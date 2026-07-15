@@ -1,0 +1,48 @@
+# Python virtual environment
+.venv/
+.venv-win/
+
+# Local secrets
+.env
+.env.local
+!.env.example
+
+# Database files
+data/*.db
+data/deepagents.db
+
+# Local resume/JD data
+/resume*.json
+/jd.json
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Node.js
+node_modules/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local AI/editor assistant metadata
+.agents/
+.claude/
+.kilocode/
+.trae/
+AGENTS.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Local runtime files
+*.pid
+.local-run/

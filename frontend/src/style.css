@@ -1,0 +1,864 @@
+:root {
+  /* 中英文混合字体栈，确保前端预览和PDF导出字体一致 */
+  font-family: 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  line-height: 1.6;
+  font-weight: 400;
+
+  color-scheme: light;
+  color: #333;
+  background-color: rgb(254, 253, 251);
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  /* 全局颜色变量 */
+  --primary-color: #d97706;       /* Claude风格橙色 */
+  --primary-hover: #b45309;
+  --secondary-color: rgb(254, 253, 251);     /* 浅米白色背景 */
+  --accent-color: #e5e5e5;
+  --text-primary: #1a1a1a;
+  --text-secondary: #666666;
+  --text-muted: #999999;
+  --border-color: #e5e5e5;
+  --error-color: #dc3545;       /* 典型红色 - 删除按钮 */
+  --error-hover: #c82333;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 6px 20px rgba(0, 0, 0, 0.1);
+  /* 圆角设为0以匹配template_demo.css风格 */
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-full: 50%;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  font-weight: 500;
+  color: var(--primary-color);
+  text-decoration: none;
+  transition: color 0.3s ease;
+}
+a:hover {
+  color: var(--primary-hover);
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background-color: var(--secondary-color);
+  color: var(--text-primary);
+  overflow: hidden; /* 禁止页面级别滚动，由内部容器处理滚动 */
+}
+
+h1 {
+  font-size: 2em;
+  line-height: 1.2;
+  font-weight: 600;
+}
+
+button {
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  padding: 0.6em 1.2em;
+  font-size: 1em;
+  font-weight: 500;
+  font-family: inherit;
+  background-color: var(--secondary-color);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+button:hover {
+  background-color: var(--accent-color);
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+}
+button:focus,
+button:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+/* 主要按钮样式 */
+.primary-btn {
+  background-color: var(--primary-color) !important;
+  border-color: var(--primary-color) !important;
+  color: white !important;
+}
+
+.primary-btn:hover {
+  background-color: var(--primary-hover) !important;
+  border-color: var(--primary-hover) !important;
+  color: white !important;
+}
+
+.card {
+  padding: 2em;
+  background-color: white;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+}
+
+#app {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  height: 100vh;
+}
+
+/* 全局滚动条样式 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 4px;
+  min-height: 30px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
+}
+
+/* 响应式调整 */
+@media (prefers-color-scheme: light) {
+  :root {
+    color: var(--text-primary);
+    background-color: var(--secondary-color);
+  }
+  a:hover {
+    color: var(--primary-hover);
+  }
+  button {
+    background-color: var(--secondary-color);
+  }
+}
+
+/* 分页元素的全局样式 - 必须在这里定义才能应用到fixed position元素 */
+.pageable-item {
+  margin-bottom: var(--module-margin);
+}
+
+/* 打印模式样式 - PDF导出已改为后端WeasyPrint生成，此处保留基础设置 */
+@media print {
+  @page {
+    size: A4;
+    margin: 0;
+  }
+}
+
+/* ==================== 弹窗通用样式 ==================== */
+.modal-mask {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  padding: 1rem;
+}
+
+.modal-container {
+  background-color: rgb(254, 253, 251);
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='3.0' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  background-blend-mode: overlay;
+  background-repeat: repeat;
+  border: 1px solid #303030;
+  border-radius: 0;
+  box-shadow: none;
+  max-width: 480px;
+  width: 100%;
+  overflow: hidden;
+  transform-origin: center center;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 弹窗动画 */
+.dialog-fade-enter-active,
+.dialog-fade-leave-active {
+  transition: all 0.3s ease;
+}
+
+.dialog-fade-enter-from,
+.dialog-fade-leave-to {
+  opacity: 0;
+}
+
+.dialog-fade-enter-from .modal-container,
+.dialog-fade-leave-to .modal-container {
+  transform: scale(0.95);
+  opacity: 0;
+}
+
+.dialog-fade-enter-to .modal-container,
+.dialog-fade-leave-from .modal-container {
+  transform: scale(1);
+  opacity: 1;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid #303030;
+  background-color: transparent;
+  gap: 12px;
+}
+
+.header-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  color: #303030;
+  pointer-events: none;
+  user-select: none;
+}
+
+.modal-header h2 {
+  font-size: 0.875rem;
+  font-weight: 400;
+  font-family: 'GTPressuraMono-Light', sans-serif;
+  color: #303030;
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  flex: 1;
+}
+
+.modal-desc {
+  padding: 0 1.5rem;
+  color: #666;
+  font-size: 0.875rem;
+  margin: 0.5rem 0 1.25rem 0;
+}
+
+.modal-close {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #303030;
+  background: transparent;
+  border-radius: 0;
+  cursor: pointer;
+  color: #303030;
+  transition: all 0.2s ease;
+}
+
+.modal-close:hover {
+  background: #303030;
+  color: #f8bebe;
+}
+
+.modal-close:disabled,
+.modal-close[disabled] {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.modal-close:disabled:hover,
+.modal-close[disabled]:hover {
+  background: transparent;
+  color: #303030;
+}
+
+/* ==================== 开始创建弹窗 ==================== */
+.start-modal .modal-header {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  padding: 1rem 1.5rem;
+}
+
+.start-modal .header-badge {
+  margin-bottom: 0;
+}
+
+.option-list {
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: row;
+  gap: 1rem;
+}
+
+.option-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 2rem 1.5rem;
+  border: 1px solid #303030;
+  background: transparent;
+  border-radius: 0;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: center;
+  flex: 1;
+}
+
+.option-item:hover {
+  background: rgba(48, 48, 48, 0.04);
+  border-color: #303030;
+  transform: none;
+  box-shadow: none;
+}
+
+.option-item.primary {
+  background: transparent;
+  border-color: #303030;
+  color: #303030;
+}
+
+.option-item.primary:hover {
+  background: rgba(48, 48, 48, 0.04);
+  border-color: #303030;
+  transform: none;
+  box-shadow: none;
+}
+
+.option-item.primary .graphic-upload {
+  border-color: #303030;
+  color: #303030;
+}
+
+.option-item.primary:hover .graphic-upload {
+  background: #303030;
+  color: #f8bebe;
+}
+
+.optionGraphic {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0;
+  flex-shrink: 0;
+}
+
+.graphic-plus {
+  background: transparent;
+  border: 1px solid #303030;
+  color: #303030;
+}
+
+.graphic-upload {
+  background: transparent;
+  border: 1px solid #f8bebe;
+  color: #f8bebe;
+}
+
+.option-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+}
+
+.option-label {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  font-family: 'GTPressuraMono-Light', sans-serif;
+  color: #303030;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.option-item.primary .option-label {
+  color: #1f2937;
+}
+
+.option-sublabel {
+  font-size: 0.75rem;
+  color: #666;
+}
+
+.option-item.primary .option-sublabel {
+  color: #6b7280;
+}
+
+.option-arrow {
+  display: none;
+}
+
+/* ==================== 上传弹窗 ==================== */
+.upload-modal .modal-header {
+  padding: 1rem 1.5rem;
+}
+
+.upload-modal .modal-body {
+  padding: 0.75rem 1.5rem 1.5rem;
+}
+
+.upload-box {
+  border: 1px dashed #303030;
+  border-radius: 0;
+  padding: 3rem 1.5rem;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background: transparent;
+}
+
+.upload-box:hover {
+  border-color: #303030;
+  border-style: solid;
+  background: rgba(48, 48, 48, 0.02);
+  transform: none;
+  box-shadow: none;
+}
+
+.hidden-input {
+  display: none;
+}
+
+.upload-graphic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  background: transparent;
+  border: 1px solid #303030;
+  border-radius: 0;
+  color: #303030;
+  margin-bottom: 16px;
+  transition: all 0.2s ease;
+}
+
+.upload-box:hover .upload-graphic {
+  transform: none;
+  box-shadow: none;
+  background: rgba(48, 48, 48, 0.04);
+}
+
+.upload-title {
+  font-size: 0.875rem;
+  font-weight: 500;
+  font-family: 'GTPressuraMono-Light', sans-serif;
+  margin: 0 0 8px 0;
+  color: #303030;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.upload-box .upload-hint {
+  font-size: 0.8125rem;
+  color: #666;
+  margin: 0;
+}
+
+.upload-box .upload-formats {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 6px 12px;
+  background: transparent;
+  border: 1px solid #303030;
+  border-radius: 0;
+  font-size: 0.6875rem;
+  font-family: 'GTPressuraMono-Light', sans-serif;
+  color: #303030;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.preview-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.preview-img {
+  max-width: 100%;
+  max-height: 200px;
+  object-fit: contain;
+  border-radius: 0;
+  border: 1px solid #303030;
+  box-shadow: none;
+}
+
+/* PDF预览样式 */
+.pdf-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 2rem;
+  background: transparent;
+  border-radius: 0;
+  border: 1px solid #303030;
+}
+
+.pdf-icon-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  background: transparent;
+  border: 1px solid #303030;
+  border-radius: 0;
+  box-shadow: none;
+  color: #dc2626;
+  margin-bottom: 12px;
+}
+
+.pdf-filename {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #303030;
+  margin: 0 0 4px 0;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pdf-hint {
+  font-size: 0.75rem;
+  color: #666;
+  margin: 0;
+}
+
+.btn-reselect {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0.5rem 1rem;
+  font-size: 0.6875rem;
+  font-family: 'GTPressuraMono-Light', sans-serif;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  border-radius: 0;
+  border: 1px solid #303030;
+  background: transparent;
+  color: #303030;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-reselect:hover {
+  border-color: #303030;
+  color: #f8bebe;
+  background: #303030;
+}
+
+.modal-footer {
+  padding: 0 1.5rem 1.5rem;
+}
+
+.full-width {
+  width: 100%;
+}
+
+/* ==================== 身份选择卡片样式 ==================== */
+.identity-cards-container {
+  padding: 0 1.5rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.identity-cards-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.identity-card {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 16px;
+  padding: 1rem 1.25rem;
+  border: 1px solid #303030;
+  background: transparent;
+  border-radius: 0;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: left;
+  width: 100%;
+  max-width: 400px;
+  outline: none;
+}
+
+.identity-card:hover {
+  background: rgba(48, 48, 48, 0.04);
+  border-color: #303030;
+  outline: none;
+}
+
+.identity-card.active {
+  background: rgba(248, 190, 190, 0.15);
+  border-color: #f8bebe;
+  outline: none;
+}
+
+.identity-icon {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #303030;
+  border-radius: 0;
+  color: #303030;
+  flex-shrink: 0;
+}
+
+.identity-icon.pink {
+  border-color: #f8bebe;
+  color: #f8bebe;
+}
+
+.identity-card.active .identity-icon {
+  background: #f8bebe;
+  color: #303030;
+  border-color: #f8bebe;
+}
+
+.identity-card.active .identity-icon.pink {
+  background: #f8bebe;
+  color: #303030;
+}
+
+.identity-card-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.identity-title {
+  font-size: 0.875rem;
+  font-weight: 500;
+  font-family: 'GTPressuraMono-Light', sans-serif;
+  color: #303030;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.identity-desc {
+  font-size: 0.75rem;
+  color: #666;
+  line-height: 1.4;
+}
+
+.identity-divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  margin: 0.5rem 0;
+}
+
+.identity-divider span {
+  font-size: 0.875rem;
+  color: #666;
+  padding: 0 1rem;
+  background: rgb(254, 253, 251);
+  position: relative;
+  z-index: 1;
+}
+
+.identity-divider::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 1.5rem;
+  right: 1.5rem;
+  height: 1px;
+  background: #e0e0e0;
+}
+
+/* 自定义身份输入框 */
+.custom-identity-input {
+  margin-top: 0.5rem;
+}
+
+.custom-identity-input textarea {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid #e0e0e0;
+  border-radius: 0;
+  font-size: 0.875rem;
+  font-family: inherit;
+  background: #f5f4f2;
+  resize: vertical;
+  min-height: 80px;
+  transition: all 0.2s ease;
+}
+
+.custom-identity-input textarea:focus {
+  outline: none;
+  border-color: #303030;
+  background: #fff;
+}
+
+.custom-identity-input textarea::placeholder {
+  color: #999;
+}
+
+/* 身份选择弹窗特殊样式 */
+.identity-selection .modal-container {
+  max-width: 600px;
+}
+
+.identity-selection .modal-header {
+  padding: 1rem 1.5rem;
+}
+
+.identity-selection .modal-desc {
+  padding: 0 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.btn-primary {
+  padding: 0.875rem 1.5rem;
+  font-size: 0.6875rem;
+  font-family: 'GTPressuraMono-Light', sans-serif;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: #303030;
+  border: 1px solid #303030;
+  border-radius: 0;
+  color: #f8bebe;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: none;
+}
+
+.btn-primary:hover:not(:disabled) {
+  transform: none;
+  box-shadow: none;
+  background: #1a1a1a;
+  border-color: #1a1a1a;
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.btn-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(248, 190, 190, 0.3);
+  border-top-color: #f8bebe;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 解析状态样式 */
+.parsing-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem 1.5rem;
+  text-align: center;
+}
+
+.parsing-spinner {
+  width: 40px;
+  height: 40px;
+  border: 2px solid rgba(48, 48, 48, 0.2);
+  border-top-color: #303030;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-bottom: 16px;
+}
+
+.parsing-text {
+  font-size: 0.875rem;
+  font-weight: 500;
+  font-family: 'GTPressuraMono-Light', sans-serif;
+  color: #303030;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.parsing-hint {
+  font-size: 0.8125rem;
+  color: #666;
+}
+
+/* ==================== 弹窗操作按钮区域 ==================== */
+.modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+
+.modal-back {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #303030;
+  background: transparent;
+  color: #303030;
+  font-size: 0.6875rem;
+  font-family: 'GTPressuraMono-Light', sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  border-radius: 0;
+  transition: all 0.2s ease;
+}
+
+.modal-back:hover {
+  background: #303030;
+  color: #f8bebe;
+}

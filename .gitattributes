@@ -1,0 +1,16 @@
+* text=auto
+
+# Keep platform-specific scripts executable with their native line endings.
+*.sh text eol=lf
+*.ps1 text eol=crlf
+
+# Binary assets
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.ttf binary
+*.woff binary
+*.woff2 binary
+*.pdf binary

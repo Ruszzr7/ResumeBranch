@@ -1,0 +1,119 @@
+openapi: 3.1.0
+info:
+  title: Resume Assistant MCP Service
+  version: 1.0.0
+  description: MCP service for resume assistant tools
+paths:
+  /list_directory:
+    post:
+      operationId: listDirectory
+      summary: List files and directories in a path
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
+                  description: Path to directory
+              required:
+                - path
+      responses:
+        "200":
+          description: Directory contents
+          content:
+            application/json:
+              schema:
+                type: string
+
+  /read_file:
+    post:
+      operationId: readFile
+      summary: Read file content
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                file_path:
+                  type: string
+                  description: Path to file
+              required:
+                - file_path
+      responses:
+        "200":
+          description: File content
+          content:
+            application/json:
+              schema:
+                type: string
+
+  /write_file:
+    post:
+      operationId: writeFile
+      summary: Write content to file
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                file_path:
+                  type: string
+                  description: Path to file
+                content:
+                  type: string
+                  description: Content to write
+              required:
+                - file_path
+                - content
+      responses:
+        "200":
+          description: Write result
+          content:
+            application/json:
+              schema:
+                type: string
+
+  /update_resume:
+    post:
+      operationId: updateResume
+      summary: Update resume.json file
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                data:
+                  type: object
+                  description: Resume data to update
+              required:
+                - data
+      responses:
+        "200":
+          description: Update result
+          content:
+            application/json:
+              schema:
+                type: string
+
+  /load_resume:
+    post:
+      operationId: loadResume
+      summary: Load resume.json file
+      requestBody:
+        required: false
+      responses:
+        "200":
+          description: Resume data
+          content:
+            application/json:
+              schema:
+                type: object

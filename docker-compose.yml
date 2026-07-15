@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  # 后端 API 服务
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: deepagents-backend:latest
+    container_name: deepagents-backend
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -X POST -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Nginx 反向代理 + 前端静态文件
+  nginx:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: deepagents-nginx
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  data:
