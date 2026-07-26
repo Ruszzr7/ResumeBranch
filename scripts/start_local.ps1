@@ -1,3 +1,9 @@
+param(
+    [ValidateSet("", "local", "multi_user")]
+    [string]$AppMode = "",
+    [string]$LocalUserEmail = ""
+)
+
 $ErrorActionPreference = "Stop"
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
@@ -10,6 +16,13 @@ if (-not (Test-Path -LiteralPath $python)) {
 }
 if (-not (Test-Path -LiteralPath (Join-Path $frontendRoot "node_modules"))) {
     throw "Missing frontend/node_modules. Run npm ci in frontend first."
+}
+
+if ($AppMode) {
+    $env:APP_MODE = $AppMode
+}
+if ($LocalUserEmail) {
+    $env:LOCAL_USER_EMAIL = $LocalUserEmail
 }
 
 New-Item -ItemType Directory -Force -Path $runDirectory | Out-Null
@@ -66,3 +79,5 @@ if (-not $backendReady -or -not $frontendReady) {
 
 Write-Output "Backend:  http://127.0.0.1:8000"
 Write-Output "Frontend: http://127.0.0.1:5173"
+$displayMode = if ($env:APP_MODE) { $env:APP_MODE } else { "from .env" }
+Write-Output "App mode: $displayMode"

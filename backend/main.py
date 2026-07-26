@@ -40,8 +40,9 @@ from .database import (
 )
 from .auth import (
     verify_password, get_password_hash, create_access_token,
-    get_current_user, oauth2_scheme
+    get_current_user, oauth2_scheme, require_multi_user_mode
 )
+from .config import APP_MODE, LOCAL_USER_EMAIL, is_local_mode
 
 # PDF 生成器 - 懒加载（在 API 调用时才导入）
 _pdf_generator = None
@@ -284,7 +285,22 @@ init_db()
 # 认证端点
 # =============================================================================
 
-@app.post("/auth/register", response_model=TokenResponse)
+@app.get("/app/config")
+async def get_app_config():
+    """Expose non-sensitive runtime capabilities to the frontend."""
+    return {
+        "app_mode": APP_MODE,
+        "authentication_required": not is_local_mode(),
+        "account_management_enabled": not is_local_mode(),
+        "local_user_email": LOCAL_USER_EMAIL if is_local_mode() else None,
+    }
+
+
+@app.post(
+    "/auth/register",
+    response_model=TokenResponse,
+    dependencies=[Depends(require_multi_user_mode)],
+)
 async def register(request: RegisterRequest, db: Session = Depends(get_db)):
     """
     用户注册
@@ -317,7 +333,11 @@ async def register(request: RegisterRequest, db: Session = Depends(get_db)):
     )
 
 
-@app.post("/auth/login", response_model=TokenResponse)
+@app.post(
+    "/auth/login",
+    response_model=TokenResponse,
+    dependencies=[Depends(require_multi_user_mode)],
+)
 async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     """
     用户登录
@@ -356,7 +376,7 @@ async def get_me(current_user = Depends(get_current_user)):
     )
 
 
-@app.get("/auth/invite-codes")
+@app.get("/auth/invite-codes", dependencies=[Depends(require_multi_user_mode)])
 async def list_invites(current_user = Depends(get_current_user), db: Session = Depends(get_db)):
     """
     获取邀请码列表（需要登录）
@@ -369,7 +389,7 @@ async def list_invites(current_user = Depends(get_current_user), db: Session = D
     ]
 
 
-@app.post("/auth/invite-codes")
+@app.post("/auth/invite-codes", dependencies=[Depends(require_multi_user_mode)])
 async def create_invite(request: Request, current_user = Depends(get_current_user), db: Session = Depends(get_db)):
     """
     生成邀请码（需要登录）
@@ -400,7 +420,7 @@ async def create_invite(request: Request, current_user = Depends(get_current_use
 @app.post("/health")
 async def health_check():
     """健康检查"""
-    return {"status": "ok", "version": "2.0.0"}
+    return {"status": "ok", "version": "2.0.0", "app_mode": APP_MODE}
 
 
 @app.post("/load_resume")
@@ -1538,18 +1558,21 @@ if __name__ == "__main__":
     # 创建本地管理员账号（凭据只从 .env 读取）
     try:
         db = SessionLocal()
-        admin_email = os.getenv("ADMIN_EMAIL", "").strip()
-        admin_password = os.getenv("ADMIN_PASSWORD", "")
-        if not admin_email or not admin_password:
-            print("[User] 未配置 ADMIN_EMAIL/ADMIN_PASSWORD，跳过管理员初始化")
+        if is_local_mode():
+            print(f"[User] 本地模式已启用，使用本地用户: {LOCAL_USER_EMAIL}")
         else:
-            existing_admin = get_user_by_email(db, admin_email)
-            if existing_admin:
-                print(f"[User] 管理员账号已存在: {admin_email}")
+            admin_email = os.getenv("ADMIN_EMAIL", "").strip()
+            admin_password = os.getenv("ADMIN_PASSWORD", "")
+            if not admin_email or not admin_password:
+                print("[User] 未配置 ADMIN_EMAIL/ADMIN_PASSWORD，跳过管理员初始化")
             else:
-                hashed_pw = get_password_hash(admin_password)
-                create_user(db, admin_email, hashed_pw, invite_code="admin")
-                print(f"[User] 已创建本地管理员账号: {admin_email}")
+                existing_admin = get_user_by_email(db, admin_email)
+                if existing_admin:
+                    print(f"[User] 管理员账号已存在: {admin_email}")
+                else:
+                    hashed_pw = get_password_hash(admin_password)
+                    create_user(db, admin_email, hashed_pw, invite_code="admin")
+                    print(f"[User] 已创建管理员账号: {admin_email}")
         db.close()
     except Exception as e:
         print(f"[User] 创建管理员账号失败: {e}")

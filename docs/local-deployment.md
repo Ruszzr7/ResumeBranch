@@ -8,6 +8,27 @@
 - PDF：WeasyPrint 69 + 隔离的 MSYS2/Pango
 - LLM：默认禁用，配置密钥后启用
 
+## 应用模式
+
+本机默认使用单用户模式：
+
+```env
+APP_MODE=local
+LOCAL_USER_EMAIL=local@localhost
+```
+
+该模式会直接进入简历工作区，不需要登录或 JWT；注册、邀请码和管理员入口会被隐藏，
+对应后端接口也会停用。数据仍通过 `User` 记录归属，以便以后切回多用户模式，并不需要
+修改数据库结构。
+
+如需恢复原有的登录、注册、邀请码和多用户隔离功能，将 `.env` 改为：
+
+```env
+APP_MODE=multi_user
+```
+
+然后重启后端和前端。`LOCAL_USER_EMAIL` 只用于本地模式，不是实际邮箱，也不会发送邮件。
+
 ## 环境隔离
 
 - Python 3.11 安装在当前用户的独立目录，未加入系统 PATH。
@@ -30,6 +51,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start_local.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\stop_local.ps1
 ```
 
+也可以临时覆盖 `.env` 中的模式，适合回归测试：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start_local.ps1 -AppMode multi_user
+```
+
 如果希望分别以前台模式观察日志，可在两个 PowerShell 窗口执行：
 
 ```powershell
@@ -37,10 +64,11 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start_backend_local.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\start_frontend_local.ps1
 ```
 
-## 登录
+## 多用户模式账号
 
-管理员邮箱为 `.env` 中的 `ADMIN_EMAIL`，随机密码保存在同一文件的
-`ADMIN_PASSWORD`。不要将 `.env` 提交到 Git，也不要在聊天或日志中粘贴密码。
+只有 `APP_MODE=multi_user` 时才需要管理员账号。邮箱与密码分别读取 `.env` 中的
+`ADMIN_EMAIL` 和 `ADMIN_PASSWORD`。不要将 `.env` 提交到 Git，也不要在聊天或日志中
+粘贴密码。
 
 ## 验收
 
@@ -48,8 +76,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start_frontend_local.ps1
 .\.venv-win\Scripts\python.exe scripts\smoke_test.py
 ```
 
-该脚本验证前端、健康检查、登录/注册、MySQL 简历与 JD 读写、PDF 导出和
-LLM 禁用保护，并在结束时删除临时测试数据。
+脚本会识别当前应用模式，验证前端、健康检查、认证策略、MySQL 简历与 JD 读写、
+PDF 导出和 LLM 禁用保护，并在结束时删除临时测试数据。本地模式下，为防止误删真实
+本地数据，完整冒烟测试应使用启动参数临时指定 `smoke-*@local.test` 邮箱。
 
 ## 启用 LLM
 

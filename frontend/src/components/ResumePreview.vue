@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, watch, nextTick, onUnmounted } from 'vue'
 import { labels } from '../utils/labels.js'
+import { buildAuthorizationHeaders } from '../config/appMode.js'
 
 const props = defineProps({
   data: {
@@ -463,12 +464,11 @@ const exportPDF = async () => {
     }
 
     // 调用后端API
-    const token = localStorage.getItem('access_token') || ''
     const response = await fetch('/export_pdf', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
+        ...buildAuthorizationHeaders()
       },
       body: JSON.stringify({
         resume_data: props.data,

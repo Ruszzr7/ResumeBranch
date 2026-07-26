@@ -193,11 +193,18 @@
 <script setup>
 import { useRouter } from 'vue-router'
 import { ref } from 'vue'
+import { loadAppConfig } from '../config/appMode.js'
 
 const router = useRouter()
 const activeTarget = ref('intern')
 
-function handleCreateResume() {
+async function handleCreateResume() {
+  const appConfig = await loadAppConfig()
+  if (appConfig.app_mode === 'local') {
+    router.push('/')
+    return
+  }
+
   const token = localStorage.getItem('access_token')
   if (token) {
     router.push('/')

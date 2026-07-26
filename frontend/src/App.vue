@@ -6,6 +6,7 @@ import ResumePreview from './components/ResumePreview.vue'
 import RichTextEditor from './components/RichTextEditor.vue'
 import MobileTabBar from './components/MobileTabBar.vue'
 import { labels } from './utils/labels.js'
+import { buildAuthorizationHeaders, loadAppConfig } from './config/appMode.js'
 
 // 响应式布局状态
 const isMobileView = ref(false)
@@ -81,8 +82,10 @@ const translateLabels = computed(() => labels.zh)
 const isLoggedIn = ref(false)
 const currentUser = ref(null)
 const token = ref(localStorage.getItem('access_token') || '')
+const appConfig = ref(null)
 const router = useRouter()
 const route = useRoute()
+const isLocalMode = computed(() => appConfig.value?.app_mode === 'local')
 
 // 计算属性：判断是否为管理页面路由
 const isAdminRoute = computed(() => route.path === '/admin')
@@ -213,18 +216,30 @@ const IDENTITY_GREETINGS = {
 }
 
 // 获取认证 headers
+function getAuthorizationHeaders() {
+  return buildAuthorizationHeaders(token.value)
+}
+
 function getAuthHeaders() {
-  const headers = {
-    'Content-Type': 'application/json'
+  return {
+    'Content-Type': 'application/json',
+    ...getAuthorizationHeaders()
   }
-  if (token.value) {
-    headers['Authorization'] = `Bearer ${token.value}`
-  }
-  return headers
 }
 
 // 检查登录状态
 async function checkLoginStatus() {
+  appConfig.value = await loadAppConfig()
+
+  if (isLocalMode.value) {
+    token.value = ''
+    currentUser.value = {
+      email: appConfig.value.local_user_email || 'local@localhost'
+    }
+    isLoggedIn.value = true
+    return
+  }
+
   const savedToken = localStorage.getItem('access_token')
   const savedUser = localStorage.getItem('user')
 
@@ -604,6 +619,9 @@ async function loadResumeData() {
 
 // 登出
 function logout() {
+  if (isLocalMode.value) {
+    return
+  }
   localStorage.removeItem('access_token')
   localStorage.removeItem('user')
   token.value = ''
@@ -700,9 +718,7 @@ async function sendMessage() {
     // 使用fetch API处理SSE流式响应
     const response = await fetch('/chat', {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token.value}`
-      },
+      headers: getAuthorizationHeaders(),
       body: formData
     })
     
@@ -925,7 +941,7 @@ async function handleOptionClick({ confirm_id, value }) {
 
     const response = await fetch('/chat', {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${token.value}` },
+      headers: getAuthorizationHeaders(),
       body: formData
     })
 
@@ -2513,7 +2529,10 @@ watch(
             <img src="@/assets/wechatcode.jpg" alt="微信" class="wechat-qr" />
           </div>
         </div>
-        <template v-if="isLoggedIn">
+        <template v-if="isLocalMode">
+          <span class="user-email">本地模式</span>
+        </template>
+        <template v-else-if="isLoggedIn">
           <span class="user-email">{{ currentUser?.email }}</span>
           <button @click="logout" class="logout-btn">登出</button>
         </template>

@@ -3,6 +3,7 @@ import Login from '../views/Login.vue'
 import Register from '../views/Register.vue'
 import Admin from '../views/Admin.vue'
 import Homepage from '../views/Homepage.vue'
+import { loadAppConfig } from '../config/appMode.js'
 
 const routes = [
   {
@@ -41,25 +42,32 @@ const router = createRouter({
 })
 
 // Navigation guard
-router.beforeEach((to, from, next) => {
+router.beforeEach(async (to) => {
+  const appConfig = await loadAppConfig()
+  if (appConfig.app_mode === 'local') {
+    if (to.meta.guest || to.meta.requiresAdmin) {
+      return '/'
+    }
+    return true
+  }
+
   const token = localStorage.getItem('access_token')
   const userStr = localStorage.getItem('user')
   const user = userStr ? JSON.parse(userStr) : null
 
   if (to.meta.requiresAuth && !token) {
-    next('/login')
+    return '/login'
   } else if (to.meta.guest && token) {
-    next('/')
+    return '/'
   } else if (to.meta.requiresAdmin) {
     // Check if user is admin (admin@qq.com)
     if (user && user.email === 'admin@qq.com') {
-      next()
+      return true
     } else {
-      next('/')
+      return '/'
     }
-  } else {
-    next()
   }
+  return true
 })
 
 export default router

@@ -112,6 +112,9 @@ git checkout develop
 ```bash
 # 创建环境变量文件
 cat > .env << 'EOF'
+# 线上部署保留登录、注册、邀请码和多用户隔离
+APP_MODE=multi_user
+
 # JWT 配置
 JWT_SECRET_KEY=your-super-secret-jwt-key-here
 

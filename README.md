@@ -23,8 +23,8 @@
 DeepAgents 是一个全栈 AI 简历优化工具，具有以下特点：
 
 - **对话式交互**：通过自然语言与 AI 对话，智能修改简历
-- **用户认证**：JWT 令牌认证，支持多用户隔离
-- **数据持久化**：SQLite 数据库存储用户简历、JD 和对话历史
+- **双运行模式**：本地单用户免登录，或 JWT 多用户隔离
+- **数据持久化**：SQLAlchemy 支持 MySQL，本地部署使用独立 MySQL 数据库
 - **AI 驱动**：基于 LangGraph 构建的智能 Agent
 - **PDF 导出**：服务端 WeasyPrint 生成高质量 PDF
 
@@ -61,6 +61,7 @@ DeepAgents 是一个全栈 AI 简历优化工具，具有以下特点：
 ## ✨ 核心功能
 
 ### 用户系统
+- ✅ `local` / `multi_user` 双模式切换
 - ✅ 用户注册（邀请码机制）
 - ✅ 用户登录/登出
 - ✅ JWT Token 认证（24 小时有效期）
@@ -258,6 +259,10 @@ cp .env.example .env
 编辑 `.env` 文件：
 
 ```env
+# 本地单用户模式（免登录）
+APP_MODE=local
+LOCAL_USER_EMAIL=local@localhost
+
 # JWT 配置（必须修改）
 JWT_SECRET_KEY=your-super-secret-jwt-key-here
 
@@ -271,9 +276,11 @@ TAVILY_API_KEY=tvly-your-tavily-api-key
 # 服务器配置
 DOMAIN=your-domain.com
 
-# 数据库（可选，默认使用 SQLite）
-DATABASE_URL=sqlite:///./data/deepagents.db
+# 数据库
+DATABASE_URL=mysql+pymysql://resume_app:password@127.0.0.1:3306/resume_assistant?charset=utf8mb4
 ```
+
+需要登录、注册、邀请码和多用户隔离时，将 `APP_MODE` 改为 `multi_user`。
 
 ### 3. 安装后端依赖
 
@@ -527,13 +534,13 @@ docker-compose down
 
 ### 创建管理员
 
+仅 `APP_MODE=multi_user` 时需要：
+
 ```bash
 python -m backend.create_admin
 ```
 
-默认管理员账号：
-- 邮箱：admin@qq.com
-- 密码：admin123
+管理员邮箱和密码必须通过 `.env` 中的 `ADMIN_EMAIL`、`ADMIN_PASSWORD` 设置。
 
 ---
 
