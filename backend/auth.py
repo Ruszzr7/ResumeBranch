@@ -8,14 +8,14 @@ import secrets
 
 from jose import jwt, JWTError
 import bcrypt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 import os
 
 from .config import LOCAL_USER_EMAIL, is_local_mode
-from .database import create_user, get_db, get_user_by_email
+from .database import create_user, get_db, get_resume_task, get_user_by_email
 
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-super-secret-key-change-this-in-production")
 ALGORITHM = "HS256"
@@ -74,7 +74,8 @@ def decode_token(token: str) -> dict:
 
 async def get_current_user(
     token: str | None = Depends(oauth2_scheme),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    x_task_id: str | None = Header(default=None, alias="X-Task-ID"),
 ):
     """
     获取当前用户（依赖注入）
@@ -85,7 +86,13 @@ async def get_current_user(
         HTTPException: 认证失败
     """
     if is_local_mode():
-        return ensure_local_user(db)
+        user = ensure_local_user(db)
+        if x_task_id:
+            task = get_resume_task(db, user.id, x_task_id)
+            if not task:
+                raise HTTPException(status_code=404, detail="任务不存在")
+            db.info["task_id"] = task.id
+        return user
 
     credentials_exception = HTTPException(
         status_code=401,
@@ -111,6 +118,12 @@ async def get_current_user(
     if not user.is_active:
         raise HTTPException(status_code=403, detail="账户已被禁用")
 
+    if x_task_id:
+        task = get_resume_task(db, user.id, x_task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="任务不存在")
+        db.info["task_id"] = task.id
+
     return user
 
 
@@ -128,7 +141,7 @@ async def get_current_user_optional(
         return None
 
     try:
-        return await get_current_user(token, db)
+        return await get_current_user(token=token, db=db, x_task_id=None)
     except HTTPException:
         return None
 

@@ -52,7 +52,7 @@ def write_file(file_path: str, content: str) -> str:
 # 数据库操作函数（新增）
 # =============================================================================
 
-def update_resume(data: dict, user_id: int = None, db: Session = None) -> str:
+def update_resume(data: dict, user_id: int = None, task_id: str = None, db: Session = None) -> str:
     """
     更新用户简历到 SQLite
 
@@ -76,6 +76,9 @@ def update_resume(data: dict, user_id: int = None, db: Session = None) -> str:
                 user_id = resume_agent.current_user_id
             else:
                 return "错误：无法确定用户身份，请先登录"
+        task_id = task_id or resume_agent.current_task_id
+        if task_id:
+            db.info["task_id"] = task_id
 
         # 确保 user_id 是有效的整数
         if user_id is None:
@@ -115,6 +118,8 @@ def load_resume(user_id: int = None, db: Session = None) -> dict:
                 user_id = resume_agent.current_user_id
             else:
                 return {}
+        if resume_agent.current_task_id:
+            db.info["task_id"] = resume_agent.current_task_id
 
         return get_user_resume(db, user_id)
     except Exception as e:
@@ -147,6 +152,8 @@ def save_jd(data: dict, user_id: int = None, db: Session = None) -> str:
                 user_id = resume_agent.current_user_id
             else:
                 return "错误：无法确定用户身份"
+        if resume_agent.current_task_id:
+            db.info["task_id"] = resume_agent.current_task_id
 
         company = data.get('company', '')
         position = data.get('position', '')
@@ -181,6 +188,8 @@ def load_jd(user_id: int = None, db: Session = None) -> dict:
                 user_id = resume_agent.current_user_id
             else:
                 return {}
+        if resume_agent.current_task_id:
+            db.info["task_id"] = resume_agent.current_task_id
 
         return get_user_jd(db, user_id)
     except Exception as e:

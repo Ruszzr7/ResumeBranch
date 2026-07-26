@@ -62,6 +62,7 @@ def estimate_tokens(text):
 
 # 全局变量：当前用户ID（由 backend.main 设置）
 current_user_id = None
+current_task_id = None
 
 # 加载环境变量
 load_dotenv()
@@ -177,25 +178,36 @@ httpx_client = httpx.Client(
     limits=httpx.Limits(max_connections=20),
 )
 
+KIMI_FIXED_TEMPERATURE_MODELS = {
+    "k3",
+    "k3-256k",
+    "kimi-for-coding",
+    "kimi-k3",
+    "kimi-k2.7-code",
+    "kimi-k2.7-code-highspeed",
+    "kimi-k2.6",
+}
+
+
+def create_llm(*, temperature: float):
+    """Create a chat model while respecting provider-specific parameters."""
+    kwargs = {
+        "api_key": llm_client_api_key,
+        "base_url": LLM_BASE_URL,
+        "model": LLM_MODEL,
+        "http_client": httpx_client,
+        "max_retries": 3,
+    }
+    if LLM_MODEL not in KIMI_FIXED_TEMPERATURE_MODELS:
+        kwargs["temperature"] = temperature
+    return ChatOpenAI(**kwargs)
+
+
 # Conversation LLM - 负责对话和读取
-conversation_llm = ChatOpenAI(
-    api_key=llm_client_api_key,
-    base_url=LLM_BASE_URL,
-    model=LLM_MODEL,
-    http_client=httpx_client,
-    max_retries=3,
-    temperature=0.1
-)
+conversation_llm = create_llm(temperature=0.1)
 
 # JD Parser LLM - 负责解析JD文本/图片为JSON
-jd_parser_llm = ChatOpenAI(
-    api_key=llm_client_api_key,
-    base_url=LLM_BASE_URL,
-    model=LLM_MODEL,
-    http_client=httpx_client,
-    max_retries=3,
-    temperature=0.0  # 解析需要低温度，保证JSON格式准确
-)
+jd_parser_llm = create_llm(temperature=0.0)
 
 
 # =============================================================================
@@ -535,7 +547,7 @@ def fix_unquoted_json_strings(content: str) -> str:
 
 
 @tool
-def save_resume_tool(content: str = "", user_id: int = None) -> str:
+def save_resume_tool(content: str = "", user_id: int = None, task_id: str = None) -> str:
     """
     将格式化后的简历数据保存到数据库
 
@@ -578,7 +590,7 @@ def save_resume_tool(content: str = "", user_id: int = None) -> str:
     try:
         print(f"[save_resume_tool] 开始保存简历，用户ID={user_id}")
         print(f"[save_resume_tool] resume_data keys: {list(resume_data.keys()) if isinstance(resume_data, dict) else 'not a dict'}")
-        result = update_resume(resume_data, user_id=user_id)
+        result = update_resume(resume_data, user_id=user_id, task_id=task_id)
         print(f"[save_resume_tool] 保存结果: {result}")
         return result
     except Exception as e:
@@ -606,6 +618,7 @@ class AgentState:
         pending_confirmation: 待确认状态（用于显示确认按钮）
         just_saved: 标记刚保存了简历，用于引导 LLM 不再调用工具
         user_id: 当前用户ID，用于数据隔离
+        task_id: 当前岗位任务ID，用于简历版本隔离
     """
     messages: list = field(default_factory=list)
     resume_data: dict = None  # None 表示尚未读取简历
@@ -613,6 +626,7 @@ class AgentState:
     pending_confirmation: dict = None  # 待确认状态
     just_saved: bool = False  # 刚保存简历后设置为 True
     user_id: int = None  # 当前用户ID
+    task_id: str = None  # 当前任务ID
 
 
 # =============================================================================
@@ -1056,6 +1070,7 @@ async def tool_node(state: AgentState) -> dict:
                     
                     # 传递 user_id
                     tool_args['user_id'] = state.user_id
+                    tool_args['task_id'] = state.task_id
                     
                     # 生成确认标记，返回给前端
                     confirm_id = str(uuid.uuid4())[:8]

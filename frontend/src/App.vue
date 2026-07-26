@@ -89,6 +89,10 @@ const isLocalMode = computed(() => appConfig.value?.app_mode === 'local')
 
 // 计算属性：判断是否为管理页面路由
 const isAdminRoute = computed(() => route.path === '/admin')
+const isWorkspaceRoute = computed(() => route.name === 'TaskWorkspace')
+const currentTaskId = computed(() => isWorkspaceRoute.value ? String(route.params.taskId || '') : '')
+const currentProject = ref(null)
+const projectTasks = ref([])
 
 // 聊天消息列表
 const messages = ref([])
@@ -217,7 +221,11 @@ const IDENTITY_GREETINGS = {
 
 // 获取认证 headers
 function getAuthorizationHeaders() {
-  return buildAuthorizationHeaders(token.value)
+  const headers = buildAuthorizationHeaders(token.value)
+  if (currentTaskId.value) {
+    headers['X-Task-ID'] = currentTaskId.value
+  }
+  return headers
 }
 
 function getAuthHeaders() {
@@ -273,8 +281,9 @@ onMounted(async () => {
     return
   }
 
-  // 加载数据并检查是否首次访问
-  await loadInitialData()
+  if (isWorkspaceRoute.value) {
+    await loadWorkspace()
+  }
 })
 
 // 初始化响应式检测
@@ -330,15 +339,10 @@ onUnmounted(() => {
 })
 
 // 监听路由变化，自动更新登录状态
-watch(() => route.path, async () => {
-  // 切换到首页时，检查登录状态并加载数据
-  if (route.path === '/') {
-    console.log('[DEBUG] watch: 路由变化到首页，检查登录状态...')
-    await checkLoginStatus()
-    if (isLoggedIn.value) {
-      console.log('[DEBUG] watch: 用户已登录，开始加载数据...')
-      await loadInitialData()
-    }
+watch(() => route.fullPath, async () => {
+  await checkLoginStatus()
+  if (isLoggedIn.value && isWorkspaceRoute.value) {
+    await loadWorkspace()
   }
 
   // /admin 页面启用滚动，其他页面禁用页面级滚动
@@ -348,6 +352,67 @@ watch(() => route.path, async () => {
     document.body.style.overflow = 'hidden'
   }
 })
+
+async function loadWorkspace() {
+  messages.value = []
+  resumeData.value = null
+  jdData.value = null
+  showStartDialog.value = false
+  hasConfirmArea.value = false
+
+  const response = await fetch(`/projects/${route.params.projectId}`, {
+    headers: getAuthorizationHeaders()
+  })
+  if (!response.ok) {
+    router.replace('/')
+    return
+  }
+  currentProject.value = await response.json()
+  projectTasks.value = currentProject.value.tasks || []
+  const task = projectTasks.value.find(item => item.id === currentTaskId.value)
+  if (!task) {
+    router.replace('/')
+    return
+  }
+  sessionId.value = task.session_id
+  await loadInitialData()
+}
+
+async function createProjectTask() {
+  const title = window.prompt('请输入岗位或公司名称', '新岗位版本')
+  if (title === null) return
+  const response = await fetch(`/projects/${route.params.projectId}/tasks`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ title: title.trim() || '新岗位版本' })
+  })
+  if (!response.ok) return
+  const task = await response.json()
+  router.push(`/projects/${task.project_id}/tasks/${task.id}`)
+}
+
+async function deleteProjectTask(task) {
+  if (task.is_base) return
+  if (!window.confirm(`确定删除岗位版本“${task.title}”吗？该版本的 JD 和对话记录也会一起删除。`)) return
+  const response = await fetch(`/tasks/${task.id}`, {
+    method: 'DELETE',
+    headers: getAuthorizationHeaders()
+  })
+  if (!response.ok) return
+  projectTasks.value = projectTasks.value.filter(item => item.id !== task.id)
+  if (task.id === currentTaskId.value) {
+    const nextTask = projectTasks.value.find(item => item.is_base) || projectTasks.value[0]
+    if (nextTask) {
+      router.replace(`/projects/${nextTask.project_id}/tasks/${nextTask.id}`)
+    } else {
+      router.replace('/')
+    }
+  }
+}
+
+function exitTask() {
+  router.push('/')
+}
 
 // 加载初始数据的函数（同时检查首次访问）
 async function loadInitialData() {
@@ -2521,14 +2586,10 @@ watch(
         </router-link>
       </h1>
       <div class="header-info">
-        <div class="header-contact">
-          <span class="contact-link">联系我们</span>
-          <div class="contact-tooltip">
-            <p class="tooltip-text">进产品交流群请扫码添加</p>
-            <p class="tooltip-text">备注"入群"更快通过~</p>
-            <img src="@/assets/wechatcode.jpg" alt="微信" class="wechat-qr" />
-          </div>
-        </div>
+        <template v-if="isWorkspaceRoute">
+          <span class="user-email">{{ currentProject?.title || '主简历' }}</span>
+          <button @click="exitTask" class="logout-btn">返回主简历列表</button>
+        </template>
         <template v-if="isLocalMode">
           <span class="user-email">本地模式</span>
         </template>
@@ -2547,10 +2608,30 @@ watch(
   <!-- 主内容区（居中显示） -->
   <div class="app-container">
     <!-- 路由视图：登录/注册/管理页面 -->
-    <router-view v-if="!isLoggedIn || isAdminRoute"></router-view>
+    <router-view v-if="!isLoggedIn || isAdminRoute || !isWorkspaceRoute"></router-view>
 
     <!-- 已登录且非管理页面：显示主内容（聊天界面） -->
-    <div v-if="isLoggedIn && !isAdminRoute" class="main-content">
+    <div v-if="isLoggedIn && isWorkspaceRoute" class="workspace-shell">
+      <aside class="task-sidebar">
+        <div class="task-sidebar-title">岗位版本</div>
+        <div v-for="task in projectTasks" :key="task.id" class="task-row">
+          <router-link
+            :to="`/projects/${task.project_id}/tasks/${task.id}`"
+            :class="['task-link', { active: task.id === currentTaskId }]"
+          >
+            <span>{{ task.is_base ? '基础简历' : task.title }}</span>
+            <small v-if="!task.is_base">{{ task.target_position || 'JD 定制版' }}</small>
+          </router-link>
+          <button
+            v-if="!task.is_base"
+            class="task-delete-btn"
+            title="删除岗位版本"
+            @click="deleteProjectTask(task)"
+          >×</button>
+        </div>
+        <button class="new-task-btn" @click="createProjectTask">＋ 新建版本</button>
+      </aside>
+      <div class="main-content">
       <!-- 桌面端：并排显示 -->
       <template v-if="!isMobileView">
         <!-- 左侧聊天区 -->
@@ -2682,7 +2763,7 @@ watch(
       <!-- 右侧简历预览区 -->
       <div class="resume-section">
         <div class="resume-content">
-          <ResumePreview :data="resumeData" :highlighted-module="highlightedModule" :jd-data="jdData" :lang="currentLang" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @toggle-lang="switchLang" />
+          <ResumePreview :data="resumeData" :task-id="currentTaskId" :highlighted-module="highlightedModule" :jd-data="jdData" :lang="currentLang" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @toggle-lang="switchLang" />
         </div>
       </div>
       </template>
@@ -2765,14 +2846,15 @@ watch(
 
           <!-- 简历 Tab 内容 -->
           <div v-else-if="currentTab === 'resume'" class="mobile-resume-view" key="resume">
-            <ResumePreview :data="resumeData" :highlighted-module="highlightedModule" :jd-data="jdData" :is-mobile-view="isMobileView" :lang="currentLang" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @toggle-lang="switchLang" />
+            <ResumePreview :data="resumeData" :task-id="currentTaskId" :highlighted-module="highlightedModule" :jd-data="jdData" :is-mobile-view="isMobileView" :lang="currentLang" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @toggle-lang="switchLang" />
           </div>
         </Transition>
 
         <!-- 移动端底部 Tab 栏 -->
         <MobileTabBar :active-tab="currentTab" @update:activeTab="currentTab = $event" />
       </template>
-    </div> <!-- 闭合 v-else main-content -->
+      </div>
+    </div> <!-- 闭合 workspace-shell -->
   </div>
 
   <!-- 图片预览弹窗 -->
@@ -3377,82 +3459,6 @@ watch(
   width: auto;
 }
 
-.header-contact {
-  position: relative;
-}
-
-.contact-link {
-  font-family: 'GTPressuraMono-Light', sans-serif;
-  font-size: 0.6875rem;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: #666;
-  cursor: pointer;
-  transition: color 0.2s;
-  margin-right: 1.5rem;
-}
-
-.contact-link:hover {
-  color: #d97706;
-}
-
-.contact-tooltip {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 1rem;
-  background: white;
-  border: 1px solid #e5e5e5;
-  border-radius: 8px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
-  opacity: 0;
-  visibility: hidden;
-  transition: all 0.2s ease;
-  z-index: 9999;
-  text-align: center;
-  min-width: 200px;
-}
-
-.contact-tooltip::before {
-  content: '';
-  position: absolute;
-  top: -6px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 0;
-  height: 0;
-  border-left: 6px solid transparent;
-  border-right: 6px solid transparent;
-  border-bottom: 6px solid white;
-}
-
-.header-contact:hover .contact-tooltip {
-  opacity: 1;
-  visibility: visible;
-}
-
-.tooltip-text {
-  font-family: 'PingFang SC', 'Noto Sans SC', sans-serif;
-  font-size: 0.8125rem;
-  color: #303030;
-  margin: 0 0 0.5rem;
-  letter-spacing: 0;
-  text-transform: none;
-}
-
-.tooltip-text:last-of-type {
-  margin-bottom: 0.75rem;
-}
-
-.wechat-qr {
-  width: 160px;
-  height: auto;
-  display: block;
-  margin: 0 auto;
-  border-radius: 4px;
-}
-
 .header-info {
   display: flex;
   gap: 1rem;
@@ -3577,16 +3583,148 @@ watch(
   font-size: 0.8rem;
 }
 
+.workspace-shell {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.task-sidebar {
+  flex: 0 0 150px;
+  padding: 1rem .55rem;
+  overflow-y: auto;
+  background: #f8f5f1;
+  border-right: 1px solid #ddd8d2;
+}
+
+.task-sidebar-title {
+  padding: .25rem .6rem .75rem;
+  color: #847b72;
+  font-size: .75rem;
+  font-weight: 700;
+  letter-spacing: .12em;
+}
+
+.task-link {
+  display: flex;
+  flex-direction: column;
+  gap: .2rem;
+  margin-bottom: .35rem;
+  padding: .7rem .75rem;
+  border-radius: 9px;
+  color: #47413b;
+  text-decoration: none;
+  min-width: 0;
+  flex: 1;
+}
+
+.task-link span,
+.task-link small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-link:hover,
+.task-link.active {
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(48, 48, 48, .08);
+}
+
+.task-link.active {
+  color: #a64b08;
+}
+
+.task-link small {
+  color: #948b82;
+  font-size: .7rem;
+}
+
+.new-task-btn {
+  width: 100%;
+  margin-top: .6rem;
+  padding: .65rem;
+  border: 1px dashed #c8bcae;
+  border-radius: 9px;
+  background: transparent;
+  color: #8d4b18;
+  cursor: pointer;
+}
+
+.task-row {
+  display: flex;
+  align-items: center;
+  gap: .25rem;
+}
+
+.task-delete-btn {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #9b9188;
+  cursor: pointer;
+}
+
+.task-delete-btn:hover {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
 .main-content {
   display: flex;
   flex: 1;
   overflow: hidden; /* 关键：让子元素处理滚动 */
   margin: 0;
   padding: 0;
+  min-width: 0;
+}
+
+@media (max-width: 1199px) {
+  .workspace-shell {
+    flex-direction: column;
+  }
+
+  .task-sidebar {
+    display: flex;
+    flex: 0 0 auto;
+    gap: .4rem;
+    padding: .5rem;
+    overflow-x: auto;
+    border-right: 0;
+    border-bottom: 1px solid #ddd8d2;
+  }
+
+  .task-sidebar-title {
+    display: none;
+  }
+
+  .task-link {
+    flex: 0 0 auto;
+    margin: 0;
+  }
+
+  .task-row {
+    flex: 0 0 auto;
+  }
+
+  .task-delete-btn {
+    display: none;
+  }
+
+  .new-task-btn {
+    flex: 0 0 auto;
+    width: auto;
+    margin: 0;
+  }
+
 }
 
 .chat-section {
-  flex: 0 0 40%; /* 聊天区域40%宽度，简历区域60% */
+  flex: 0 0 37%;
   display: flex;
   flex-direction: column;
   background-color: rgb(254, 253, 251);
@@ -3985,6 +4123,7 @@ watch(
 
 .resume-section {
   flex: 1;
+  min-width: 0;
   max-width: none;
   background-color: rgb(249, 245, 242);
   margin: 0;
@@ -4001,6 +4140,7 @@ watch(
 
 .resume-content {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;

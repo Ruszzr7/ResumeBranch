@@ -20,6 +20,14 @@ export default defineConfig({
         target: 'http://localhost:8000',
         changeOrigin: true
       },
+      '/projects': {
+        target: 'http://localhost:8000',
+        changeOrigin: true
+      },
+      '/tasks': {
+        target: 'http://localhost:8000',
+        changeOrigin: true
+      },
       '/health': {
         target: 'http://localhost:8000',
         changeOrigin: true

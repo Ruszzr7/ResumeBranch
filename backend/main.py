@@ -16,8 +16,24 @@ import base64
 import platform
 import subprocess
 import os
+import sys
 import uuid
 from datetime import datetime
+
+
+def _configure_console_encoding():
+    """Keep diagnostic output from crashing on Unicode characters on Windows."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure:
+            try:
+                reconfigure(encoding="utf-8", errors="backslashreplace")
+            except (AttributeError, ValueError):
+                pass
+
+
+_configure_console_encoding()
+
 from fastapi import FastAPI, Request, UploadFile, File, Form, Depends, HTTPException, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -36,7 +52,10 @@ from .database import (
     init_db, get_db, create_user, get_user_by_email,
     save_user_resume, get_user_resume, save_user_jd, get_user_jd,
     check_invite_code, use_invite_code, create_invite_code,
-    get_parsing_status, set_parsing_status
+    get_parsing_status, set_parsing_status, get_user_photo,
+    list_resume_projects, create_resume_project, get_resume_project,
+    list_project_tasks, create_resume_task, get_resume_task,
+    delete_resume_project, delete_resume_task
 )
 from .auth import (
     verify_password, get_password_hash, create_access_token,
@@ -152,6 +171,51 @@ class UserResponse(BaseModel):
 class SaveResumeRequest(BaseModel):
     """保存简历请求"""
     resume_data: dict
+
+
+class CreateProjectRequest(BaseModel):
+    """创建简历项目请求"""
+    title: str = "未命名简历"
+
+
+class CreateTaskRequest(BaseModel):
+    """创建岗位任务请求"""
+    title: str = "新岗位版本"
+
+
+def serialize_task(task):
+    resume_data = task.resume_data or {}
+    basics = resume_data.get("basics", {}) if isinstance(resume_data, dict) else {}
+    jd_data = task.jd_data or {}
+    return {
+        "id": task.id,
+        "project_id": task.project_id,
+        "title": task.title,
+        "is_base": task.is_base,
+        "session_id": task.session_id,
+        "candidate_name": basics.get("name", ""),
+        "target_position": (
+            basics.get("target_position", "")
+            or (jd_data.get("position", "") if isinstance(jd_data, dict) else "")
+        ),
+        "message_count": len(task.messages or []),
+        "created_at": task.created_at.isoformat() if task.created_at else None,
+        "updated_at": task.updated_at.isoformat() if task.updated_at else None,
+    }
+
+
+def serialize_project(project, task_count=0):
+    resume_data = project.base_resume_data or {}
+    basics = resume_data.get("basics", {}) if isinstance(resume_data, dict) else {}
+    return {
+        "id": project.id,
+        "title": project.title,
+        "candidate_name": basics.get("name", ""),
+        "target_position": basics.get("target_position", ""),
+        "task_count": task_count,
+        "created_at": project.created_at.isoformat() if project.created_at else None,
+        "updated_at": project.updated_at.isoformat() if project.updated_at else None,
+    }
 
 
 # =============================================================================
@@ -417,6 +481,89 @@ async def create_invite(request: Request, current_user = Depends(get_current_use
 # 业务端点
 # =============================================================================
 
+@app.get("/projects")
+async def get_projects(db: Session = Depends(get_db), current_user = Depends(get_current_user)):
+    """列出简历项目，并自动迁移旧版单简历数据。"""
+    projects = list_resume_projects(db, current_user.id)
+    return [
+        serialize_project(project, len(list_project_tasks(db, current_user.id, project.id)))
+        for project in projects
+    ]
+
+
+@app.post("/projects")
+async def create_project(
+    request: CreateProjectRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    project, base_task = create_resume_project(db, current_user.id, request.title)
+    return {**serialize_project(project, 1), "base_task_id": base_task.id}
+
+
+@app.get("/projects/{project_id}")
+async def get_project(
+    project_id: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    project = get_resume_project(db, current_user.id, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    tasks = list_project_tasks(db, current_user.id, project_id)
+    return {**serialize_project(project, len(tasks)), "tasks": [serialize_task(t) for t in tasks]}
+
+
+@app.delete("/projects/{project_id}")
+async def delete_project(
+    project_id: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    if not delete_resume_project(db, current_user.id, project_id):
+        raise HTTPException(status_code=404, detail="主简历不存在")
+    return {"success": True}
+
+
+@app.post("/projects/{project_id}/tasks")
+async def create_task(
+    project_id: str,
+    request: CreateTaskRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    task = create_resume_task(db, current_user.id, project_id, request.title)
+    if not task:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    return serialize_task(task)
+
+
+@app.get("/tasks/{task_id}")
+async def get_task(
+    task_id: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    task = get_resume_task(db, current_user.id, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return serialize_task(task)
+
+
+@app.delete("/tasks/{task_id}")
+async def delete_task(
+    task_id: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    result = delete_resume_task(db, current_user.id, task_id)
+    if result == "not_found":
+        raise HTTPException(status_code=404, detail="岗位版本不存在")
+    if result == "base_task":
+        raise HTTPException(status_code=400, detail="基础简历不能单独删除，请删除整份主简历")
+    return {"success": True}
+
+
 @app.post("/health")
 async def health_check():
     """健康检查"""
@@ -440,9 +587,7 @@ async def load_resume_endpoint(db: Session = Depends(get_db), current_user = Dep
             print(f"[load_resume] 未找到简历数据")
 
         # 获取证件照
-        from .database import Resume
-        resume_obj = db.query(Resume).filter(Resume.user_id == current_user.id).first()
-        photo = resume_obj.photo if resume_obj and resume_obj.photo else ""
+        photo = get_user_photo(db, current_user.id)
 
         # 将 photo 放入 resume_data 的 basics 中（保持向前兼容）
         if resume_data and isinstance(resume_data, dict):
@@ -658,32 +803,65 @@ async def parse_and_save_resume_endpoint(
         if not content_type.startswith('image/') and content_type != 'application/pdf':
             return JSONResponse(content={"success": False, "error": "只支持图片或PDF文件"}, status_code=400)
 
-        # 读取文件内容并转换为base64
+        # 读取文件内容
         file_content = await file.read()
-        base64_content = base64.b64encode(file_content).decode('utf-8')
-
-        # 根据文件类型设置MIME类型
-        if content_type == 'application/pdf':
-            mime_type = 'application/pdf'
-        elif content_type == 'image/png':
-            mime_type = 'image/png'
-        elif content_type == 'image/webp':
-            mime_type = 'image/webp'
-        else:
-            mime_type = 'image/jpeg'
 
         from .resume_agent import RESUME_FULL_EXTRACT_PROMPT, jd_parser_llm
 
         # 设置解析状态为进行中
         set_parsing_status(db, current_user.id, "parsing")
 
-        # 构建消息 - 使用base64数据URL
-        message = HumanMessage(
-            content=[
-                {"type": "text", "text": "请完整提取这份简历中的所有信息，**不要省略任何内容**。"},
-                {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{base64_content}"}}
-            ]
-        )
+        # Kimi/OpenAI 视觉接口不接收 application/pdf 类型的 image_url。
+        # PDF 先在本地逐页渲染为 PNG，再作为多张图片交给视觉模型。
+        message_content = [
+            {"type": "text", "text": "请完整提取这份简历中的所有信息，**不要省略任何内容**。"}
+        ]
+        if content_type == 'application/pdf':
+            import fitz
+
+            document = fitz.open(stream=file_content, filetype="pdf")
+            try:
+                if document.page_count == 0:
+                    return JSONResponse(
+                        content={"success": False, "error": "PDF 没有可解析页面"},
+                        status_code=400,
+                    )
+                if document.page_count > 10:
+                    return JSONResponse(
+                        content={"success": False, "error": "PDF 最多支持 10 页"},
+                        status_code=400,
+                    )
+
+                for page in document:
+                    pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+                    page_base64 = base64.b64encode(
+                        pixmap.tobytes("png")
+                    ).decode("utf-8")
+                    message_content.append({
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/png;base64,{page_base64}"
+                        },
+                    })
+            finally:
+                document.close()
+        else:
+            if content_type == 'image/png':
+                mime_type = 'image/png'
+            elif content_type == 'image/webp':
+                mime_type = 'image/webp'
+            else:
+                mime_type = 'image/jpeg'
+
+            base64_content = base64.b64encode(file_content).decode('utf-8')
+            message_content.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{mime_type};base64,{base64_content}"
+                },
+            })
+
+        message = HumanMessage(content=message_content)
 
         # 调用 LLM 解析
         response = await jd_parser_llm.ainvoke([
@@ -750,9 +928,7 @@ async def export_pdf_endpoint(request: Request, db: Session = Depends(get_db), c
             return JSONResponse(content="错误: 没有找到简历数据，请先创建或加载简历", status_code=400)
 
         # 从数据库获取证件照
-        from .database import Resume
-        resume_obj = db.query(Resume).filter(Resume.user_id == current_user.id).first()
-        photo = resume_obj.photo if resume_obj and resume_obj.photo else None
+        photo = get_user_photo(db, current_user.id) or None
 
         generate_pdf = get_pdf_generator()
         pdf_bytes = generate_pdf(resume_data, style, photo, lang)
@@ -786,12 +962,24 @@ async def chat_endpoint(
     """
     require_llm_configured()
     try:
+        task_id = db.info.get("task_id")
+        if not task_id:
+            return JSONResponse(content={"error": "请先选择一个简历任务"}, status_code=400)
+        from . import resume_agent
+        resume_agent.current_user_id = current_user.id
+        resume_agent.current_task_id = task_id
+
         # 生成会话 ID
         if not session_id:
             session_id = generate_session_id()
+        elif len(session_id) > 36:
+            return JSONResponse(
+                content={"error": "session_id 最长为 36 个字符"},
+                status_code=400,
+            )
 
         # 构建 graph 配置（用于状态追踪）
-        config = {"configurable": {"thread_id": f"user_{current_user.id}_session_{session_id}"}}
+        config = {"configurable": {"thread_id": f"task_{task_id}_session_{session_id}"}}
 
         # 检测用户是否点击了确认按钮（必须在使用 message 之前）
         is_confirm_click = '[CONFIRM_REPLY:' in message.strip()
@@ -815,11 +1003,37 @@ async def chat_endpoint(
                     "image_url": {"url": f"data:{file.content_type};base64,{base64_content}"}
                 })
             elif file.content_type == "application/pdf":
-                base64_content = base64.b64encode(content).decode("utf-8")
-                message_content.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{file.content_type};base64,{base64_content}"}
-                })
+                import fitz
+
+                document = fitz.open(stream=content, filetype="pdf")
+                try:
+                    if document.page_count == 0:
+                        return JSONResponse(
+                            content={"error": "PDF 没有可解析页面"},
+                            status_code=400,
+                        )
+                    if document.page_count > 10:
+                        return JSONResponse(
+                            content={"error": "PDF 最多支持 10 页"},
+                            status_code=400,
+                        )
+
+                    for page in document:
+                        pixmap = page.get_pixmap(
+                            matrix=fitz.Matrix(2, 2),
+                            alpha=False,
+                        )
+                        page_base64 = base64.b64encode(
+                            pixmap.tobytes("png")
+                        ).decode("utf-8")
+                        message_content.append({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{page_base64}"
+                            },
+                        })
+                finally:
+                    document.close()
 
         # 从数据库加载用户数据
         resume_data = get_user_resume(db, current_user.id)
@@ -878,7 +1092,8 @@ async def chat_endpoint(
             "resume_data": initial_resume_data,
             "jd_data": initial_jd_data,
             "pending_confirmation": initial_pending_confirmation,  # 从数据库加载待确认状态
-            "user_id": current_user.id  # 添加用户ID，用于数据隔离
+            "user_id": current_user.id,  # 添加用户ID，用于数据隔离
+            "task_id": task_id,
         }
         print(f"[InitState] initial_state 创建完成: {len(all_messages)} 条消息, pending_confirmation={initial_state.get('pending_confirmation') is not None}")
         for i, msg in enumerate(all_messages):
@@ -1179,6 +1394,7 @@ async def confirm_endpoint(
         # 设置全局用户ID
         from . import resume_agent
         resume_agent.current_user_id = current_user.id
+        resume_agent.current_task_id = db.info.get("task_id")
 
         # 从数据库获取 pending_confirmation
         from .database import clear_pending_confirmation, get_pending_confirmation, get_user_resume
@@ -1209,7 +1425,11 @@ async def confirm_endpoint(
 
             # 保存修改后的简历数据
             from .tools import update_resume
-            result = update_resume(updated_resume_data, user_id=current_user.id)
+            result = update_resume(
+                updated_resume_data,
+                user_id=current_user.id,
+                task_id=db.info.get("task_id"),
+            )
             print(f"[Confirm] 保存结果: {result}")
 
             # 清除 pending_confirmation 状态

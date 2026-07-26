@@ -32,6 +32,11 @@ const props = defineProps({
     type: String,
     required: false,
     default: 'zh'
+  },
+  taskId: {
+    type: String,
+    required: false,
+    default: ''
   }
 })
 
@@ -44,11 +49,27 @@ const emit = defineEmits(['open-jd-dialog', 'open-resume-edit', 'toggle-lang'])
 const isMobile = computed(() => props.isMobileView || window.innerWidth < 1200)
 
 // ========== 样式控制变量 ==========
-const marginVertical = ref(9)
-const marginHorizontal = ref(9)
-const moduleMargin = ref(1)
-const lineHeight = ref(1.6)
-const fontSize = ref(11)
+const DEFAULT_STYLE = {
+  marginVertical: 9,
+  marginHorizontal: 9,
+  moduleMargin: 1,
+  lineHeight: 1.6,
+  fontSize: 11
+}
+const marginVertical = ref(DEFAULT_STYLE.marginVertical)
+const marginHorizontal = ref(DEFAULT_STYLE.marginHorizontal)
+const moduleMargin = ref(DEFAULT_STYLE.moduleMargin)
+const lineHeight = ref(DEFAULT_STYLE.lineHeight)
+const fontSize = ref(DEFAULT_STYLE.fontSize)
+
+function resetStyleSettings(event) {
+  marginVertical.value = DEFAULT_STYLE.marginVertical
+  marginHorizontal.value = DEFAULT_STYLE.marginHorizontal
+  moduleMargin.value = DEFAULT_STYLE.moduleMargin
+  lineHeight.value = DEFAULT_STYLE.lineHeight
+  fontSize.value = DEFAULT_STYLE.fontSize
+  event?.currentTarget?.blur()
+}
 
 // 移动端样式面板展开状态
 const isStylePanelExpanded = ref(false)
@@ -85,6 +106,9 @@ const pagePaddingStyle = computed(() => ({
 // ========== 分页相关 ==========
 const pageCount = ref(1)
 const scale = ref(1)
+const fitWidthScale = ref(1)
+const zoomMode = ref('width') // width | page | manual
+const manualZoom = ref(1)
 const observer = ref(null)
 const containerRef = ref(null)
 const contentRef = ref(null)
@@ -172,9 +196,25 @@ const pageStyle = computed(() => ({
 // 预览区域容器样式
 const pagesContainerStyle = computed(() => ({
   transform: `scale(${scale.value})`,
-  transformOrigin: 'top center',
-  width: `${PAGE_WIDTH}px`
+  transformOrigin: 'top left',
+  width: `${PAGE_WIDTH}px`,
+  position: 'absolute',
+  top: '0',
+  left: '0'
 }))
+
+const pagesViewportStyle = computed(() => {
+  const unscaledHeight = pageCount.value * PAGE_HEIGHT + Math.max(0, pageCount.value - 1) * 20
+  return {
+    width: `${PAGE_WIDTH * scale.value}px`,
+    height: `${unscaledHeight * scale.value}px`
+  }
+})
+
+const zoomPercentage = computed(() => {
+  if (!fitWidthScale.value) return 100
+  return Math.round((scale.value / fitWidthScale.value) * 100)
+})
 
 // ========== 精细分页算法 ==========
 const calculatePagination = async () => {
@@ -393,12 +433,38 @@ const calculateScale = () => {
   const container = containerRef.value || document.querySelector('.preview-content')
   if (!container) return
 
-  const availableWidth = container.clientWidth - 60
-  const newScale = Math.min(1, Math.max(0.3, availableWidth / PAGE_WIDTH))
+  const availableWidth = container.clientWidth - 40
+  const widthScale = Math.min(1, Math.max(0.3, availableWidth / PAGE_WIDTH))
+  fitWidthScale.value = widthScale
+
+  let newScale = widthScale
+  if (zoomMode.value === 'page') {
+    const availableHeight = container.clientHeight - 40
+    newScale = Math.min(widthScale, Math.max(0.3, availableHeight / PAGE_HEIGHT))
+  } else if (zoomMode.value === 'manual') {
+    newScale = widthScale * manualZoom.value
+  }
 
   if (Math.abs(newScale - scale.value) > 0.01) {
     scale.value = newScale
   }
+}
+
+const setZoomMode = (mode, event) => {
+  zoomMode.value = mode
+  if (mode === 'width') manualZoom.value = 1
+  calculateScale()
+  event?.currentTarget?.blur()
+}
+
+const adjustZoom = (delta, event) => {
+  const currentRatio = fitWidthScale.value
+    ? scale.value / fitWidthScale.value
+    : manualZoom.value
+  manualZoom.value = Math.min(1, Math.max(0.4, currentRatio + delta))
+  zoomMode.value = 'manual'
+  calculateScale()
+  event?.currentTarget?.blur()
 }
 
 // ========== 工具栏控制 ==========
@@ -468,7 +534,8 @@ const exportPDF = async () => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...buildAuthorizationHeaders()
+        ...buildAuthorizationHeaders(),
+        ...(props.taskId ? { 'X-Task-ID': props.taskId } : {})
       },
       body: JSON.stringify({
         resume_data: props.data,
@@ -572,10 +639,17 @@ const getItemIndex = (type, dataIndex) => {
     <!-- 工具栏 - 始终显示 -->
     <div class="resume-toolbar-wrapper">
       <div class="resume-toolbar">
-        <div class="toolbar-icon">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
-          </svg>
+        <button class="toolbar-icon reset-style-btn" @click="resetStyleSettings" title="恢复默认排版设置">🔧</button>
+        <div class="zoom-controls" aria-label="简历缩放">
+          <button :class="{ active: zoomMode === 'width' }" @click="setZoomMode('width', $event)" title="适应预览宽度">适宽</button>
+          <button :class="{ active: zoomMode === 'page' }" @click="setZoomMode('page', $event)" title="完整显示一页">整页</button>
+          <div class="zoom-readout">
+            <span class="zoom-value">{{ zoomPercentage }}%</span>
+            <span class="zoom-stepper">
+              <button @click="adjustZoom(0.1, $event)" :disabled="zoomPercentage >= 100" title="放大">＋</button>
+              <button @click="adjustZoom(-0.1, $event)" :disabled="zoomPercentage <= 40" title="缩小">−</button>
+            </span>
+          </div>
         </div>
         
         <!-- 移动端：可展开的样式调整面板 -->
@@ -992,6 +1066,7 @@ const getItemIndex = (type, dataIndex) => {
     </div>
 
     <!-- 分页预览 -->
+    <div class="pages-scale-shell" :style="pagesViewportStyle">
     <div class="pages-wrapper" :style="pagesContainerStyle">
       <div v-for="page in pageCount" :key="page" class="a4-page" :style="pageStyle">
         <div class="page-inner" :style="pagePaddingStyle">
@@ -1137,6 +1212,7 @@ const getItemIndex = (type, dataIndex) => {
         <div class="page-footer">{{ page }} / {{ pageCount }}</div>
       </div>
     </div>
+    </div>
     <div v-if="pageCount > 1" class="page-indicator">共 {{ pageCount }} 页</div>
     </div>
     </template>
@@ -1186,13 +1262,15 @@ const getItemIndex = (type, dataIndex) => {
 }
 .resume-toolbar {
   background-color: transparent;
-  padding: 0.5rem 1rem;
+  padding: 0.4rem 0.55rem;
   box-shadow: none;
   border-bottom: 1px solid #e0e0e0;
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.3rem;
   flex-shrink: 0;
+  flex-wrap: nowrap;
+  overflow: visible;
 }
 .toolbar-icon {
   display: flex;
@@ -1203,10 +1281,92 @@ const getItemIndex = (type, dataIndex) => {
   height: 24px;
   flex-shrink: 0;
 }
+.reset-style-btn {
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 17px;
+  cursor: pointer;
+  transition: background .15s, transform .15s;
+}
+.reset-style-btn:hover {
+  background: #eee7df;
+  transform: rotate(-12deg);
+}
+.reset-style-btn:focus,
+.reset-style-btn:focus-visible,
+.reset-style-btn:active {
+  border: 0;
+  outline: none;
+  box-shadow: none;
+}
+.zoom-controls {
+  display: flex;
+  align-items: center;
+  height: 30px;
+  border: 1px solid #303030;
+  flex-shrink: 0;
+}
+.zoom-controls button {
+  height: 100%;
+  min-width: 30px;
+  padding: 0 .3rem;
+  border: 0;
+  border-right: 1px solid #303030;
+  background: transparent;
+  color: #303030;
+  font-size: .625rem;
+  cursor: pointer;
+}
+.zoom-controls button:hover:not(:disabled),
+.zoom-controls button.active {
+  background: #303030;
+  color: #f8bebe;
+}
+.zoom-controls button:disabled {
+  opacity: .35;
+  cursor: default;
+}
+.zoom-controls button:focus,
+.zoom-controls button:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+.zoom-value {
+  min-width: 38px;
+  padding: 0 .2rem;
+  color: #303030;
+  font-size: .625rem;
+  line-height: 28px;
+  text-align: center;
+}
+.zoom-readout {
+  display: flex;
+  height: 100%;
+}
+.zoom-stepper {
+  display: flex;
+  width: 15px;
+  flex-direction: column;
+  border-left: 1px solid #303030;
+}
+.zoom-stepper button {
+  min-width: 0;
+  width: 15px;
+  height: 50%;
+  padding: 0;
+  border: 0;
+  font-size: .55rem;
+  line-height: 1;
+}
+.zoom-stepper button:first-child {
+  border-bottom: 1px solid #303030;
+}
 .toolbar-controls-container {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 0.3rem;
   flex-shrink: 0;
 }
 .toolbar-section {
@@ -1225,22 +1385,22 @@ const getItemIndex = (type, dataIndex) => {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.3rem;
 }
 .toolbar-title {
   font-family: 'GTPressuraMono-Light', sans-serif;
-  font-size: 0.6875rem;
+  font-size: 0.625rem;
   font-weight: 400;
   margin: 0;
   color: #303030;
   white-space: nowrap;
   cursor: pointer;
-  padding: 0.4rem 0.8rem;
+  padding: 0.35rem 0.45rem;
   border-radius: 0;
   background: transparent;
   border: 1px solid #303030;
   text-transform: uppercase;
-  letter-spacing: 0.25em;
+  letter-spacing: 0.06em;
   transition: all 0.2s ease;
 }
 .toolbar-title:hover {
@@ -1321,18 +1481,18 @@ const getItemIndex = (type, dataIndex) => {
   background: #f8bebe;
   color: #303030;
   border: 1px solid #303030;
-  padding: 0.5rem 1rem;
+  padding: 0.38rem 0.55rem;
   font-family: 'GTPressuraMono-Light', sans-serif;
-  font-size: 0.6875rem;
+  font-size: 0.625rem;
   font-weight: 400;
   border-radius: 0;
   cursor: pointer;
   transition: all 0.2s ease;
   display: flex;
   align-items: center;
-  gap: 0.3rem;
+  gap: 0.2rem;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.03em;
   box-shadow: 2px 2px 0 #303030;
 }
 .export-btn:hover {
@@ -1353,13 +1513,13 @@ const getItemIndex = (type, dataIndex) => {
   border: 1px solid #303030;
 }
 .lang-toggle span {
-  padding: 0.4rem 0.6rem;
+  padding: 0.35rem 0.4rem;
   font-family: 'GTPressuraMono-Light', sans-serif;
-  font-size: 0.6875rem;
+  font-size: 0.625rem;
   cursor: pointer;
   transition: all 0.2s ease;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.03em;
 }
 .lang-toggle span:first-child {
   border-right: 1px solid #303030;
@@ -1376,19 +1536,19 @@ const getItemIndex = (type, dataIndex) => {
   background: transparent;
   color: #303030;
   border: 1px solid #303030;
-  padding: 0.4rem 0.8rem;
+  padding: 0.35rem 0.5rem;
   font-family: 'GTPressuraMono-Light', sans-serif;
-  font-size: 0.6875rem;
+  font-size: 0.625rem;
   font-weight: 400;
   border-radius: 0;
   cursor: pointer;
   transition: all 0.2s ease;
   display: flex;
   align-items: center;
-  gap: 0.3rem;
+  gap: 0.2rem;
   position: relative;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.03em;
 }
 .jd-upload-btn:hover {
   background: #f8bebe;
@@ -1448,6 +1608,11 @@ const getItemIndex = (type, dataIndex) => {
   display: flex;
   flex-direction: column;
   gap: 20px;
+}
+.pages-scale-shell {
+  position: relative;
+  flex: 0 0 auto;
+  align-self: center;
 }
 
 /* 打印容器默认隐藏，只在打印时显示 */

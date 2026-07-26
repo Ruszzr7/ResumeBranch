@@ -33,7 +33,9 @@ def cleanup_test_data(email: str, invite_code: str | None) -> None:
         Conversation,
         InviteCode,
         JobDescription,
+        ProjectTask,
         Resume,
+        ResumeProject,
         SessionLocal,
         User,
     )
@@ -42,6 +44,8 @@ def cleanup_test_data(email: str, invite_code: str | None) -> None:
     try:
         user = db.query(User).filter(User.email == email).first()
         if user:
+            db.query(ProjectTask).filter(ProjectTask.user_id == user.id).delete()
+            db.query(ResumeProject).filter(ResumeProject.user_id == user.id).delete()
             db.query(Conversation).filter(Conversation.user_id == user.id).delete()
             db.query(JobDescription).filter(JobDescription.user_id == user.id).delete()
             db.query(Resume).filter(Resume.user_id == user.id).delete()
@@ -56,6 +60,15 @@ def cleanup_test_data(email: str, invite_code: str | None) -> None:
 def exercise_business_endpoints(
     client: httpx.Client, headers: dict[str, str], test_email: str
 ) -> None:
+    project_response = client.post(
+        f"{API_URL}/projects",
+        json={"title": "Smoke Resume Project"},
+        headers=headers,
+    )
+    require(project_response, 200, "create resume project")
+    project = project_response.json()
+    base_headers = {**headers, "X-Task-ID": project["base_task_id"]}
+
     resume_data = {
         "basics": {
             "name": "Local Smoke Test",
@@ -71,19 +84,31 @@ def exercise_business_endpoints(
     saved = client.post(
         f"{API_URL}/save_resume",
         json={"resume_data": resume_data},
-        headers=headers,
+        headers=base_headers,
     )
     require(saved, 200, "save resume")
 
-    loaded = client.post(f"{API_URL}/load_resume", headers=headers)
+    loaded = client.post(f"{API_URL}/load_resume", headers=base_headers)
     require(loaded, 200, "load resume")
     if loaded.json().get("basics", {}).get("name") != "Local Smoke Test":
         raise RuntimeError("resume did not round-trip through MySQL")
 
+    task_response = client.post(
+        f"{API_URL}/projects/{project['id']}/tasks",
+        json={"title": "Local Test JD"},
+        headers=headers,
+    )
+    require(task_response, 200, "create JD task")
+    task_headers = {**headers, "X-Task-ID": task_response.json()["id"]}
+    cloned = client.post(f"{API_URL}/load_resume", headers=task_headers)
+    require(cloned, 200, "clone base resume into JD task")
+    if cloned.json().get("basics", {}).get("name") != "Local Smoke Test":
+        raise RuntimeError("JD task did not inherit the project's base resume")
+
     exported_pdf = client.post(
         f"{API_URL}/export_pdf",
         json={"lang": "zh", "style": {}},
-        headers=headers,
+        headers=task_headers,
     )
     require(exported_pdf, 200, "export PDF")
     if not exported_pdf.content.startswith(b"%PDF"):
@@ -92,20 +117,28 @@ def exercise_business_endpoints(
     saved_jd = client.post(
         f"{API_URL}/save_jd",
         json={"jd_data": {"company": "Local Test", "position": "Engineer"}},
-        headers=headers,
+        headers=task_headers,
     )
     require(saved_jd, 200, "save JD")
-    loaded_jd = client.post(f"{API_URL}/load_jd", headers=headers)
+    loaded_jd = client.post(f"{API_URL}/load_jd", headers=task_headers)
     require(loaded_jd, 200, "load JD")
     if loaded_jd.json().get("company") != "Local Test":
         raise RuntimeError("JD did not round-trip through MySQL")
 
-    llm_disabled = client.post(
+    llm_response = client.post(
         f"{API_URL}/chat",
-        data={"message": "hello", "session_id": "smoke-test"},
-        headers=headers,
+        data={
+            "message": "Reply briefly that the smoke test connection works.",
+            "session_id": "smoke-test",
+        },
+        headers=task_headers,
     )
-    require(llm_disabled, 503, "disabled LLM guard")
+    if os.getenv("LLM_API_KEY", "").strip():
+        require(llm_response, 200, "configured LLM")
+        if '"type": "end"' not in llm_response.text:
+            raise RuntimeError("configured LLM response did not complete its SSE stream")
+    else:
+        require(llm_response, 503, "disabled LLM guard")
 
 
 def authenticate_multi_user(

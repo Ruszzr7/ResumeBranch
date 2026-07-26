@@ -17,6 +17,12 @@ const routes = [
     component: Homepage
   },
   {
+    path: '/projects/:projectId/tasks/:taskId',
+    name: 'TaskWorkspace',
+    component: Homepage,
+    meta: { requiresAuth: true }
+  },
+  {
     path: '/login',
     name: 'Login',
     component: Login,

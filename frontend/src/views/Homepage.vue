@@ -1,5 +1,41 @@
 <template>
   <div class="homepage" id="homepage">
+    <section class="project-hub" v-if="canUseProjects">
+      <div class="section-inner">
+        <div class="project-hub-header">
+          <div>
+            <span class="eyebrow">我的简历</span>
+            <h2>主简历</h2>
+            <p>每份主简历保存完整经历；针对不同 JD 创建独立岗位版本。</p>
+          </div>
+          <button class="btn-hero-primary" @click="handleCreateResume">＋ 新建主简历</button>
+        </div>
+        <div v-if="isLoadingProjects" class="project-empty">正在加载主简历…</div>
+        <div v-else-if="projects.length" class="project-grid">
+          <div
+            v-for="project in projects"
+            :key="project.id"
+            class="project-card"
+            @click="openProject(project)"
+          >
+            <div class="project-card-top">
+              <span class="project-icon">简</span>
+              <div class="project-card-actions">
+                <span class="project-count">{{ project.task_count }} 个版本</span>
+                <button class="project-delete-btn" title="删除主简历" @click.stop="deleteProject(project)">删除</button>
+              </div>
+            </div>
+            <h3>{{ project.title }}</h3>
+            <p>{{ project.candidate_name || '尚未填写姓名' }} · {{ project.target_position || '尚未填写目标岗位' }}</p>
+            <span class="project-open">打开主简历 →</span>
+          </div>
+        </div>
+        <button v-else class="project-empty project-empty-action" @click="handleCreateResume">
+          暂无主简历，点击创建第一份基础简历
+        </button>
+      </div>
+    </section>
+
     <!-- Hero Section -->
     <section class="hero">
       <div class="hero-bg"></div>
@@ -192,26 +228,78 @@
 
 <script setup>
 import { useRouter } from 'vue-router'
-import { ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { loadAppConfig } from '../config/appMode.js'
+import { buildAuthorizationHeaders } from '../config/appMode.js'
 
 const router = useRouter()
 const activeTarget = ref('intern')
+const projects = ref([])
+const isLoadingProjects = ref(false)
+const appConfig = ref(null)
+const canUseProjects = computed(() => appConfig.value?.app_mode === 'local' || !!localStorage.getItem('access_token'))
+
+function authHeaders() {
+  return {
+    'Content-Type': 'application/json',
+    ...buildAuthorizationHeaders(localStorage.getItem('access_token') || '')
+  }
+}
+
+async function loadProjects() {
+  if (!canUseProjects.value) return
+  isLoadingProjects.value = true
+  try {
+    const response = await fetch('/projects', { headers: authHeaders() })
+    if (response.ok) projects.value = await response.json()
+  } finally {
+    isLoadingProjects.value = false
+  }
+}
+
+async function openProject(project) {
+  const response = await fetch(`/projects/${project.id}`, { headers: authHeaders() })
+  if (!response.ok) return
+  const detail = await response.json()
+  const task = detail.tasks?.[0]
+  if (task) router.push(`/projects/${project.id}/tasks/${task.id}`)
+}
+
+async function deleteProject(project) {
+  if (!window.confirm(`确定删除主简历“${project.title}”吗？其下所有岗位版本、JD 和对话记录都会一起删除。`)) return
+  const response = await fetch(`/projects/${project.id}`, {
+    method: 'DELETE',
+    headers: authHeaders()
+  })
+  if (response.ok) {
+    projects.value = projects.value.filter(item => item.id !== project.id)
+  }
+}
 
 async function handleCreateResume() {
-  const appConfig = await loadAppConfig()
-  if (appConfig.app_mode === 'local') {
-    router.push('/')
+  appConfig.value = appConfig.value || await loadAppConfig()
+  const token = localStorage.getItem('access_token')
+  if (appConfig.value.app_mode !== 'local' && !token) {
+    router.push('/register')
     return
   }
 
-  const token = localStorage.getItem('access_token')
-  if (token) {
-    router.push('/')
-  } else {
-    router.push('/register')
-  }
+  const title = window.prompt('请输入主简历名称', '我的简历')
+  if (title === null) return
+  const response = await fetch('/projects', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ title: title.trim() || '我的简历' })
+  })
+  if (!response.ok) return
+  const project = await response.json()
+  router.push(`/projects/${project.id}/tasks/${project.base_task_id}`)
 }
+
+onMounted(async () => {
+  appConfig.value = await loadAppConfig()
+  await loadProjects()
+})
 </script>
 
 <style scoped>
@@ -226,6 +314,132 @@ async function handleCreateResume() {
   max-width: 1200px;
   margin: 0 auto;
   padding: 0 1.5rem;
+}
+
+.project-hub {
+  padding: 5.5rem 0 2.5rem;
+  background: #f7f4ee;
+  border-bottom: 1px solid #e8e2d8;
+}
+
+.project-hub-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 2rem;
+  margin-bottom: 1.5rem;
+}
+
+.project-hub-header h2 {
+  margin: .25rem 0;
+  font-size: 2rem;
+}
+
+.project-hub-header p,
+.project-card p {
+  color: #777068;
+}
+
+.eyebrow {
+  color: #b45309;
+  font-size: .8rem;
+  font-weight: 700;
+  letter-spacing: .12em;
+}
+
+.project-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 1rem;
+}
+
+.project-card {
+  padding: 1.25rem;
+  border: 1px solid #ddd5c9;
+  border-radius: 14px;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+  transition: transform .2s, box-shadow .2s;
+}
+
+.project-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 30px rgba(48, 48, 48, .08);
+}
+
+.project-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.project-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: #303030;
+  color: white;
+}
+
+.project-count,
+.project-open {
+  color: #b45309;
+  font-size: .8rem;
+}
+
+.project-card-actions {
+  display: flex;
+  align-items: center;
+  gap: .65rem;
+}
+
+.project-delete-btn {
+  padding: .3rem .5rem;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #9b9188;
+  cursor: pointer;
+}
+
+.project-delete-btn:hover {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.project-card h3 {
+  margin: 1rem 0 .35rem;
+  font-size: 1.1rem;
+}
+
+.project-card p {
+  min-height: 1.5rem;
+  margin: 0 0 1rem;
+  font-size: .9rem;
+}
+
+.project-empty {
+  width: 100%;
+  padding: 2rem;
+  border: 1px dashed #cfc5b7;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, .55);
+  color: #777068;
+  text-align: center;
+}
+
+.project-empty-action {
+  cursor: pointer;
+}
+
+@media (max-width: 700px) {
+  .project-hub-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
 }
 
 /* Hero Section */
