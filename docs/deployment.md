@@ -183,7 +183,7 @@ services:
   backend:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: backend/Dockerfile
     image: deepagents-backend:latest
     container_name: deepagents-backend
     ports:
@@ -323,7 +323,7 @@ server {
 ### 4. 后端 Dockerfile
 
 ```dockerfile
-# Dockerfile
+# backend/Dockerfile
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -342,8 +342,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # 安装 Python 依赖
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY backend/requirements.txt ./backend/requirements.txt
+RUN pip install --no-cache-dir -r backend/requirements.txt
 
 # 复制应用代码
 COPY . .
@@ -354,10 +354,10 @@ RUN mkdir -p data && touch data/deepagents.db
 EXPOSE 8000
 
 # 使用 Gunicorn（生产环境推荐）
-CMD ["gunicorn", "mcp_service_simple:app", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--workers", "2", "--access-logfile", "-", "--error-logfile", "-"]
+CMD ["gunicorn", "backend.main:app", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--workers", "2", "--access-logfile", "-", "--error-logfile", "-"]
 ```
 
-### 5. 更新 requirements.txt
+### 5. 更新 backend/requirements.txt
 
 ```
 # 确保包含生产环境依赖

@@ -7,4 +7,4 @@ if (-not (Test-Path -LiteralPath $python)) {
 }
 
 Set-Location $projectRoot
-& $python "mcp_service_simple.py"
+& $python -m backend.main

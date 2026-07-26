@@ -1,5 +1,5 @@
 """
-简历助手 MCP 服务
+简历助手后端服务
 
 提供 HTTP API 接口，连接前端和 AI 代理。
 
@@ -7,7 +7,7 @@
 1. HTTP 请求处理和响应
 2. SSE 流式输出
 3. 用户认证（JWT）
-4. 数据持久化（SQLite）
+4. 数据持久化（SQLAlchemy）
 """
 
 import json
@@ -16,7 +16,6 @@ import base64
 import platform
 import subprocess
 import os
-import sys
 import uuid
 from datetime import datetime
 from fastapi import FastAPI, Request, UploadFile, File, Form, Depends, HTTPException, status
@@ -27,22 +26,19 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
-# 添加项目根目录到 Python 路径
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 # 导入 resume_agent 中的 graph 和 conversation_llm
-from resume_agent import graph, conversation_llm, current_user_id, LLM_ENABLED
+from .resume_agent import LLM_ENABLED, conversation_llm, current_user_id, graph
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate
 
 # 导入自定义模块
-from database import (
+from .database import (
     init_db, get_db, create_user, get_user_by_email,
     save_user_resume, get_user_resume, save_user_jd, get_user_jd,
     check_invite_code, use_invite_code, create_invite_code,
     get_parsing_status, set_parsing_status
 )
-from auth import (
+from .auth import (
     verify_password, get_password_hash, create_access_token,
     get_current_user, oauth2_scheme
 )
@@ -117,7 +113,7 @@ def get_pdf_generator():
     global _pdf_generator
     if _pdf_generator is None:
         _setup_weasyprint_env()
-        from pdf_generator import generate_pdf
+        from .pdf_generator import generate_pdf
         _pdf_generator = generate_pdf
     return _pdf_generator
 
@@ -260,7 +256,7 @@ async def compress_context_with_llm(messages, max_summary_length=1000):
 # FastAPI 应用
 # =============================================================================
 
-app = FastAPI(title="Resume Assistant MCP Service", version="2.0.0")
+app = FastAPI(title="Resume Assistant API", version="2.0.0")
 
 
 def require_llm_configured():
@@ -365,7 +361,7 @@ async def list_invites(current_user = Depends(get_current_user), db: Session = D
     """
     获取邀请码列表（需要登录）
     """
-    from database import InviteCode
+    from .database import InviteCode
     codes = db.query(InviteCode).order_by(InviteCode.created_at.desc()).all()
     return [
         {"code": c.code, "is_used": c.is_used, "created_at": c.created_at.isoformat()}
@@ -424,7 +420,7 @@ async def load_resume_endpoint(db: Session = Depends(get_db), current_user = Dep
             print(f"[load_resume] 未找到简历数据")
 
         # 获取证件照
-        from database import Resume
+        from .database import Resume
         resume_obj = db.query(Resume).filter(Resume.user_id == current_user.id).first()
         photo = resume_obj.photo if resume_obj and resume_obj.photo else ""
 
@@ -540,7 +536,7 @@ async def save_conversation_endpoint(request: Request, db: Session = Depends(get
         # 过滤掉消息中的图片
         filtered_messages = [filter_images_from_message_dict(msg) for msg in messages]
 
-        from database import save_conversation
+        from .database import save_conversation
         save_conversation(db, current_user.id, session_id, filtered_messages)
 
         return JSONResponse(content={"success": True})
@@ -559,7 +555,7 @@ async def load_conversation_endpoint(request: Request, db: Session = Depends(get
         request_data = await request.json()
         session_id = request_data.get('session_id', 'default')
 
-        from database import get_conversation
+        from .database import get_conversation
         messages = get_conversation(db, current_user.id, session_id)
 
         return JSONResponse(content=messages)
@@ -581,7 +577,7 @@ async def parse_jd_endpoint(request: Request, current_user = Depends(get_current
         jd_text = request_data.get('text', '')
         jd_image = request_data.get('image', '')
 
-        from resume_agent import jd_parser_llm, JD_PARSER_PROMPT
+        from .resume_agent import JD_PARSER_PROMPT, jd_parser_llm
 
         if jd_image:
             if jd_image.startswith('data:image'):
@@ -656,7 +652,7 @@ async def parse_and_save_resume_endpoint(
         else:
             mime_type = 'image/jpeg'
 
-        from resume_agent import jd_parser_llm, RESUME_FULL_EXTRACT_PROMPT
+        from .resume_agent import RESUME_FULL_EXTRACT_PROMPT, jd_parser_llm
 
         # 设置解析状态为进行中
         set_parsing_status(db, current_user.id, "parsing")
@@ -689,7 +685,7 @@ async def parse_and_save_resume_endpoint(
             return JSONResponse(content={"success": False, "error": "解析失败", "raw": content}, status_code=500)
 
         # 保存到数据库
-        from database import save_user_resume
+        from .database import save_user_resume
         save_user_resume(db, current_user.id, resume_data)
         # 设置解析状态为完成
         set_parsing_status(db, current_user.id, "completed")
@@ -734,7 +730,7 @@ async def export_pdf_endpoint(request: Request, db: Session = Depends(get_db), c
             return JSONResponse(content="错误: 没有找到简历数据，请先创建或加载简历", status_code=400)
 
         # 从数据库获取证件照
-        from database import Resume
+        from .database import Resume
         resume_obj = db.query(Resume).filter(Resume.user_id == current_user.id).first()
         photo = resume_obj.photo if resume_obj and resume_obj.photo else None
 
@@ -820,7 +816,7 @@ async def chat_endpoint(
             current_message = HumanMessage(content=message.strip())
 
         # 从数据库获取压缩后的上下文（这是唯一的消息来源）
-        from database import get_conversation_context
+        from .database import get_conversation_context
         db_context_raw = get_conversation_context(db, current_user.id, session_id)
 
         # 转换数据库中的消息为 Message 对象
@@ -847,7 +843,7 @@ async def chat_endpoint(
         initial_jd_data = jd_data if jd_data else (get_user_jd(db, current_user.id) or {})
 
         # 从数据库获取待确认状态
-        from database import get_pending_confirmation
+        from .database import get_pending_confirmation
         initial_pending_confirmation = get_pending_confirmation(db, current_user.id, session_id)
         if initial_pending_confirmation:
             print(f"[InitState] 从数据库加载 pending_confirmation: confirm_id={initial_pending_confirmation.get('confirm_id')}")
@@ -926,7 +922,7 @@ async def chat_endpoint(
                     save_user_jd(db, user_id, final_jd_data)
 
                 # 保存上下文（带压缩逻辑）
-                from database import save_conversation_context
+                from .database import save_conversation_context
 
                 # 1. 构建压缩上下文（按原始顺序保存 HumanMessage 和 AIMessage）
                 compressed_context = []
@@ -1066,7 +1062,7 @@ async def chat_endpoint(
                                     confirm_msg_id = str(uuid.uuid4())
                                     # 同步保存 pending_confirmation 到数据库，确保立即可用
                                     try:
-                                        from database import save_conversation_context, get_conversation_context
+                                        from .database import get_conversation_context, save_conversation_context
                                         # 先获取当前压缩上下文
                                         current_context = get_conversation_context(db, current_user.id, session_id)
                                         # 保存 pending_confirmation，保留当前上下文
@@ -1161,11 +1157,11 @@ async def confirm_endpoint(
     """
     try:
         # 设置全局用户ID
-        import resume_agent
+        from . import resume_agent
         resume_agent.current_user_id = current_user.id
 
         # 从数据库获取 pending_confirmation
-        from database import get_pending_confirmation, clear_pending_confirmation, get_user_resume
+        from .database import clear_pending_confirmation, get_pending_confirmation, get_user_resume
         pending_confirmation = get_pending_confirmation(db, current_user.id, session_id)
 
         if not pending_confirmation:
@@ -1192,7 +1188,7 @@ async def confirm_endpoint(
                 return JSONResponse(content={"error": f"简历数据格式错误: {str(e)}"}, status_code=400)
 
             # 保存修改后的简历数据
-            from tools import update_resume
+            from .tools import update_resume
             result = update_resume(updated_resume_data, user_id=current_user.id)
             print(f"[Confirm] 保存结果: {result}")
 
@@ -1348,7 +1344,7 @@ async def first_message_endpoint(
 
         # 调用 LLM 生成首次提问（使用 conversation_llm）
         from langchain_core.prompts import ChatPromptTemplate
-        from resume_agent import conversation_llm
+        from .resume_agent import conversation_llm
 
         # 创建提示模板
         prompt_template = ChatPromptTemplate.from_template("{prompt}")
@@ -1359,7 +1355,7 @@ async def first_message_endpoint(
         ai_message = response.content
 
         # 保存 AI 消息到数据库（同时保存到 messages 和 compressed_context）
-        from database import save_conversation, save_conversation_context
+        from .database import save_conversation, save_conversation_context
         from langchain_core.messages import HumanMessage, AIMessage
 
         # 保存到 messages 字段
@@ -1427,7 +1423,7 @@ async def first_message_from_resume_endpoint(
 
         # 调用 LLM 生成首次提问（使用 conversation_llm）
         from langchain_core.prompts import ChatPromptTemplate
-        from resume_agent import conversation_llm
+        from .resume_agent import conversation_llm
 
         # 创建提示模板
         prompt_template = ChatPromptTemplate.from_template("{prompt}")
@@ -1438,7 +1434,7 @@ async def first_message_from_resume_endpoint(
         ai_message = response.content
 
         # 保存 AI 消息到数据库（同时保存到 messages 和 compressed_context）
-        from database import save_conversation, save_conversation_context
+        from .database import save_conversation, save_conversation_context
 
         # 保存到 messages 字段
         save_conversation(db, current_user.id, session_id, [
@@ -1492,7 +1488,7 @@ async def save_ai_message_endpoint(
             session_id = generate_session_id()
 
         # 保存 AI 消息到数据库
-        from database import save_conversation, save_conversation_context
+        from .database import save_conversation, save_conversation_context
 
         # 保存到 messages 字段
         save_conversation(db, current_user.id, session_id, [
@@ -1523,10 +1519,10 @@ async def save_ai_message_endpoint(
 
 if __name__ == "__main__":
     import uvicorn
-    from database import cleanup_old_contexts, SessionLocal, get_user_by_email, create_user
-    from auth import get_password_hash
+    from .auth import get_password_hash
+    from .database import SessionLocal, cleanup_old_contexts, create_user, get_user_by_email
 
-    print("Resume Assistant MCP 服务启动中...")
+    print("Resume Assistant 后端服务启动中...")
     print("支持多用户认证和数据库持久化")
 
     # 启动时清理 7 天未访问的上下文

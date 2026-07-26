@@ -27,7 +27,7 @@ function Test-LocalUrl([string]$url, [string]$method = "Get") {
 if (-not (Test-LocalUrl "http://127.0.0.1:8000/health" "Post")) {
     $backendOptions = @{
         FilePath = $python
-        ArgumentList = "mcp_service_simple.py"
+        ArgumentList = @("-m", "backend.main")
         WorkingDirectory = $projectRoot
         WindowStyle = "Hidden"
         PassThru = $true

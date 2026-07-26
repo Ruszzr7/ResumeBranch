@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 import os
-import sys
 from dotenv import load_dotenv
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 load_dotenv()
 
-from database import SessionLocal, get_user_by_email, create_user, engine, Base
-from auth import get_password_hash
+from .auth import get_password_hash
+from .database import Base, SessionLocal, create_user, engine, get_user_by_email
 
 Base.metadata.create_all(bind=engine)
 

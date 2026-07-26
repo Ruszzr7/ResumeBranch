@@ -29,7 +29,7 @@ def require(response: httpx.Response, expected: int, label: str) -> None:
 
 
 def cleanup_test_data(email: str, invite_code: str | None) -> None:
-    from database import (
+    from backend.database import (
         Conversation,
         InviteCode,
         JobDescription,

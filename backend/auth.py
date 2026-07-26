@@ -11,7 +11,7 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 import os
 
-from database import get_db, get_user_by_email
+from .database import get_db, get_user_by_email
 
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-super-secret-key-change-this-in-production")
 ALGORITHM = "HS256"

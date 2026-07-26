@@ -27,7 +27,7 @@
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
   --shadow-lg: 0 6px 20px rgba(0, 0, 0, 0.1);
-  /* 圆角设为0以匹配template_demo.css风格 */
+  /* 统一使用直角视觉风格 */
   --radius-sm: 0;
   --radius-md: 0;
   --radius-lg: 0;

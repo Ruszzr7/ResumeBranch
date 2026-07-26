@@ -6,7 +6,7 @@
 import os
 import json
 from sqlalchemy.orm import Session
-from database import get_db, save_user_resume, get_user_resume, save_user_jd, get_user_jd
+from .database import get_db, get_user_jd, get_user_resume, save_user_jd, save_user_resume
 
 
 def list_directory(path: str) -> str:
@@ -70,7 +70,7 @@ def update_resume(data: dict, user_id: int = None, db: Session = None) -> str:
 
     try:
         # 如果没有提供 user_id，从 resume_agent 模块获取全局用户ID
-        import resume_agent
+        from . import resume_agent
         if user_id is None:
             if resume_agent.current_user_id:
                 user_id = resume_agent.current_user_id
@@ -109,7 +109,7 @@ def load_resume(user_id: int = None, db: Session = None) -> dict:
 
     try:
         # 如果没有提供 user_id，从 resume_agent 模块获取全局用户ID
-        import resume_agent
+        from . import resume_agent
         if user_id is None:
             if resume_agent.current_user_id:
                 user_id = resume_agent.current_user_id
@@ -141,7 +141,7 @@ def save_jd(data: dict, user_id: int = None, db: Session = None) -> str:
         db = next(db_gen)
 
     try:
-        import resume_agent
+        from . import resume_agent
         if user_id is None:
             if resume_agent.current_user_id:
                 user_id = resume_agent.current_user_id
@@ -175,7 +175,7 @@ def load_jd(user_id: int = None, db: Session = None) -> dict:
         db = next(db_gen)
 
     try:
-        import resume_agent
+        from . import resume_agent
         if user_id is None:
             if resume_agent.current_user_id:
                 user_id = resume_agent.current_user_id

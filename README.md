@@ -40,7 +40,6 @@ DeepAgents 是一个全栈 AI 简历优化工具，具有以下特点：
 | Element Plus | 2.13.0 | UI 组件库 |
 | Vue Router | 4.6.4 | 路由管理 |
 | marked | 17.0.1 | Markdown 渲染 |
-| html2pdf.js | 0.12.1 | 客户端 PDF 导出（备用） |
 
 ### 后端
 | 技术 | 版本 | 用途 |
@@ -85,7 +84,6 @@ DeepAgents 是一个全栈 AI 简历优化工具，具有以下特点：
 
 ### 导出功能
 - ✅ 服务端 WeasyPrint PDF 导出（推荐）
-- ✅ 客户端 html2pdf.js 导出（备用）
 
 ### AI 特性
 - ✅ SSE 流式响应
@@ -235,7 +233,7 @@ DeepAgents 是一个全栈 AI 简历优化工具，具有以下特点：
 
 ## 🚀 快速开始
 
-> Windows 本机运行请优先参考 [LOCAL_DEPLOYMENT.md](LOCAL_DEPLOYMENT.md)。该方案使用
+> Windows 本机运行请优先参考 [本地部署说明](docs/local-deployment.md)。该方案使用
 > 项目专用 Python 虚拟环境、本机 MySQL 8.4 和隔离的 WeasyPrint/Pango，不依赖 Docker。
 
 ### 环境要求
@@ -286,7 +284,7 @@ source .venv/bin/activate  # macOS/Linux
 # .venv\Scripts\activate  # Windows
 
 # 安装依赖
-pip install -r requirements.txt
+pip install -r backend/requirements.txt
 ```
 
 ### 4. 安装前端依赖
@@ -302,7 +300,7 @@ cd ..
 ```bash
 # 数据库会在首次运行时自动创建
 # 如需创建管理员账号
-python create_admin.py
+python -m backend.create_admin
 ```
 
 ### 6. 启动服务
@@ -312,21 +310,17 @@ python create_admin.py
 ```bash
 # 终端 1 - 启动后端
 source .venv/bin/activate
-python mcp_service_simple.py
+python -m backend.main
 
 # 终端 2 - 启动前端
 cd frontend
 npm run dev
 ```
 
-**方式二：使用启动脚本**
+**方式二：Windows 本地启动脚本**
 
-```bash
-# 后端
-./start_backend.sh
-
-# 前端（另一个终端）
-cd frontend && npm run dev
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start_local.ps1
 ```
 
 **方式三：Docker 部署（推荐生产环境）**
@@ -346,54 +340,36 @@ docker-compose up -d --build
 ## 📁 项目结构
 
 ```
-DeepAgents/
-├── frontend/                          # Vue3 前端项目
+resume_assistant/
+├── backend/                           # FastAPI / LangGraph Python 包
+│   ├── main.py                        # FastAPI 入口
+│   ├── resume_agent.py                # LangGraph Agent
+│   ├── database.py                    # SQLAlchemy 模型与数据访问
+│   ├── auth.py                        # JWT 认证
+│   ├── tools.py                       # Agent 工具
+│   ├── pdf_generator.py               # WeasyPrint PDF 导出
+│   ├── create_admin.py                # 管理员初始化模块
+│   ├── requirements.txt
+│   ├── requirements.lock.txt
+│   └── Dockerfile
+├── frontend/                          # Vue 3 / Vite 前端
 │   ├── src/
-│   │   ├── components/               # 组件
-│   │   │   ├── ChatMessage.vue      # 聊天消息
-│   │   │   ├── ResumePreview.vue    # 简历预览
-│   │   │   ├── RichTextEditor.vue   # 富文本编辑器
-│   │   │   ├── BoldTextarea.vue     # 加粗文本域
-│   │   │   └── MobileTabBar.vue     # 移动端导航
-│   │   ├── views/                   # 页面
-│   │   │   ├── Homepage.vue         # 首页
-│   │   │   ├── Login.vue            # 登录
-│   │   │   ├── Register.vue         # 注册
-│   │   │   └── Admin.vue            # 管理员后台
-│   │   ├── router/
-│   │   └── index.js             # 路由配置
-│   ├── App.vue                  # 主应用
-│   ├── main.js                  # 入口
-│   ├── api.js                   # API 请求封装
-│   └── style.css                # 全局样式
+│   ├── public/
 │   ├── package.json
-│   ├── vite.config.js
 │   ├── Dockerfile
 │   └── nginx.conf
-│
-├── data/                              # 数据目录
-│   └── deepagents.db                 # SQLite 数据库
-│
-├── nginx/                             # Nginx 配置
-│   ├── nginx.conf
-│   └── conf.d/
-│
-├── mcp_service_simple.py              # FastAPI 服务入口
-├── resume_agent.py                    # LangGraph AI Agent 核心
-├── tools.py                           # 工具函数
-├── pdf_generator.py                   # PDF 生成器
-├── database.py                        # 数据库模型
-├── auth.py                            # JWT 认证
-├── create_admin.py                    # 管理员创建脚本
-├── requirements.txt                   # Python 依赖
-├── .env                               # 环境变量
-├── .env.example                       # 环境变量模板
-├── docker-compose.yml                 # Docker Compose 配置
-├── Dockerfile                         # 后端 Dockerfile
-├── start_backend.sh                   # 后端启动脚本
-├── DEPLOYMENT.md                      # 部署指南
-├── RESUME_AGENT_ARCHITECTURE.md      # Agent 架构文档
-└── README.md                          # 本文件
+├── docs/                              # 部署、测试、架构和 Prompt 文档
+│   ├── architecture/
+│   ├── prompts/
+│   ├── deployment.md
+│   ├── local-deployment.md
+│   └── testing.md
+├── scripts/                           # Windows 本地启动、停止与冒烟测试
+├── nginx/                             # Docker Nginx 配置
+├── data/                              # 本地运行数据（SQLite 回退模式）
+├── docker-compose.yml
+├── .env.example
+└── README.md
 ```
 
 ---
@@ -462,7 +438,7 @@ DeepAgents/
 
 ## 🚢 部署指南
 
-详细部署文档请参考 [DEPLOYMENT.md](./DEPLOYMENT.md)。
+详细部署文档请参考 [部署指南](docs/deployment.md)。
 
 ### Docker Compose 快速部署
 
@@ -552,7 +528,7 @@ docker-compose down
 ### 创建管理员
 
 ```bash
-python create_admin.py
+python -m backend.create_admin
 ```
 
 默认管理员账号：
@@ -563,8 +539,9 @@ python create_admin.py
 
 ## 📚 相关文档
 
-- [RESUME_AGENT_ARCHITECTURE.md](./RESUME_AGENT_ARCHITECTURE.md) - LangGraph Agent 详细架构文档
-- [DEPLOYMENT.md](./DEPLOYMENT.md) - 完整部署指南
+- [本地部署说明](docs/local-deployment.md) - Windows 本地部署与启动说明
+- [部署指南](docs/deployment.md) - 完整部署指南
+- [测试清单](docs/testing.md) - 功能回归检查项
 
 ---
 

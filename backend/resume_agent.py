@@ -60,7 +60,7 @@ def estimate_tokens(text):
     other_chars = len(text_str) - chinese_chars
     return int(chinese_chars * 0.5 + other_chars * 0.25)
 
-# 全局变量：当前用户ID（由 mcp_service_simple.py 设置）
+# 全局变量：当前用户ID（由 backend.main 设置）
 current_user_id = None
 
 # 加载环境变量
@@ -544,7 +544,7 @@ def save_resume_tool(content: str = "", user_id: int = None) -> str:
         user_id: 用户ID（从状态中传递）
     """
     import re
-    from tools import update_resume
+    from .tools import update_resume
 
     # 检查是否有用户ID
     if user_id is None:
@@ -947,7 +947,7 @@ async def tool_node(state: AgentState) -> dict:
                                     }
 
                             # 直接调用 update_resume 保存
-                            from tools import update_resume
+                            from .tools import update_resume
                             result = update_resume(updated_resume_data, user_id=state.user_id)
                             saved_resume = True
                             print(f"[Tool] 保存结果: {result}")
