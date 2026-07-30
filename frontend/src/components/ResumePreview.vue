@@ -73,9 +73,34 @@ function resetStyleSettings(event) {
 
 // 移动端样式面板展开状态
 const isStylePanelExpanded = ref(false)
+const activeToolbarMenu = ref(null)
 
 function toggleStylePanel() {
   isStylePanelExpanded.value = !isStylePanelExpanded.value
+}
+
+function toggleToolbarMenu(menu, event) {
+  event?.stopPropagation()
+  activeToolbarMenu.value = activeToolbarMenu.value === menu ? null : menu
+}
+
+function closeToolbarMenu() {
+  activeToolbarMenu.value = null
+}
+
+function toggleLanguage() {
+  emit('toggle-lang', props.lang === 'zh' ? 'en' : 'zh')
+}
+
+function openEditTarget(target) {
+  closeToolbarMenu()
+  emit(target === 'resume' ? 'open-resume-edit' : 'open-jd-dialog')
+}
+
+function handleToolbarOutsideClick(event) {
+  if (!event.target.closest('.compact-toolbar-group')) {
+    closeToolbarMenu()
+  }
 }
 
 // A4尺寸（像素，96dpi）
@@ -511,6 +536,7 @@ const formatText = (text) => {
 
 // ========== 导出PDF（调用后端API，使用WeasyPrint生成矢量PDF）============
 const showSuccessDialog = ref(false)
+const exportError = ref('')
 const isExportingPDF = ref(false)
 
 const exportPDF = async () => {
@@ -566,7 +592,7 @@ const exportPDF = async () => {
 
   } catch (error) {
     console.error('PDF导出错误:', error)
-    alert('PDF导出失败，请确保后端服务已启动')
+    exportError.value = 'PDF 导出失败，请确认后端服务正常运行后重试。'
   } finally {
     isExportingPDF.value = false
   }
@@ -594,11 +620,13 @@ onMounted(async () => {
   if (contentRef.value) observer.value.observe(contentRef.value)
   observer.value.observe(document.body)
   window.addEventListener('resize', calculateScale)
+  document.addEventListener('click', handleToolbarOutsideClick)
 })
 
 onUnmounted(() => {
   observer.value?.disconnect()
   window.removeEventListener('resize', calculateScale)
+  document.removeEventListener('click', handleToolbarOutsideClick)
   clearTimeout(window.scaleTimeout)
 })
 
@@ -639,21 +667,20 @@ const getItemIndex = (type, dataIndex) => {
     <!-- 工具栏 - 始终显示 -->
     <div class="resume-toolbar-wrapper">
       <div class="resume-toolbar">
-        <button class="toolbar-icon reset-style-btn" @click="resetStyleSettings" title="恢复默认排版设置">🔧</button>
-        <div class="zoom-controls" aria-label="简历缩放">
-          <button :class="{ active: zoomMode === 'width' }" @click="setZoomMode('width', $event)" title="适应预览宽度">适宽</button>
-          <button :class="{ active: zoomMode === 'page' }" @click="setZoomMode('page', $event)" title="完整显示一页">整页</button>
-          <div class="zoom-readout">
-            <span class="zoom-value">{{ zoomPercentage }}%</span>
-            <span class="zoom-stepper">
-              <button @click="adjustZoom(0.1, $event)" :disabled="zoomPercentage >= 100" title="放大">＋</button>
-              <button @click="adjustZoom(-0.1, $event)" :disabled="zoomPercentage <= 40" title="缩小">−</button>
-            </span>
-          </div>
-        </div>
-        
         <!-- 移动端：可展开的样式调整面板 -->
         <template v-if="isMobile">
+          <button class="toolbar-icon reset-style-btn" @click="resetStyleSettings" title="恢复默认排版设置">🔧</button>
+          <div class="zoom-controls" aria-label="简历缩放">
+            <button :class="{ active: zoomMode === 'width' }" @click="setZoomMode('width', $event)" title="适应预览宽度">适宽</button>
+            <button :class="{ active: zoomMode === 'page' }" @click="setZoomMode('page', $event)" title="完整显示一页">整页</button>
+            <div class="zoom-readout">
+              <span class="zoom-value">{{ zoomPercentage }}%</span>
+              <span class="zoom-stepper">
+                <button @click="adjustZoom(0.1, $event)" :disabled="zoomPercentage >= 100" title="放大">＋</button>
+                <button @click="adjustZoom(-0.1, $event)" :disabled="zoomPercentage <= 40" title="缩小">−</button>
+              </span>
+            </div>
+          </div>
           <div class="mobile-toolbar-row">
             <button class="mobile-style-btn" @click="toggleStylePanel" :class="{ active: isStylePanelExpanded }">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -672,7 +699,6 @@ const getItemIndex = (type, dataIndex) => {
               <span>编辑简历</span>
             </button>
             <button class="mobile-jd-btn" @click="emit('open-jd-dialog')">
-              <span v-if="!jdData" class="red-dot"></span>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
                 <polyline points="14 2 14 8 20 8"></polyline>
@@ -720,87 +746,126 @@ const getItemIndex = (type, dataIndex) => {
           </Transition>
         </template>
         
-        <!-- PC端：原有的工具栏 -->
+        <!-- PC端：合并同类功能，保留完整操作 -->
         <template v-else>
-          <div class="toolbar-controls-container">
-            <div class="toolbar-section" @mouseenter="showControlPanel" @mouseleave="hideControlPanel">
-              <h3 class="toolbar-title">页边距</h3>
-              <div class="toolbar-controls">
-                <div class="control-item">
-                  <label class="control-label">上下: {{ marginVertical }}rem</label>
-                  <input type="range" v-model.number="marginVertical" min="3" max="12" step="0.25" class="slider">
-                </div>
-                <div class="control-item">
-                  <label class="control-label">左右: {{ marginHorizontal }}rem</label>
-                  <input type="range" v-model.number="marginHorizontal" min="3" max="12" step="0.25" class="slider">
-                </div>
+          <div class="compact-toolbar-cluster">
+          <div class="compact-toolbar-group">
+            <button
+              class="compact-toolbar-btn"
+              :class="{ active: activeToolbarMenu === 'zoom' }"
+              :aria-expanded="activeToolbarMenu === 'zoom'"
+              aria-label="打开页面缩放"
+              @click="toggleToolbarMenu('zoom', $event)"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3m18 0v3a2 2 0 0 1-2 2h-3"/>
+              </svg>
+              <span>{{ zoomPercentage }}%</span>
+            </button>
+            <div v-if="activeToolbarMenu === 'zoom'" class="compact-popover zoom-popover" @click.stop>
+              <div class="compact-popover-title">页面缩放</div>
+              <div class="zoom-mode-grid">
+                <button :class="{ active: zoomMode === 'width' }" @click="setZoomMode('width', $event)">适宽</button>
+                <button :class="{ active: zoomMode === 'page' }" @click="setZoomMode('page', $event)">整页</button>
               </div>
-            </div>
-            <div class="toolbar-section" @mouseenter="showControlPanel" @mouseleave="hideControlPanel">
-              <h3 class="toolbar-title">模块边距</h3>
-              <div class="toolbar-controls">
-                <div class="control-item">
-                  <label class="control-label">间距: {{ moduleMargin }}rem</label>
-                  <input type="range" v-model.number="moduleMargin" min="0.25" max="2" step="0.25" class="slider">
-                </div>
-              </div>
-            </div>
-            <div class="toolbar-section" @mouseenter="showControlPanel" @mouseleave="hideControlPanel">
-              <h3 class="toolbar-title">行间距</h3>
-              <div class="toolbar-controls">
-                <div class="control-item">
-                  <label class="control-label">行距: {{ lineHeight }}</label>
-                  <input type="range" v-model.number="lineHeight" min="1.1" max="2.2" step="0.1" class="slider">
-                </div>
-              </div>
-            </div>
-            <div class="toolbar-section" @mouseenter="showControlPanel" @mouseleave="hideControlPanel">
-              <h3 class="toolbar-title">字体大小</h3>
-              <div class="toolbar-controls">
-                <div class="control-item">
-                  <label class="control-label">大小: {{ fontSize }}pt</label>
-                  <input type="range" v-model.number="fontSize" min="9" max="14" step="0.5" class="slider">
-                </div>
+              <div class="compact-zoom-stepper">
+                <button @click="adjustZoom(-0.1, $event)" :disabled="zoomPercentage <= 40" aria-label="缩小">−</button>
+                <button @click="manualZoom = 1; setZoomMode('manual', $event)" aria-label="恢复百分之百">100%</button>
+                <button @click="adjustZoom(0.1, $event)" :disabled="zoomPercentage >= 100" aria-label="放大">＋</button>
               </div>
             </div>
           </div>
-          <div class="toolbar-section toolbar-actions">
-            <!-- 语言切换 -->
-            <div class="lang-toggle">
-              <span :class="{ active: lang === 'zh' }" @click="emit('toggle-lang', 'zh')">中</span>
-              <span :class="{ active: lang === 'en' }" @click="emit('toggle-lang', 'en')">EN</span>
+
+          <div class="compact-toolbar-group">
+            <button
+              class="compact-toolbar-btn"
+              :class="{ active: activeToolbarMenu === 'layout' }"
+              :aria-expanded="activeToolbarMenu === 'layout'"
+              aria-label="打开排版设置"
+              @click="toggleToolbarMenu('layout', $event)"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <rect x="4" y="3" width="16" height="18" rx="2"/>
+                <path d="M8 7h8M8 11h8M8 15h5"/>
+              </svg>
+              <span>排版</span>
+            </button>
+            <div v-if="activeToolbarMenu === 'layout'" class="compact-popover layout-popover" @click.stop>
+              <div class="compact-popover-title">排版设置</div>
+              <label class="compact-control">
+                <span>上下页边距 <strong>{{ marginVertical }}mm</strong></span>
+                <input type="range" v-model.number="marginVertical" min="3" max="12" step="0.25" class="slider">
+              </label>
+              <label class="compact-control">
+                <span>左右页边距 <strong>{{ marginHorizontal }}mm</strong></span>
+                <input type="range" v-model.number="marginHorizontal" min="3" max="12" step="0.25" class="slider">
+              </label>
+              <label class="compact-control">
+                <span>模块间距 <strong>{{ moduleMargin }}rem</strong></span>
+                <input type="range" v-model.number="moduleMargin" min="0.25" max="2" step="0.25" class="slider">
+              </label>
+              <label class="compact-control">
+                <span>行间距 <strong>{{ lineHeight }}</strong></span>
+                <input type="range" v-model.number="lineHeight" min="1.1" max="2.2" step="0.1" class="slider">
+              </label>
+              <label class="compact-control">
+                <span>字体大小 <strong>{{ fontSize }}pt</strong></span>
+                <input type="range" v-model.number="fontSize" min="9" max="14" step="0.5" class="slider">
+              </label>
+              <button class="compact-reset-btn" @click="resetStyleSettings">恢复默认排版</button>
             </div>
-            <button
-              class="jd-upload-btn"
-              @click="emit('open-resume-edit')"
-              title="编辑简历"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-              </svg>
-              <span>编辑简历</span>
-            </button>
-            <button
-              class="jd-upload-btn"
-              @click="emit('open-jd-dialog')"
-              title="上传目标岗位信息"
-            >
-              <span v-if="!jdData" class="red-dot"></span>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                <polyline points="14 2 14 8 20 8"></polyline>
-                <line x1="16" y1="13" x2="8" y2="13"></line>
-                <line x1="16" y1="17" x2="8" y2="17"></line>
-                <polyline points="10 9 9 9 8 9"></polyline>
-              </svg>
-              <span>目标岗位</span>
-            </button>
-            <button class="export-btn" @click="exportPDF" :disabled="isExportingPDF || !data">
-              <span v-if="isExportingPDF" class="spinner"></span>
-              <span>{{ isExportingPDF ? '导出中...' : '导出PDF' }}</span>
-            </button>
           </div>
+
+          <button class="compact-toolbar-btn language-btn" @click="toggleLanguage" :aria-label="`切换为${lang === 'zh' ? '英文' : '中文'}简历`">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <circle cx="12" cy="12" r="9"/>
+              <path d="M3 12h18M12 3c2.2 2.5 3.3 5.5 3.3 9S14.2 18.5 12 21c-2.2-2.5-3.3-5.5-3.3-9S9.8 5.5 12 3"/>
+            </svg>
+            <span>{{ lang === 'zh' ? '中 / EN' : 'EN / 中' }}</span>
+          </button>
+
+          <div class="compact-toolbar-group edit-toolbar-group">
+            <button
+              class="compact-toolbar-btn"
+              :class="{ active: activeToolbarMenu === 'edit' }"
+              :aria-expanded="activeToolbarMenu === 'edit'"
+              aria-label="打开内容编辑菜单"
+              @click="toggleToolbarMenu('edit', $event)"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M12 20h9"/>
+                <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z"/>
+              </svg>
+              <span>编辑</span>
+            </button>
+            <div v-if="activeToolbarMenu === 'edit'" class="compact-popover edit-popover" @click.stop>
+              <div class="compact-popover-title">编辑内容</div>
+              <button class="compact-menu-item" @click="openEditTarget('resume')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/>
+                  <path d="M14 2v6h6M8 13h8M8 17h5"/>
+                </svg>
+                <span><strong>编辑简历</strong><small>修改个人信息与经历</small></span>
+              </button>
+              <button class="compact-menu-item" @click="openEditTarget('jd')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <rect x="3" y="7" width="18" height="13" rx="2"/>
+                  <path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 12h18"/>
+                </svg>
+                <span><strong>目标岗位 JD</strong><small>{{ jdData ? '查看或修改岗位信息' : '添加岗位信息' }}</small></span>
+              </button>
+            </div>
+          </div>
+          </div>
+
+          <button class="export-btn compact-export-btn" @click="exportPDF" :disabled="isExportingPDF || !data">
+            <span v-if="isExportingPDF" class="spinner"></span>
+            <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M12 3v12M7 10l5 5 5-5"/>
+              <path d="M5 21h14"/>
+            </svg>
+            <span>{{ isExportingPDF ? '导出中...' : '导出 PDF' }}</span>
+          </button>
         </template>
       </div>
     </div>
@@ -1243,6 +1308,15 @@ const getItemIndex = (type, dataIndex) => {
       <button class="confirm-btn" @click="showSuccessDialog = false">我知道了</button>
     </div>
   </div>
+
+  <div v-if="exportError" class="success-dialog-overlay" @click.self="exportError = ''">
+    <div class="success-dialog error-dialog">
+      <div class="success-icon error-icon">!</div>
+      <h3>导出未完成</h3>
+      <p>{{ exportError }}</p>
+      <button class="confirm-btn" @click="exportError = ''">关闭</button>
+    </div>
+  </div>
 </template>
 
 <style scoped>
@@ -1257,17 +1331,23 @@ const getItemIndex = (type, dataIndex) => {
   position: sticky;
   top: 0;
   z-index: 100;
-  background-color: rgb(249, 245, 242);
+  background: rgba(31, 32, 37, 0.97);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
   flex-shrink: 0;
 }
 .resume-toolbar {
-  background-color: transparent;
-  padding: 0.4rem 0.55rem;
+  height: 60px;
+  min-height: 60px;
+  box-sizing: border-box;
+  background: transparent;
+  padding: 0.55rem 0.65rem;
   box-shadow: none;
-  border-bottom: 1px solid #e0e0e0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
   display: flex;
   align-items: center;
-  gap: 0.3rem;
+  justify-content: flex-end;
+  gap: 0.4rem;
   flex-shrink: 0;
   flex-wrap: nowrap;
   overflow: visible;
@@ -1322,7 +1402,7 @@ const getItemIndex = (type, dataIndex) => {
 .zoom-controls button:hover:not(:disabled),
 .zoom-controls button.active {
   background: #303030;
-  color: #f8bebe;
+  color: #78a6ff;
 }
 .zoom-controls button:disabled {
   opacity: .35;
@@ -1405,7 +1485,7 @@ const getItemIndex = (type, dataIndex) => {
 }
 .toolbar-title:hover {
   background: #303030;
-  color: #f8bebe;
+  color: #78a6ff;
 }
 .toolbar-controls {
   visibility: hidden;
@@ -1478,7 +1558,7 @@ const getItemIndex = (type, dataIndex) => {
   box-shadow: none;
 }
 .export-btn {
-  background: #f8bebe;
+  background: #5f8ff2;
   color: #303030;
   border: 1px solid #303030;
   padding: 0.38rem 0.55rem;
@@ -1497,7 +1577,7 @@ const getItemIndex = (type, dataIndex) => {
 }
 .export-btn:hover {
   background: #303030;
-  color: #f8bebe;
+  color: #78a6ff;
   box-shadow: none;
   transform: translate(2px, 2px);
 }
@@ -1526,7 +1606,7 @@ const getItemIndex = (type, dataIndex) => {
 }
 .lang-toggle span.active {
   background: #303030;
-  color: #f8bebe;
+  color: #78a6ff;
 }
 .lang-toggle span:not(.active):hover {
   background: #f0f0f0;
@@ -1551,18 +1631,266 @@ const getItemIndex = (type, dataIndex) => {
   letter-spacing: 0.03em;
 }
 .jd-upload-btn:hover {
-  background: #f8bebe;
+  background: rgba(95, 143, 242, 0.16);
   border-color: #303030;
 }
-.red-dot {
+/* 桌面端 Apple 风格合并工具栏 */
+.compact-toolbar-group {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.compact-toolbar-cluster {
+  display: flex;
+  align-items: center;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
+.compact-toolbar-cluster .compact-toolbar-btn {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.compact-toolbar-cluster .compact-toolbar-group + .compact-toolbar-group,
+.compact-toolbar-cluster > .compact-toolbar-btn,
+.compact-toolbar-cluster > .compact-toolbar-group + .compact-toolbar-btn,
+.compact-toolbar-cluster > .compact-toolbar-btn + .compact-toolbar-group {
+  border-left: 1px solid rgba(255, 255, 255, 0.065);
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.compact-toolbar-btn {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.32rem;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 9px;
+  color: #c9c9cf;
+  background: rgba(255, 255, 255, 0.055);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  cursor: pointer;
+  white-space: nowrap;
+  font-size: 0.68rem;
+  font-weight: 500;
+  transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+}
+
+.compact-toolbar-btn svg,
+.compact-export-btn svg,
+.compact-menu-item svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.compact-toolbar-btn:hover,
+.compact-toolbar-btn.active {
+  color: #f5f5f7;
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.compact-toolbar-cluster .compact-toolbar-btn.active {
+  border-color: transparent;
+}
+
+.compact-toolbar-btn:focus,
+.compact-export-btn:focus,
+.compact-menu-item:focus,
+.compact-reset-btn:focus,
+.compact-toolbar-btn:focus-visible,
+.compact-export-btn:focus-visible,
+.compact-menu-item:focus-visible,
+.compact-reset-btn:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.compact-popover {
   position: absolute;
-  top: -3px;
-  right: -3px;
-  width: 8px;
-  height: 8px;
-  background: #ef4444;
+  top: calc(100% + 9px);
+  right: 0;
+  z-index: 10020;
+  min-width: 220px;
+  padding: 0.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  color: #f5f5f7;
+  background: rgba(35, 36, 42, 0.98);
+  box-shadow: 0 20px 55px rgba(0, 0, 0, 0.48);
+  backdrop-filter: blur(26px);
+  -webkit-backdrop-filter: blur(26px);
+}
+
+.layout-popover {
+  width: 255px;
+}
+
+.edit-popover {
+  width: 240px;
+}
+
+.compact-popover-title {
+  margin-bottom: 0.65rem;
+  color: #f0f0f3;
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+.zoom-mode-grid,
+.compact-zoom-stepper {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.4rem;
+}
+
+.compact-zoom-stepper {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 0.45rem;
+}
+
+.zoom-mode-grid button,
+.compact-zoom-stepper button,
+.compact-reset-btn {
+  min-height: 32px;
+  padding: 0.3rem 0.45rem;
+  border: 0;
+  border-radius: 9px;
+  color: #c7c7ce;
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 0.68rem;
+}
+
+.zoom-mode-grid button:hover,
+.zoom-mode-grid button.active,
+.compact-zoom-stepper button:hover:not(:disabled),
+.compact-reset-btn:hover {
+  color: #f5f5f7;
+  background: rgba(255, 255, 255, 0.11);
+}
+
+.compact-zoom-stepper button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.compact-control {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.65rem;
+}
+
+.compact-control > span {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+  color: #bdbdc5;
+  font-size: 0.68rem;
+}
+
+.compact-control strong {
+  color: #85858f;
+  font-weight: 400;
+}
+
+.compact-control .slider {
+  width: 100%;
+  height: 3px;
+  border-radius: 999px;
+  background: #3b3c42;
+}
+
+.compact-control .slider::-webkit-slider-thumb {
+  width: 13px;
+  height: 13px;
   border-radius: 50%;
-  border: 2px solid white;
+  background: #e7eaf1;
+}
+
+.compact-control .slider::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #e7eaf1;
+}
+
+.compact-reset-btn {
+  width: 100%;
+  margin-top: 0.8rem;
+}
+
+.compact-menu-item {
+  width: 100%;
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.5rem 0.55rem;
+  border: 0;
+  border-radius: 9px;
+  color: #d7d7dc;
+  background: transparent;
+  text-align: left;
+}
+
+.compact-menu-item:hover {
+  color: #f5f5f7;
+  background: rgba(255, 255, 255, 0.075);
+}
+
+.compact-menu-item > span {
+  display: grid;
+  gap: 0.12rem;
+}
+
+.compact-menu-item strong {
+  font-size: 0.69rem;
+  font-weight: 500;
+}
+
+.compact-menu-item small {
+  color: #85858f;
+  font-size: 0.62rem;
+}
+
+.language-btn {
+  flex: 0 0 auto;
+}
+
+.compact-export-btn {
+  min-height: 32px;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 9px;
+  color: #0b0b0d;
+  background: #f0f0f2;
+  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.2);
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.compact-export-btn:hover {
+  color: #0b0b0d;
+  background: #ffffff;
+  box-shadow: 0 7px 20px rgba(0, 0, 0, 0.28);
+  transform: translateY(-1px);
+}
+
+.compact-export-btn:disabled {
+  color: #0b0b0d;
+  background: #a8a8ad;
+  border-color: transparent;
+  transform: none;
 }
 /* Spinner 转圈圈 */
 .spinner {
@@ -1585,7 +1913,9 @@ const getItemIndex = (type, dataIndex) => {
   flex-direction: column;
   align-items: center;
   padding: 20px;
-  background: rgb(254, 253, 251);
+  background:
+    radial-gradient(circle at 50% 5%, rgba(91, 105, 145, 0.16), transparent 34%),
+    #202126;
   width: 100%;
   box-sizing: border-box;
   overflow-y: auto;
@@ -1921,6 +2251,13 @@ const getItemIndex = (type, dataIndex) => {
   color: #22c55e;
 }
 
+.success-icon.error-icon {
+  color: #b64d52;
+  font-size: 28px;
+  font-weight: 600;
+  background: #fff0f0;
+}
+
 .success-dialog h3 {
   margin: 0 0 16px;
   font-size: 1.25rem;
@@ -2136,14 +2473,6 @@ const getItemIndex = (type, dataIndex) => {
     display: none !important;
   }
 
-  /* 移动端红点位置调整 */
-  .mobile-jd-btn .red-dot {
-    top: -2px;
-    right: -2px;
-    width: 6px;
-    height: 6px;
-  }
-
   .toolbar-controls-container {
     gap: 6px;
     flex-wrap: wrap;
@@ -2293,7 +2622,7 @@ const getItemIndex = (type, dataIndex) => {
   }
 
   .mobile-style-btn.active {
-    background: #f8bebe;
+    background: #5f8ff2;
   }
 
   /* 移动端JD按钮 - 跟PC端样式一致 */
@@ -2320,7 +2649,7 @@ const getItemIndex = (type, dataIndex) => {
   }
 
   .mobile-jd-btn:hover {
-    background: #f8bebe;
+    background: rgba(95, 143, 242, 0.16);
     border-color: #303030;
   }
 
@@ -2337,7 +2666,7 @@ const getItemIndex = (type, dataIndex) => {
     justify-content: center;
     gap: 4px;
     padding: 8px 6px;
-    background: #f8bebe;
+    background: #5f8ff2;
     color: #303030;
     border: 1px solid #303030;
     border-radius: 0;
@@ -2354,7 +2683,7 @@ const getItemIndex = (type, dataIndex) => {
 
   .mobile-export-btn:hover:not(:disabled) {
     background: #303030;
-    color: #f8bebe;
+    color: #78a6ff;
   }
 
   .mobile-export-btn:active:not(:disabled) {

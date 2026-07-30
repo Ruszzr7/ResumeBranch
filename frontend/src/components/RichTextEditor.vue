@@ -411,16 +411,18 @@ onMounted(() => {
 <style scoped>
 .rich-editor {
   width: 100%;
-  border: 1px solid #e9ecef;
-  border-radius: var(--radius-sm);
-  background: #fafafa;
+  color: #ededf1;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.035);
   transition: all 0.2s ease;
+  overflow: hidden;
 }
 
 .rich-editor:focus-within {
-  border-color: var(--primary-color);
-  background: #fff;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.08);
+  border-color: rgba(120, 166, 255, 0.55);
+  background: #25262c;
+  box-shadow: 0 0 0 3px rgba(120, 166, 255, 0.09);
 }
 
 .editor-content {
@@ -435,6 +437,8 @@ onMounted(() => {
   word-break: break-word;
   overflow-y: auto;
   font-family: inherit;
+  color: #ededf1;
+  background: transparent;
 }
 
 /* 让 contenteditable 按 Enter 时插入 <br> 而不是 <div> */
@@ -444,13 +448,13 @@ onMounted(() => {
 
 .editor-content:empty:before {
   content: attr(placeholder);
-  color: #adb5bd;
+  color: #777780;
   pointer-events: none;
 }
 
 .editor-content b {
   font-weight: 600;
-  color: var(--text-primary);
+  color: #fff;
 }
 
 .editor-hint {
@@ -458,10 +462,10 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   padding: 0.4rem 0.75rem;
-  background: #f8f9fa;
-  border-top: 1px solid #e9ecef;
+  background: rgba(255, 255, 255, 0.025);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
   font-size: 0.75rem;
-  color: #adb5bd;
+  color: #777780;
   border-radius: 0 0 var(--radius-sm) var(--radius-sm);
 }
 
@@ -476,14 +480,15 @@ onMounted(() => {
   padding: 0.15rem 0.4rem;
   font-size: 0.7rem;
   font-family: inherit;
-  background: #fff;
-  border: 1px solid #dee2e6;
+  color: #c8cad2;
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid rgba(255, 255, 255, 0.11);
   border-radius: 3px;
-  box-shadow: 0 1px 0 #dee2e6;
+  box-shadow: none;
 }
 
 .line-count {
-  color: #adb5bd;
+  color: #777780;
 }
 
 /* 隐藏滚动条但保留功能 */
@@ -496,11 +501,11 @@ onMounted(() => {
 }
 
 .editor-content::-webkit-scrollbar-thumb {
-  background: #dee2e6;
+  background: rgba(255, 255, 255, 0.16);
   border-radius: 3px;
 }
 
 .editor-content::-webkit-scrollbar-thumb:hover {
-  background: #ced4da;
+  background: rgba(255, 255, 255, 0.24);
 }
 </style>

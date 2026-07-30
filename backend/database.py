@@ -304,7 +304,13 @@ def list_project_tasks(db, user_id: int, project_id: str):
     ).order_by(ProjectTask.is_base.desc(), ProjectTask.updated_at.desc()).all()
 
 
-def create_resume_task(db, user_id: int, project_id: str, title: str = "新岗位版本"):
+def create_resume_task(
+    db,
+    user_id: int,
+    project_id: str,
+    title: str = "新岗位版本",
+    copy_base_resume: bool = True,
+):
     project = get_resume_project(db, user_id, project_id)
     if not project:
         return None
@@ -316,8 +322,8 @@ def create_resume_task(db, user_id: int, project_id: str, title: str = "新岗�
         title=(title or "新岗位版本").strip()[:120],
         is_base=False,
         session_id=task_id,
-        resume_data=project.base_resume_data or {},
-        photo=project.photo or "",
+        resume_data=(project.base_resume_data or {}) if copy_base_resume else {},
+        photo=(project.photo or "") if copy_base_resume else "",
     )
     db.add(task)
     db.commit()

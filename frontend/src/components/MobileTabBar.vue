@@ -73,12 +73,12 @@ function switchTab(tabId) {
 }
 
 .pixel-switch.active {
-  background: #f8bebe;
+  background: #5f8ff2;
   box-shadow: inset 2px 2px 0 rgba(0, 0, 0, 0.1);
 }
 
 .pixel-switch.active:active {
-  background: #f8bebe;
+  background: #78a6ff;
   box-shadow: none;
   transform: translate(2px, 2px);
 }

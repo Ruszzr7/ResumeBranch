@@ -14,8 +14,8 @@
   -moz-osx-font-smoothing: grayscale;
 
   /* 全局颜色变量 */
-  --primary-color: #d97706;       /* Claude风格橙色 */
-  --primary-hover: #b45309;
+  --primary-color: #5f8ff2;
+  --primary-hover: #78a6ff;
   --secondary-color: rgb(254, 253, 251);     /* 浅米白色背景 */
   --accent-color: #e5e5e5;
   --text-primary: #1a1a1a;
@@ -81,7 +81,10 @@ button:hover {
   border-color: var(--primary-color);
   color: var(--primary-color);
 }
-button:focus,
+button:focus {
+  outline: none;
+}
+
 button:focus-visible {
   outline: 2px solid var(--primary-color);
   outline-offset: 2px;
@@ -276,7 +279,7 @@ button:focus-visible {
 
 .modal-close:hover {
   background: #303030;
-  color: #f8bebe;
+  color: #78a6ff;
 }
 
 .modal-close:disabled,
@@ -353,7 +356,7 @@ button:focus-visible {
 
 .option-item.primary:hover .graphic-upload {
   background: #303030;
-  color: #f8bebe;
+  color: #78a6ff;
 }
 
 .optionGraphic {
@@ -374,8 +377,8 @@ button:focus-visible {
 
 .graphic-upload {
   background: transparent;
-  border: 1px solid #f8bebe;
-  color: #f8bebe;
+  border: 1px solid #78a6ff;
+  color: #78a6ff;
 }
 
 .option-content {
@@ -575,7 +578,7 @@ button:focus-visible {
 
 .btn-reselect:hover {
   border-color: #303030;
-  color: #f8bebe;
+  color: #78a6ff;
   background: #303030;
 }
 
@@ -627,8 +630,8 @@ button:focus-visible {
 }
 
 .identity-card.active {
-  background: rgba(248, 190, 190, 0.15);
-  border-color: #f8bebe;
+  background: rgba(95, 143, 242, 0.15);
+  border-color: #78a6ff;
   outline: none;
 }
 
@@ -645,18 +648,18 @@ button:focus-visible {
 }
 
 .identity-icon.pink {
-  border-color: #f8bebe;
-  color: #f8bebe;
+  border-color: #78a6ff;
+  color: #78a6ff;
 }
 
 .identity-card.active .identity-icon {
-  background: #f8bebe;
+  background: #78a6ff;
   color: #303030;
-  border-color: #f8bebe;
+  border-color: #78a6ff;
 }
 
 .identity-card.active .identity-icon.pink {
-  background: #f8bebe;
+  background: #78a6ff;
   color: #303030;
 }
 
@@ -765,7 +768,7 @@ button:focus-visible {
   background: #303030;
   border: 1px solid #303030;
   border-radius: 0;
-  color: #f8bebe;
+  color: #78a6ff;
   cursor: pointer;
   transition: all 0.2s ease;
   box-shadow: none;
@@ -788,8 +791,8 @@ button:focus-visible {
 .btn-spinner {
   width: 14px;
   height: 14px;
-  border: 2px solid rgba(248, 190, 190, 0.3);
-  border-top-color: #f8bebe;
+  border: 2px solid rgba(95, 143, 242, 0.3);
+  border-top-color: #78a6ff;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -860,5 +863,5 @@ button:focus-visible {
 
 .modal-back:hover {
   background: #303030;
-  color: #f8bebe;
+  color: #78a6ff;
 }

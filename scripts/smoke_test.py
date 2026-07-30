@@ -105,6 +105,21 @@ def exercise_business_endpoints(
     if cloned.json().get("basics", {}).get("name") != "Local Smoke Test":
         raise RuntimeError("JD task did not inherit the project's base resume")
 
+    blank_task_response = client.post(
+        f"{API_URL}/projects/{project['id']}/tasks",
+        json={"title": "Blank JD", "copy_base_resume": False},
+        headers=headers,
+    )
+    require(blank_task_response, 200, "create blank JD task")
+    blank_task_headers = {
+        **headers,
+        "X-Task-ID": blank_task_response.json()["id"],
+    }
+    blank_resume = client.post(f"{API_URL}/load_resume", headers=blank_task_headers)
+    require(blank_resume, 200, "load blank JD task")
+    if blank_resume.json().get("basics", {}).get("name"):
+        raise RuntimeError("blank JD task unexpectedly inherited the base resume")
+
     exported_pdf = client.post(
         f"{API_URL}/export_pdf",
         json={"lang": "zh", "style": {}},
@@ -247,6 +262,21 @@ def main() -> None:
                 cleanup_email = test_email
                 user_headers: dict[str, str] = {}
                 verify_local_auth_is_disabled(client)
+                settings = client.get(f"{API_URL}/settings/llm")
+                require(settings, 200, "read local LLM settings")
+                settings_data = settings.json()
+                if "api_key" in settings_data:
+                    raise RuntimeError("LLM settings endpoint exposed the API key")
+                save_settings = client.put(
+                    f"{API_URL}/settings/llm",
+                    json={
+                        "provider": settings_data.get("provider", "moonshot"),
+                        "model": settings_data.get("model", ""),
+                        "base_url": settings_data.get("base_url", ""),
+                        "api_key": None,
+                    },
+                )
+                require(save_settings, 200, "save local LLM settings")
             else:
                 user_headers, invite_code = authenticate_multi_user(
                     client, test_email, test_password

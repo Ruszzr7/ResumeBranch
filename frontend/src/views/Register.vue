@@ -230,7 +230,7 @@ input:hover {
 }
 
 .submit-btn:hover:not(:disabled) {
-  background-color: #f8bebe;
+  background-color: #5f8ff2;
 }
 
 .submit-btn:disabled {
@@ -276,6 +276,6 @@ input:hover {
 }
 
 .link-btn:hover {
-  color: #f8bebe;
+  color: #78a6ff;
 }
 </style>

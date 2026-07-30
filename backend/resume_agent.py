@@ -189,18 +189,34 @@ KIMI_FIXED_TEMPERATURE_MODELS = {
 }
 
 
-def create_llm(*, temperature: float):
-    """Create a chat model while respecting provider-specific parameters."""
+def create_llm_for_config(
+    *,
+    api_key: str,
+    base_url: str | None,
+    model: str,
+    temperature: float,
+):
+    """Create a chat model for a specific local configuration."""
     kwargs = {
-        "api_key": llm_client_api_key,
-        "base_url": LLM_BASE_URL,
-        "model": LLM_MODEL,
+        "api_key": api_key or "local-llm-disabled",
+        "base_url": base_url,
+        "model": model,
         "http_client": httpx_client,
         "max_retries": 3,
     }
-    if LLM_MODEL not in KIMI_FIXED_TEMPERATURE_MODELS:
+    if model not in KIMI_FIXED_TEMPERATURE_MODELS:
         kwargs["temperature"] = temperature
     return ChatOpenAI(**kwargs)
+
+
+def create_llm(*, temperature: float):
+    """Create a chat model while respecting provider-specific parameters."""
+    return create_llm_for_config(
+        api_key=LLM_API_KEY,
+        base_url=LLM_BASE_URL,
+        model=LLM_MODEL,
+        temperature=temperature,
+    )
 
 
 # Conversation LLM - 负责对话和读取
@@ -208,6 +224,25 @@ conversation_llm = create_llm(temperature=0.1)
 
 # JD Parser LLM - 负责解析JD文本/图片为JSON
 jd_parser_llm = create_llm(temperature=0.0)
+
+
+def reload_llm_config():
+    """Reload local LLM settings without restarting the backend process."""
+    global LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, LLM_ENABLED
+    global llm_client_api_key, conversation_llm, jd_parser_llm
+
+    LLM_API_KEY = os.getenv("LLM_API_KEY", "").strip()
+    LLM_BASE_URL = os.getenv("BASE_URL", "").strip() or None
+    LLM_MODEL = os.getenv("LLM_MODEL", "gemini-3-flash-preview").strip() or "gemini-3-flash-preview"
+    LLM_ENABLED = bool(LLM_API_KEY)
+    llm_client_api_key = LLM_API_KEY or "local-llm-disabled"
+    conversation_llm = create_llm(temperature=0.1)
+    jd_parser_llm = create_llm(temperature=0.0)
+    return {
+        "configured": LLM_ENABLED,
+        "model": LLM_MODEL,
+        "base_url": LLM_BASE_URL or "",
+    }
 
 
 # =============================================================================

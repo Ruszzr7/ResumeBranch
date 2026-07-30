@@ -218,11 +218,12 @@ const handleOptionClick = (option) => {
 
 /* 用户消息内容 */
 .chat-message__content--user {
-  background-color: #1a1a1a;
-  color: white;
-  padding: 0px 16px;  /* 减小内边距，让气泡更紧凑 */
-  border-radius: 24px;  /* 四角等倒圆角 */
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  background: #24252a;
+  color: #f5f5f7;
+  padding: 7px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.065);
+  border-radius: 16px 16px 5px 16px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.2);
   max-width: 75%;
   line-height: 1.7;
   margin: 8px 0;
@@ -244,7 +245,7 @@ const handleOptionClick = (option) => {
 /* 助手消息内容 - 简洁样式 */
 .chat-message__content--assistant {
   background-color: transparent;
-  color: #1a1a1a;
+  color: #d8d8dd;
   padding: 8px 0;
   border-radius: 0;
   box-shadow: none;
@@ -277,31 +278,31 @@ const handleOptionClick = (option) => {
   align-items: center;
   justify-content: center;
   padding: 6px;
-  background-color: #f1f3f4;
+  background: rgba(255, 255, 255, 0.06);
   border-radius: 8px;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .chat-attachment:hover {
-  background-color: #e5e7eb;
+  background: rgba(255, 255, 255, 0.1);
   transform: translateY(-1px);
 }
 
 .chat-attachment--image {
-  background-color: #fef3c7;
+  background: rgba(120, 166, 255, 0.1);
 }
 
 .chat-attachment--image:hover {
-  background-color: #fde68a;
+  background: rgba(120, 166, 255, 0.16);
 }
 
 .chat-attachment--pdf {
-  background-color: #fee2e2;
+  background: rgba(255, 116, 116, 0.1);
 }
 
 .chat-attachment--pdf:hover {
-  background-color: #fecaca;
+  background: rgba(255, 116, 116, 0.16);
 }
 
 .chat-attachment__icon {
@@ -311,7 +312,7 @@ const handleOptionClick = (option) => {
 }
 
 .chat-attachment--image .chat-attachment__icon {
-  color: #d97706;
+  color: #78a6ff;
 }
 
 .chat-attachment--pdf .chat-attachment__icon {
@@ -464,17 +465,17 @@ const handleOptionClick = (option) => {
 .confirm-area {
   margin-top: 16px;
   padding: 20px 28px;
-  background-color: #fafafa;
-  border-radius: 12px;
-  border: 2px solid #e8e8e8;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+  background: linear-gradient(145deg, rgba(60, 79, 120, 0.2), rgba(255, 255, 255, 0.035));
+  border-radius: 14px;
+  border: 1px solid rgba(120, 166, 255, 0.18);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22);
   display: inline-block;
   min-width: 300px;
 }
 
 .confirm-content {
   margin: 0 0 20px 0;
-  color: #1a1a1a;
+  color: #f0f0f3;
   font-size: 15px;
   font-weight: 500;
   text-align: center;
@@ -490,77 +491,80 @@ const handleOptionClick = (option) => {
 /* 按钮样式 - 像素风简洁风格 */
 .confirm-btn {
   padding: 12px 32px;
-  border-radius: 8px;
+  border-radius: 9px;
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.15s ease;
-  border: 2px solid #1a1a1a;
-  background-color: white;
-  color: #1a1a1a;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.065);
+  color: #d7d7dc;
   font-family: inherit;
-  box-shadow: 2px 2px 0 #1a1a1a; /* 像素风阴影 */
+  box-shadow: none;
 }
 
 .confirm-btn:hover {
-  transform: translate(-1px, -1px);
-  box-shadow: 4px 4px 0 #1a1a1a;
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.11);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
 }
 
 .confirm-btn:active {
-  transform: translate(1px, 1px);
-  box-shadow: 1px 1px 0 #1a1a1a;
+  transform: translateY(0);
+  box-shadow: none;
 }
 
 .confirm-btn:focus,
 .confirm-btn:focus-visible {
-  outline: none;
-  border-color: #d97706;
-  box-shadow: 2px 2px 0 #d97706;
+  outline: 2px solid #78a6ff;
+  outline-offset: 2px;
+  border-color: transparent;
+  box-shadow: none;
 }
 
 .confirm-btn--primary {
-  background-color: #1a1a1a;
-  border-color: #1a1a1a;
-  color: white;
-  box-shadow: 2px 2px 0 #1a1a1a;
+  background: #e8eaf0;
+  border-color: #e8eaf0;
+  color: #0b0b0d;
+  box-shadow: none;
 }
 
 .confirm-btn--primary:hover {
-  background-color: #333333;
-  border-color: #333333;
-  color: white;
-  box-shadow: 4px 4px 0 #1a1a1a;
+  background: #ffffff;
+  border-color: #ffffff;
+  color: #0b0b0d;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
 }
 
 .confirm-btn--primary:active {
-  background-color: #1a1a1a;
-  box-shadow: 1px 1px 0 #1a1a1a;
+  background: #d7d9df;
+  color: #0b0b0d;
+  box-shadow: none;
 }
 
 .confirm-btn--default {
-  background-color: white;
-  border-color: #1a1a1a;
-  color: #1a1a1a;
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #d7d7dc;
 }
 
 .confirm-btn--default:hover {
-  background-color: #f5f5f5;
-  border-color: #1a1a1a;
-  color: #1a1a1a;
+  background: rgba(255, 255, 255, 0.11);
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #fff;
 }
 
 .confirm-btn--danger {
-  background-color: #fff;
-  border-color: #dc3545;
-  color: #dc3545;
-  box-shadow: 2px 2px 0 #dc3545;
+  background: rgba(255, 100, 100, 0.08);
+  border-color: rgba(255, 120, 120, 0.35);
+  color: #ff9a9a;
+  box-shadow: none;
 }
 
 .confirm-btn--danger:hover {
-  background-color: #fff0f0;
-  border-color: #dc3545;
-  color: #dc3545;
-  box-shadow: 4px 4px 0 #dc3545;
+  background: rgba(255, 100, 100, 0.14);
+  border-color: rgba(255, 120, 120, 0.5);
+  color: #ffb0b0;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
 }
 </style>

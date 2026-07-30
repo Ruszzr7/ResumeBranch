@@ -5,6 +5,7 @@ import ChatMessage from './components/ChatMessage.vue'
 import ResumePreview from './components/ResumePreview.vue'
 import RichTextEditor from './components/RichTextEditor.vue'
 import MobileTabBar from './components/MobileTabBar.vue'
+import BrandLogo from './components/BrandLogo.vue'
 import { labels } from './utils/labels.js'
 import { buildAuthorizationHeaders, loadAppConfig } from './config/appMode.js'
 
@@ -93,6 +94,17 @@ const isWorkspaceRoute = computed(() => route.name === 'TaskWorkspace')
 const currentTaskId = computed(() => isWorkspaceRoute.value ? String(route.params.taskId || '') : '')
 const currentProject = ref(null)
 const projectTasks = ref([])
+const currentTask = computed(() => projectTasks.value.find(task => task.id === currentTaskId.value) || null)
+const showTaskCreateDialog = ref(false)
+const newTaskTitle = ref('')
+const taskCreateMode = ref('copy')
+const isCreatingTask = ref(false)
+const taskCreateError = ref('')
+const taskToDelete = ref(null)
+const isDeletingTask = ref(false)
+const taskDeleteError = ref('')
+const uiNotice = ref({ visible: false, type: 'error', message: '' })
+let uiNoticeTimer = null
 
 // 聊天消息列表
 const messages = ref([])
@@ -328,6 +340,7 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('storage', handleStorageChange)
   stopParsingStatusPoll()
+  if (uiNoticeTimer) clearTimeout(uiNoticeTimer)
   if (messagesContainer.value) {
     messagesContainer.value.removeEventListener('scroll', handleScroll)
   }
@@ -379,39 +392,99 @@ async function loadWorkspace() {
 }
 
 async function createProjectTask() {
-  const title = window.prompt('请输入岗位或公司名称', '新岗位版本')
-  if (title === null) return
-  const response = await fetch(`/projects/${route.params.projectId}/tasks`, {
-    method: 'POST',
-    headers: getAuthHeaders(),
-    body: JSON.stringify({ title: title.trim() || '新岗位版本' })
-  })
-  if (!response.ok) return
-  const task = await response.json()
-  router.push(`/projects/${task.project_id}/tasks/${task.id}`)
+  newTaskTitle.value = ''
+  taskCreateMode.value = 'copy'
+  taskCreateError.value = ''
+  showTaskCreateDialog.value = true
 }
 
-async function deleteProjectTask(task) {
-  if (task.is_base) return
-  if (!window.confirm(`确定删除岗位版本“${task.title}”吗？该版本的 JD 和对话记录也会一起删除。`)) return
-  const response = await fetch(`/tasks/${task.id}`, {
-    method: 'DELETE',
-    headers: getAuthorizationHeaders()
-  })
-  if (!response.ok) return
-  projectTasks.value = projectTasks.value.filter(item => item.id !== task.id)
-  if (task.id === currentTaskId.value) {
-    const nextTask = projectTasks.value.find(item => item.is_base) || projectTasks.value[0]
-    if (nextTask) {
-      router.replace(`/projects/${nextTask.project_id}/tasks/${nextTask.id}`)
-    } else {
-      router.replace('/')
+function closeTaskCreateDialog() {
+  if (isCreatingTask.value) return
+  showTaskCreateDialog.value = false
+  taskCreateError.value = ''
+}
+
+async function confirmCreateProjectTask() {
+  const title = newTaskTitle.value.trim() || '新岗位版本'
+  isCreatingTask.value = true
+  taskCreateError.value = ''
+  try {
+    const response = await fetch(`/projects/${route.params.projectId}/tasks`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        title,
+        copy_base_resume: taskCreateMode.value === 'copy'
+      })
+    })
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}))
+      throw new Error(data.detail || '创建岗位版本失败，请重试')
     }
+    const task = await response.json()
+    isCreatingTask.value = false
+    showTaskCreateDialog.value = false
+    await router.push(`/projects/${task.project_id}/tasks/${task.id}`)
+  } catch (error) {
+    taskCreateError.value = error.message || '创建岗位版本失败，请重试'
+  } finally {
+    isCreatingTask.value = false
   }
 }
 
-function exitTask() {
-  router.push('/')
+async function deleteProjectTask(task, event) {
+  if (task.is_base) return
+  if (event?.detail > 0) {
+    event.currentTarget?.blur()
+  }
+  taskToDelete.value = task
+  taskDeleteError.value = ''
+}
+
+function closeTaskDeleteDialog() {
+  if (isDeletingTask.value) return
+  taskToDelete.value = null
+  taskDeleteError.value = ''
+}
+
+async function confirmDeleteProjectTask() {
+  if (!taskToDelete.value) return
+  const deletingTask = taskToDelete.value
+  isDeletingTask.value = true
+  taskDeleteError.value = ''
+  try {
+    const response = await fetch(`/tasks/${deletingTask.id}`, {
+      method: 'DELETE',
+      headers: getAuthorizationHeaders()
+    })
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}))
+      throw new Error(data.detail || '删除失败，请重试')
+    }
+    projectTasks.value = projectTasks.value.filter(item => item.id !== deletingTask.id)
+    taskToDelete.value = null
+    isDeletingTask.value = false
+    if (deletingTask.id === currentTaskId.value) {
+      const nextTask = projectTasks.value.find(item => item.is_base) || projectTasks.value[0]
+      if (nextTask) {
+        router.replace(`/projects/${nextTask.project_id}/tasks/${nextTask.id}`)
+      } else {
+        router.replace('/')
+      }
+    }
+  } catch (error) {
+    taskDeleteError.value = error.message || '删除失败，请重试'
+  } finally {
+    isDeletingTask.value = false
+  }
+}
+
+function showNotice(message, type = 'error') {
+  if (uiNoticeTimer) clearTimeout(uiNoticeTimer)
+  uiNotice.value = { visible: true, type, message }
+  uiNoticeTimer = setTimeout(() => {
+    uiNotice.value.visible = false
+  }, 3600)
 }
 
 // 加载初始数据的函数（同时检查首次访问）
@@ -630,7 +703,7 @@ async function pollParsingStatus() {
       console.error('❌ 解析失败')
       stopParsingStatusPoll()
       isParsingResume.value = false
-      alert('简历解析失败，请重新上传')
+      showNotice('简历解析失败，请重新上传')
     }
     // 如果还是 'parsing'，继续轮询
   } catch (error) {
@@ -700,7 +773,7 @@ function logout() {
 async function sendMessage() {
   // 检查登录状态
   if (!isLoggedIn.value) {
-    alert('请先登录')
+    showNotice('请先登录')
     return
   }
   if ((!userInput.value.trim() && uploadedFiles.value.length === 0) || isLoading.value) return
@@ -1655,11 +1728,11 @@ async function saveResume() {
       // 刷新简历渲染
       loadResume()
     } else {
-      alert('保存失败，请重试')
+      showNotice('保存失败，请重试')
     }
   } catch (error) {
     console.error('保存简历失败:', error)
-    alert('保存失败，请重试')
+    showNotice('保存失败，请重试')
   } finally {
     isSaving.value = false
   }
@@ -1668,7 +1741,7 @@ async function saveResume() {
 // 解析岗位信息
 async function parseJD() {
   if (!jdInputText.value.trim() && !jdInputImage.value) {
-    alert('请输入职位描述或粘贴图片')
+    showNotice('请输入职位描述或粘贴图片')
     return
   }
 
@@ -1690,7 +1763,7 @@ async function parseJD() {
     const result = await response.json()
 
     if (result.error) {
-      alert('识别失败: ' + result.error)
+      showNotice('识别失败: ' + result.error)
       return
     }
 
@@ -1716,7 +1789,7 @@ async function parseJD() {
     jdInputMode.value = 'form'
   } catch (error) {
     console.error('识别失败:', error)
-    alert('识别失败，请重试')
+    showNotice('识别失败，请重试')
   } finally {
     isParsingJD.value = false
   }
@@ -1741,11 +1814,11 @@ async function saveJD() {
       jdData.value = { ...jdFormData.value }
       isJDDialogOpen.value = false
     } else {
-      alert('保存失败: ' + (result.error || '未知错误'))
+      showNotice('保存失败: ' + (result.error || '未知错误'))
     }
   } catch (error) {
     console.error('保存失败:', error)
-    alert('保存失败，请重试')
+    showNotice('保存失败，请重试')
   } finally {
     isSaving.value = false
   }
@@ -1887,6 +1960,37 @@ function closeStartDialog() {
   showStartDialog.value = false
 }
 
+async function cancelNewProjectOnboarding() {
+  showStartDialog.value = false
+  showIdentityDialog.value = false
+  showUploadDialog.value = false
+
+  if (route.query.new === '1' && currentProject.value?.id) {
+    try {
+      const response = await fetch(`/projects/${currentProject.value.id}`, {
+        method: 'DELETE',
+        headers: getAuthorizationHeaders()
+      })
+      if (!response.ok) {
+        throw new Error('删除未完成的简历失败')
+      }
+    } catch (error) {
+      showNotice(error.message || '取消创建失败，请重试')
+      showStartDialog.value = true
+      return
+    }
+  }
+  await router.push('/')
+}
+
+async function completeNewProjectOnboarding() {
+  if (route.query.new !== '1') return
+  await router.replace({
+    name: route.name,
+    params: route.params
+  })
+}
+
 // 从空白创建简历 - 打开身份选择弹窗
 function startFromBlank() {
   closeStartDialog()
@@ -1920,12 +2024,12 @@ function selectIdentity(identity) {
 // 确认身份选择
 async function confirmIdentitySelection() {
   if (!selectedIdentity.value) {
-    alert('请选择一个身份类型')
+    showNotice('请选择一个身份类型')
     return
   }
 
   if (selectedIdentity.value === 'custom' && !customIdentity.value.trim()) {
-    alert('请输入你的身份描述')
+    showNotice('请输入你的身份描述')
     return
   }
 
@@ -1935,6 +2039,7 @@ async function confirmIdentitySelection() {
 
   closeIdentityDialog()
   closeStartDialog()
+  await completeNewProjectOnboarding()
 
   if (identity === 'custom') {
     // 自定义身份：调用后端 API 获取首次提问
@@ -1955,7 +2060,7 @@ async function confirmIdentitySelection() {
       isLoading.value = false
 
       if (data.error) {
-        alert(data.error)
+        showNotice(data.error)
         return
       }
 
@@ -2005,7 +2110,7 @@ async function confirmIdentitySelection() {
     } catch (error) {
       isLoading.value = false
       console.error('获取首次提问失败:', error)
-      alert('获取首次提问失败，请重试')
+      showNotice('获取首次提问失败，请重试')
     }
   } else {
     // 预设身份：直接使用预制消息并保存到数据库
@@ -2105,13 +2210,13 @@ function handleResumeImageSelect(event) {
 
   // 验证文件类型
   if (!file.type.startsWith('image/') && file.type !== 'application/pdf') {
-    alert('请上传图片文件（JPG、PNG）或 PDF')
+    showNotice('请上传图片文件（JPG、PNG）或 PDF')
     return
   }
 
   // 验证文件大小（5MB）
   if (file.size > 5 * 1024 * 1024) {
-    alert('文件大小不能超过 5MB')
+    showNotice('文件大小不能超过 5MB')
     return
   }
 
@@ -2136,7 +2241,7 @@ function handleResumeImageSelect(event) {
 // 解析并保存简历
 async function parseAndSaveResume() {
   if (!resumeImageFile.value) {
-    alert('请先选择简历图片')
+    showNotice('请先选择简历图片')
     return
   }
 
@@ -2166,6 +2271,7 @@ async function parseAndSaveResume() {
       // 更新简历数据
       resumeData.value = data.resume_data
       closeUploadDialog()
+      await completeNewProjectOnboarding()
 
       // 获取 AI 的首次针对性提问
       isLoading.value = true
@@ -2242,12 +2348,12 @@ async function parseAndSaveResume() {
         }]
       }
     } else {
-      alert('解析失败：' + data.error)
+      showNotice('解析失败：' + data.error)
       // 解析失败，保留状态让用户可以重试
     }
   } catch (error) {
     console.error('解析简历失败:', error)
-    alert('解析简历失败，请稍后重试')
+    showNotice('解析简历失败，请稍后重试')
   } finally {
     // 重置前端状态
     isParsingResume.value = false
@@ -2323,10 +2429,92 @@ watch(
 </script>
 
 <template>
+  <Teleport to="body">
+    <Transition name="toast">
+      <div v-if="uiNotice.visible" :class="['app-toast', `is-${uiNotice.type}`]" role="status">
+        {{ uiNotice.message }}
+      </div>
+    </Transition>
+  </Teleport>
+
+  <!-- 新建岗位版本弹窗 -->
+  <Teleport to="body">
+    <Transition name="dialog-fade">
+      <div v-if="showTaskCreateDialog" class="workspace-modal-mask" @click.self="closeTaskCreateDialog">
+        <form class="workspace-modal" @submit.prevent="confirmCreateProjectTask">
+          <div class="workspace-modal-header">
+            <div>
+              <span class="workspace-modal-kicker">JOB VERSION</span>
+              <h2>新建岗位版本</h2>
+            </div>
+            <button type="button" class="modal-close-btn" aria-label="关闭" @click="closeTaskCreateDialog">×</button>
+          </div>
+          <label class="workspace-field">
+            <span>岗位或公司名称</span>
+            <input v-model="newTaskTitle" autofocus maxlength="80" placeholder="例如：字节跳动 · 后端开发" />
+          </label>
+          <fieldset class="copy-mode-fieldset">
+            <legend>初始内容</legend>
+            <label :class="['copy-mode-card', { active: taskCreateMode === 'copy' }]">
+              <input v-model="taskCreateMode" type="radio" value="copy" />
+              <span class="copy-mode-icon">⎘</span>
+              <span>
+                <strong>复制主简历</strong>
+                <small>推荐。保留已有经历，再针对 JD 独立调整。</small>
+              </span>
+            </label>
+            <label :class="['copy-mode-card', { active: taskCreateMode === 'blank' }]">
+              <input v-model="taskCreateMode" type="radio" value="blank" />
+              <span class="copy-mode-icon">＋</span>
+              <span>
+                <strong>创建空白版本</strong>
+                <small>不带入主简历内容，从头开始编辑。</small>
+              </span>
+            </label>
+          </fieldset>
+          <p v-if="taskCreateError" class="workspace-modal-error">{{ taskCreateError }}</p>
+          <div class="workspace-modal-footer">
+            <button type="button" class="workspace-btn secondary" :disabled="isCreatingTask" @click="closeTaskCreateDialog">取消</button>
+            <button type="submit" class="workspace-btn primary" :disabled="isCreatingTask">
+              {{ isCreatingTask ? '创建中…' : '创建版本' }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </Transition>
+  </Teleport>
+
+  <!-- 删除岗位版本弹窗 -->
+  <Teleport to="body">
+    <Transition name="dialog-fade">
+      <div v-if="taskToDelete" class="workspace-modal-mask" @click.self="closeTaskDeleteDialog">
+        <div class="workspace-modal compact">
+          <div class="workspace-modal-header">
+            <div>
+              <span class="workspace-modal-kicker danger">DELETE VERSION</span>
+              <h2>删除岗位版本？</h2>
+            </div>
+            <button type="button" class="modal-close-btn" aria-label="关闭" @click="closeTaskDeleteDialog">×</button>
+          </div>
+          <p class="workspace-modal-copy">
+            “{{ taskToDelete.title }}”及其 JD、对话记录会一并删除。主简历不受影响，此操作无法撤销。
+          </p>
+          <p v-if="taskDeleteError" class="workspace-modal-error">{{ taskDeleteError }}</p>
+          <div class="workspace-modal-footer">
+            <button type="button" class="workspace-btn secondary" :disabled="isDeletingTask" @click="closeTaskDeleteDialog">取消</button>
+            <button type="button" class="workspace-btn danger" :disabled="isDeletingTask" @click="confirmDeleteProjectTask">
+              {{ isDeletingTask ? '删除中…' : '确认删除' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
+
   <!-- 首次进入选择弹窗 -->
   <Teleport to="body">
     <Transition name="dialog-fade">
-      <div v-if="showStartDialog" class="modal-mask">
+      <div v-if="showStartDialog" class="modal-mask" @click.self="cancelNewProjectOnboarding">
         <div class="modal-container start-modal" @click.stop>
           <div class="modal-header">
             <div class="header-badge">
@@ -2336,6 +2524,7 @@ watch(
               </svg>
             </div>
             <h2>创建简历</h2>
+            <button type="button" class="modal-close-btn light" aria-label="取消创建" @click="cancelNewProjectOnboarding">×</button>
           </div>
           <p class="modal-desc">选择一种方式开始创建你的简历</p>
           <div class="option-list">
@@ -2370,6 +2559,9 @@ watch(
                 <polyline points="9 18 15 12 9 6"></polyline>
               </svg>
             </button>
+          </div>
+          <div class="modal-footer start-modal-footer">
+            <button type="button" class="btn-secondary full-width" @click="cancelNewProjectOnboarding">取消</button>
           </div>
         </div>
       </div>
@@ -2578,29 +2770,15 @@ watch(
   </Teleport>
 
   <!-- 顶部导航栏（全屏宽度） -->
-  <header class="app-header">
+  <header v-if="isWorkspaceRoute" class="app-header">
     <div class="header-content">
       <h1>
-        <router-link to="/">
-          <img src="@/assets/offerflow.svg" alt="OfferFlow" class="app-logo" />
+        <router-link to="/" class="header-brand-link" aria-label="返回 ResumeBranch 首页">
+          <BrandLogo />
         </router-link>
       </h1>
       <div class="header-info">
-        <template v-if="isWorkspaceRoute">
-          <span class="user-email">{{ currentProject?.title || '主简历' }}</span>
-          <button @click="exitTask" class="logout-btn">返回主简历列表</button>
-        </template>
-        <template v-if="isLocalMode">
-          <span class="user-email">本地模式</span>
-        </template>
-        <template v-else-if="isLoggedIn">
-          <span class="user-email">{{ currentUser?.email }}</span>
-          <button @click="logout" class="logout-btn">登出</button>
-        </template>
-        <template v-else>
-          <router-link to="/login" class="auth-link">登录</router-link>
-          <router-link to="/register" class="auth-link">注册</router-link>
-        </template>
+        <span class="workspace-project-title">{{ currentProject?.title || '主简历' }}</span>
       </div>
     </div>
   </header>
@@ -2618,6 +2796,7 @@ watch(
           <router-link
             :to="`/projects/${task.project_id}/tasks/${task.id}`"
             :class="['task-link', { active: task.id === currentTaskId }]"
+            :title="task.is_base ? '基础简历' : task.title"
           >
             <span>{{ task.is_base ? '基础简历' : task.title }}</span>
             <small v-if="!task.is_base">{{ task.target_position || 'JD 定制版' }}</small>
@@ -2626,7 +2805,7 @@ watch(
             v-if="!task.is_base"
             class="task-delete-btn"
             title="删除岗位版本"
-            @click="deleteProjectTask(task)"
+            @click="deleteProjectTask(task, $event)"
           >×</button>
         </div>
         <button class="new-task-btn" @click="createProjectTask">＋ 新建版本</button>
@@ -2636,6 +2815,13 @@ watch(
       <template v-if="!isMobileView">
         <!-- 左侧聊天区 -->
       <div class="chat-section">
+        <div class="chat-panel-header">
+          <div class="assistant-orb" aria-hidden="true"></div>
+          <div class="chat-panel-title">
+            <strong>简历助手</strong>
+            <span>{{ currentTask?.is_base ? '基础简历' : (currentTask?.title || '岗位版本') }}</span>
+          </div>
+        </div>
         <div class="chat-container">
           <div class="messages-container" ref="messagesContainer">
             <ChatMessage
@@ -3142,7 +3328,7 @@ watch(
               </div>
               <div class="field-group">
                 <label>性别</label>
-                <el-select v-model="resumeFormData.basics.gender" placeholder="请选择" class="element-select">
+                <el-select v-model="resumeFormData.basics.gender" placeholder="请选择" class="element-select" popper-class="resume-dark-select-popper">
                   <el-option label="男" value="男" />
                   <el-option label="女" value="女" />
                   <el-option label="保密" value="保密" />
@@ -3180,7 +3366,7 @@ watch(
                 </div>
                 <div class="field-group">
                   <label>学历</label>
-                  <el-select v-model="edu.degree" placeholder="请选择" class="element-select">
+                  <el-select v-model="edu.degree" placeholder="请选择" class="element-select" popper-class="resume-dark-select-popper">
                     <el-option label="博士" value="博士" />
                     <el-option label="硕士" value="硕士" />
                     <el-option label="本科" value="本科" />
@@ -3203,6 +3389,7 @@ watch(
                         format="YYYY.MM"
                         value-format="YYYY-MM"
                         class="element-date-picker"
+                        popper-class="resume-dark-date-popper"
                       />
                     </template>
                     <template v-else>
@@ -3250,7 +3437,7 @@ watch(
                 </div>
                 <div class="field-group">
                   <label>工作类型</label>
-                  <el-select v-model="work.job_type" placeholder="请选择" class="element-select">
+                  <el-select v-model="work.job_type" placeholder="请选择" class="element-select" popper-class="resume-dark-select-popper">
                     <el-option label="全职" value="全职" />
                     <el-option label="实习" value="实习" />
                   </el-select>
@@ -3268,6 +3455,7 @@ watch(
                         format="YYYY.MM"
                         value-format="YYYY-MM"
                         class="element-date-picker"
+                        popper-class="resume-dark-date-popper"
                       />
                     </template>
                     <template v-else>
@@ -3325,6 +3513,7 @@ watch(
                         format="YYYY.MM"
                         value-format="YYYY-MM"
                         class="element-date-picker"
+                        popper-class="resume-dark-date-popper"
                       />
                     </template>
                     <template v-else>
@@ -3414,20 +3603,31 @@ watch(
 .app-container {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 60px); /* 减去header高度 */
+  height: 100vh;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-  background-color: #e6e2dd;
+  color: #f5f5f7;
+  background:
+    radial-gradient(circle at 64% -20%, rgba(100, 130, 220, 0.12), transparent 36%),
+    #050506;
   width: 100%;
   margin: 0;
   max-width: none;
 }
 
+.app-header + .app-container {
+  height: calc(100vh - 64px);
+}
+
 .app-header {
   width: 100%;
-  background-color: rgb(249, 245, 242);
-  color: var(--text-primary);
+  height: 64px;
+  min-height: 64px;
+  background: rgba(8, 8, 10, 0.94);
+  color: #f5f5f7;
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
   box-shadow: none;
-  border-bottom: 1px solid #e0e0e0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
   position: sticky;
   top: 0;
   z-index: 9999;
@@ -3438,7 +3638,9 @@ watch(
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 1rem 2rem;
+  height: 100%;
+  min-height: 0;
+  padding: 0.65rem 2.1rem;
   width: 100%;
   box-sizing: border-box;
   margin: 0;
@@ -3448,39 +3650,45 @@ watch(
   margin: 0;
   display: flex;
   align-items: center;
+  height: 24px;
+  line-height: 1;
 }
 
-.app-header h1 a {
-  display: block;
+.app-header h1 .header-brand-link {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  line-height: 1;
 }
 
 .app-logo {
   height: 26px;
   width: auto;
+  filter: grayscale(1) brightness(0) invert(1);
+  opacity: 0.92;
 }
 
 .header-info {
   display: flex;
   gap: 1rem;
-  font-family: 'GTPressuraMono-Light', sans-serif;
-  font-size: 0.6875rem;
-  text-transform: uppercase;
-  letter-spacing: 0.25em;
-  color: #303030;
+  font-size: 0.8rem;
+  color: #8f8f98;
   align-items: center;
 }
 
-.user-email {
-  color: #303030;
-  font-weight: 400;
+.workspace-project-title {
+  color: #d8d8dd;
+  font-size: 0.9rem;
+  font-weight: 560;
+  letter-spacing: 0.03em;
 }
 
 .logout-btn {
-  padding: 0.5rem 1rem;
-  border: 1px solid #303030;
-  border-radius: 0;
-  background: transparent;
-  color: #303030;
+  padding: 0.45rem 0.8rem;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.055);
+  color: #c9c9cf;
   font-family: 'GTPressuraMono-Light', sans-serif;
   font-size: 0.6875rem;
   text-transform: uppercase;
@@ -3490,16 +3698,17 @@ watch(
 }
 
 .logout-btn:hover {
-  background: #303030;
-  color: #f8bebe;
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
 }
 
 .auth-link {
-  color: #303030;
+  color: #c9c9cf;
   text-decoration: none;
   padding: 0.5rem 1rem;
-  border: 1px solid #303030;
-  border-radius: 0;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 9px;
   font-family: 'GTPressuraMono-Light', sans-serif;
   font-size: 0.6875rem;
   text-transform: uppercase;
@@ -3508,8 +3717,8 @@ watch(
 }
 
 .auth-link:hover {
-  background: #303030;
-  color: #f8bebe;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
 }
 
 /* 未登录提示样式 */
@@ -3588,56 +3797,85 @@ watch(
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  background: #08090b;
 }
 
 .task-sidebar {
-  flex: 0 0 150px;
-  padding: 1rem .55rem;
+  flex: 0 0 156px;
+  padding: 1rem .65rem;
   overflow-y: auto;
-  background: #f8f5f1;
-  border-right: 1px solid #ddd8d2;
+  background: rgba(8, 8, 10, 0.88);
+  border-right: 1px solid rgba(255, 255, 255, 0.065);
 }
 
 .task-sidebar-title {
   padding: .25rem .6rem .75rem;
-  color: #847b72;
-  font-size: .75rem;
-  font-weight: 700;
-  letter-spacing: .12em;
+  color: #74747d;
+  font-size: .8rem;
+  font-weight: 500;
+  letter-spacing: .1em;
 }
 
 .task-link {
   display: flex;
   flex-direction: column;
   gap: .2rem;
-  margin-bottom: .35rem;
-  padding: .7rem .75rem;
-  border-radius: 9px;
-  color: #47413b;
+  margin-bottom: .2rem;
+  padding: .58rem .65rem;
+  border-radius: 0;
+  color: #a7a7af;
   text-decoration: none;
   min-width: 0;
   flex: 1;
+  font-size: .8rem;
 }
 
-.task-link span,
 .task-link small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.task-link > span {
+  position: relative;
+  display: block;
+  padding-left: 0;
+  overflow: visible;
+  line-height: 1.35;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .task-link:hover,
 .task-link.active {
-  background: #fff;
-  box-shadow: 0 1px 4px rgba(48, 48, 48, .08);
+  background: transparent;
+  box-shadow: none;
 }
 
 .task-link.active {
-  color: #a64b08;
+  color: #f5f5f7;
+  font-weight: 600;
+}
+
+.task-link.active span {
+  display: block;
+  padding-left: .8rem;
+}
+
+.task-link.active span::before {
+  position: absolute;
+  top: .48em;
+  left: 0;
+  width: 5px;
+  height: 5px;
+  content: '';
+  background: #78a6ff;
+  border-radius: 50%;
+  box-shadow: 0 0 8px rgba(120, 166, 255, .55);
 }
 
 .task-link small {
-  color: #948b82;
+  color: #777780;
   font-size: .7rem;
 }
 
@@ -3645,11 +3883,18 @@ watch(
   width: 100%;
   margin-top: .6rem;
   padding: .65rem;
-  border: 1px dashed #c8bcae;
-  border-radius: 9px;
+  border: 0;
+  border-radius: 0;
   background: transparent;
-  color: #8d4b18;
+  color: #8d8d96;
+  font-size: .8rem;
+  text-align: left;
   cursor: pointer;
+}
+
+.new-task-btn:hover {
+  color: #dbe6ff;
+  background: transparent;
 }
 
 .task-row {
@@ -3665,13 +3910,13 @@ watch(
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: #9b9188;
+  color: #686871;
   cursor: pointer;
 }
 
 .task-delete-btn:hover {
-  background: #fee2e2;
-  color: #b91c1c;
+  background: transparent;
+  color: #ff8e8e;
 }
 
 .main-content {
@@ -3724,16 +3969,63 @@ watch(
 }
 
 .chat-section {
-  flex: 0 0 37%;
+  flex: 0 0 39%;
   display: flex;
   flex-direction: column;
-  background-color: rgb(254, 253, 251);
+  background:
+    radial-gradient(circle at 40% 10%, rgba(79, 105, 160, 0.09), transparent 31%),
+    #0c0c0e;
   margin: 0;
   padding: 0;
   overflow: hidden;
   position: relative;
-  border-right: 1px solid #e0e0e0;
+  border-right: 1px solid rgba(255, 255, 255, 0.065);
   height: 100%; /* 确保高度填满 */
+}
+
+.chat-panel-header {
+  height: 60px;
+  min-height: 60px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.65rem 0.9rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+  background: rgba(12, 12, 14, 0.76);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+.assistant-orb {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 34% 32%, #fff 0 7%, #a9c0ff 16%, #576fb3 42%, #171926 68%);
+  box-shadow: 0 0 22px rgba(106, 141, 235, 0.32);
+}
+
+.chat-panel-title {
+  min-width: 0;
+  display: grid;
+  gap: 0.08rem;
+}
+
+.chat-panel-title strong {
+  color: #eeeeF1;
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.chat-panel-title span {
+  overflow: hidden;
+  color: #7f7f88;
+  font-size: 0.66rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 简洁的滚动条样式 - 应用于所有可滚动区域 */
@@ -3744,20 +4036,20 @@ watch(
 
 .messages-container::-webkit-scrollbar-track,
 .preview-content::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: transparent;
   border-radius: 4px;
 }
 
 .messages-container::-webkit-scrollbar-thumb,
 .preview-content::-webkit-scrollbar-thumb {
-  background: #c1c1c1;
+  background: rgba(255, 255, 255, 0.14);
   border-radius: 4px;
   min-height: 30px;
 }
 
 .messages-container::-webkit-scrollbar-thumb:hover,
 .preview-content::-webkit-scrollbar-thumb:hover {
-  background: #a8a8a8;
+  background: rgba(255, 255, 255, 0.24);
 }
 
 /* 聊天区域容器 */
@@ -3775,14 +4067,15 @@ watch(
 .messages-container {
   flex: 1;
   overflow-y: auto;
-  padding: 1.5rem;
+  padding: 1.35rem 1.15rem;
   display: flex;
   flex-direction: column;
   gap: 1rem;
   width: 100%;
   max-width: 1200px;
   margin: 0 auto;
-  font-size: 14px; /* 聊天区域字体缩小，避免内容太拥挤 */
+  color: #d8d8dd;
+  font-size: 14px;
 }
 
 /* 滑动至底部按钮 */
@@ -3794,22 +4087,22 @@ watch(
   width: 44px;
   height: 44px;
   border-radius: 22px;
-  background: rgba(255, 255, 255, 0.75);
-  border: 1px solid rgba(224, 224, 224, 0.8);
+  background: rgba(35, 36, 41, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.09);
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #555;
+  color: #c9c9cf;
   transition: all 0.2s ease;
   z-index: 10;
   backdrop-filter: blur(4px);
 }
 
 .scroll-to-bottom-btn:hover {
-  background: rgba(255, 255, 255, 0.95);
-  color: #333;
+  background: rgba(52, 53, 59, 0.96);
+  color: #fff;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
   transform: translateX(-50%) translateY(-2px);
 }
@@ -3844,13 +4137,9 @@ watch(
 
 .floating-input-container {
   position: relative;
-  padding: 1rem;
-  background: rgb(254, 253, 251);
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='3.0' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
-  background-blend-mode: overlay;
-  background-repeat: repeat;
-  background-size: auto;
-  border-top: 1px solid transparent;
+  padding: 0.75rem 0.85rem 0.85rem;
+  background: linear-gradient(to top, #0c0c0e 72%, rgba(12, 12, 14, 0));
+  border-top: 1px solid rgba(255, 255, 255, 0.025);
   flex-shrink: 0;
 }
 
@@ -3868,16 +4157,18 @@ watch(
   flex: 1;
   display: flex;
   flex-direction: column;
-  background-color: #f5f4f2;
-  border: 1px solid #e0e0e0;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.09);
   transition: all 0.2s ease;
   overflow: hidden;
-  border-radius: 0;
+  border-radius: 15px;
+  box-shadow: 0 14px 35px rgba(0, 0, 0, 0.24);
 }
 
 .textarea-container:focus-within {
-  background-color: white;
-  border-color: #303030;
+  background: rgba(255, 255, 255, 0.065);
+  border-color: rgba(120, 166, 255, 0.48);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.3), 0 0 0 3px rgba(120, 166, 255, 0.08);
 }
 
 .textarea-container textarea {
@@ -3887,14 +4178,14 @@ watch(
   border: none;
   resize: none;
   font-size: 0.875rem;
-  font-family: 'GTPressuraMono-Light', sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   background-color: transparent;
   transition: all 0.2s ease;
   min-height: 4.0625rem;
   max-height: 150px;
   overflow-y: auto;
   line-height: 1.5;
-  color: #303030;
+  color: #f1f1f4;
 }
 
 .textarea-container textarea::-webkit-scrollbar {
@@ -3911,7 +4202,7 @@ watch(
 }
 
 .textarea-container textarea::placeholder {
-  color: #666;
+  color: #73737c;
 }
 
 /* 底部工具栏 */
@@ -3929,8 +4220,8 @@ watch(
   background: transparent;
   border: none;
   padding: 0.5rem;
-  border-radius: 0;
-  color: #303030;
+  border-radius: 9px;
+  color: #8f8f98;
   cursor: pointer;
   transition: all 0.15s ease;
   display: flex;
@@ -3939,8 +4230,8 @@ watch(
 }
 
 .icon-btn:hover:not(:disabled) {
-  background-color: transparent;
-  color: #f8bebe;
+  background: rgba(255, 255, 255, 0.07);
+  color: #f5f5f7;
 }
 
 .icon-btn:disabled {
@@ -3960,18 +4251,19 @@ watch(
 
 /* 发送按钮 - 模仿模板风格 */
 .send-btn {
-  color: #303030;
+  color: #0b0b0d;
   margin-left: auto;
-  background-color: transparent;
+  background: #e9e9ec;
   border: none;
-  padding: 0.75rem;
+  border-radius: 10px;
+  padding: 0.65rem;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .send-btn:hover:not(:disabled) {
-  background-color: transparent;
-  color: #f8bebe;
+  background: #fff;
+  color: #0b0b0d;
 }
 
 .send-btn:disabled {
@@ -4125,9 +4417,9 @@ watch(
   flex: 1;
   min-width: 0;
   max-width: none;
-  background-color: rgb(249, 245, 242);
+  background: #0d0e11;
   margin: 0;
-  padding: 1rem;
+  padding: 0;
   position: relative;
   overflow: visible;
   border-left: none;
@@ -4142,7 +4434,7 @@ watch(
   flex: 1;
   min-width: 0;
   min-height: 0;
-  overflow-y: auto;
+  overflow-y: hidden;
   overflow-x: hidden;
 }
 
@@ -4151,17 +4443,18 @@ watch(
   align-items: center;
   gap: 0.75rem;
   padding: 1rem;
-  color: var(--text-secondary);
+  color: #a9abb4;
   font-size: 0.9rem;
-  background-color: var(--secondary-color);
-  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
   margin: 0.5rem 0;
-  box-shadow: var(--shadow-sm);
+  box-shadow: none;
 }
 
 .loading-spinner {
   animation: spin 1s linear infinite;
-  color: var(--primary-color);
+  color: #78a6ff;
   transform-origin: center;
 }
 
@@ -4169,9 +4462,9 @@ watch(
   font-weight: 500;
   background: linear-gradient(
     90deg,
-    #9ca3af 0%,
-    #d1d5db 50%,
-    #9ca3af 100%
+    #8fa6d6 0%,
+    #eef3ff 50%,
+    #8fa6d6 100%
   );
   background-size: 200% 100%;
   background-clip: text;
@@ -4305,7 +4598,7 @@ watch(
 
 .dialog-close-btn:hover {
   background: #303030;
-  color: #f8bebe;
+  color: #78a6ff;
 }
 
 .dialog-body {
@@ -4365,7 +4658,7 @@ watch(
 
 .dialog-cancel-btn:hover {
   background: #303030;
-  color: #f8bebe;
+  color: #78a6ff;
 }
 
 .dialog-save-btn {
@@ -4383,7 +4676,7 @@ watch(
 }
 
 .dialog-save-btn:hover {
-  background: #f8bebe;
+  background: #5f8ff2;
   border-color: #303030;
 }
 
@@ -4391,7 +4684,7 @@ watch(
   padding: 0.5rem 1rem;
   border: 1px solid #303030;
   border-radius: 0;
-  background: #f8bebe;
+  background: #5f8ff2;
   color: #303030;
   font-family: 'GTPressuraMono-Light', sans-serif;
   font-size: 0.6875rem;
@@ -4404,7 +4697,7 @@ watch(
 
 .dialog-submit-btn:hover:not(:disabled) {
   background: #303030;
-  color: #f8bebe;
+  color: #78a6ff;
   box-shadow: none;
   transform: translate(2px, 2px);
 }
@@ -4502,7 +4795,7 @@ watch(
 
 .translate-dialog .confirm-btn {
   background: #303030;
-  color: #f8bebe;
+  color: #78a6ff;
   border: 1px solid #303030;
   padding: 0.5rem 1rem;
   font-size: 0.75rem;
@@ -4579,7 +4872,7 @@ watch(
 
 .jd-dialog .dialog-close-btn:hover {
   background: #303030;
-  color: #f8bebe;
+  color: #78a6ff;
 }
 
 .jd-input-section {
@@ -4648,7 +4941,7 @@ watch(
   line-height: 1.5;
   padding: 0.5rem;
   background: rgba(48, 48, 48, 0.04);
-  border-left: 2px solid #f8bebe;
+  border-left: 2px solid #78a6ff;
 }
 
 .remove-image-btn {
@@ -4667,7 +4960,7 @@ watch(
 }
 
 .remove-image-btn:hover {
-  background: #f8bebe;
+  background: rgba(95, 143, 242, 0.16);
 }
 
 .jd-dialog .dialog-actions {
@@ -4684,7 +4977,7 @@ watch(
   padding: 0.5rem 1rem;
   border: 1px solid #303030;
   border-radius: 0;
-  background: #f8bebe;
+  background: #5f8ff2;
   color: #303030;
   font-family: 'GTPressuraMono-Light', sans-serif;
   font-size: 0.6875rem;
@@ -4701,7 +4994,7 @@ watch(
 
 .parse-btn:hover:not(:disabled) {
   background: #303030;
-  color: #f8bebe;
+  color: #78a6ff;
   box-shadow: none;
   transform: translate(2px, 2px);
 }
@@ -4743,14 +5036,14 @@ watch(
 
 .cancel-btn:hover {
   background: #303030;
-  color: #f8bebe;
+  color: #78a6ff;
 }
 
 .save-btn {
   padding: 0.5rem 1rem;
   border: 1px solid #303030;
   border-radius: 0;
-  background: #f8bebe;
+  background: #5f8ff2;
   color: #303030;
   font-family: 'GTPressuraMono-Light', sans-serif;
   font-size: 0.6875rem;
@@ -4763,7 +5056,7 @@ watch(
 
 .save-btn:hover {
   background: #303030;
-  color: #f8bebe;
+  color: #78a6ff;
   box-shadow: none;
   transform: translate(2px, 2px);
 }
@@ -5099,7 +5392,7 @@ watch(
 
 .resume-dialog .dialog-close-btn:hover {
   background: #303030;
-  color: #f8bebe;
+  color: #78a6ff;
 }
 
 .resume-form-section {
@@ -5169,7 +5462,7 @@ watch(
 }
 
 .add-btn:hover {
-  background: #f8bebe;
+  background: rgba(95, 143, 242, 0.16);
   border-color: #303030;
 }
 
@@ -5188,7 +5481,7 @@ watch(
 }
 
 .add-nested-btn:hover {
-  background: #f8bebe;
+  background: rgba(95, 143, 242, 0.16);
   border-color: #303030;
 }
 
@@ -5205,7 +5498,7 @@ watch(
 }
 
 .remove-btn:hover {
-  background: #f8bebe;
+  background: rgba(255, 91, 91, 0.08);
   color: #303030;
   border-color: #303030;
 }
@@ -5484,7 +5777,7 @@ watch(
 }
 
 .tags-input .tag-remove:hover {
-  color: #f8bebe;
+  color: #78a6ff;
 }
 
 .tags-input .tag-input {
@@ -5787,6 +6080,1017 @@ watch(
   .messages-container {
     padding: 0.75rem;
     font-size: 13px;
+  }
+}
+
+/* Apple 风格暗色弹窗：保留所有原表单和保存逻辑 */
+:is(.fullscreen-dialog-overlay, .translate-dialog-overlay, .jd-dialog-overlay, .resume-dialog-overlay) {
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+:is(.fullscreen-dialog, .translate-dialog, .jd-dialog, .resume-dialog) {
+  color: #ededf1;
+  background: #15161a;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 18px;
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.55);
+}
+
+:is(.fullscreen-dialog, .translate-dialog, .jd-dialog, .resume-dialog) .dialog-header {
+  color: #f5f5f7;
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom-color: rgba(255, 255, 255, 0.075);
+}
+
+:is(.fullscreen-dialog, .translate-dialog, .jd-dialog, .resume-dialog) .dialog-header h3 {
+  color: #f5f5f7;
+}
+
+:is(.fullscreen-dialog, .translate-dialog, .jd-dialog, .resume-dialog) .dialog-close-btn {
+  color: #9b9ba4;
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 9px;
+}
+
+:is(.fullscreen-dialog, .translate-dialog, .jd-dialog, .resume-dialog) .dialog-close-btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+:is(.jd-dialog, .resume-dialog) label,
+:is(.jd-dialog, .resume-dialog) .section-title,
+:is(.jd-dialog, .resume-dialog) .form-header {
+  color: #cfcfd5;
+}
+
+:is(.jd-dialog, .resume-dialog) :is(input, textarea, select),
+.fullscreen-dialog .dialog-textarea {
+  color: #ededf1;
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}
+
+:is(.jd-dialog, .resume-dialog) :is(input, textarea, select):focus,
+.fullscreen-dialog .dialog-textarea:focus {
+  color: #f5f5f7;
+  background: #25262c !important;
+  border-color: rgba(120, 166, 255, 0.55);
+  box-shadow: 0 0 0 3px rgba(120, 166, 255, 0.09);
+}
+
+:is(.jd-dialog, .resume-dialog) :is(input, textarea)::placeholder,
+.fullscreen-dialog .dialog-textarea::placeholder {
+  color: #6f6f78;
+}
+
+:is(.jd-dialog, .resume-dialog) .dialog-actions,
+:is(.fullscreen-dialog, .translate-dialog) .dialog-footer {
+  background: rgba(255, 255, 255, 0.015);
+  border-top-color: rgba(255, 255, 255, 0.075);
+}
+
+.translate-dialog .dialog-body p,
+.translate-dialog .cancel-btn,
+.translate-dialog .confirm-btn {
+  color: #f5f5f7;
+}
+
+.translate-dialog .cancel-btn {
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.translate-dialog .confirm-btn {
+  background: #5f8ff2;
+  border-color: #78a6ff;
+}
+
+:is(.dialog-save-btn, .dialog-submit-btn) {
+  color: #fff;
+  background: #5f8ff2;
+  border-color: #78a6ff;
+  border-radius: 9px;
+  box-shadow: none;
+}
+
+:is(.dialog-save-btn, .dialog-submit-btn):hover:not(:disabled) {
+  color: #fff;
+  background: #78a6ff;
+  border-color: #8eb5ff;
+  transform: translateY(-1px);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.25);
+}
+
+:is(.jd-dialog, .resume-dialog) :deep(.el-input__wrapper),
+:is(.jd-dialog, .resume-dialog) :deep(.el-select__wrapper),
+:is(.jd-dialog, .resume-dialog) :deep(.el-date-editor) {
+  color: #ededf1;
+  background: rgba(255, 255, 255, 0.05) !important;
+  border-radius: 10px;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.1) inset !important;
+}
+
+.resume-dialog .element-select {
+  --el-component-size: 46px;
+}
+
+.resume-dialog .field-group input.element-input,
+.resume-dialog .field-group > input:not([type='checkbox']):not([type='file']) {
+  height: 46px;
+  min-height: 46px;
+  padding-block: 0;
+  box-sizing: border-box;
+}
+
+.resume-dialog .element-select :deep(.el-select__wrapper),
+.resume-dialog .element-select :deep(.el-input__wrapper),
+.resume-dialog .element-date-picker :deep(.el-input__wrapper),
+.resume-dialog :deep(.element-date-picker.el-input__wrapper) {
+  height: 46px !important;
+  min-height: 46px !important;
+  padding: 0 0.75rem;
+  box-sizing: border-box !important;
+}
+
+.resume-dialog .present-date-display {
+  height: 46px;
+  min-height: 46px;
+  box-sizing: border-box;
+  color: #ededf1;
+  background: rgba(255, 255, 255, 0.045);
+  border-color: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}
+
+.resume-dialog .present-start-date {
+  color: #ededf1;
+}
+
+.resume-dialog .present-separator {
+  color: #777780;
+}
+
+.resume-dialog .present-end-text {
+  color: #78a6ff;
+}
+
+.resume-dialog .present-label {
+  color: #d5d5da;
+}
+
+.resume-dialog .present-label input[type='checkbox'] {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  margin: 0;
+  padding: 0;
+  appearance: none;
+  background: #25262c;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 4px;
+  box-shadow: none;
+}
+
+.resume-dialog .present-label input[type='checkbox']:checked {
+  background: #5f8ff2;
+  border-color: #78a6ff;
+}
+
+.resume-dialog .present-label input[type='checkbox']:checked::after {
+  position: absolute;
+  top: 2px;
+  left: 5px;
+  width: 5px;
+  height: 9px;
+  content: '';
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.resume-dialog :deep(.element-date-picker) {
+  gap: 8px;
+}
+
+.resume-dialog :deep(.element-date-picker .el-range-input) {
+  height: auto;
+  min-height: 0;
+  padding: 0 4px;
+  color: #ededf1;
+  background: transparent !important;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.resume-dialog :deep(.element-date-picker .el-range-input:focus) {
+  background: transparent !important;
+  border: 0;
+  box-shadow: none;
+}
+
+.resume-dialog :deep(.element-date-picker .el-range__icon) {
+  width: 18px;
+  margin: 0 2px 0 0;
+  flex: 0 0 18px;
+}
+
+.resume-dialog :deep(.element-date-picker .el-range-separator) {
+  width: 22px;
+  flex: 0 0 22px;
+  color: #777780;
+}
+
+.resume-dialog :deep(.element-date-picker .el-range__close-icon) {
+  width: 18px;
+  margin-left: 2px;
+  flex: 0 0 18px;
+}
+
+.resume-dialog .element-select :deep(.el-select__placeholder),
+.resume-dialog .element-select :deep(.el-select__selected-item),
+.resume-dialog .element-select :deep(.el-input__inner) {
+  font-family: 'GTPressuraMono-Light', sans-serif;
+  font-size: 0.8rem !important;
+  font-weight: 400;
+  line-height: 1.2;
+}
+
+:is(.jd-dialog, .resume-dialog) :deep(.el-input__wrapper:hover),
+:is(.jd-dialog, .resume-dialog) :deep(.el-select__wrapper:hover) {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18) inset !important;
+}
+
+:is(.jd-dialog, .resume-dialog) :deep(.is-focus .el-input__wrapper),
+:is(.jd-dialog, .resume-dialog) :deep(.el-input__wrapper.is-focus),
+:is(.jd-dialog, .resume-dialog) :deep(.el-select__wrapper.is-focused) {
+  color: #f5f5f7 !important;
+  background: #25262c !important;
+  box-shadow: 0 0 0 1px rgba(120, 166, 255, 0.6) inset,
+    0 0 0 3px rgba(120, 166, 255, 0.09) !important;
+}
+
+:is(.jd-dialog, .resume-dialog) :deep(.el-input__inner),
+:is(.jd-dialog, .resume-dialog) :deep(.el-select__selected-item),
+:is(.jd-dialog, .resume-dialog) :deep(.el-select__placeholder) {
+  color: #ededf1 !important;
+}
+
+:is(.jd-dialog, .resume-dialog) :deep(.el-select__caret),
+:is(.jd-dialog, .resume-dialog) :deep(.el-input__icon) {
+  color: #8d8d96;
+}
+
+:global(.resume-dark-select-popper.el-popper) {
+  background: #25262c !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.42) !important;
+}
+
+:global(.resume-dark-select-popper .el-popper__arrow::before) {
+  background: #25262c !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+}
+
+:global(.resume-dark-select-popper .el-select-dropdown__item) {
+  color: #d8d8dd !important;
+  background: transparent !important;
+}
+
+:global(.resume-dark-select-popper .el-select-dropdown__item:hover),
+:global(.resume-dark-select-popper .el-select-dropdown__item.is-hovering) {
+  color: #fff !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+
+:global(.resume-dark-select-popper .el-select-dropdown__item.is-selected) {
+  color: #a9c5ff !important;
+  background: rgba(95, 143, 242, 0.12) !important;
+}
+
+:global(.resume-dark-date-popper.el-picker__popper) {
+  --el-bg-color-overlay: #25262c;
+  --el-border-color-light: rgba(255, 255, 255, 0.1);
+  --el-border-color-lighter: rgba(255, 255, 255, 0.075);
+  --el-fill-color-light: rgba(95, 143, 242, 0.12);
+  --el-fill-color: rgba(255, 255, 255, 0.06);
+  --el-text-color-primary: #ededf1;
+  --el-text-color-regular: #c8cad2;
+  --el-text-color-secondary: #8d8f98;
+  color: #ededf1;
+  background: #25262c !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.48) !important;
+}
+
+:global(.resume-dark-date-popper .el-picker-panel),
+:global(.resume-dark-date-popper .el-picker-panel__body-wrapper),
+:global(.resume-dark-date-popper .el-picker-panel__body),
+:global(.resume-dark-date-popper .el-date-range-picker__content) {
+  color: #d8d9de;
+  background: #25262c !important;
+}
+
+:global(.resume-dark-date-popper .el-date-range-picker__content.is-left) {
+  border-right-color: rgba(255, 255, 255, 0.09);
+}
+
+:global(.resume-dark-date-popper .el-date-range-picker__header),
+:global(.resume-dark-date-popper .el-picker-panel__icon-btn) {
+  color: #f1f1f4;
+}
+
+:global(.resume-dark-date-popper .el-month-table td) {
+  color: #c9cad0;
+}
+
+:global(.resume-dark-date-popper .el-month-table td .el-date-table-cell) {
+  background: transparent;
+}
+
+:global(.resume-dark-date-popper .el-month-table td:hover .el-date-table-cell__text) {
+  color: #fff;
+  background: rgba(120, 166, 255, 0.16);
+}
+
+:global(.resume-dark-date-popper .el-month-table td.in-range .el-date-table-cell) {
+  background: rgba(95, 143, 242, 0.14);
+}
+
+:global(.resume-dark-date-popper .el-month-table td.start-date .el-date-table-cell__text),
+:global(.resume-dark-date-popper .el-month-table td.end-date .el-date-table-cell__text) {
+  color: #fff;
+  background: #5f8ff2;
+}
+
+:global(.resume-dark-date-popper .el-month-table td.disabled .el-date-table-cell) {
+  color: #5f616a;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+:global(.resume-dark-date-popper .el-popper__arrow::before) {
+  background: #25262c !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+}
+
+:is(.jd-dialog, .resume-dialog) .save-btn {
+  color: #fff;
+  background: #5f8ff2;
+  border-color: #78a6ff;
+  border-radius: 9px;
+  box-shadow: none;
+}
+
+:is(.jd-dialog, .resume-dialog) .save-btn:hover:not(:disabled) {
+  color: #fff;
+  background: #78a6ff;
+  border-color: #8eb5ff;
+  transform: translateY(-1px);
+}
+
+:is(.jd-dialog, .resume-dialog) .cancel-btn {
+  color: #d5d5da;
+  background: rgba(255, 255, 255, 0.055);
+  border-color: rgba(255, 255, 255, 0.1);
+  border-radius: 9px;
+}
+
+:is(.jd-dialog, .resume-dialog) .cancel-btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.resume-dialog .photo-upload-area,
+.resume-dialog .array-item,
+.resume-dialog .tags-input {
+  color: #d5d5da;
+  background: rgba(255, 255, 255, 0.035);
+  border-color: rgba(255, 255, 255, 0.09);
+}
+
+.resume-dialog .array-item-header {
+  color: #ededf1;
+}
+
+.resume-dialog .remove-btn {
+  color: #9b9da6;
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+}
+
+.resume-dialog .remove-btn:hover,
+.resume-dialog .remove-btn:focus-visible {
+  color: #ff9b9b;
+  background: rgba(255, 91, 91, 0.08);
+  border-color: rgba(255, 123, 123, 0.35);
+  outline: none;
+}
+
+.resume-dialog .tags-input {
+  min-height: 46px;
+  padding: 0.5rem;
+  box-sizing: border-box;
+}
+
+.resume-dialog .tags-input .tag {
+  color: #dbe6ff;
+  background: rgba(95, 143, 242, 0.13);
+  border-radius: 6px;
+}
+
+.resume-dialog .tags-input .tag-remove {
+  color: #9fb7e9;
+}
+
+.resume-dialog .tags-input .tag-remove:hover {
+  color: #fff;
+}
+
+.resume-dialog .tags-input .tag-input {
+  height: 28px;
+  min-height: 28px;
+  padding: 0.25rem;
+  color: #ededf1;
+  background: transparent !important;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.resume-dialog .tags-input .tag-input:focus {
+  background: transparent !important;
+  border: 0;
+  box-shadow: none;
+}
+
+.resume-dialog .add-btn,
+.resume-dialog .add-nested-btn {
+  color: #a9abb4;
+  background: rgba(255, 255, 255, 0.025);
+  border-color: rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  outline: none;
+}
+
+.resume-dialog .add-btn:hover,
+.resume-dialog .add-btn:focus-visible,
+.resume-dialog .add-nested-btn:hover,
+.resume-dialog .add-nested-btn:focus-visible {
+  color: #eef3ff;
+  background: rgba(95, 143, 242, 0.1);
+  border-color: rgba(120, 166, 255, 0.48);
+  box-shadow: 0 0 0 3px rgba(120, 166, 255, 0.08);
+}
+
+.resume-dialog .add-btn:active,
+.resume-dialog .add-nested-btn:active {
+  color: #fff;
+  background: rgba(95, 143, 242, 0.16);
+  border-color: rgba(120, 166, 255, 0.62);
+}
+
+.resume-dialog .photo-upload-area:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(120, 166, 255, 0.45);
+}
+
+.resume-dialog .array-item-header span,
+.resume-dialog .array-item-nested > label {
+  color: #ededf1;
+}
+
+.jd-input-section .input-group label {
+  color: #b5b5bd;
+}
+
+.jd-input-section .input-group textarea {
+  color: #ededf1;
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}
+
+.jd-input-section .input-group textarea::placeholder {
+  color: #777780;
+}
+
+.jd-input-section .input-group textarea:focus {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.065);
+  border-color: rgba(120, 166, 255, 0.55);
+  box-shadow: 0 0 0 3px rgba(120, 166, 255, 0.09);
+}
+
+.jd-dialog .parse-btn {
+  color: #fff;
+  background: #5f8ff2;
+  border-color: #78a6ff;
+  border-radius: 9px;
+  box-shadow: none;
+}
+
+.jd-dialog .parse-btn:hover:not(:disabled) {
+  color: #fff;
+  background: #78a6ff;
+  border-color: #8eb5ff;
+  box-shadow: none;
+  transform: translateY(-1px);
+}
+
+.jd-dialog .parse-btn:disabled {
+  color: #777780;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.08);
+  opacity: 1;
+}
+
+@media (max-width: 1199px) {
+  .workspace-shell,
+  .mobile-chat-view,
+  .mobile-resume-view {
+    background: #0c0c0e;
+  }
+
+  .task-sidebar {
+    background: #0d0e11;
+    border-bottom-color: rgba(255, 255, 255, 0.065);
+  }
+
+  .floating-input-container.mobile-input {
+    background: #0c0c0e;
+    border-top-color: rgba(255, 255, 255, 0.065);
+  }
+
+  .mobile-input .textarea-container {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.09);
+  }
+}
+
+/* ResumeBranch workspace finish */
+.app-header {
+  background: #1b1c20;
+  border-bottom-color: rgba(255, 255, 255, 0.075);
+}
+
+.header-brand-link {
+  display: inline-flex;
+  text-decoration: none;
+}
+
+.app-header h1 {
+  margin: 0;
+}
+
+.workspace-shell {
+  background: #1b1c20;
+}
+
+.task-sidebar {
+  background: #202126;
+  border-right-color: rgba(255, 255, 255, 0.075);
+}
+
+.main-content,
+.chat-section,
+.chat-container,
+.floating-input-container {
+  background: #222329;
+}
+
+.chat-panel-header {
+  background: #1e1f24;
+  border-bottom-color: rgba(255, 255, 255, 0.075);
+}
+
+.textarea-container {
+  background: #292a30;
+  border-color: rgba(255, 255, 255, 0.095);
+}
+
+.textarea-container:focus-within {
+  background: #2c2d34;
+}
+
+.workspace-modal-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 2200;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(8, 9, 12, 0.68);
+  backdrop-filter: blur(18px);
+}
+
+.workspace-modal {
+  width: min(520px, 100%);
+  padding: 26px;
+  color: #f4f4f5;
+  background: #23242a;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 20px;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.42);
+}
+
+.workspace-modal.compact {
+  width: min(440px, 100%);
+}
+
+.workspace-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 22px;
+}
+
+.workspace-modal-header h2 {
+  margin: 5px 0 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.workspace-modal-kicker {
+  color: #92b4ff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+}
+
+.workspace-modal-kicker.danger {
+  color: #ff9d9d;
+}
+
+.modal-close-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: #a6a6ae;
+  font-size: 23px;
+  line-height: 28px;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.modal-close-btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.modal-close-btn:focus-visible {
+  outline: 2px solid #89aefc;
+  outline-offset: 2px;
+}
+
+.modal-close-btn.light {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: #555861;
+  border-color: #d8d9dd;
+}
+
+.workspace-field {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 20px;
+  color: #b8b8c0;
+  font-size: 13px;
+}
+
+.workspace-field input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  color: #f5f5f7;
+  font: inherit;
+  background: #2b2c32;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 11px;
+  outline: none;
+}
+
+.workspace-field input:focus {
+  border-color: #7fa8ff;
+  box-shadow: 0 0 0 3px rgba(90, 137, 238, 0.14);
+}
+
+.copy-mode-fieldset {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.copy-mode-fieldset legend {
+  margin-bottom: 9px;
+  color: #b8b8c0;
+  font-size: 13px;
+}
+
+.copy-mode-card {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  color: #ececef;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 13px;
+  cursor: pointer;
+}
+
+.copy-mode-card:hover {
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.copy-mode-card.active {
+  background: rgba(91, 139, 242, 0.1);
+  border-color: rgba(125, 167, 255, 0.65);
+}
+
+.copy-mode-card input {
+  accent-color: #86aaff;
+}
+
+.copy-mode-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  color: #dce7ff;
+  background: rgba(124, 165, 255, 0.13);
+  border-radius: 9px;
+}
+
+.copy-mode-card strong,
+.copy-mode-card small {
+  display: block;
+}
+
+.copy-mode-card strong {
+  margin-bottom: 3px;
+  font-size: 14px;
+}
+
+.copy-mode-card small {
+  color: #9b9ba4;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.workspace-modal-copy {
+  margin: 0;
+  color: #b9b9c1;
+  font-size: 14px;
+  line-height: 1.75;
+}
+
+.workspace-modal-error {
+  margin: 14px 0 0;
+  color: #ffaaaa;
+  font-size: 13px;
+}
+
+.workspace-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.workspace-btn {
+  min-width: 92px;
+  padding: 10px 15px;
+  color: #ececf0;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.workspace-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.workspace-btn.primary {
+  color: #fff;
+  background: #5f8ff2;
+  border-color: #78a6ff;
+}
+
+.workspace-btn.danger {
+  color: #fff;
+  background: #a64649;
+  border-color: #b9565a;
+}
+
+.workspace-btn:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.start-modal-footer {
+  margin-top: 18px;
+}
+
+.modal-mask {
+  background: rgba(8, 9, 12, 0.68);
+  backdrop-filter: blur(18px);
+}
+
+.modal-container {
+  color: #f2f2f4;
+  background: #23242a;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 20px;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.42);
+}
+
+.modal-container .modal-header {
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+.modal-container .modal-header h2,
+.modal-container .option-label,
+.modal-container .identity-title,
+.modal-container .upload-title,
+.modal-container .pdf-filename {
+  color: #f1f1f3;
+}
+
+.modal-container .modal-desc,
+.modal-container .option-sublabel,
+.modal-container .identity-desc,
+.modal-container .upload-hint,
+.modal-container .upload-formats,
+.modal-container .pdf-hint {
+  color: #9c9ca5;
+}
+
+.modal-container .header-badge,
+.modal-container .optionGraphic,
+.modal-container .identity-icon,
+.modal-container .upload-graphic,
+.modal-container .pdf-icon-wrapper {
+  color: #d9e5ff;
+  background: rgba(124, 165, 255, 0.12);
+  border-color: rgba(124, 165, 255, 0.22);
+}
+
+.modal-container .option-item,
+.modal-container .identity-card,
+.modal-container .upload-box,
+.modal-container .preview-box {
+  color: #ededf0;
+  background: rgba(255, 255, 255, 0.028);
+  border-color: rgba(255, 255, 255, 0.09);
+}
+
+.modal-container .option-item:hover,
+.modal-container .identity-card:hover,
+.modal-container .upload-box:hover {
+  background: rgba(255, 255, 255, 0.055);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.modal-container .option-item.primary,
+.modal-container .identity-card.active {
+  background: rgba(96, 139, 232, 0.11);
+  border-color: rgba(126, 167, 255, 0.55);
+}
+
+.modal-container .identity-card.active .identity-icon,
+.modal-container .identity-card.active .identity-icon.pink {
+  color: #202126;
+  background: #f5f5f7;
+  border-color: #f5f5f7;
+}
+
+.modal-container .option-item.primary .option-label,
+.modal-container .option-item.primary .option-sublabel {
+  color: inherit;
+}
+
+.modal-container .option-arrow,
+.modal-container .modal-back {
+  color: #a6a6af;
+}
+
+.modal-container .modal-back {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.modal-container .modal-footer {
+  border-top-color: rgba(255, 255, 255, 0.08);
+}
+
+.modal-container .btn-primary {
+  color: #fff;
+  background: #5f8ff2;
+  border-color: #78a6ff;
+  box-shadow: none;
+}
+
+.modal-container .btn-primary:hover:not(:disabled) {
+  color: #fff;
+  background: #78a6ff;
+}
+
+.modal-container .btn-secondary {
+  color: #d0d0d5;
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.modal-container .custom-identity-input textarea {
+  color: #eeeeF1;
+  background: #2b2c32;
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.modal-container .custom-identity-input textarea::placeholder {
+  color: #777780;
+}
+
+.app-toast {
+  position: fixed;
+  top: 84px;
+  left: 50%;
+  z-index: 3000;
+  max-width: min(460px, calc(100vw - 32px));
+  padding: 11px 16px;
+  color: #f4f4f5;
+  font-size: 13px;
+  background: #292a30;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 11px;
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.3);
+  transform: translateX(-50%);
+}
+
+.app-toast.is-error {
+  border-color: rgba(255, 139, 139, 0.35);
+}
+
+.toast-enter-active,
+.toast-leave-active {
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.toast-enter-from,
+.toast-leave-to {
+  opacity: 0;
+  transform: translate(-50%, -8px);
+}
+
+@media (max-width: 1199px) {
+  .workspace-shell,
+  .mobile-chat-view,
+  .mobile-resume-view {
+    background: #222329;
+  }
+
+  .task-sidebar {
+    background: #202126;
+  }
+
+  .floating-input-container.mobile-input {
+    background: #222329;
+  }
+}
+
+@media (max-width: 640px) {
+  .workspace-modal {
+    padding: 20px;
+    border-radius: 16px;
+  }
+
+  .copy-mode-card {
+    grid-template-columns: auto 1fr;
+  }
+
+  .copy-mode-card input {
+    grid-row: 1;
+  }
+
+  .copy-mode-icon {
+    display: none;
   }
 }
 </style>

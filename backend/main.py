@@ -19,6 +19,8 @@ import os
 import sys
 import uuid
 from datetime import datetime
+from pathlib import Path
+from dotenv import set_key
 
 
 def _configure_console_encoding():
@@ -43,6 +45,7 @@ from sqlalchemy.orm import Session
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
 # 导入 resume_agent 中的 graph 和 conversation_llm
+from . import resume_agent
 from .resume_agent import LLM_ENABLED, conversation_llm, current_user_id, graph
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate
@@ -181,6 +184,15 @@ class CreateProjectRequest(BaseModel):
 class CreateTaskRequest(BaseModel):
     """创建岗位任务请求"""
     title: str = "新岗位版本"
+    copy_base_resume: bool = True
+
+
+class LLMSettingsRequest(BaseModel):
+    """本地 LLM 设置。api_key 为空时保留现有密钥。"""
+    provider: str = "moonshot"
+    model: str
+    base_url: str
+    api_key: str | None = None
 
 
 def serialize_task(task):
@@ -321,12 +333,12 @@ async def compress_context_with_llm(messages, max_summary_length=1000):
 # FastAPI 应用
 # =============================================================================
 
-app = FastAPI(title="Resume Assistant API", version="2.0.0")
+app = FastAPI(title="ResumeBranch API", version="2.0.0")
 
 
 def require_llm_configured():
     """Return a clear local-mode error instead of attempting an unauthenticated call."""
-    if not LLM_ENABLED:
+    if not resume_agent.LLM_ENABLED:
         raise HTTPException(
             status_code=503,
             detail="LLM_API_KEY 尚未配置；基础简历和数据库功能可继续使用。"
@@ -357,6 +369,99 @@ async def get_app_config():
         "authentication_required": not is_local_mode(),
         "account_management_enabled": not is_local_mode(),
         "local_user_email": LOCAL_USER_EMAIL if is_local_mode() else None,
+    }
+
+
+def require_local_settings():
+    """Keep machine-local secrets out of hosted or multi-user deployments."""
+    if not is_local_mode():
+        raise HTTPException(status_code=404, detail="本地设置仅在本地模式可用")
+
+
+def serialize_llm_settings():
+    api_key = os.getenv("LLM_API_KEY", "").strip()
+    return {
+        "provider": os.getenv("LLM_PROVIDER", "moonshot").strip() or "moonshot",
+        "model": os.getenv("LLM_MODEL", "").strip(),
+        "base_url": os.getenv("BASE_URL", "").strip(),
+        "configured": bool(api_key),
+        "api_key_hint": f"••••{api_key[-4:]}" if api_key else "",
+    }
+
+
+@app.get("/settings/llm", dependencies=[Depends(require_local_settings)])
+async def get_llm_settings(current_user=Depends(get_current_user)):
+    """Return local LLM settings without exposing the stored API key."""
+    return serialize_llm_settings()
+
+
+@app.post("/settings/llm/test", dependencies=[Depends(require_local_settings)])
+async def test_llm_settings(
+    request: LLMSettingsRequest,
+    current_user=Depends(get_current_user),
+):
+    model = request.model.strip()
+    base_url = request.base_url.strip()
+    api_key = (request.api_key or os.getenv("LLM_API_KEY", "")).strip()
+    if not model or not base_url or not api_key:
+        raise HTTPException(status_code=400, detail="请完整填写模型、Base URL 和 API Key")
+    if not base_url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="Base URL 必须以 http:// 或 https:// 开头")
+
+    try:
+        test_llm = resume_agent.create_llm_for_config(
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            temperature=0.0,
+        )
+        await asyncio.wait_for(
+            test_llm.ainvoke([HumanMessage(content="Reply with OK only.")]),
+            timeout=35,
+        )
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="连接超时，请检查接口地址或网络") from exc
+    except Exception as exc:
+        print(f"[Settings] LLM connection test failed: {exc}")
+        raise HTTPException(status_code=400, detail="连接失败，请检查模型、接口地址和密钥") from exc
+    return {"success": True, "model": model}
+
+
+@app.put("/settings/llm", dependencies=[Depends(require_local_settings)])
+async def update_llm_settings(
+    request: LLMSettingsRequest,
+    current_user=Depends(get_current_user),
+):
+    global LLM_ENABLED, conversation_llm
+
+    provider = request.provider.strip() or "custom"
+    model = request.model.strip()
+    base_url = request.base_url.strip()
+    if not model or not base_url:
+        raise HTTPException(status_code=400, detail="模型和 Base URL 不能为空")
+    if not base_url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="Base URL 必须以 http:// 或 https:// 开头")
+
+    dotenv_path = Path(__file__).resolve().parents[1] / ".env"
+    updates = {
+        "LLM_PROVIDER": provider,
+        "LLM_MODEL": model,
+        "BASE_URL": base_url,
+    }
+    if request.api_key is not None and request.api_key.strip():
+        updates["LLM_API_KEY"] = request.api_key.strip()
+
+    for key, value in updates.items():
+        os.environ[key] = value
+        set_key(str(dotenv_path), key, value)
+
+    runtime = resume_agent.reload_llm_config()
+    # Keep legacy references in this module in sync for context compression.
+    LLM_ENABLED = resume_agent.LLM_ENABLED
+    conversation_llm = resume_agent.conversation_llm
+    return {
+        **serialize_llm_settings(),
+        "configured": runtime["configured"],
     }
 
 
@@ -532,7 +637,13 @@ async def create_task(
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user),
 ):
-    task = create_resume_task(db, current_user.id, project_id, request.title)
+    task = create_resume_task(
+        db,
+        current_user.id,
+        project_id,
+        request.title,
+        copy_base_resume=request.copy_base_resume,
+    )
     if not task:
         raise HTTPException(status_code=404, detail="项目不存在")
     return serialize_task(task)
