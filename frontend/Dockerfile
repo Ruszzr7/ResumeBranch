@@ -22,6 +22,7 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 
 # 清理默认配置
 RUN rm -f /etc/nginx/conf.d/default.conf
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 # 暴露端口
 EXPOSE 80

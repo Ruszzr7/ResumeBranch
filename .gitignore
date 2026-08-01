@@ -10,6 +10,7 @@
 # Database files
 data/*.db
 data/deepagents.db
+data/llm_profiles.json
 
 # Local resume/JD data
 /resume*.json

@@ -7,43 +7,8 @@ import os
 import re
 from weasyprint import HTML
 
-
-# 语言字典
-LABELS = {
-    'zh': {
-        'education': '教育经历',
-        'workExperience': '工作经历',
-        'projectExperience': '项目经历',
-        'others': '其他',
-        'selfEvaluation': '自我评价',
-        'targetPosition': '目标岗位',
-        'skills': '技能',
-        'certificates': '证书',
-        'language': '语言',
-        'thesis': '论文',
-        'nameNotSet': '姓名未填写',
-        'schoolNotSet': '学校未填写',
-        'companyNotSet': '公司未填写',
-        'projectNotSet': '项目未填写',
-    },
-    'en': {
-        'education': 'Education',
-        'workExperience': 'Work Experience',
-        'projectExperience': 'Project Experience',
-        'others': 'Others',
-        'selfEvaluation': 'Self Evaluation',
-        'targetPosition': 'Target Position',
-        'skills': 'Skills',
-        'certificates': 'Certificates',
-        'language': 'Language',
-        'thesis': 'Thesis',
-        'nameNotSet': 'Name Not Set',
-        'schoolNotSet': 'School Not Set',
-        'companyNotSet': 'Company Not Set',
-        'projectNotSet': 'Project Not Set',
-    }
-}
-
+from .resume_data import normalize_resume_data
+from .resume_labels import LABELS
 
 def format_markdown(text: str) -> str:
     """格式化Markdown语法为HTML"""
@@ -66,6 +31,8 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         photo: 证件照base64编码（可选，如果为None则从resume_data中提取）
         lang: 语言，'zh' 或 'en'
     """
+    resume_data = normalize_resume_data(resume_data)
+
     # 获取语言标签
     labels = LABELS.get(lang, LABELS['zh'])
 
@@ -153,6 +120,22 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
                     date_str += f" - {date_range[1]}"
             html_parts.append(f'<div class="graduation-date">{date_str}</div>')
             html_parts.append('</div>')
+
+            academic_metrics = []
+            if edu.get("gpa"):
+                gpa_value = str(edu["gpa"])
+                if edu.get("gpa_scale"):
+                    gpa_value += f'/{edu["gpa_scale"]}'
+                academic_metrics.append(f'{labels["gpa"]}：{gpa_value}')
+            if edu.get("ranking"):
+                academic_metrics.append(f'{labels["ranking"]}：{edu["ranking"]}')
+            if edu.get("average_score"):
+                academic_metrics.append(f'{labels["averageScore"]}：{edu["average_score"]}')
+            if academic_metrics:
+                html_parts.append('<div class="academic-metrics">')
+                for metric in academic_metrics:
+                    html_parts.append(f'<span>{format_markdown(metric)}</span>')
+                html_parts.append('</div>')
 
             # 论文
             if edu.get("theses") and len(edu["theses"]) > 0:
@@ -455,6 +438,16 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     }}
 
     .degree-major {{
+        font-size: 0.8em;
+        font-weight: 500;
+        color: #6c757d;
+    }}
+
+    .academic-metrics {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.25em 1em;
+        margin-top: 0.125em;
         font-size: 0.8em;
         font-weight: 500;
         color: #6c757d;

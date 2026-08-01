@@ -24,9 +24,9 @@ langchain-openai>=1.1.0
 langchain-core>=1.1.0
 langchain-tavily>=0.2.0
 
-# PDF 生成与解析
+# PDF 与 Word 导出
 weasyprint>=60.0
-PyMuPDF>=1.24,<2
+python-docx>=1.2.0,<2
 
 # HTTP 客户端
 httpx>=0.25.0

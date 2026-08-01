@@ -43,6 +43,20 @@ const props = defineProps({
 // 获取当前语言的标签
 const t = computed(() => labels[props.lang] || labels.zh)
 
+function academicMetrics(item) {
+  const metrics = []
+  if (item?.gpa) {
+    metrics.push(`${t.value.gpa}：${item.gpa}${item.gpa_scale ? `/${item.gpa_scale}` : ''}`)
+  }
+  if (item?.ranking) {
+    metrics.push(`${t.value.ranking}：${item.ranking}`)
+  }
+  if (item?.average_score) {
+    metrics.push(`${t.value.averageScore}：${item.average_score}`)
+  }
+  return metrics
+}
+
 const emit = defineEmits(['open-jd-dialog', 'open-resume-edit', 'toggle-lang'])
 
 // 检测是否为移动端视图
@@ -538,11 +552,15 @@ const formatText = (text) => {
 const showSuccessDialog = ref(false)
 const exportError = ref('')
 const isExportingPDF = ref(false)
+const isExportingDOCX = ref(false)
+const lastExportFormat = ref('PDF')
 
-const exportPDF = async () => {
+const exportDocument = async (format) => {
   if (!props.data) return
 
-  isExportingPDF.value = true
+  const isPDF = format === 'pdf'
+  if (isPDF) isExportingPDF.value = true
+  else isExportingDOCX.value = true
   try {
     // 构建样式参数
     const style = {
@@ -556,7 +574,7 @@ const exportPDF = async () => {
     }
 
     // 调用后端API
-    const response = await fetch('/export_pdf', {
+    const response = await fetch(isPDF ? '/export_pdf' : '/export_docx', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -571,32 +589,38 @@ const exportPDF = async () => {
     })
 
     if (!response.ok) {
-      throw new Error('PDF生成失败')
+      const errorData = await response.json().catch(() => null)
+      throw new Error(errorData?.detail || errorData || `${isPDF ? 'PDF' : 'Word'}生成失败`)
     }
 
     // 获取PDF二进制数据
-    const pdfBlob = await response.blob()
+    const documentBlob = await response.blob()
 
     // 创建下载链接
-    const url = window.URL.createObjectURL(pdfBlob)
+    const url = window.URL.createObjectURL(documentBlob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `resume_${props.data.basics?.name || 'export'}.pdf`
+    a.download = `resume_${props.data.basics?.name || 'export'}.${isPDF ? 'pdf' : 'docx'}`
     document.body.appendChild(a)
     a.click()
     window.URL.revokeObjectURL(url)
     document.body.removeChild(a)
 
     // 显示成功提示弹窗
+    lastExportFormat.value = isPDF ? 'PDF' : 'Word'
     showSuccessDialog.value = true
 
   } catch (error) {
-    console.error('PDF导出错误:', error)
-    exportError.value = 'PDF 导出失败，请确认后端服务正常运行后重试。'
+    console.error('简历导出错误:', error)
+    exportError.value = error.message || '简历导出失败，请确认后端服务正常运行后重试。'
   } finally {
-    isExportingPDF.value = false
+    if (isPDF) isExportingPDF.value = false
+    else isExportingDOCX.value = false
   }
 }
+
+const exportPDF = () => exportDocument('pdf')
+const exportWord = () => exportDocument('docx')
 
 // ========== 生命周期 ==========
 onMounted(async () => {
@@ -762,6 +786,10 @@ const getItemIndex = (type, dataIndex) => {
               </svg>
               <span>{{ zoomPercentage }}%</span>
             </button>
+            <button class="mobile-export-btn word-export-btn" @click="exportWord" :disabled="isExportingDOCX || !data">
+              <span v-if="isExportingDOCX" class="spinner"></span>
+              <span>{{ isExportingDOCX ? '导出中...' : '导出Word' }}</span>
+            </button>
             <div v-if="activeToolbarMenu === 'zoom'" class="compact-popover zoom-popover" @click.stop>
               <div class="compact-popover-title">页面缩放</div>
               <div class="zoom-mode-grid">
@@ -866,6 +894,13 @@ const getItemIndex = (type, dataIndex) => {
             </svg>
             <span>{{ isExportingPDF ? '导出中...' : '导出 PDF' }}</span>
           </button>
+          <button class="export-btn compact-export-btn word-export-btn" @click="exportWord" :disabled="isExportingDOCX || !data">
+            <span v-if="isExportingDOCX" class="spinner"></span>
+            <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M6 3h9l3 3v15H6z"/><path d="M15 3v4h4M9 11l2 6 2-4 2 4 2-6"/>
+            </svg>
+            <span>{{ isExportingDOCX ? '导出中...' : '导出 Word' }}</span>
+          </button>
         </template>
       </div>
     </div>
@@ -909,6 +944,9 @@ const getItemIndex = (type, dataIndex) => {
             <span class="graduation-date">{{ item.date_range?.[0] || '' }} - {{ item.date_range?.[1] || '至今' }}</span>
           </div>
           <div class="degree-major" v-html="formatText(`${item.degree || ''} ${item.major || ''}`)"></div>
+          <div v-if="academicMetrics(item).length" class="academic-metrics">
+            <span v-for="metric in academicMetrics(item)" :key="metric" v-html="formatText(metric)"></span>
+          </div>
         </div>
         <template v-if="data.education">
           <template v-for="(item, idx) in data.education">
@@ -1050,6 +1088,9 @@ const getItemIndex = (type, dataIndex) => {
             <span class="graduation-date">{{ item.date_range?.[0] || '' }} - {{ item.date_range?.[1] || '至今' }}</span>
           </div>
           <div class="degree-major" v-html="formatText(`${item.degree || ''} ${item.major || ''}`)"></div>
+          <div v-if="academicMetrics(item).length" class="academic-metrics">
+            <span v-for="metric in academicMetrics(item)" :key="metric" v-html="formatText(metric)"></span>
+          </div>
           <!-- 论文 -->
           <template v-if="item.theses?.length">
             <div v-for="(thesis, tIdx) in item.theses" :key="'thesis-'+idx+'-'+tIdx" class="thesis-item">
@@ -1169,6 +1210,9 @@ const getItemIndex = (type, dataIndex) => {
                     <span class="graduation-date">{{ item.date_range?.[0] || '' }} - {{ item.date_range?.[1] || '至今' }}</span>
                   </div>
                   <div class="degree-major" v-html="formatText(`${item.degree || ''} ${item.major || ''}`)"></div>
+                  <div v-if="academicMetrics(item).length" class="academic-metrics">
+                    <span v-for="metric in academicMetrics(item)" :key="metric" v-html="formatText(metric)"></span>
+                  </div>
                 </div>
                 <!-- 论文（独立分页项） -->
                 <template v-if="item.theses?.length">
@@ -1304,7 +1348,7 @@ const getItemIndex = (type, dataIndex) => {
         </svg>
       </div>
       <h3>简历导出成功</h3>
-      <p>PDF 文件已成功下载。<br><br>网页预览与实际 PDF 文件在排版上可能有细微差异，这不是问题——如果需要，你可以随时调整样式参数后重新导出。</p>
+      <p>{{ lastExportFormat }} 文件已成功下载。<br><br>{{ lastExportFormat === 'Word' ? 'DOCX 中的文字、段落和列表均可在 Word 或 WPS 中继续编辑。' : '网页预览与实际 PDF 文件在排版上可能有细微差异；可调整样式参数后重新导出。' }}</p>
       <button class="confirm-btn" @click="showSuccessDialog = false">我知道了</button>
     </div>
   </div>
@@ -2083,6 +2127,15 @@ const getItemIndex = (type, dataIndex) => {
 .degree-major,
 .position,
 .project-role {
+  font-size: 0.8em;
+  color: #6c757d;
+  font-weight: 500;
+}
+.academic-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25em 1em;
+  margin-top: 0.125em;
   font-size: 0.8em;
   color: #6c757d;
   font-weight: 500;

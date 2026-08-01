@@ -200,19 +200,40 @@
               <p>在本地模式下接入自己的模型服务。密钥仅交给当前主机上的后端使用。</p>
               <div class="settings-grid">
                 <div class="field">
-                  <label for="provider">服务商</label>
-                  <select id="provider" v-model="llmSettings.provider">
-                    <option value="moonshot">Moonshot / Kimi</option>
-                    <option value="openai-compatible">OpenAI Compatible</option>
-                  </select>
+                  <label id="provider-label">服务商</label>
+                  <div ref="providerSelectRoot" class="provider-select">
+                    <button
+                      type="button"
+                      class="provider-select-trigger"
+                      aria-labelledby="provider-label"
+                      :aria-expanded="showProviderMenu"
+                      @click="showProviderMenu = !showProviderMenu"
+                    >
+                      <span>{{ selectedProvider?.label || '选择服务商' }}</span>
+                      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg>
+                    </button>
+                    <div v-if="showProviderMenu" class="provider-select-menu" role="listbox" aria-labelledby="provider-label">
+                      <button
+                        v-for="provider in providerCatalog"
+                        :key="provider.id"
+                        type="button"
+                        role="option"
+                        :aria-selected="provider.id === llmSettings.provider"
+                        :class="['provider-select-option', { active: provider.id === llmSettings.provider }]"
+                        @click="chooseProvider(provider.id)"
+                      >
+                        {{ provider.label }}
+                      </button>
+                    </div>
+                  </div>
                 </div>
                 <div class="field">
                   <label for="model">模型</label>
-                  <input id="model" v-model="llmSettings.model" placeholder="例如：kimi-k2.6" />
+                  <input id="model" v-model="llmSettings.model" placeholder="填写厂商当前模型 ID" @change="syncTemperatureForModel" />
                 </div>
                 <div class="field full">
                   <label for="base-url">Base URL</label>
-                  <input id="base-url" v-model="llmSettings.base_url" placeholder="https://…" />
+                  <input id="base-url" v-model="llmSettings.base_url" placeholder="填写 OpenAI 兼容 Base URL" />
                 </div>
                 <div class="field full">
                   <label for="api-key">API Key</label>
@@ -224,6 +245,30 @@
                     autocomplete="off"
                   />
                 </div>
+                <div v-if="selectedTemperature?.supported" class="field full">
+                  <label for="temperature">温度 Temperature</label>
+                  <div class="temperature-field">
+                    <input
+                      id="temperature"
+                      v-model.number="llmSettings.temperature"
+                      type="range"
+                      :min="selectedTemperature.min"
+                      :max="selectedTemperature.max"
+                      :step="selectedTemperature.step"
+                    />
+                    <input
+                      v-model.number="llmSettings.temperature"
+                      type="number"
+                      :min="selectedTemperature.min"
+                      :max="selectedTemperature.max"
+                      :step="selectedTemperature.step"
+                    />
+                  </div>
+                </div>
+              </div>
+              <div v-if="selectedProvider?.note" class="provider-note">
+                {{ selectedProvider.note }}
+                <a v-if="selectedProvider.docs_url" :href="selectedProvider.docs_url" target="_blank" rel="noreferrer">官方文档</a>
               </div>
               <div class="security-note">
                 前端不会读取或回显完整密钥；保存后由本地后端更新配置。
@@ -266,15 +311,32 @@ const projectToDelete = ref(null)
 const isDeletingProject = ref(false)
 const deleteError = ref('')
 const showSettingsDialog = ref(false)
+const showProviderMenu = ref(false)
+const providerSelectRoot = ref(null)
 const isTestingSettings = ref(false)
 const isSavingSettings = ref(false)
 const settingsStatus = ref({ type: '', message: '' })
+const providerCatalog = ref([])
+const providerProfiles = ref({})
 const llmSettings = ref({
-  provider: 'moonshot',
+  provider: 'kimi_api',
   model: '',
   base_url: '',
   api_key: '',
+  temperature: null,
   configured: false
+})
+
+const selectedProvider = computed(() => providerCatalog.value.find(item => item.id === llmSettings.value.provider))
+const selectedTemperature = computed(() => {
+  const config = selectedProvider.value?.temperature
+  if (!config) return null
+  const model = llmSettings.value.model.toLowerCase()
+  const modelDisablesTemperature =
+    ['kimi_api', 'kimi_coding'].includes(llmSettings.value.provider) ||
+    (llmSettings.value.provider === 'deepseek' && /(reasoner|thinking)/.test(model)) ||
+    (llmSettings.value.provider === 'openai' && /^(gpt-5|o1|o3|o4)/.test(model))
+  return { ...config, supported: config.supported && !modelDisablesTemperature }
 })
 
 const isLocalMode = computed(() => appConfig.value?.app_mode === 'local')
@@ -402,21 +464,49 @@ async function openSettings() {
     const response = await fetch('/settings/llm', { headers: authHeaders() })
     if (!response.ok) throw new Error((await response.json()).detail || '无法读取配置')
     const data = await response.json()
-    llmSettings.value = {
-      provider: data.provider || 'moonshot',
-      model: data.model || '',
-      base_url: data.base_url || '',
-      api_key: '',
-      configured: !!data.configured
-    }
+    providerCatalog.value = data.providers || []
+    providerProfiles.value = data.profiles || {}
+    llmSettings.value.provider = data.active_provider || providerCatalog.value[0]?.id || 'kimi_api'
+    selectProvider()
   } catch (error) {
     settingsStatus.value = { type: 'error', message: error.message || '无法读取配置' }
+  }
+}
+
+function selectProvider() {
+  const provider = selectedProvider.value
+  const profile = providerProfiles.value[llmSettings.value.provider] || {}
+  llmSettings.value = {
+    provider: llmSettings.value.provider,
+    model: profile.model || '',
+    base_url: profile.base_url || '',
+    api_key: '',
+    temperature: profile.temperature_supported === false
+      ? null
+      : (profile.temperature ?? provider?.temperature?.default ?? null),
+    configured: !!profile.configured
+  }
+  settingsStatus.value = { type: '', message: '' }
+}
+
+function chooseProvider(providerId) {
+  llmSettings.value.provider = providerId
+  showProviderMenu.value = false
+  selectProvider()
+}
+
+function syncTemperatureForModel() {
+  if (selectedTemperature.value?.supported && llmSettings.value.temperature === null) {
+    llmSettings.value.temperature = selectedProvider.value?.temperature?.default ?? 0.2
+  } else if (!selectedTemperature.value?.supported) {
+    llmSettings.value.temperature = null
   }
 }
 
 function closeSettings() {
   if (isTestingSettings.value || isSavingSettings.value) return
   showSettingsDialog.value = false
+  showProviderMenu.value = false
   llmSettings.value.api_key = ''
 }
 
@@ -425,7 +515,8 @@ function settingsPayload() {
     provider: llmSettings.value.provider,
     model: llmSettings.value.model.trim(),
     base_url: llmSettings.value.base_url.trim(),
-    api_key: llmSettings.value.api_key.trim() || null
+    api_key: llmSettings.value.api_key.trim() || null,
+    temperature: llmSettings.value.temperature
   }
 }
 
@@ -461,8 +552,9 @@ async function saveSettings() {
     })
     const data = await response.json()
     if (!response.ok) throw new Error(data.detail || '保存失败')
-    llmSettings.value.configured = !!data.configured
-    llmSettings.value.api_key = ''
+    providerCatalog.value = data.providers || providerCatalog.value
+    providerProfiles.value = data.profiles || providerProfiles.value
+    selectProvider()
     settingsStatus.value = { type: 'success', message: '设置已保存，后续请求立即生效' }
   } catch (error) {
     settingsStatus.value = { type: 'error', message: error.message || '保存失败' }
@@ -473,18 +565,32 @@ async function saveSettings() {
 
 function handleKeydown(event) {
   if (event.key !== 'Escape') return
+  if (showProviderMenu.value) {
+    showProviderMenu.value = false
+    return
+  }
   if (showCreateDialog.value) closeCreateDialog()
   if (projectToDelete.value) closeDeleteDialog()
   if (showSettingsDialog.value) closeSettings()
+}
+
+function handleDocumentClick(event) {
+  if (providerSelectRoot.value && !providerSelectRoot.value.contains(event.target)) {
+    showProviderMenu.value = false
+  }
 }
 
 onMounted(async () => {
   appConfig.value = await loadAppConfig()
   await loadProjects()
   window.addEventListener('keydown', handleKeydown)
+  document.addEventListener('click', handleDocumentClick)
 })
 
-onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeydown)
+  document.removeEventListener('click', handleDocumentClick)
+})
 </script>
 
 <style scoped>
@@ -938,6 +1044,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
 }
 
 .internal-modal.settings-modal {
+  --settings-control-font-size: 0.8rem;
   width: min(520px, 100%);
 }
 
@@ -1007,10 +1114,102 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
   background: rgba(255, 255, 255, 0.05);
 }
 
+.settings-modal .modal-body input,
+.settings-modal .provider-select-trigger,
+.settings-modal .provider-select-option,
+.settings-modal > footer .primary-btn,
+.settings-modal > footer .secondary-btn {
+  font-family: inherit;
+  font-size: var(--settings-control-font-size);
+  font-weight: 400;
+}
+
 .modal-body input:focus,
 .modal-body select:focus {
   border-color: rgba(120, 166, 255, 0.6);
   box-shadow: 0 0 0 3px rgba(120, 166, 255, 0.09);
+}
+
+.provider-select {
+  position: relative;
+}
+
+.provider-select-trigger {
+  display: flex;
+  width: 100%;
+  height: 42px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 0.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  color: #f2f2f4;
+  background: rgba(255, 255, 255, 0.05);
+  font: inherit;
+  text-align: left;
+}
+
+.provider-select-trigger:hover,
+.provider-select-trigger[aria-expanded='true'] {
+  color: #fff;
+  background: #303138;
+  border-color: rgba(120, 166, 255, 0.6);
+  box-shadow: 0 0 0 3px rgba(120, 166, 255, 0.09);
+}
+
+.provider-select-trigger svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: #bfc0c7;
+  stroke-width: 2;
+}
+
+.provider-select-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  right: 0;
+  left: 0;
+  max-height: 260px;
+  padding: 5px;
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 10px;
+  background: #292a30;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.45);
+  color-scheme: dark;
+}
+
+.provider-select-option {
+  display: block;
+  width: 100%;
+  padding: 0.62rem 0.7rem;
+  border: 0;
+  border-radius: 7px;
+  color: #d6d7dc;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+}
+
+.provider-select-option:hover,
+.provider-select-option:focus-visible {
+  color: #fff;
+  background: #393a42;
+}
+
+.provider-select-option.active {
+  color: #fff;
+  background: #454750;
+}
+
+.provider-select-menu::-webkit-scrollbar-track {
+  background: #24252a;
+}
+
+.provider-select-menu::-webkit-scrollbar-thumb {
+  background: #555761;
 }
 
 .modal-body > small {
@@ -1075,6 +1274,29 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
 
 .security-note {
   margin-top: 1rem;
+}
+
+.provider-note {
+  margin-top: 0.8rem;
+  color: #b8b8c0;
+  font-size: 0.7rem;
+  line-height: 1.55;
+}
+
+.provider-note a {
+  margin-left: 0.45rem;
+  color: #91b6ff;
+}
+
+.temperature-field {
+  display: grid;
+  grid-template-columns: 1fr 84px;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.temperature-field input[type="number"] {
+  width: 100%;
 }
 
 .settings-status {

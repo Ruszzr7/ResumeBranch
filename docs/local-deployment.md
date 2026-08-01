@@ -39,30 +39,59 @@ APP_MODE=multi_user
 
 ## 启动与停止
 
-在项目根目录执行：
+脚本位于 `scripts/` 目录，按需选择：
+
+| 脚本 | 作用 |
+|------|------|
+| `start_db_local.cmd` | 双击启动本机 MySQL 服务 |
+| `start_backend_local.cmd` | 双击并前台启动后端 |
+| `start_frontend_local.cmd` | 双击并前台启动前端 |
+| `start_local.cmd` | 双击一键后台启动数据库 + 后端 + 前端 |
+| `stop_local.cmd` | 双击停止前端、后端和 MySQL，并清理端口残留进程 |
+
+Windows 下直接使用 `.cmd` 文件即可，启动与停止过程不依赖 PowerShell 脚本。
+
+### 首次设置
+
+复制 `.env.example` 为 `.env`，填写 MySQL 连接信息，然后按“安装依赖”章节准备
+`.venv-win` 和 `frontend/node_modules`。启动脚本不会覆盖现有配置或数据库。
+
+### 一键启动全部
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\start_local.ps1
+.\scripts\start_local.cmd
 ```
 
-停止后台进程：
+启动成功后会输出：
+
+```
+Backend:  http://127.0.0.1:8000
+Frontend: http://127.0.0.1:5173
+App mode: local
+Logs:     C:\...\resume_assistant\.local-run
+```
+
+### 停止
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\stop_local.ps1
+.\scripts\stop_local.cmd
 ```
 
-也可以临时覆盖 `.env` 中的模式，适合回归测试：
+五个脚本在成功或失败后都会保留结果提示，按任意键后才关闭窗口。启动或停止
+MySQL Windows 服务时会自动请求管理员授权；前端和后端通过实际监听端口定位并停止，
+不依赖可能已经失效的历史 PID。
+
+### 分别启动（前台观察日志）
+
+在三个“命令提示符”窗口分别执行：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\start_local.ps1 -AppMode multi_user
+.\scripts\start_db_local.cmd
+.\scripts\start_backend_local.cmd
+.\scripts\start_frontend_local.cmd
 ```
 
-如果希望分别以前台模式观察日志，可在两个 PowerShell 窗口执行：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\start_backend_local.ps1
-powershell -ExecutionPolicy Bypass -File .\scripts\start_frontend_local.ps1
-```
+应用模式通过 `.env` 中的 `APP_MODE=local` 或 `APP_MODE=multi_user` 设置，修改后重新启动。
 
 ## 多用户模式账号
 

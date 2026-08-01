@@ -64,19 +64,14 @@ def update_resume(data: dict, user_id: int = None, task_id: str = None, db: Sess
     Returns:
         str: 操作结果消息
     """
-    if db is None:
+    owns_db = db is None
+    if owns_db:
         db_gen = get_db()
         db = next(db_gen)
 
     try:
-        # 如果没有提供 user_id，从 resume_agent 模块获取全局用户ID
-        from . import resume_agent
         if user_id is None:
-            if resume_agent.current_user_id:
-                user_id = resume_agent.current_user_id
-            else:
-                return "错误：无法确定用户身份，请先登录"
-        task_id = task_id or resume_agent.current_task_id
+            return "错误：无法确定用户身份，请先登录"
         if task_id:
             db.info["task_id"] = task_id
 
@@ -91,11 +86,11 @@ def update_resume(data: dict, user_id: int = None, task_id: str = None, db: Sess
         db.rollback()  # 回滚事务
         return f"保存失败：{str(e)}"
     finally:
-        if db:
+        if owns_db and db:
             db.close()
 
 
-def load_resume(user_id: int = None, db: Session = None) -> dict:
+def load_resume(user_id: int = None, task_id: str = None, db: Session = None) -> dict:
     """
     从 SQLite 加载用户简历
 
@@ -106,30 +101,26 @@ def load_resume(user_id: int = None, db: Session = None) -> dict:
     Returns:
         dict: 简历数据，如果不存在返回空字典
     """
-    if db is None:
+    owns_db = db is None
+    if owns_db:
         db_gen = get_db()
         db = next(db_gen)
 
     try:
-        # 如果没有提供 user_id，从 resume_agent 模块获取全局用户ID
-        from . import resume_agent
         if user_id is None:
-            if resume_agent.current_user_id:
-                user_id = resume_agent.current_user_id
-            else:
-                return {}
-        if resume_agent.current_task_id:
-            db.info["task_id"] = resume_agent.current_task_id
+            return {}
+        if task_id:
+            db.info["task_id"] = task_id
 
         return get_user_resume(db, user_id)
     except Exception as e:
         return {"error": f"加载失败：{str(e)}"}
     finally:
-        if db:
+        if owns_db and db:
             db.close()
 
 
-def save_jd(data: dict, user_id: int = None, db: Session = None) -> str:
+def save_jd(data: dict, user_id: int = None, task_id: str = None, db: Session = None) -> str:
     """
     保存用户 JD 数据到 SQLite
 
@@ -141,19 +132,16 @@ def save_jd(data: dict, user_id: int = None, db: Session = None) -> str:
     Returns:
         str: 操作结果消息
     """
-    if db is None:
+    owns_db = db is None
+    if owns_db:
         db_gen = get_db()
         db = next(db_gen)
 
     try:
-        from . import resume_agent
         if user_id is None:
-            if resume_agent.current_user_id:
-                user_id = resume_agent.current_user_id
-            else:
-                return "错误：无法确定用户身份"
-        if resume_agent.current_task_id:
-            db.info["task_id"] = resume_agent.current_task_id
+            return "错误：无法确定用户身份"
+        if task_id:
+            db.info["task_id"] = task_id
 
         company = data.get('company', '')
         position = data.get('position', '')
@@ -162,11 +150,11 @@ def save_jd(data: dict, user_id: int = None, db: Session = None) -> str:
     except Exception as e:
         return f"保存失败：{str(e)}"
     finally:
-        if db:
+        if owns_db and db:
             db.close()
 
 
-def load_jd(user_id: int = None, db: Session = None) -> dict:
+def load_jd(user_id: int = None, task_id: str = None, db: Session = None) -> dict:
     """
     从 SQLite 加载用户 JD 数据
 
@@ -177,23 +165,20 @@ def load_jd(user_id: int = None, db: Session = None) -> dict:
     Returns:
         dict: JD 数据，如果不存在返回空字典
     """
-    if db is None:
+    owns_db = db is None
+    if owns_db:
         db_gen = get_db()
         db = next(db_gen)
 
     try:
-        from . import resume_agent
         if user_id is None:
-            if resume_agent.current_user_id:
-                user_id = resume_agent.current_user_id
-            else:
-                return {}
-        if resume_agent.current_task_id:
-            db.info["task_id"] = resume_agent.current_task_id
+            return {}
+        if task_id:
+            db.info["task_id"] = task_id
 
         return get_user_jd(db, user_id)
     except Exception as e:
         return {"error": f"加载失败：{str(e)}"}
     finally:
-        if db:
+        if owns_db and db:
             db.close()

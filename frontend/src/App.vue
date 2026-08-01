@@ -1033,7 +1033,6 @@ async function sendMessage() {
 
 // 处理确认按钮点击
 async function handleOptionClick({ confirm_id, value }) {
-  // 找到并标记确认消息为已处理
   const confirmMsgIndex = messages.value.findIndex(m => m.type === 'confirm' && m.confirm_id === confirm_id)
   if (confirmMsgIndex !== -1) {
     messages.value[confirmMsgIndex] = {
@@ -1041,27 +1040,17 @@ async function handleOptionClick({ confirm_id, value }) {
       handled: true
     }
   }
-  // 清除 confirm area 状态
   hasConfirmArea.value = false
 
-  // 如果点击取消，不调用 graph
-  if (value === 'cancel') {
-    return
-  }
-
-  // 发送确认回复到 /chat，触发 handle_confirmation → formatter_llm → save_resume_tool
   const confirmMessage = `[CONFIRM_REPLY:${confirm_id}:${value}]`
-
   const baseId = Date.now() * 1000 + Math.floor(Math.random() * 1000)
-  const userMessageId = baseId
   const streamMessageId = baseId + 1
 
   messages.value.push({
-    id: userMessageId,
+    id: baseId,
     role: 'user',
-    content: value === 'confirm' ? '确认保存' : '取消'
+    content: value === 'confirm' ? '确认保存' : '取消修改'
   })
-
   messages.value.push({
     id: streamMessageId,
     role: 'assistant',
@@ -1077,77 +1066,81 @@ async function handleOptionClick({ confirm_id, value }) {
     formData.append('message', confirmMessage)
     formData.append('session_id', sessionId.value)
 
+    // 恢复原版确认链路：确认回复进入 /chat，由 LangGraph tool_node 处理。
     const response = await fetch('/chat', {
       method: 'POST',
       headers: getAuthorizationHeaders(),
       body: formData
     })
 
-    if (!response.ok) throw new Error(`HTTP错误! 状态: ${response.status}`)
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}))
+      throw new Error(errorData.error || errorData.detail || `HTTP错误! 状态: ${response.status}`)
+    }
 
     const reader = response.body.getReader()
     const decoder = new TextDecoder('utf-8')
     let buffer = ''
+    let resumeRefreshed = false
 
     while (true) {
       const { done, value: chunk } = await reader.read()
       if (done) break
-
       buffer += decoder.decode(chunk, { stream: true })
 
       let newlineIndex
       while ((newlineIndex = buffer.indexOf('\n\n')) !== -1) {
-        const message = buffer.substring(0, newlineIndex)
+        const eventText = buffer.substring(0, newlineIndex)
         buffer = buffer.substring(newlineIndex + 2)
+        if (!eventText.startsWith('data: ')) continue
 
-        if (message.startsWith('data: ')) {
-          const jsonData = message.substring(6).trim()
-          if (!jsonData) continue
+        const jsonData = eventText.substring(6).trim()
+        if (!jsonData) continue
 
-          try {
-            const data = JSON.parse(jsonData)
-
-            if (data.type === 'stream') {
-              isLoading.value = false
-              const idx = messages.value.findIndex(m => m.id === streamMessageId)
-              if (idx !== -1) {
-                messages.value[idx] = { ...messages.value[idx], content: data.content, streaming: true }
-              }
-            } else if (data.type === 'final') {
-              isLoading.value = false
-              isResponding.value = false
-              const idx = messages.value.findIndex(m => m.id === streamMessageId)
-              if (idx !== -1) {
-                messages.value[idx] = { ...messages.value[idx], content: data.content, streaming: false }
-              }
-              if (data.session_id) {
-                sessionId.value = data.session_id
-                localStorage.setItem('resumeAssistantSessionId', data.session_id)
-              }
-              updateResumeData()
-            } else if (data.type === 'end') {
-              isResponding.value = false
-              updateResumeData()
-              if (data.session_id) {
-                sessionId.value = data.session_id
-                localStorage.setItem('resumeAssistantSessionId', data.session_id)
-              }
-            }
-          } catch (e) {
-            console.error('解析JSON失败:', e)
+        const data = JSON.parse(jsonData)
+        if (data.type === 'stream') {
+          isLoading.value = false
+          const index = messages.value.findIndex(m => m.id === streamMessageId)
+          if (index !== -1) {
+            messages.value[index] = { ...messages.value[index], content: data.content, streaming: true }
           }
+        } else if (data.type === 'final') {
+          isLoading.value = false
+          const index = messages.value.findIndex(m => m.id === streamMessageId)
+          if (index !== -1) {
+            messages.value[index] = { ...messages.value[index], content: data.content, streaming: false }
+          }
+          if (data.session_id) sessionId.value = data.session_id
+          if (value === 'confirm') {
+            await updateResumeData()
+            resumeRefreshed = true
+          }
+        } else if (data.type === 'end') {
+          if (data.session_id) sessionId.value = data.session_id
+          if (value === 'confirm' && !resumeRefreshed) await updateResumeData()
         }
       }
     }
   } catch (error) {
     console.error('确认操作失败:', error)
+    if (confirmMsgIndex !== -1) {
+      messages.value[confirmMsgIndex] = {
+        ...messages.value[confirmMsgIndex],
+        handled: false
+      }
+    }
+    hasConfirmArea.value = true
+    const index = messages.value.findIndex(m => m.id === streamMessageId)
+    if (index !== -1) {
+      messages.value[index] = {
+        ...messages.value[index],
+        content: `处理确认请求失败：${error.message || '请重试。'}`,
+        streaming: false
+      }
+    }
+  } finally {
     isLoading.value = false
     isResponding.value = false
-    messages.value.push({
-      id: Date.now() + 2,
-      role: 'assistant',
-      content: '处理确认请求失败，请重试。'
-    })
   }
 }
 
@@ -1401,6 +1394,10 @@ function openResumeEditDialog() {
   // 为每项教育经历初始化日期
   resumeFormData.value.education.forEach(edu => {
     initDateRange(edu)
+    edu.gpa = edu.gpa || ''
+    edu.gpa_scale = edu.gpa_scale || ''
+    edu.ranking = edu.ranking || ''
+    edu.average_score = edu.average_score || ''
   })
 
   // 转换自我评价为多行文本
@@ -1555,6 +1552,10 @@ function addEducation() {
     degree: '',
     date_range: ['', ''],
     school_tags: [],
+    gpa: '',
+    gpa_scale: '',
+    ranking: '',
+    average_score: '',
     theses: []
   })
 }
@@ -3375,6 +3376,22 @@ watch(
                     <el-option label="高中" value="高中" />
                     <el-option label="初中及以下" value="初中及以下" />
                   </el-select>
+                </div>
+                <div class="field-group">
+                  <label>GPA / 绩点</label>
+                  <input v-model="edu.gpa" placeholder="例如 3.72" class="element-input" />
+                </div>
+                <div class="field-group">
+                  <label>绩点满分</label>
+                  <input v-model="edu.gpa_scale" placeholder="例如 4.0" class="element-input" />
+                </div>
+                <div class="field-group">
+                  <label>专业 / 年级排名</label>
+                  <input v-model="edu.ranking" placeholder="例如 前 10%" class="element-input" />
+                </div>
+                <div class="field-group">
+                  <label>平均分 / 加权平均分</label>
+                  <input v-model="edu.average_score" placeholder="例如 88/100" class="element-input" />
                 </div>
                 <div class="field-group full-width">
                   <label>时间范围</label>
@@ -6132,6 +6149,20 @@ watch(
   background: rgba(255, 255, 255, 0.05);
   border-color: rgba(255, 255, 255, 0.1);
   border-radius: 10px;
+}
+
+:is(.jd-dialog, .resume-dialog) select {
+  color-scheme: dark;
+}
+
+:is(.jd-dialog, .resume-dialog) select option {
+  color: #ededf1;
+  background: #292a30;
+}
+
+:is(.jd-dialog, .resume-dialog) select option:checked {
+  color: #fff;
+  background: #454750;
 }
 
 :is(.jd-dialog, .resume-dialog) :is(input, textarea, select):focus,

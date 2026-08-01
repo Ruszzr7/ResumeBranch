@@ -19,6 +19,9 @@ export const labels = {
     degree: '学历',
     major: '专业',
     graduationDate: '毕业时间',
+    gpa: 'GPA',
+    ranking: '排名',
+    averageScore: '平均分',
     thesis: '论文',
 
     // 工作经历
@@ -83,6 +86,9 @@ export const labels = {
     degree: 'Degree',
     major: 'Major',
     graduationDate: 'Graduation Date',
+    gpa: 'GPA',
+    ranking: 'Ranking',
+    averageScore: 'Average Score',
     thesis: 'Thesis',
 
     // 工作经历

@@ -12,6 +12,8 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
+from .resume_data import normalize_resume_data
+
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/deepagents.db")
 
@@ -143,6 +145,53 @@ def get_db():
 def init_db():
     """初始化数据库（创建所有表）"""
     Base.metadata.create_all(bind=engine)
+    migrate_resume_academic_fields()
+
+
+def migrate_resume_academic_fields():
+    """Migrate legacy GPA-in-thesis records into explicit education fields."""
+    db = SessionLocal()
+    changed = 0
+    try:
+        for resume in db.query(Resume).all():
+            try:
+                normalized = normalize_resume_data(resume.resume_data or {})
+            except (TypeError, ValueError) as exc:
+                print(f"[Migration] 跳过 legacy resume {resume.id}: {exc}")
+                continue
+            if normalized != (resume.resume_data or {}):
+                resume.resume_data = normalized
+                changed += 1
+
+        for project in db.query(ResumeProject).all():
+            try:
+                normalized = normalize_resume_data(project.base_resume_data or {})
+            except (TypeError, ValueError) as exc:
+                print(f"[Migration] 跳过 resume project {project.id}: {exc}")
+                continue
+            if normalized != (project.base_resume_data or {}):
+                project.base_resume_data = normalized
+                changed += 1
+
+        for task in db.query(ProjectTask).all():
+            try:
+                normalized = normalize_resume_data(task.resume_data or {})
+            except (TypeError, ValueError) as exc:
+                print(f"[Migration] 跳过 resume task {task.id}: {exc}")
+                continue
+            if normalized != (task.resume_data or {}):
+                task.resume_data = normalized
+                changed += 1
+
+        if changed:
+            db.commit()
+            print(f"[Migration] 已规范化 {changed} 份简历的教育成绩字段")
+    except Exception as exc:
+        db.rollback()
+        # A normalization issue should not prevent the application from starting.
+        print(f"[Migration] 教育成绩字段迁移跳过: {exc}")
+    finally:
+        db.close()
 
 
 # =============================================================================
@@ -168,9 +217,17 @@ def create_user(db, email: str, hashed_password: str, invite_code: str):
     return user
 
 
-def _active_task(db):
+def _active_task(db, user_id: int):
     task_id = db.info.get("task_id")
-    return db.query(ProjectTask).filter(ProjectTask.id == task_id).first() if task_id else None
+    if not task_id:
+        return None
+    task = db.query(ProjectTask).filter(
+        ProjectTask.id == task_id,
+        ProjectTask.user_id == user_id,
+    ).first()
+    if not task:
+        raise ValueError("当前简历任务不存在或不属于该用户")
+    return task
 
 
 def get_or_create_legacy_project(db, user_id: int):
@@ -363,7 +420,7 @@ def delete_resume_task(db, user_id: int, task_id: str) -> str:
 
 
 def get_user_photo(db, user_id: int) -> str:
-    task = _active_task(db)
+    task = _active_task(db, user_id)
     if task:
         return task.photo or ""
     resume = db.query(Resume).filter(Resume.user_id == user_id).first()
@@ -372,17 +429,17 @@ def get_user_photo(db, user_id: int) -> str:
 
 def get_user_resume(db, user_id: int) -> dict:
     """获取用户简历"""
-    task = _active_task(db)
+    task = _active_task(db, user_id)
     if task:
-        return task.resume_data or {}
+        return normalize_resume_data(task.resume_data or {})
     resume = db.query(Resume).filter(Resume.user_id == user_id).first()
-    return resume.resume_data if resume else {}
+    return normalize_resume_data(resume.resume_data or {}) if resume else {}
 
 
 def get_parsing_status(db, user_id: int) -> str:
     """获取简历解析状态"""
     try:
-        task = _active_task(db)
+        task = _active_task(db, user_id)
         if task:
             return task.parsing_status or "none"
         resume = db.query(Resume).filter(Resume.user_id == user_id).first()
@@ -394,7 +451,7 @@ def get_parsing_status(db, user_id: int) -> str:
 
 def set_parsing_status(db, user_id: int, status: str):
     """设置简历解析状态"""
-    task = _active_task(db)
+    task = _active_task(db, user_id)
     if task:
         task.parsing_status = status
         task.updated_at = datetime.utcnow()
@@ -420,10 +477,11 @@ def save_user_resume(db, user_id: int, data: dict, name: str = "默认简历", p
         name: 简历名称
         photo: 证件照base64编码（可选，如果为None则从data中提取）
     """
+    data = normalize_resume_data(data)
     print(f"[save_user_resume] 开始保存，用户ID={user_id}")
     print(f"[save_user_resume] 传入 data keys: {list(data.keys()) if isinstance(data, dict) else 'not a dict'}")
     
-    task = _active_task(db)
+    task = _active_task(db, user_id)
     if task:
         existing_photo = task.photo or ""
         if photo is None:
@@ -481,7 +539,7 @@ def save_user_resume(db, user_id: int, data: dict, name: str = "默认简历", p
 
 def get_user_jd(db, user_id: int) -> dict:
     """获取用户JD"""
-    task = _active_task(db)
+    task = _active_task(db, user_id)
     if task:
         return task.jd_data or {}
     jd = db.query(JobDescription).filter(JobDescription.user_id == user_id).first()
@@ -490,7 +548,7 @@ def get_user_jd(db, user_id: int) -> dict:
 
 def save_user_jd(db, user_id: int, data: dict, company: str = "", position: str = ""):
     """保存用户JD"""
-    task = _active_task(db)
+    task = _active_task(db, user_id)
     if task:
         task.jd_data = data
         task.updated_at = datetime.utcnow()
@@ -510,7 +568,7 @@ def save_user_jd(db, user_id: int, data: dict, company: str = "", position: str 
 
 def save_conversation(db, user_id: int, session_id: str, messages: list):
     """保存对话历史"""
-    task = _active_task(db)
+    task = _active_task(db, user_id)
     if task:
         task.messages = messages
         task.last_accessed = datetime.utcnow()
@@ -532,7 +590,7 @@ def save_conversation(db, user_id: int, session_id: str, messages: list):
 
 def get_conversation(db, user_id: int, session_id: str) -> list:
     """获取对话历史"""
-    task = _active_task(db)
+    task = _active_task(db, user_id)
     if task:
         task.last_accessed = datetime.utcnow()
         db.commit()
@@ -572,7 +630,7 @@ def create_invite_code(db, code: str):
 
 def save_conversation_context(db, user_id: int, session_id: str, compressed_context: list, pending_confirmation: dict = None):
     """保存压缩后的上下文到数据库"""
-    task = _active_task(db)
+    task = _active_task(db, user_id)
     if task:
         task.compressed_context = compressed_context
         if pending_confirmation is not None:
@@ -605,7 +663,7 @@ def save_conversation_context(db, user_id: int, session_id: str, compressed_cont
 
 def get_pending_confirmation(db, user_id: int, session_id: str) -> dict:
     """获取待确认状态"""
-    task = _active_task(db)
+    task = _active_task(db, user_id)
     if task:
         return task.pending_confirmation
     conv = db.query(Conversation).filter(
@@ -617,7 +675,7 @@ def get_pending_confirmation(db, user_id: int, session_id: str) -> dict:
 
 def clear_pending_confirmation(db, user_id: int, session_id: str):
     """清除待确认状态"""
-    task = _active_task(db)
+    task = _active_task(db, user_id)
     if task:
         task.pending_confirmation = None
         task.updated_at = datetime.utcnow()
@@ -634,7 +692,7 @@ def clear_pending_confirmation(db, user_id: int, session_id: str):
 
 def get_conversation_context(db, user_id: int, session_id: str) -> list:
     """获取压缩后的上下文（用于性能优化）"""
-    task = _active_task(db)
+    task = _active_task(db, user_id)
     if task:
         task.last_accessed = datetime.utcnow()
         db.commit()
@@ -662,7 +720,7 @@ def cleanup_old_contexts(db, days: int = 7):
 
 def delete_conversation_context(db, user_id: int, session_id: str):
     """删除指定会话的上下文"""
-    task = _active_task(db)
+    task = _active_task(db, user_id)
     if task:
         task.compressed_context = []
         task.updated_at = datetime.utcnow()

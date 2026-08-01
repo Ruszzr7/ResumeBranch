@@ -22,7 +22,17 @@ export default defineConfig({
       },
       '/projects': {
         target: 'http://localhost:8000',
-        changeOrigin: true
+        changeOrigin: true,
+        bypass(req) {
+          // The workspace page and the Projects API intentionally share the
+          // /projects prefix. A direct browser refresh must stay in the SPA.
+          if (
+            req.method === 'GET' &&
+            /^\/projects\/[^/]+\/tasks\/[^/?]+(?:\?.*)?$/.test(req.url || '')
+          ) {
+            return '/index.html'
+          }
+        }
       },
       '/tasks': {
         target: 'http://localhost:8000',
@@ -69,6 +79,10 @@ export default defineConfig({
         changeOrigin: true
       },
       '/export_pdf': {
+        target: 'http://localhost:8000',
+        changeOrigin: true
+      },
+      '/export_docx': {
         target: 'http://localhost:8000',
         changeOrigin: true
       },

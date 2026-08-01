@@ -20,7 +20,6 @@ import sys
 import uuid
 from datetime import datetime
 from pathlib import Path
-from dotenv import set_key
 
 
 def _configure_console_encoding():
@@ -46,7 +45,7 @@ from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
 # 导入 resume_agent 中的 graph 和 conversation_llm
 from . import resume_agent
-from .resume_agent import LLM_ENABLED, conversation_llm, current_user_id, graph
+from .resume_agent import LLM_ENABLED, conversation_llm, graph
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate
 
@@ -65,6 +64,14 @@ from .auth import (
     get_current_user, oauth2_scheme, require_multi_user_mode
 )
 from .config import APP_MODE, LOCAL_USER_EMAIL, is_local_mode
+from .llm_providers import (
+    load_profiles,
+    save_profile,
+    serialize_settings,
+    temperature_supported,
+    validate_profile,
+)
+from .multimodal_files import build_file_message_part
 
 # PDF 生成器 - 懒加载（在 API 调用时才导入）
 _pdf_generator = None
@@ -188,11 +195,12 @@ class CreateTaskRequest(BaseModel):
 
 
 class LLMSettingsRequest(BaseModel):
-    """本地 LLM 设置。api_key 为空时保留现有密钥。"""
-    provider: str = "moonshot"
+    """本地 LLM 服务商配置。api_key 为空时保留该服务商的现有密钥。"""
+    provider: str = "kimi_api"
     model: str
     base_url: str
     api_key: str | None = None
+    temperature: float | None = None
 
 
 def serialize_task(task):
@@ -378,21 +386,10 @@ def require_local_settings():
         raise HTTPException(status_code=404, detail="本地设置仅在本地模式可用")
 
 
-def serialize_llm_settings():
-    api_key = os.getenv("LLM_API_KEY", "").strip()
-    return {
-        "provider": os.getenv("LLM_PROVIDER", "moonshot").strip() or "moonshot",
-        "model": os.getenv("LLM_MODEL", "").strip(),
-        "base_url": os.getenv("BASE_URL", "").strip(),
-        "configured": bool(api_key),
-        "api_key_hint": f"••••{api_key[-4:]}" if api_key else "",
-    }
-
-
 @app.get("/settings/llm", dependencies=[Depends(require_local_settings)])
 async def get_llm_settings(current_user=Depends(get_current_user)):
-    """Return local LLM settings without exposing the stored API key."""
-    return serialize_llm_settings()
+    """Return all provider profiles without exposing stored API keys."""
+    return serialize_settings()
 
 
 @app.post("/settings/llm/test", dependencies=[Depends(require_local_settings)])
@@ -402,18 +399,22 @@ async def test_llm_settings(
 ):
     model = request.model.strip()
     base_url = request.base_url.strip()
-    api_key = (request.api_key or os.getenv("LLM_API_KEY", "")).strip()
-    if not model or not base_url or not api_key:
-        raise HTTPException(status_code=400, detail="请完整填写模型、Base URL 和 API Key")
-    if not base_url.startswith(("http://", "https://")):
-        raise HTTPException(status_code=400, detail="Base URL 必须以 http:// 或 https:// 开头")
+    stored = load_profiles().get("profiles", {}).get(request.provider, {})
+    api_key = (request.api_key or stored.get("api_key", "")).strip()
+    try:
+        validate_profile(request.provider, model, base_url, request.temperature)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not api_key:
+        raise HTTPException(status_code=400, detail="请填写该服务商的 API Key")
 
     try:
         test_llm = resume_agent.create_llm_for_config(
             api_key=api_key,
             base_url=base_url,
             model=model,
-            temperature=0.0,
+            temperature=request.temperature,
+            provider=request.provider,
         )
         await asyncio.wait_for(
             test_llm.ainvoke([HumanMessage(content="Reply with OK only.")]),
@@ -424,7 +425,7 @@ async def test_llm_settings(
     except Exception as exc:
         print(f"[Settings] LLM connection test failed: {exc}")
         raise HTTPException(status_code=400, detail="连接失败，请检查模型、接口地址和密钥") from exc
-    return {"success": True, "model": model}
+    return {"success": True, "model": model, "provider": request.provider}
 
 
 @app.put("/settings/llm", dependencies=[Depends(require_local_settings)])
@@ -434,33 +435,27 @@ async def update_llm_settings(
 ):
     global LLM_ENABLED, conversation_llm
 
-    provider = request.provider.strip() or "custom"
+    provider = request.provider.strip()
     model = request.model.strip()
     base_url = request.base_url.strip()
-    if not model or not base_url:
-        raise HTTPException(status_code=400, detail="模型和 Base URL 不能为空")
-    if not base_url.startswith(("http://", "https://")):
-        raise HTTPException(status_code=400, detail="Base URL 必须以 http:// 或 https:// 开头")
+    try:
+        validate_profile(provider, model, base_url, request.temperature)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    dotenv_path = Path(__file__).resolve().parents[1] / ".env"
-    updates = {
-        "LLM_PROVIDER": provider,
-        "LLM_MODEL": model,
-        "BASE_URL": base_url,
-    }
-    if request.api_key is not None and request.api_key.strip():
-        updates["LLM_API_KEY"] = request.api_key.strip()
-
-    for key, value in updates.items():
-        os.environ[key] = value
-        set_key(str(dotenv_path), key, value)
+    save_profile(provider, {
+        "model": model,
+        "base_url": base_url,
+        "api_key": (request.api_key or "").strip(),
+        "temperature": request.temperature if temperature_supported(provider, model) else None,
+    })
 
     runtime = resume_agent.reload_llm_config()
     # Keep legacy references in this module in sync for context compression.
     LLM_ENABLED = resume_agent.LLM_ENABLED
     conversation_llm = resume_agent.conversation_llm
     return {
-        **serialize_llm_settings(),
+        **serialize_settings(),
         "configured": runtime["configured"],
     }
 
@@ -914,7 +909,7 @@ async def parse_and_save_resume_endpoint(
         if not content_type.startswith('image/') and content_type != 'application/pdf':
             return JSONResponse(content={"success": False, "error": "只支持图片或PDF文件"}, status_code=400)
 
-        # 读取文件内容
+        # 读取文件内容并保留原始 PDF；原版生产链路由模型原生解析 PDF。
         file_content = await file.read()
 
         from .resume_agent import RESUME_FULL_EXTRACT_PROMPT, jd_parser_llm
@@ -922,55 +917,14 @@ async def parse_and_save_resume_endpoint(
         # 设置解析状态为进行中
         set_parsing_status(db, current_user.id, "parsing")
 
-        # Kimi/OpenAI 视觉接口不接收 application/pdf 类型的 image_url。
-        # PDF 先在本地逐页渲染为 PNG，再作为多张图片交给视觉模型。
         message_content = [
             {"type": "text", "text": "请完整提取这份简历中的所有信息，**不要省略任何内容**。"}
         ]
-        if content_type == 'application/pdf':
-            import fitz
-
-            document = fitz.open(stream=file_content, filetype="pdf")
-            try:
-                if document.page_count == 0:
-                    return JSONResponse(
-                        content={"success": False, "error": "PDF 没有可解析页面"},
-                        status_code=400,
-                    )
-                if document.page_count > 10:
-                    return JSONResponse(
-                        content={"success": False, "error": "PDF 最多支持 10 页"},
-                        status_code=400,
-                    )
-
-                for page in document:
-                    pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
-                    page_base64 = base64.b64encode(
-                        pixmap.tobytes("png")
-                    ).decode("utf-8")
-                    message_content.append({
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/png;base64,{page_base64}"
-                        },
-                    })
-            finally:
-                document.close()
-        else:
-            if content_type == 'image/png':
-                mime_type = 'image/png'
-            elif content_type == 'image/webp':
-                mime_type = 'image/webp'
-            else:
-                mime_type = 'image/jpeg'
-
-            base64_content = base64.b64encode(file_content).decode('utf-8')
-            message_content.append({
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:{mime_type};base64,{base64_content}"
-                },
-            })
+        message_content.append(build_file_message_part(
+            file_content,
+            content_type,
+            normalize_image_type=True,
+        ))
 
         message = HumanMessage(content=message_content)
 
@@ -1056,6 +1010,40 @@ async def export_pdf_endpoint(request: Request, db: Session = Depends(get_db), c
         return JSONResponse(content=f"错误: {str(e)}", status_code=500)
 
 
+@app.post("/export_docx")
+async def export_docx_endpoint(request: Request, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
+    """导出可继续编辑的 Word（DOCX）简历。"""
+    try:
+        try:
+            request_data = await request.json()
+        except Exception:
+            request_data = {}
+        resume_data = get_user_resume(db, current_user.id)
+        if not resume_data:
+            raise HTTPException(status_code=400, detail="没有找到简历数据，请先创建或加载简历")
+
+        from .docx_generator import generate_docx
+
+        docx_bytes = generate_docx(
+            resume_data,
+            request_data.get("style", {}),
+            get_user_photo(db, current_user.id) or None,
+            request_data.get("lang", "zh"),
+        )
+        return StreamingResponse(
+            iter([docx_bytes]),
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f"attachment; filename=resume_{current_user.id}.docx"},
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"Word 导出错误: {exc}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(content=f"错误: {exc}", status_code=500)
+
+
 @app.post("/chat")
 async def chat_endpoint(
     message: str = Form(""),
@@ -1076,10 +1064,6 @@ async def chat_endpoint(
         task_id = db.info.get("task_id")
         if not task_id:
             return JSONResponse(content={"error": "请先选择一个简历任务"}, status_code=400)
-        from . import resume_agent
-        resume_agent.current_user_id = current_user.id
-        resume_agent.current_task_id = task_id
-
         # 生成会话 ID
         if not session_id:
             session_id = generate_session_id()
@@ -1114,37 +1098,7 @@ async def chat_endpoint(
                     "image_url": {"url": f"data:{file.content_type};base64,{base64_content}"}
                 })
             elif file.content_type == "application/pdf":
-                import fitz
-
-                document = fitz.open(stream=content, filetype="pdf")
-                try:
-                    if document.page_count == 0:
-                        return JSONResponse(
-                            content={"error": "PDF 没有可解析页面"},
-                            status_code=400,
-                        )
-                    if document.page_count > 10:
-                        return JSONResponse(
-                            content={"error": "PDF 最多支持 10 页"},
-                            status_code=400,
-                        )
-
-                    for page in document:
-                        pixmap = page.get_pixmap(
-                            matrix=fitz.Matrix(2, 2),
-                            alpha=False,
-                        )
-                        page_base64 = base64.b64encode(
-                            pixmap.tobytes("png")
-                        ).decode("utf-8")
-                        message_content.append({
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{page_base64}"
-                            },
-                        })
-                finally:
-                    document.close()
+                message_content.append(build_file_message_part(content, file.content_type))
 
         # 从数据库加载用户数据
         resume_data = get_user_resume(db, current_user.id)
@@ -1349,6 +1303,7 @@ async def chat_endpoint(
             print(f"[StreamResponse] messages_list 初始化: {len(messages_list)} 条消息")
             resume_data_result = {}
             pending_confirmation_result = None  # 保存待确认状态
+            confirmation_processed = False
             final_content = None
             accumulated_content = ""
             current_node = None
@@ -1402,6 +1357,13 @@ async def chat_endpoint(
                             print(f"[SSE] tool_node output keys: {output_keys}")
                             if isinstance(event.get("data", {}).get("output"), dict):
                                 output = event["data"]["output"]
+                                output_messages = output.get("messages", [])
+                                if is_confirm_click and any(
+                                    isinstance(item, ToolMessage)
+                                    and getattr(item, "name", "") == "confirmation_handler"
+                                    for item in output_messages
+                                ):
+                                    confirmation_processed = True
                                 print(f"[SSE] pending_confirmation in output: {output.get('pending_confirmation')}")
                                 if "pending_confirmation" in output and output["pending_confirmation"]:
                                     confirm_data = output["pending_confirmation"]
@@ -1462,6 +1424,10 @@ async def chat_endpoint(
             if not final_content:
                 final_content = "抱歉，我无法理解您的请求。"
 
+            if confirmation_processed:
+                from .database import clear_pending_confirmation
+                clear_pending_confirmation(db, current_user.id, session_id)
+
             print(f"[SSE] 准备发送 final 事件, pending_confirmation={pending_confirmation_result is not None}")
             yield 'data: ' + json.dumps({
                 "type": "final",
@@ -1471,9 +1437,11 @@ async def chat_endpoint(
 
             # 保存消息到数据库（异步执行，不阻塞 SSE 响应）
             import asyncio
+            # tool_node 已经执行过确认保存/取消，不再由状态持久化重复写简历。
+            resume_data_to_persist = {} if confirmation_processed else resume_data_result
             asyncio.create_task(save_state_async(
                 db, current_user.id, session_id,
-                messages_list, resume_data_result, initial_jd_data, pending_confirmation_result
+                messages_list, resume_data_to_persist, initial_jd_data, pending_confirmation_result
             ))
 
             print(f"[SSE] 准备发送 end 事件")
@@ -1502,10 +1470,9 @@ async def confirm_endpoint(
     直接处理确认/取消操作，不经过 LLM
     """
     try:
-        # 设置全局用户ID
-        from . import resume_agent
-        resume_agent.current_user_id = current_user.id
-        resume_agent.current_task_id = db.info.get("task_id")
+        task_id = db.info.get("task_id")
+        if not task_id:
+            return JSONResponse(content={"error": "请先选择一个简历任务"}, status_code=400)
 
         # 从数据库获取 pending_confirmation
         from .database import clear_pending_confirmation, get_pending_confirmation, get_user_resume
@@ -1517,10 +1484,16 @@ async def confirm_endpoint(
         if pending_confirmation.get("confirm_id") != confirm_id:
             return JSONResponse(content={"error": "确认ID不匹配"}, status_code=400)
 
+        if action not in {"confirm", "cancel"}:
+            return JSONResponse(content={"error": "无效的确认操作"}, status_code=400)
+
         # 根据操作处理
         if action == "confirm":
             # 从 pending_confirmation 获取修改后的简历数据
             tool_args = pending_confirmation.get("tool_args", {})
+            pending_task_id = tool_args.get("task_id")
+            if pending_task_id and pending_task_id != task_id:
+                return JSONResponse(content={"error": "待确认操作不属于当前简历任务"}, status_code=409)
             content = tool_args.get("content", "")
 
             if not content:
@@ -1530,8 +1503,10 @@ async def confirm_endpoint(
             import json as json_module
             try:
                 updated_resume_data = json_module.loads(content)
+                from .resume_agent import normalize_and_validate_resume
+                updated_resume_data = normalize_and_validate_resume(updated_resume_data)
                 print(f"[Confirm] 解析修改后的简历数据成功，包含 {len(updated_resume_data)} 个顶级字段")
-            except json_module.JSONDecodeError as e:
+            except (json_module.JSONDecodeError, TypeError, ValueError) as e:
                 return JSONResponse(content={"error": f"简历数据格式错误: {str(e)}"}, status_code=400)
 
             # 保存修改后的简历数据
@@ -1539,9 +1514,12 @@ async def confirm_endpoint(
             result = update_resume(
                 updated_resume_data,
                 user_id=current_user.id,
-                task_id=db.info.get("task_id"),
+                task_id=task_id,
+                db=db,
             )
             print(f"[Confirm] 保存结果: {result}")
+            if result.startswith("保存失败") or result.startswith("错误"):
+                return JSONResponse(content={"error": result}, status_code=400)
 
             # 清除 pending_confirmation 状态
             clear_pending_confirmation(db, current_user.id, session_id)
@@ -1549,7 +1527,8 @@ async def confirm_endpoint(
             return JSONResponse(content={
                 "success": True,
                 "message": result,
-                "action": "saved"
+                "action": "saved",
+                "resume_data": updated_resume_data,
             })
 
         else:

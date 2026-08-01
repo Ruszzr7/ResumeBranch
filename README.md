@@ -260,6 +260,8 @@ cd DeepAgents
 
 ### 2. 配置环境变量
 
+复制示例文件并编辑：
+
 ```bash
 cp .env.example .env
 ```
@@ -290,52 +292,59 @@ DATABASE_URL=mysql+pymysql://resume_app:password@127.0.0.1:3306/resume_assistant
 
 需要登录、注册、邀请码和多用户隔离时，将 `APP_MODE` 改为 `multi_user`。
 
-### 3. 安装后端依赖
+### 3. 安装依赖
+
+安装后端和前端依赖：
 
 ```bash
 # 创建虚拟环境
-python -m venv .venv
-source .venv/bin/activate  # macOS/Linux
-# .venv\Scripts\activate  # Windows
+python -m venv .venv-win
+# .venv-win\Scripts\activate  # Windows
 
-# 安装依赖
-pip install -r backend/requirements.txt
-```
+# 安装后端依赖
+.venv-win\Scripts\pip install -r backend/requirements.txt
 
-### 4. 安装前端依赖
-
-```bash
+# 安装前端依赖
 cd frontend
 npm install
 cd ..
 ```
 
-### 5. 初始化数据库
+### 4. 初始化数据库
 
 ```bash
-# 数据库会在首次运行时自动创建
-# 如需创建管理员账号
-python -m backend.create_admin
+# 数据库会在首次运行时自动创建表
+# 如需创建管理员账号（仅 multi_user 模式）
+.venv-win\Scripts\python.exe -m backend.create_admin
 ```
 
-### 6. 启动服务
+### 5. 启动服务
 
-**方式一：手动启动（开发环境）**
+**方式一：Windows 本地一键启动（推荐）**
+
+```cmd
+# 启动数据库 + 后端 + 前端
+scripts\start_local.cmd
+
+# 分别启动（前台观察日志）
+scripts\start_db_local.cmd
+scripts\start_backend_local.cmd
+scripts\start_frontend_local.cmd
+
+# 停止
+scripts\stop_local.cmd
+```
+
+**方式二：手动启动（跨平台开发环境）**
 
 ```bash
 # 终端 1 - 启动后端
-source .venv/bin/activate
+source .venv/bin/activate  # macOS/Linux
 python -m backend.main
 
 # 终端 2 - 启动前端
 cd frontend
 npm run dev
-```
-
-**方式二：Windows 本地启动脚本**
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\start_local.ps1
 ```
 
 **方式三：Docker 部署（推荐生产环境）**
@@ -344,7 +353,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start_local.ps1
 docker-compose up -d --build
 ```
 
-### 7. 访问应用
+### 6. 访问应用
 
 - 前端：http://localhost:5173
 - 后端 API：http://localhost:8000

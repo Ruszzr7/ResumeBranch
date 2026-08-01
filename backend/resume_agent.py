@@ -27,6 +27,9 @@ from dataclasses import dataclass
 from typing import List
 from pydantic import BaseModel, Field
 
+from .resume_data import normalize_resume_data
+from .llm_providers import active_profile, temperature_supported
+
 
 def sanitize_for_log(content):
     """清理内容中的 base64 图片数据，避免日志污染"""
@@ -59,10 +62,6 @@ def estimate_tokens(text):
     chinese_chars = sum(1 for c in text_str if '\u4e00' <= c <= '\u9fff')
     other_chars = len(text_str) - chinese_chars
     return int(chinese_chars * 0.5 + other_chars * 0.25)
-
-# 全局变量：当前用户ID（由 backend.main 设置）
-current_user_id = None
-current_task_id = None
 
 # 加载环境变量
 load_dotenv()
@@ -97,6 +96,10 @@ class Education(BaseModel):
     degree: str = Field(..., description="学历")
     date_range: List[str] = Field(..., description="就读时间")
     school_tags: List[str] = Field(default_factory=list, description="学校性质标签")
+    gpa: str = Field(default="", description="平均绩点，例如 3.72")
+    gpa_scale: str = Field(default="", description="绩点满分，例如 4.0")
+    ranking: str = Field(default="", description="专业或年级排名，例如 前10%")
+    average_score: str = Field(default="", description="加权平均分，例如 88/100")
     theses: List[Thesis] = Field(default_factory=list, description="论文列表")
 
 
@@ -164,9 +167,11 @@ class JobDescription(BaseModel):
 # LLM 配置
 # =============================================================================
 
-LLM_API_KEY = os.getenv("LLM_API_KEY", "").strip()
-LLM_BASE_URL = os.getenv("BASE_URL", "").strip() or None
-LLM_MODEL = os.getenv("LLM_MODEL", "gemini-3-flash-preview").strip() or "gemini-3-flash-preview"
+LLM_PROVIDER, _ACTIVE_LLM_PROFILE = active_profile()
+LLM_API_KEY = _ACTIVE_LLM_PROFILE["api_key"]
+LLM_BASE_URL = _ACTIVE_LLM_PROFILE["base_url"] or None
+LLM_MODEL = _ACTIVE_LLM_PROFILE["model"]
+LLM_TEMPERATURE = _ACTIVE_LLM_PROFILE.get("temperature")
 LLM_ENABLED = bool(LLM_API_KEY)
 
 # ChatOpenAI constructs clients during module import. A local sentinel keeps the
@@ -178,23 +183,13 @@ httpx_client = httpx.Client(
     limits=httpx.Limits(max_connections=20),
 )
 
-KIMI_FIXED_TEMPERATURE_MODELS = {
-    "k3",
-    "k3-256k",
-    "kimi-for-coding",
-    "kimi-k3",
-    "kimi-k2.7-code",
-    "kimi-k2.7-code-highspeed",
-    "kimi-k2.6",
-}
-
-
 def create_llm_for_config(
     *,
     api_key: str,
     base_url: str | None,
     model: str,
-    temperature: float,
+    temperature: float | None,
+    provider: str = "openai",
 ):
     """Create a chat model for a specific local configuration."""
     kwargs = {
@@ -204,7 +199,7 @@ def create_llm_for_config(
         "http_client": httpx_client,
         "max_retries": 3,
     }
-    if model not in KIMI_FIXED_TEMPERATURE_MODELS:
+    if temperature is not None and temperature_supported(provider, model):
         kwargs["temperature"] = temperature
     return ChatOpenAI(**kwargs)
 
@@ -215,7 +210,8 @@ def create_llm(*, temperature: float):
         api_key=LLM_API_KEY,
         base_url=LLM_BASE_URL,
         model=LLM_MODEL,
-        temperature=temperature,
+        temperature=LLM_TEMPERATURE if LLM_TEMPERATURE is not None else temperature,
+        provider=LLM_PROVIDER,
     )
 
 
@@ -228,12 +224,14 @@ jd_parser_llm = create_llm(temperature=0.0)
 
 def reload_llm_config():
     """Reload local LLM settings without restarting the backend process."""
-    global LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, LLM_ENABLED
+    global LLM_PROVIDER, LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, LLM_TEMPERATURE, LLM_ENABLED
     global llm_client_api_key, conversation_llm, jd_parser_llm
 
-    LLM_API_KEY = os.getenv("LLM_API_KEY", "").strip()
-    LLM_BASE_URL = os.getenv("BASE_URL", "").strip() or None
-    LLM_MODEL = os.getenv("LLM_MODEL", "gemini-3-flash-preview").strip() or "gemini-3-flash-preview"
+    LLM_PROVIDER, profile = active_profile()
+    LLM_API_KEY = profile["api_key"]
+    LLM_BASE_URL = profile["base_url"] or None
+    LLM_MODEL = profile["model"]
+    LLM_TEMPERATURE = profile.get("temperature")
     LLM_ENABLED = bool(LLM_API_KEY)
     llm_client_api_key = LLM_API_KEY or "local-llm-disabled"
     conversation_llm = create_llm(temperature=0.1)
@@ -242,6 +240,8 @@ def reload_llm_config():
         "configured": LLM_ENABLED,
         "model": LLM_MODEL,
         "base_url": LLM_BASE_URL or "",
+        "provider": LLM_PROVIDER,
+        "temperature": LLM_TEMPERATURE,
     }
 
 
@@ -264,7 +264,7 @@ CONVERSATION_PROMPT = """
 ## 标准优化顺序，你必须严格按照以下顺序逐步优化简历，**每次只聚焦一个模块**，不要跳跃：
 1. **目标岗位**：如果你没有任何关于用户目标岗位或意愿的信息，不要进行假设，优先引导用户**点击页面右上角的“目标岗位”按钮上传目标岗位JD（文本或图片）**，或者如果没有明确的目标岗位，至少引导用户输入一个明确的期望岗位名称（如"我想申请字节跳动的产品经理岗位"），以便后续优化有明确的方向。
 2. **基础信息**：姓名、手机、邮箱、期望岗位 （重要，绝对不能缺漏！）
-3. **教育经历**：学校、专业、学位、时间、亮点标签
+3. **教育经历**：学校、专业、学位、时间、亮点标签、GPA/绩点、排名、平均分
 4. **工作经历**：公司、职位、时间、STAR 描述、量化结果
 5. **项目经历**：项目名、角色、技术栈、STAR 描述、量化成果
 6. **其他**：技能、证书、语言
@@ -335,6 +335,7 @@ CONVERSATION_PROMPT = """
 - **save_resume_tool**：当你给出了完整的优化建议、可以达到修改标准时，需要输出完整的修改建议（不要只输出部分的改动点，而是要输出要修改的部分的前后对比），且调用此工具。你需要将完整的简历JSON作为参数传入。调用后，系统会自动在前端显示确认框，**用户点击确认后才会实际保存到简历库**。
 - **输出措辞注意**：当你调用 `save_resume_tool` 时，你的回复内容应该说"上述修改方案已准备好，请在下方确认框中确认是否应用（确认框可能稍有延迟，请耐心等待，确认框出现前不要离开或刷新当前页面以免丢失聊天记录）"或"以上是我对你的简历的修改建议，请在下方确认框中确认是否修改到简历库？（确认框显示可能稍有延迟，请耐心等待）"之类的话术，**绝对不能说"已保存"、"已同步"、"已修改"、"已经更新到简历库"等**，因为此时还需要用户确认，简历还没有实际被修改。
 - **内容一致性约束**：你调用 `save_resume_tool` 时传入的JSON参数内容，必须与你的文字回复中描述的修改内容保持一致。文字描述是修改建议的展示形式，JSON是修改建议的数据形式，两者描述的是同一份修改。如果发现不一致，以JSON中的内容为准修正你的文字回复。
+- **教育成绩字段约束**：用户提到“GPA”“绩点”“平均绩点”时写入 `gpa`，满分写入 `gpa_scale`；“专业排名/年级排名”写入 `ranking`；“平均分/加权平均分”写入 `average_score`。这些内容绝对不能写入 `theses`。
 - 当调用工具时，传入的JSON格式如下：
 ```json
 {
@@ -351,6 +352,10 @@ CONVERSATION_PROMPT = """
     "degree": "学位",
     "date_range": ["开始时间", "结束时间"],
     "school_tags": ["标签1", "标签2"],
+    "gpa": "3.72",
+    "gpa_scale": "4.0",
+    "ranking": "前10%",
+    "average_score": "88/100",
     "theses": []
   }],
   "work_experience": [{
@@ -471,6 +476,10 @@ RESUME_FULL_EXTRACT_PROMPT = '''# Role
     "degree": "学位",
     "date_range": ["开始时间", "结束时间"],
     "school_tags": ["标签1", "标签2"],
+    "gpa": "3.72",
+    "gpa_scale": "4.0",
+    "ranking": "前10%",
+    "average_score": "88/100",
     "theses": []
   }],
   "work_experience": [{
@@ -503,6 +512,7 @@ RESUME_FULL_EXTRACT_PROMPT = '''# Role
 5. 如果图片中没有某字段，设置为 "" 或 []，不要省略
 6. 绝对不要输出 ```json 或 ``` 标记
 7. 绝对不要输出其他任何文字
+8. “GPA/绩点/平均绩点”写入 gpa，绩点满分写入 gpa_scale；排名写入 ranking；平均分或加权平均分写入 average_score，绝对不要把这些信息写入 theses
 
 # 示例
 输入：一张简历图片，包含姓名"张三"，手机"13800138000"，工作经历"2020.01 - 2022.12 在字节跳动担任产品经理"
@@ -581,6 +591,13 @@ def fix_unquoted_json_strings(content: str) -> str:
         return content
 
 
+def normalize_and_validate_resume(data: dict) -> dict:
+    """Normalize legacy fields and reject malformed model-generated resumes."""
+    normalized = normalize_resume_data(data)
+    Resume.model_validate(normalized)
+    return normalized
+
+
 @tool
 def save_resume_tool(content: str = "", user_id: int = None, task_id: str = None) -> str:
     """
@@ -620,6 +637,11 @@ def save_resume_tool(content: str = "", user_id: int = None, task_id: str = None
         except json.JSONDecodeError as e2:
             print(f"[save_resume_tool] 修复后仍然失败: {e2}")
             return f"保存失败：JSON 解析错误 - {str(e)}"
+
+    try:
+        resume_data = normalize_and_validate_resume(resume_data)
+    except Exception as exc:
+        return f"保存失败：简历数据结构不合法 - {str(exc)}"
 
     # 保存到数据库
     try:
@@ -769,6 +791,11 @@ async def conversation_node(state: AgentState) -> dict:
     llm_messages = []
     for msg in state.messages:
         if isinstance(msg, ToolMessage):
+            tool_result = str(getattr(msg, 'content', '') or '')
+            if tool_result.startswith("保存失败") or tool_result.startswith("错误"):
+                llm_messages.append(HumanMessage(
+                    content=f"[系统工具错误：{tool_result}。请修正完整简历JSON后重新调用保存工具。]"
+                ))
             continue  # 跳过 ToolMessage
         elif isinstance(msg, HumanMessage):
             # 跳过确认消息（不作为 LLM 输入，但保留在数据库中）
@@ -898,7 +925,8 @@ async def conversation_node(state: AgentState) -> dict:
         "jd_data": state.jd_data or {},
         "pending_confirmation": pending_conf,
         "just_saved": False,  # 清除 just_saved 标记
-        "user_id": state.user_id  # 保留用户ID
+        "user_id": state.user_id,  # 保留用户ID
+        "task_id": state.task_id,
     }
     
     # 创建临时状态对象用于调试
@@ -938,6 +966,7 @@ async def tool_node(state: AgentState) -> dict:
     # 处理确认回复
     if '[CONFIRM_REPLY:' in user_content:
         print("[Tool] 检测到确认回复")
+        updated_resume_data = None
         import re
         match = re.search(r'\[CONFIRM_REPLY:([^:]+):([^:]+)\]', user_content)
         
@@ -957,8 +986,12 @@ async def tool_node(state: AgentState) -> dict:
                 tool_name = state.pending_confirmation.get('tool_name')
                 tool_args = state.pending_confirmation.get('tool_args', {})
                 confirm_content = state.pending_confirmation.get('content', '确认此修改')
-                
-                if value == 'confirm':
+
+                pending_task_id = tool_args.get("task_id")
+                if pending_task_id and pending_task_id != state.task_id:
+                    result = "无效的确认请求：待确认修改不属于当前简历任务"
+                    saved_resume = False
+                elif value == 'confirm':
                     # 执行保存
                     print("[Tool] 用户确认，执行保存")
                     try:
@@ -987,18 +1020,30 @@ async def tool_node(state: AgentState) -> dict:
                                     # 直接跳到后面清除 pending_confirmation
                                     pending_confirmation = None
                                     return {
-                                        "messages": state.messages + [ToolMessage(content=result)],
+                                        "messages": state.messages + [ToolMessage(
+                                            content=result,
+                                            tool_call_id="confirm",
+                                            name="confirmation_handler",
+                                        )],
                                         "resume_data": state.resume_data,
                                         "jd_data": state.jd_data,
                                         "pending_confirmation": pending_confirmation,
                                         "just_saved": False,
-                                        "user_id": state.user_id
+                                        "user_id": state.user_id,
+                                        "task_id": state.task_id,
                                     }
 
                             # 直接调用 update_resume 保存
                             from .tools import update_resume
-                            result = update_resume(updated_resume_data, user_id=state.user_id)
-                            saved_resume = True
+                            updated_resume_data = normalize_and_validate_resume(updated_resume_data)
+                            result = update_resume(
+                                updated_resume_data,
+                                user_id=state.user_id,
+                                task_id=state.task_id,
+                            )
+                            saved_resume = not (
+                                result.startswith("保存失败") or result.startswith("错误")
+                            )
                             print(f"[Tool] 保存结果: {result}")
                     except json.JSONDecodeError as e:
                         result = f"保存失败：JSON 解析错误 - {str(e)}"
@@ -1006,10 +1051,13 @@ async def tool_node(state: AgentState) -> dict:
                     except Exception as e:
                         result = f"保存失败：{str(e)}"
                         saved_resume = False
-                else:
+                elif value == 'cancel':
                     # 取消
                     print("[Tool] 用户取消")
                     result = "已取消保存"
+                    saved_resume = False
+                else:
+                    result = "确认回复格式错误"
                     saved_resume = False
                 
                 # 清除 pending_confirmation
@@ -1049,7 +1097,8 @@ async def tool_node(state: AgentState) -> dict:
             "jd_data": state.jd_data or {},
             "pending_confirmation": pending_confirmation,
             "just_saved": saved_resume,
-            "user_id": state.user_id
+            "user_id": state.user_id,
+            "task_id": state.task_id,
         }
     
     # 普通工具调用处理
@@ -1057,7 +1106,13 @@ async def tool_node(state: AgentState) -> dict:
     if not hasattr(last_message, 'tool_calls') or not last_message.tool_calls:
         print("=== [End] tool_node (no tool_calls) 耗时: 0.00s ===\n")
         # 没有工具调用时，返回原始消息（保持上下文）
-        return {"messages": list(state.messages), "resume_data": state.resume_data or {}, "jd_data": state.jd_data or {}}
+        return {
+            "messages": list(state.messages),
+            "resume_data": state.resume_data or {},
+            "jd_data": state.jd_data or {},
+            "user_id": state.user_id,
+            "task_id": state.task_id,
+        }
 
     # 打印工具调用信息
     print(f"Tool calls: {[tc.name if hasattr(tc, 'name') else tc.get('name') for tc in last_message.tool_calls]}")
@@ -1100,36 +1155,39 @@ async def tool_node(state: AgentState) -> dict:
                     content = tool_args.get('content', '')
                     try:
                         updated_resume_data = json.loads(content)
-                    except json.JSONDecodeError:
+                        updated_resume_data = normalize_and_validate_resume(updated_resume_data)
+                        tool_args['content'] = json.dumps(updated_resume_data, ensure_ascii=False)
+                    except Exception as exc:
                         updated_resume_data = None
-                    
-                    # 传递 user_id
-                    tool_args['user_id'] = state.user_id
-                    tool_args['task_id'] = state.task_id
-                    
-                    # 生成确认标记，返回给前端
-                    confirm_id = str(uuid.uuid4())[:8]
-                    pending_confirmation = {
-                        "confirm_id": confirm_id,
-                        "content": "是否确认修改简历？",  # 固定提示文案
-                        "options": [
-                            {"label": "确认", "value": "confirm", "style": "primary"},
-                            {"label": "取消", "value": "cancel", "style": "default"}
-                        ],
-                        "tool_name": tool_name,
-                        "tool_args": tool_args,
-                        "status": "pending"
-                    }
-                    
-                    # 返回确认标记
-                    marker = {
-                        "type": "save_resume",
-                        "confirm_id": confirm_id,
-                        "content": "是否确认修改简历？",
-                        "options": pending_confirmation["options"]
-                    }
-                    result = f"[CONFIRM_MARKER:{json.dumps(marker)}]"
-                    print(f"[Tool] 生成确认标记，confirm_id={confirm_id}")
+                        result = f"保存失败：简历数据结构不合法 - {str(exc)}"
+                    else:
+                        # 服务端覆盖身份参数，绝不信任模型生成的 user_id/task_id。
+                        tool_args['user_id'] = state.user_id
+                        tool_args['task_id'] = state.task_id
+
+                        # 生成确认标记，返回给前端
+                        confirm_id = str(uuid.uuid4())[:8]
+                        pending_confirmation = {
+                            "confirm_id": confirm_id,
+                            "content": "是否确认修改简历？",  # 固定提示文案
+                            "options": [
+                                {"label": "确认", "value": "confirm", "style": "primary"},
+                                {"label": "取消", "value": "cancel", "style": "default"}
+                            ],
+                            "tool_name": tool_name,
+                            "tool_args": tool_args,
+                            "status": "pending"
+                        }
+
+                        # 返回确认标记
+                        marker = {
+                            "type": "save_resume",
+                            "confirm_id": confirm_id,
+                            "content": "是否确认修改简历？",
+                            "options": pending_confirmation["options"]
+                        }
+                        result = f"[CONFIRM_MARKER:{json.dumps(marker)}]"
+                        print(f"[Tool] 生成确认标记，confirm_id={confirm_id}")
                 else:
                     # 其他工具直接执行
                     result = tool_func.invoke(tool_args)
@@ -1171,7 +1229,8 @@ async def tool_node(state: AgentState) -> dict:
         "jd_data": state.jd_data or {},
         "pending_confirmation": pending_confirmation,
         "just_saved": saved_resume,
-        "user_id": state.user_id
+        "user_id": state.user_id,
+        "task_id": state.task_id,
     }
 
 
@@ -1264,6 +1323,16 @@ def tool_node_router(state: AgentState) -> str:
     # 如果有待确认状态，返回 END（等待前端确认）
     if getattr(state, 'pending_confirmation', None):
         return END
+
+    # 取消是确定性操作，不需要再次调用 LLM；直接把工具结果返回前端。
+    if state.messages:
+        last_message = state.messages[-1]
+        if (
+            isinstance(last_message, ToolMessage)
+            and getattr(last_message, "name", "") == "confirmation_handler"
+            and last_message.content == "已取消保存"
+        ):
+            return END
 
     # 默认返回 conversation_llm 生成结束语
     return "conversation_llm"
