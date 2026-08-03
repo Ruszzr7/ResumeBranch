@@ -98,6 +98,12 @@ const currentTask = computed(() => projectTasks.value.find(task => task.id === c
 const showTaskCreateDialog = ref(false)
 const newTaskTitle = ref('')
 const taskCreateMode = ref('copy')
+const taskCreateStep = ref(1)
+const taskSourceId = ref('')
+const taskResumeSources = ref([])
+const taskJDText = ref('')
+const taskJDData = ref({})
+const isParsingTaskJD = ref(false)
 const isCreatingTask = ref(false)
 const taskCreateError = ref('')
 const taskToDelete = ref(null)
@@ -105,6 +111,25 @@ const isDeletingTask = ref(false)
 const taskDeleteError = ref('')
 const uiNotice = ref({ visible: false, type: 'error', message: '' })
 let uiNoticeTimer = null
+
+const currentProjectSources = computed(() => taskResumeSources.value.filter(
+  source => source.project_id === String(route.params.projectId || '')
+))
+const otherProjectSourceGroups = computed(() => {
+  const groups = new Map()
+  taskResumeSources.value
+    .filter(source => source.project_id !== String(route.params.projectId || ''))
+    .forEach(source => {
+      if (!groups.has(source.project_id)) {
+        groups.set(source.project_id, { id: source.project_id, title: source.project_title, sources: [] })
+      }
+      groups.get(source.project_id).sources.push(source)
+    })
+  return [...groups.values()]
+})
+const selectedTaskSource = computed(() => taskResumeSources.value.find(
+  source => source.id === taskSourceId.value
+) || null)
 
 // 聊天消息列表
 const messages = ref([])
@@ -129,6 +154,36 @@ const hasConfirmArea = ref(false)
 // 加载文案状态
 const loadingText = ref('正在处理中...')
 let loadingTextInterval = null
+const processingRequestId = ref('')
+const processingPhase = ref('')
+const processingText = ref('')
+const confirmationProgressPhases = new Set(['building_preview', 'validating', 'ready'])
+const showProcessingBar = computed(() => (
+  isResponding.value
+  && confirmationProgressPhases.has(processingPhase.value)
+  && Boolean(processingText.value)
+))
+
+function beginProcessing(requestId) {
+  processingRequestId.value = requestId
+  processingPhase.value = ''
+  processingText.value = ''
+}
+
+function updateProcessing(data) {
+  if (data.request_id && data.request_id !== processingRequestId.value) return
+  if (!confirmationProgressPhases.has(data.phase)) return
+  isLoading.value = false
+  processingPhase.value = data.phase
+  processingText.value = '正在生成确认框，请勿离开或刷新当前页面…'
+}
+
+function finishProcessing(requestId = '') {
+  if (requestId && processingRequestId.value && requestId !== processingRequestId.value) return
+  processingRequestId.value = ''
+  processingPhase.value = ''
+  processingText.value = ''
+}
 // 全屏弹窗状态
 const isFullscreenDialogOpen = ref(false)
 const dialogUserInput = ref('')
@@ -317,17 +372,6 @@ onMounted(() => {
     window.addEventListener('resize', checkMobileView)
   }
 
-  // 监听聊天容器滚动事件（带节流）
-  // 使用 nextTick 确保 DOM 已挂载
-  nextTick(() => {
-    if (messagesContainer.value) {
-      messagesContainer.value.addEventListener('scroll', handleScroll)
-      console.log('[DEBUG] 滚动监听已添加')
-    } else {
-      console.log('[DEBUG] messagesContainer 未找到')
-    }
-  })
-
   // 初始化页面滚动状态（直接访问 /admin 时）
   if (route.path === '/admin') {
     document.body.style.overflow = 'auto'
@@ -341,9 +385,6 @@ onUnmounted(() => {
   window.removeEventListener('storage', handleStorageChange)
   stopParsingStatusPoll()
   if (uiNoticeTimer) clearTimeout(uiNoticeTimer)
-  if (messagesContainer.value) {
-    messagesContainer.value.removeEventListener('scroll', handleScroll)
-  }
   if (resizeObserver) {
     resizeObserver.disconnect()
   } else {
@@ -394,14 +435,65 @@ async function loadWorkspace() {
 async function createProjectTask() {
   newTaskTitle.value = ''
   taskCreateMode.value = 'copy'
+  taskCreateStep.value = 1
+  taskJDText.value = ''
+  taskJDData.value = {}
   taskCreateError.value = ''
   showTaskCreateDialog.value = true
+  try {
+    const response = await fetch('/resume-sources', { headers: getAuthorizationHeaders() })
+    if (!response.ok) throw new Error('无法加载简历列表')
+    taskResumeSources.value = await response.json()
+    const currentBase = taskResumeSources.value.find(
+      source => source.project_id === String(route.params.projectId) && source.is_base
+    )
+    taskSourceId.value = currentBase?.id || currentTaskId.value || ''
+  } catch (error) {
+    taskCreateError.value = error.message || '无法加载简历列表'
+  }
 }
 
 function closeTaskCreateDialog() {
   if (isCreatingTask.value) return
   showTaskCreateDialog.value = false
   taskCreateError.value = ''
+}
+
+function goToTaskJDStep() {
+  if (taskCreateMode.value === 'copy' && !taskSourceId.value) {
+    taskCreateError.value = '请选择要复制的简历'
+    return
+  }
+  taskCreateError.value = ''
+  taskCreateStep.value = 2
+}
+
+async function goToTaskReview({ skipJD = false } = {}) {
+  taskCreateError.value = ''
+  if (skipJD || !taskJDText.value.trim()) {
+    taskJDData.value = {}
+    taskCreateStep.value = 3
+    return
+  }
+  isParsingTaskJD.value = true
+  try {
+    const response = await fetch('/parse_jd', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ text: taskJDText.value.trim(), image: '' })
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok || data.error) throw new Error(data.error || 'JD 识别失败')
+    taskJDData.value = { ...data, raw_text: taskJDText.value.trim() }
+    if (!newTaskTitle.value.trim()) {
+      newTaskTitle.value = [data.company, data.position].filter(Boolean).join(' · ') || '新岗位版本'
+    }
+    taskCreateStep.value = 3
+  } catch (error) {
+    taskCreateError.value = error.message || 'JD 识别失败，请重试或暂时跳过'
+  } finally {
+    isParsingTaskJD.value = false
+  }
 }
 
 async function confirmCreateProjectTask() {
@@ -414,7 +506,9 @@ async function confirmCreateProjectTask() {
       headers: getAuthHeaders(),
       body: JSON.stringify({
         title,
-        copy_base_resume: taskCreateMode.value === 'copy'
+        copy_base_resume: false,
+        source_task_id: taskCreateMode.value === 'copy' ? taskSourceId.value : null,
+        jd_data: taskJDData.value
       })
     })
     if (!response.ok) {
@@ -779,12 +873,13 @@ async function sendMessage() {
   if ((!userInput.value.trim() && uploadedFiles.value.length === 0) || isLoading.value) return
 
   // 如果有未处理的 confirm area，取消它（用户发送了新消息）
-  const pendingConfirmIndex = messages.value.findIndex(m => m.type === 'confirm' && !m.handled)
-  if (pendingConfirmIndex !== -1) {
-    messages.value[pendingConfirmIndex] = {
-      ...messages.value[pendingConfirmIndex],
-      handled: true
-    }
+  const hadPendingConfirmation = messages.value.some(m => m.type === 'confirm' && !m.handled)
+  if (hadPendingConfirmation) {
+    messages.value = messages.value.map(message => (
+      message.type === 'confirm' && !message.handled
+        ? { ...message, handled: true }
+        : message
+    ))
     hasConfirmArea.value = false
   }
 
@@ -801,6 +896,7 @@ async function sendMessage() {
   const baseId = Date.now() * 1000 + Math.floor(Math.random() * 1000)
   const userMessageId = baseId
   const streamMessageId = baseId + 1
+  const requestId = globalThis.crypto?.randomUUID?.() || `request-${baseId}`
 
   // 添加用户消息
   const userMessage = {
@@ -819,9 +915,11 @@ async function sendMessage() {
     streaming: true
   }
   messages.value.push(streamingMessage)
+  nextTick(() => scrollToBottom('auto'))
 
   isLoading.value = true
   isResponding.value = true
+  beginProcessing(requestId)
   // 启动加载文案切换
   loadingText.value = '正在处理中...'
   let textIndex = 0
@@ -846,6 +944,7 @@ async function sendMessage() {
     const formData = new FormData()
     formData.append('message', input)
     formData.append('session_id', sessionId.value)
+    formData.append('request_id', requestId)
 
     // 添加上传的文件
     // 注意：uploadedFiles 在函数开头已被清空，这里附件信息已保存在 currentAttachments 中
@@ -894,7 +993,9 @@ async function sendMessage() {
             try {
               const data = JSON.parse(jsonData)
 
-              if (data.type === 'stream') {
+              if (data.type === 'progress') {
+                updateProcessing(data)
+              } else if (data.type === 'stream') {
                 // 停止加载文案切换
                 if (loadingTextInterval) {
                   clearTimeout(loadingTextInterval)
@@ -932,6 +1033,7 @@ async function sendMessage() {
                 }
                 // 收到第一个流式输出后，隐藏加载指示器
                 isLoading.value = false
+                finishProcessing(data.request_id)
                 // 更新会话ID并保存到localStorage
                 if (data.session_id) {
                   sessionId.value = data.session_id
@@ -962,22 +1064,56 @@ async function sendMessage() {
                 }
                 isLoading.value = false
                 isResponding.value = false
-                // 添加新的确认消息（不更新现有消息，确保按钮在AI消息下方显示）
-                messages.value.push({
+                finishProcessing(data.request_id)
+                // 一个任务同时只能有一个活动确认框。先失效旧确认，再按
+                // confirm_id 更新或插入，避免重复 SSE 事件生成双确认框。
+                messages.value = messages.value.map(message => (
+                  message.type === 'confirm' && !message.handled
+                    ? { ...message, handled: true }
+                    : message
+                ))
+                const confirmationMessage = {
                   id: data.id || Date.now(),
                   role: 'assistant',
                   type: 'confirm',
                   content: data.content,
                   options: data.options,
+                  changes: data.changes || [],
                   confirm_id: data.confirm_id,
+                  handled: false,
                   streaming: false
-                })
+                }
+                const existingConfirmIndex = messages.value.findIndex(
+                  message => message.type === 'confirm' && message.confirm_id === data.confirm_id
+                )
+                if (existingConfirmIndex === -1) {
+                  messages.value.push(confirmationMessage)
+                } else {
+                  messages.value[existingConfirmIndex] = confirmationMessage
+                }
                 // 标记有 confirm area，禁用输入
                 hasConfirmArea.value = true
+              } else if (data.type === 'proposal_error') {
+                if (loadingTextInterval) {
+                  clearTimeout(loadingTextInterval)
+                  loadingTextInterval = null
+                }
+                const index = messages.value.findIndex(m => m.id === streamMessageId)
+                if (index !== -1) {
+                  messages.value[index] = {
+                    ...messages.value[index],
+                    content: data.message || '本次修改无法安全生成确认预览，系统未对简历做任何更改。',
+                    streaming: false
+                  }
+                }
+                isLoading.value = false
+                isResponding.value = false
+                finishProcessing(data.request_id)
               } else if (data.type === 'end') {
                 console.log('[前端] 收到 end 事件, isResponding before:', isResponding.value, 'isLoading:', isLoading.value)
                 // 结束信号，关闭连接
                 isResponding.value = false
+                finishProcessing(data.request_id)
                 console.log('[前端] isResponding 已设置为 false')
                 // 只在流式响应结束时调用一次updateResumeData()
                 updateResumeData()
@@ -1032,7 +1168,7 @@ async function sendMessage() {
 }
 
 // 处理确认按钮点击
-async function handleOptionClick({ confirm_id, value }) {
+async function handleOptionClick({ confirm_id, value, selected_change_ids = [] }) {
   const confirmMsgIndex = messages.value.findIndex(m => m.type === 'confirm' && m.confirm_id === confirm_id)
   if (confirmMsgIndex !== -1) {
     messages.value[confirmMsgIndex] = {
@@ -1042,14 +1178,19 @@ async function handleOptionClick({ confirm_id, value }) {
   }
   hasConfirmArea.value = false
 
-  const confirmMessage = `[CONFIRM_REPLY:${confirm_id}:${value}]`
+  const selectedSuffix = selected_change_ids.length ? `:${selected_change_ids.join(',')}` : ''
+  const confirmMessage = `[CONFIRM_REPLY:${confirm_id}:${value}${selectedSuffix}]`
+  const isAccepting = value !== 'cancel'
   const baseId = Date.now() * 1000 + Math.floor(Math.random() * 1000)
   const streamMessageId = baseId + 1
+  const requestId = globalThis.crypto?.randomUUID?.() || `confirm-${baseId}`
 
   messages.value.push({
     id: baseId,
     role: 'user',
-    content: value === 'confirm' ? '确认保存' : '取消修改'
+    content: value === 'cancel'
+      ? '全部拒绝'
+      : (value === 'confirm_selected' ? `应用已选 ${selected_change_ids.length} 项修改` : '全部接受')
   })
   messages.value.push({
     id: streamMessageId,
@@ -1065,6 +1206,7 @@ async function handleOptionClick({ confirm_id, value }) {
     const formData = new FormData()
     formData.append('message', confirmMessage)
     formData.append('session_id', sessionId.value)
+    formData.append('request_id', requestId)
 
     // 恢复原版确认链路：确认回复进入 /chat，由 LangGraph tool_node 处理。
     const response = await fetch('/chat', {
@@ -1082,6 +1224,8 @@ async function handleOptionClick({ confirm_id, value }) {
     const decoder = new TextDecoder('utf-8')
     let buffer = ''
     let resumeRefreshed = false
+    let confirmationProcessed = false
+    let confirmationSucceeded = false
 
     while (true) {
       const { done, value: chunk } = await reader.read()
@@ -1106,20 +1250,36 @@ async function handleOptionClick({ confirm_id, value }) {
           }
         } else if (data.type === 'final') {
           isLoading.value = false
+          confirmationProcessed = Boolean(data.confirmation_processed)
+          confirmationSucceeded = Boolean(data.confirmation_success)
           const index = messages.value.findIndex(m => m.id === streamMessageId)
           if (index !== -1) {
             messages.value[index] = { ...messages.value[index], content: data.content, streaming: false }
           }
           if (data.session_id) sessionId.value = data.session_id
-          if (value === 'confirm') {
+          if (isAccepting && confirmationSucceeded) {
             await updateResumeData()
             resumeRefreshed = true
           }
         } else if (data.type === 'end') {
+          confirmationProcessed = confirmationProcessed || Boolean(data.confirmation_processed)
+          confirmationSucceeded = confirmationSucceeded || Boolean(data.confirmation_success)
           if (data.session_id) sessionId.value = data.session_id
-          if (value === 'confirm' && !resumeRefreshed) await updateResumeData()
+          if (isAccepting && confirmationSucceeded && !resumeRefreshed) {
+            await updateResumeData()
+            resumeRefreshed = true
+          }
         }
       }
+    }
+    if (isAccepting && confirmationProcessed && confirmationSucceeded && resumeRefreshed) {
+      messages.value.push({
+        id: Date.now() * 1000 + 9,
+        role: 'assistant',
+        type: 'undo',
+        content: '本次修改已应用。',
+        handled: false
+      })
     }
   } catch (error) {
     console.error('确认操作失败:', error)
@@ -1141,6 +1301,46 @@ async function handleOptionClick({ confirm_id, value }) {
   } finally {
     isLoading.value = false
     isResponding.value = false
+    finishProcessing(requestId)
+    try {
+      await fetch('/save_conversation', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ session_id: sessionId.value, messages: messages.value })
+      })
+    } catch (saveError) {
+      console.error('保存确认消息失败:', saveError)
+    }
+  }
+}
+
+async function handleUndoClick({ message_id }) {
+  const index = messages.value.findIndex(message => message.id === message_id)
+  try {
+    const response = await fetch(`/tasks/${currentTaskId.value}/undo`, {
+      method: 'POST',
+      headers: getAuthorizationHeaders()
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(data.detail || '撤回失败，请重试')
+    if (index !== -1) {
+      messages.value[index] = { ...messages.value[index], handled: true, content: '已撤回本次修改。' }
+    }
+    messages.value = messages.value.map(message => (
+      message.type === 'confirm' && !message.handled
+        ? { ...message, handled: true }
+        : message
+    ))
+    hasConfirmArea.value = false
+    await updateResumeData()
+    showNotice('已撤回本次修改', 'success')
+    await fetch('/save_conversation', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ session_id: sessionId.value, messages: messages.value })
+    })
+  } catch (error) {
+    showNotice(error.message || '撤回失败，请重试')
   }
 }
 
@@ -2271,6 +2471,8 @@ async function parseAndSaveResume() {
     if (data.success) {
       // 更新简历数据
       resumeData.value = data.resume_data
+      const task = projectTasks.value.find(item => item.id === currentTaskId.value)
+      if (task && data.source_page_count) task.source_page_count = data.source_page_count
       closeUploadDialog()
       await completeNewProjectOnboarding()
 
@@ -2363,35 +2565,31 @@ async function parseAndSaveResume() {
 }
 
 // 自动滚动到底部，添加丝滑过渡效果
-function scrollToBottom() {
+function scrollToBottom(behavior = 'smooth') {
   if (messagesContainer.value) {
-    // 立即滚动到底部，带有丝滑过渡效果
     messagesContainer.value.scrollTo({
       top: messagesContainer.value.scrollHeight,
-      behavior: 'smooth'
+      behavior
     })
+    isChatNearBottom.value = true
+    showScrollToBottomButton.value = false
   }
 }
 
 // 滑动至底部按钮状态
 const showScrollToBottomButton = ref(false)
+const isChatNearBottom = ref(true)
 let scrollThrottleTimer = null
 
 // 检查是否需要显示滑动至底部按钮
 function checkScrollPosition() {
-  if (!messagesContainer.value) {
-    console.log('[DEBUG] checkScrollPosition: messagesContainer 为空')
-    return
-  }
+  if (!messagesContainer.value) return
   
   const { scrollTop, scrollHeight, clientHeight } = messagesContainer.value
   const distanceFromBottom = scrollHeight - scrollTop - clientHeight
   
-  console.log(`[DEBUG] scrollTop=${scrollTop}, scrollHeight=${scrollHeight}, clientHeight=${clientHeight}, distanceFromBottom=${distanceFromBottom}`)
-  
-  // 滚动距离底部超过20像素时显示按钮
-  showScrollToBottomButton.value = distanceFromBottom > 1500
-  console.log(`[DEBUG] showScrollToBottomButton=${showScrollToBottomButton.value}`)
+  isChatNearBottom.value = distanceFromBottom <= 120
+  showScrollToBottomButton.value = !isChatNearBottom.value
 }
 
 // 滚动事件节流处理（100ms间隔）
@@ -2407,10 +2605,6 @@ function handleScroll() {
 // 点击滑动至底部按钮
 function handleScrollToBottomClick() {
   scrollToBottom()
-  // 滚动完成后隐藏按钮
-  setTimeout(() => {
-    showScrollToBottomButton.value = false
-  }, 500)
 }
 
 // 监听消息列表变化，自动滚动到底部
@@ -2418,11 +2612,10 @@ function handleScrollToBottomClick() {
 watch(
   () => messages.value,
   () => {
-    // 使用nextTick确保DOM已更新
+    const shouldFollowLatest = isChatNearBottom.value
     nextTick(() => {
-      scrollToBottom()
-      // 检查是否需要显示滚动按钮
-      checkScrollPosition()
+      if (shouldFollowLatest) scrollToBottom('auto')
+      else checkScrollPosition()
     })
   },
   { deep: true }
@@ -2450,33 +2643,82 @@ watch(
             </div>
             <button type="button" class="modal-close-btn" aria-label="关闭" @click="closeTaskCreateDialog">×</button>
           </div>
-          <label class="workspace-field">
-            <span>岗位或公司名称</span>
-            <input v-model="newTaskTitle" autofocus maxlength="80" placeholder="例如：字节跳动 · 后端开发" />
-          </label>
-          <fieldset class="copy-mode-fieldset">
-            <legend>初始内容</legend>
-            <label :class="['copy-mode-card', { active: taskCreateMode === 'copy' }]">
-              <input v-model="taskCreateMode" type="radio" value="copy" />
-              <span class="copy-mode-icon">⎘</span>
-              <span>
-                <strong>复制主简历</strong>
-                <small>推荐。保留已有经历，再针对 JD 独立调整。</small>
-              </span>
+          <div class="task-create-steps" aria-label="创建进度">
+            <span v-for="step in 3" :key="step" :class="{ active: taskCreateStep >= step }">{{ step }}</span>
+          </div>
+
+          <section v-if="taskCreateStep === 1" class="task-create-panel">
+            <div class="task-step-heading">
+              <strong>选择简历来源</strong>
+              <small>只复制简历内容和照片，不复制原 JD 或对话。</small>
+            </div>
+            <fieldset class="copy-mode-fieldset">
+              <label :class="['copy-mode-card', { active: taskCreateMode === 'copy' }]">
+                <input v-model="taskCreateMode" type="radio" value="copy" />
+                <span class="copy-mode-icon">⎘</span>
+                <span><strong>复制现有简历</strong><small>创建独立副本，后续修改互不影响。</small></span>
+              </label>
+              <label :class="['copy-mode-card', { active: taskCreateMode === 'blank' }]">
+                <input v-model="taskCreateMode" type="radio" value="blank" />
+                <span class="copy-mode-icon">＋</span>
+                <span><strong>创建空白版本</strong><small>不带入任何简历内容。</small></span>
+              </label>
+            </fieldset>
+
+            <div v-if="taskCreateMode === 'copy'" class="resume-source-picker">
+              <strong class="source-group-title">当前主简历</strong>
+              <label v-for="source in currentProjectSources" :key="source.id" class="resume-source-row">
+                <input v-model="taskSourceId" type="radio" :value="source.id" />
+                <span><b>{{ source.is_base ? '基础简历' : source.title }}</b><small>{{ source.target_position || source.candidate_name || '未填写目标岗位' }}</small></span>
+              </label>
+              <details v-if="otherProjectSourceGroups.length" class="other-resume-sources">
+                <summary>其他主简历</summary>
+                <div v-for="group in otherProjectSourceGroups" :key="group.id" class="source-project-group">
+                  <strong>{{ group.title }}</strong>
+                  <label v-for="source in group.sources" :key="source.id" class="resume-source-row">
+                    <input v-model="taskSourceId" type="radio" :value="source.id" />
+                    <span><b>{{ source.is_base ? '基础简历' : source.title }}</b><small>{{ source.target_position || source.candidate_name || '未填写目标岗位' }}</small></span>
+                  </label>
+                </div>
+              </details>
+            </div>
+          </section>
+
+          <section v-else-if="taskCreateStep === 2" class="task-create-panel">
+            <div class="task-step-heading">
+              <strong>添加目标岗位 JD</strong>
+              <small>粘贴岗位描述后自动识别；暂时没有 JD 也可以跳过。</small>
+            </div>
+            <textarea v-model="taskJDText" class="task-jd-input" rows="10" placeholder="在这里粘贴完整的职位描述（JD）…"></textarea>
+          </section>
+
+          <section v-else class="task-create-panel task-review-panel">
+            <div class="task-step-heading">
+              <strong>确认新版本</strong>
+              <small>创建后仍可继续编辑简历和岗位信息。</small>
+            </div>
+            <label class="workspace-field">
+              <span>版本名称</span>
+              <input v-model="newTaskTitle" maxlength="80" placeholder="例如：字节跳动 · 后端开发" />
             </label>
-            <label :class="['copy-mode-card', { active: taskCreateMode === 'blank' }]">
-              <input v-model="taskCreateMode" type="radio" value="blank" />
-              <span class="copy-mode-icon">＋</span>
-              <span>
-                <strong>创建空白版本</strong>
-                <small>不带入主简历内容，从头开始编辑。</small>
-              </span>
-            </label>
-          </fieldset>
+            <dl class="task-review-list">
+              <div><dt>简历来源</dt><dd>{{ taskCreateMode === 'blank' ? '空白简历' : `${selectedTaskSource?.project_title || ''} / ${selectedTaskSource?.is_base ? '基础简历' : selectedTaskSource?.title || ''}` }}</dd></div>
+              <div><dt>目标岗位</dt><dd>{{ taskJDData.position || '暂未添加 JD' }}</dd></div>
+              <div v-if="taskJDData.company"><dt>公司</dt><dd>{{ taskJDData.company }}</dd></div>
+            </dl>
+          </section>
           <p v-if="taskCreateError" class="workspace-modal-error">{{ taskCreateError }}</p>
           <div class="workspace-modal-footer">
-            <button type="button" class="workspace-btn secondary" :disabled="isCreatingTask" @click="closeTaskCreateDialog">取消</button>
-            <button type="submit" class="workspace-btn primary" :disabled="isCreatingTask">
+            <button v-if="taskCreateStep === 1" type="button" class="workspace-btn secondary" @click="closeTaskCreateDialog">取消</button>
+            <button v-else type="button" class="workspace-btn secondary" :disabled="isCreatingTask || isParsingTaskJD" @click="taskCreateStep--">上一步</button>
+            <button v-if="taskCreateStep === 1" type="button" class="workspace-btn primary" @click="goToTaskJDStep">下一步</button>
+            <template v-else-if="taskCreateStep === 2">
+              <button type="button" class="workspace-btn secondary" :disabled="isParsingTaskJD" @click="goToTaskReview({ skipJD: true })">暂不添加 JD</button>
+              <button type="button" class="workspace-btn primary" :disabled="isParsingTaskJD || !taskJDText.trim()" @click="goToTaskReview()">
+                {{ isParsingTaskJD ? '识别中…' : '识别并继续' }}
+              </button>
+            </template>
+            <button v-else type="submit" class="workspace-btn primary" :disabled="isCreatingTask">
               {{ isCreatingTask ? '创建中…' : '创建版本' }}
             </button>
           </div>
@@ -2824,12 +3066,13 @@ watch(
           </div>
         </div>
         <div class="chat-container">
-          <div class="messages-container" ref="messagesContainer">
+          <div class="messages-container" ref="messagesContainer" @scroll="handleScroll">
             <ChatMessage
               v-for="message in messages"
               :key="message.id + '_' + (message.content?.length || 0)"
               :message="message"
               @optionClick="handleOptionClick"
+              @undoClick="handleUndoClick"
             />
             <!-- 只有当没有过程消息且正在加载时才显示默认加载指示器 -->
           <div v-if="isLoading" class="loading-indicator">
@@ -2847,16 +3090,25 @@ watch(
           <Transition name="fade">
             <button
               v-if="showScrollToBottomButton"
+              type="button"
               class="scroll-to-bottom-btn"
+              aria-label="返回最新消息"
+              title="返回最新消息"
               @click="handleScrollToBottomClick"
             >
-              <span class="scroll-arrow">↓</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 5v14M6.5 13.5 12 19l5.5-5.5"/>
+              </svg>
             </button>
           </Transition>
         </div>
         
         <!-- 悬浮输入容器 -->
         <div class="floating-input-container">
+          <div v-if="showProcessingBar" class="processing-status" role="status" aria-live="polite">
+            <span class="processing-track" aria-hidden="true"><span></span></span>
+            <span>{{ processingText }}</span>
+          </div>
           <!-- 文件上传区域 -->
           <div v-if="uploadedFiles.length > 0" class="uploaded-files">
             <div v-for="file in uploadedFiles" :key="file.id" class="file-thumbnail">
@@ -2950,7 +3202,7 @@ watch(
       <!-- 右侧简历预览区 -->
       <div class="resume-section">
         <div class="resume-content">
-          <ResumePreview :data="resumeData" :task-id="currentTaskId" :highlighted-module="highlightedModule" :jd-data="jdData" :lang="currentLang" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @toggle-lang="switchLang" />
+          <ResumePreview :data="resumeData" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :highlighted-module="highlightedModule" :jd-data="jdData" :lang="currentLang" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @toggle-lang="switchLang" />
         </div>
       </div>
       </template>
@@ -2961,12 +3213,13 @@ watch(
         <Transition name="tab-content" mode="out-in">
           <div v-if="currentTab === 'chat'" class="mobile-chat-view" key="chat">
             <div class="chat-container">
-              <div class="messages-container" ref="messagesContainer">
+              <div class="messages-container" ref="messagesContainer" @scroll="handleScroll">
                 <ChatMessage
                   v-for="message in messages"
                   :key="message.id + '_' + (message.content?.length || 0)"
                   :message="message"
                   @optionClick="handleOptionClick"
+                  @undoClick="handleUndoClick"
                 />
                 <div v-if="isLoading" class="loading-indicator">
                   <div class="loading-spinner">
@@ -2983,11 +3236,14 @@ watch(
               <Transition name="fade">
                 <button
                   v-if="showScrollToBottomButton"
+                  type="button"
                   class="scroll-to-bottom-btn"
+                  aria-label="返回最新消息"
+                  title="返回最新消息"
                   @click="handleScrollToBottomClick"
                 >
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M6 9l6 6 6-6"/>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M12 5v14M6.5 13.5 12 19l5.5-5.5"/>
                   </svg>
                 </button>
               </Transition>
@@ -2995,6 +3251,10 @@ watch(
             
             <!-- 悬浮输入容器 -->
             <div class="floating-input-container mobile-input">
+              <div v-if="showProcessingBar" class="processing-status" role="status" aria-live="polite">
+                <span class="processing-track" aria-hidden="true"><span></span></span>
+                <span>{{ processingText }}</span>
+              </div>
               <div v-if="uploadedFiles.length > 0" class="uploaded-files">
                 <div v-for="file in uploadedFiles" :key="file.id" class="file-thumbnail">
                   <div v-if="file.type.startsWith('image/')" class="file-icon image-icon" :style="{ cursor: 'pointer' }" @click="openImagePreview(file)">
@@ -3033,7 +3293,7 @@ watch(
 
           <!-- 简历 Tab 内容 -->
           <div v-else-if="currentTab === 'resume'" class="mobile-resume-view" key="resume">
-            <ResumePreview :data="resumeData" :task-id="currentTaskId" :highlighted-module="highlightedModule" :jd-data="jdData" :is-mobile-view="isMobileView" :lang="currentLang" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @toggle-lang="switchLang" />
+            <ResumePreview :data="resumeData" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :highlighted-module="highlightedModule" :jd-data="jdData" :is-mobile-view="isMobileView" :lang="currentLang" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @toggle-lang="switchLang" />
           </div>
         </Transition>
 
@@ -4084,6 +4344,7 @@ watch(
 .messages-container {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 1.35rem 1.15rem;
   display: flex;
   flex-direction: column;
@@ -4099,46 +4360,45 @@ watch(
 .scroll-to-bottom-btn {
   position: absolute;
   left: 50%;
-  bottom: 20px;
+  bottom: 14px;
   transform: translateX(-50%);
-  width: 44px;
-  height: 44px;
-  border-radius: 22px;
-  background: rgba(35, 36, 41, 0.9);
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  background: rgba(43, 44, 50, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.24);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #c9c9cf;
-  transition: all 0.2s ease;
+  color: #e4e4e8;
+  transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease, transform 0.16s ease;
   z-index: 10;
   backdrop-filter: blur(4px);
 }
 
 .scroll-to-bottom-btn:hover {
-  background: rgba(52, 53, 59, 0.96);
+  background: rgba(57, 58, 65, 0.98);
+  border-color: rgba(255, 255, 255, 0.22);
   color: #fff;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
-  transform: translateX(-50%) translateY(-2px);
+  transform: translateX(-50%) translateY(-1px);
 }
 
 .scroll-to-bottom-btn:active {
   transform: translateX(-50%) translateY(0);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 }
 
 .scroll-to-bottom-btn svg {
-  width: 20px;
-  height: 20px;
-  stroke-width: 2;
+  width: 19px;
+  height: 19px;
+  stroke-width: 2.25;
 }
 
-.scroll-arrow {
-  font-size: 20px;
-  color: #666;
-  line-height: 1;
+.scroll-to-bottom-btn:focus-visible {
+  outline: 2px solid #8eb1ff;
+  outline-offset: 2px;
 }
 
 /* 按钮淡入淡出动画 */
@@ -4158,6 +4418,40 @@ watch(
   background: linear-gradient(to top, #0c0c0e 72%, rgba(12, 12, 14, 0));
   border-top: 1px solid rgba(255, 255, 255, 0.025);
   flex-shrink: 0;
+}
+
+.processing-status {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  min-height: 25px;
+  margin: -2px 3px 7px;
+  color: #aeb2bd;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.processing-track {
+  position: relative;
+  height: 2px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.09);
+  border-radius: 999px;
+}
+
+.processing-track > span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 45%;
+  background: linear-gradient(90deg, transparent, #8bb0ff, transparent);
+  border-radius: inherit;
+  animation: processing-slide 1.15s ease-in-out infinite;
+}
+
+@keyframes processing-slide {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(245%); }
 }
 
 .input-wrapper {
@@ -6800,6 +7094,8 @@ watch(
 
 .workspace-field input {
   width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   box-sizing: border-box;
   padding: 12px 14px;
   color: #f5f5f7;
@@ -6869,6 +7165,114 @@ watch(
 .copy-mode-card small {
   display: block;
 }
+
+.task-create-steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: -4px 0 20px;
+}
+
+.task-create-steps span {
+  display: grid;
+  height: 24px;
+  place-items: center;
+  color: #777983;
+  font-size: 11px;
+  border-bottom: 2px solid rgba(255, 255, 255, 0.08);
+}
+
+.task-create-steps span.active {
+  color: #cbd9ff;
+  border-color: #7fa8ff;
+}
+
+.task-create-panel {
+  max-height: min(55vh, 520px);
+  overflow-y: auto;
+}
+
+.task-step-heading {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 16px;
+}
+
+.task-step-heading strong { font-size: 15px; }
+.task-step-heading small { color: #999ba4; font-size: 12px; line-height: 1.55; }
+
+.resume-source-picker {
+  display: grid;
+  gap: 7px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.source-group-title,
+.other-resume-sources summary,
+.source-project-group > strong {
+  color: #aeb0ba;
+  font-size: 12px;
+}
+
+.resume-source-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 11px;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.resume-source-row:hover { background: rgba(255, 255, 255, 0.045); }
+.resume-source-row input { accent-color: #86aaff; }
+.resume-source-row span,
+.resume-source-row b,
+.resume-source-row small { display: block; }
+.resume-source-row span { min-width: 0; }
+.resume-source-row b { color: #e6e6ea; font-size: 13px; }
+.resume-source-row small { margin-top: 3px; color: #8f919a; font-size: 11px; }
+
+.other-resume-sources { margin-top: 5px; }
+.other-resume-sources summary { padding: 8px 0; cursor: pointer; }
+.source-project-group { margin: 8px 0 12px 12px; }
+.source-project-group > strong { display: block; margin-bottom: 5px; }
+
+.task-jd-input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 13px 14px;
+  color: #eeeef2;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.65;
+  background: #2b2c32;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 11px;
+  outline: none;
+}
+
+.task-jd-input:focus { border-color: #7fa8ff; }
+
+.task-review-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.task-review-list div {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: 12px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.025);
+  border-radius: 9px;
+}
+
+.task-review-list dt { color: #94969f; font-size: 12px; }
+.task-review-list dd { margin: 0; color: #e1e1e5; font-size: 13px; }
 
 .copy-mode-card strong {
   margin-bottom: 3px;

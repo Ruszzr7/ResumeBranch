@@ -5,7 +5,6 @@ PDF生成器模块
 
 import os
 import re
-from weasyprint import HTML
 
 from .resume_data import normalize_resume_data
 from .resume_labels import LABELS
@@ -37,7 +36,8 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     labels = LABELS.get(lang, LABELS['zh'])
 
     # 默认样式
-    style = style or {}
+    from .layout import apply_page_mode_defaults
+    style = apply_page_mode_defaults(style)
     margin_top = style.get('marginTop', 9)  # mm
     margin_bottom = style.get('marginBottom', 9)  # mm
     margin_left = style.get('marginLeft', 9)  # mm
@@ -45,6 +45,10 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     module_margin = style.get('moduleMargin', 1)  # rem单位，与前端一致
     line_height = style.get('lineHeight', 1.6)
     font_size = style.get('fontSize', 11)  # pt单位
+    page_break_before = style.get('pageBreakBefore', '')
+
+    def break_class(key: str) -> str:
+        return ' page-break-before' if page_break_before == key else ''
 
     html_parts = []
 
@@ -87,11 +91,12 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
 
     # 教育经历
     if resume_data.get("education") and len(resume_data["education"]) > 0:
-        html_parts.append('<section class="section">')
+        html_parts.append(f'<section class="section{break_class("education:0")}">')
         html_parts.append(f'<h2 class="section-title">{labels["education"]}</h2>')
 
-        for edu in resume_data["education"]:
-            html_parts.append('<div class="education-item">')
+        for edu_index, edu in enumerate(resume_data["education"]):
+            item_break = break_class(f"education:{edu_index}") if edu_index > 0 else ''
+            html_parts.append(f'<div class="education-item{item_break}">')
             html_parts.append('<div class="education-header">')
             html_parts.append('<div class="school-info">')
             html_parts.append(f'<span class="school">{edu.get("school_name", "学校未填写")}</span>')
@@ -160,11 +165,12 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
 
     # 工作经历
     if resume_data.get("work_experience") and len(resume_data["work_experience"]) > 0:
-        html_parts.append('<section class="section">')
+        html_parts.append(f'<section class="section{break_class("work_experience:0")}">')
         html_parts.append(f'<h2 class="section-title">{labels["workExperience"]}</h2>')
 
-        for work in resume_data["work_experience"]:
-            html_parts.append('<div class="work-item">')
+        for work_index, work in enumerate(resume_data["work_experience"]):
+            item_break = break_class(f"work_experience:{work_index}") if work_index > 0 else ''
+            html_parts.append(f'<div class="work-item{item_break}">')
             html_parts.append('<div class="work-header">')
             html_parts.append('<div class="work-main">')
             html_parts.append(f'<div class="company">{work.get("company_name", "公司未填写")}</div>')
@@ -202,11 +208,12 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
 
     # 项目经历
     if resume_data.get("project_experience") and len(resume_data["project_experience"]) > 0:
-        html_parts.append('<section class="section">')
+        html_parts.append(f'<section class="section{break_class("project_experience:0")}">')
         html_parts.append(f'<h2 class="section-title">{labels["projectExperience"]}</h2>')
 
-        for project in resume_data["project_experience"]:
-            html_parts.append('<div class="project-item">')
+        for project_index, project in enumerate(resume_data["project_experience"]):
+            item_break = break_class(f"project_experience:{project_index}") if project_index > 0 else ''
+            html_parts.append(f'<div class="project-item{item_break}">')
             html_parts.append('<div class="project-header">')
             html_parts.append(f'<div class="project-name">{project.get("project_name", project.get("name", "项目未填写"))}</div>')
 
@@ -251,7 +258,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         ])
 
         if has_others:
-            html_parts.append('<section class="section others">')
+            html_parts.append(f'<section class="section others{break_class("others")}">')
             html_parts.append(f'<h2 class="section-title">{labels["others"]}</h2>')
 
             if others.get("skills") and len(others["skills"]) > 0:
@@ -285,7 +292,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
 
     # 自我评价
     if resume_data.get("self_evaluation") and len(resume_data["self_evaluation"]) > 0:
-        html_parts.append('<section class="section self-evaluation">')
+        html_parts.append(f'<section class="section self-evaluation{break_class("self_evaluation")}">')
         html_parts.append(f'<h2 class="section-title">{labels["selfEvaluation"]}</h2>')
         for eval_item in resume_data["self_evaluation"]:
             html_parts.append(f'<div class="self-eval-item">{format_markdown(eval_item)}</div>')
@@ -441,6 +448,11 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         font-size: 0.8em;
         font-weight: 500;
         color: #6c757d;
+    }}
+
+    .page-break-before {{
+        break-before: page;
+        page-break-before: always;
     }}
 
     .academic-metrics {{
@@ -644,6 +656,10 @@ def generate_pdf(resume_data: dict, style: dict = None, photo: str = None, lang:
     Returns:
         PDF文件的二进制数据
     """
+    from weasyprint import HTML
+    from .layout import enforce_page_limit, normalize_page_mode
+
     html_content = render_resume_to_html(resume_data, style, photo, lang)
-    pdf = HTML(string=html_content, base_url=os.getcwd()).write_pdf()
-    return pdf
+    document = HTML(string=html_content, base_url=os.getcwd()).render()
+    enforce_page_limit(normalize_page_mode((style or {}).get("pageMode")), len(document.pages))
+    return document.write_pdf()

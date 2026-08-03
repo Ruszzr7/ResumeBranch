@@ -54,10 +54,10 @@ from .database import (
     init_db, get_db, create_user, get_user_by_email,
     save_user_resume, get_user_resume, save_user_jd, get_user_jd,
     check_invite_code, use_invite_code, create_invite_code,
-    get_parsing_status, set_parsing_status, get_user_photo,
+    get_parsing_status, set_parsing_status, set_source_page_count, get_user_photo,
     list_resume_projects, create_resume_project, get_resume_project,
-    list_project_tasks, create_resume_task, get_resume_task,
-    delete_resume_project, delete_resume_task
+    list_project_tasks, list_user_resume_sources, create_resume_task, get_resume_task,
+    delete_resume_project, delete_resume_task, undo_latest_resume_revision
 )
 from .auth import (
     verify_password, get_password_hash, create_access_token,
@@ -192,6 +192,8 @@ class CreateTaskRequest(BaseModel):
     """创建岗位任务请求"""
     title: str = "新岗位版本"
     copy_base_resume: bool = True
+    source_task_id: str | None = None
+    jd_data: dict | None = None
 
 
 class LLMSettingsRequest(BaseModel):
@@ -219,6 +221,7 @@ def serialize_task(task):
             or (jd_data.get("position", "") if isinstance(jd_data, dict) else "")
         ),
         "message_count": len(task.messages or []),
+        "source_page_count": max(1, int(task.source_page_count or 1)),
         "created_at": task.created_at.isoformat() if task.created_at else None,
         "updated_at": task.updated_at.isoformat() if task.updated_at else None,
     }
@@ -614,6 +617,22 @@ async def get_project(
     return {**serialize_project(project, len(tasks)), "tasks": [serialize_task(t) for t in tasks]}
 
 
+@app.get("/resume-sources")
+async def get_resume_sources(
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    """Return all of the current user's resumes, grouped by project in the UI."""
+    projects = {project.id: project for project in list_resume_projects(db, current_user.id)}
+    sources = []
+    for task in list_user_resume_sources(db, current_user.id):
+        project = projects.get(task.project_id)
+        item = serialize_task(task)
+        item["project_title"] = project.title if project else "未命名主简历"
+        sources.append(item)
+    return sources
+
+
 @app.delete("/projects/{project_id}")
 async def delete_project(
     project_id: str,
@@ -638,6 +657,8 @@ async def create_task(
         project_id,
         request.title,
         copy_base_resume=request.copy_base_resume,
+        source_task_id=request.source_task_id,
+        jd_data=request.jd_data,
     )
     if not task:
         raise HTTPException(status_code=404, detail="项目不存在")
@@ -668,6 +689,23 @@ async def delete_task(
     if result == "base_task":
         raise HTTPException(status_code=400, detail="基础简历不能单独删除，请删除整份主简历")
     return {"success": True}
+
+
+@app.post("/tasks/{task_id}/undo")
+async def undo_task_resume_change(
+    task_id: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    """Undo the latest assistant-applied revision when it is still current."""
+    result, resume_data = undo_latest_resume_revision(db, current_user.id, task_id)
+    if result == "not_found":
+        raise HTTPException(status_code=404, detail="岗位版本不存在")
+    if result == "no_revision":
+        raise HTTPException(status_code=409, detail="没有可以撤回的修改")
+    if result == "conflict":
+        raise HTTPException(status_code=409, detail="简历在本次修改后又发生了变化，无法直接撤回")
+    return {"success": True, "message": "已撤回本次修改", "resume_data": resume_data}
 
 
 @app.post("/health")
@@ -911,6 +949,8 @@ async def parse_and_save_resume_endpoint(
 
         # 读取文件内容并保留原始 PDF；原版生产链路由模型原生解析 PDF。
         file_content = await file.read()
+        from .source_documents import detect_source_page_count
+        source_page_count = detect_source_page_count(file_content, content_type)
 
         from .resume_agent import RESUME_FULL_EXTRACT_PROMPT, jd_parser_llm
 
@@ -950,12 +990,14 @@ async def parse_and_save_resume_endpoint(
         # 保存到数据库
         from .database import save_user_resume
         save_user_resume(db, current_user.id, resume_data)
+        set_source_page_count(db, current_user.id, source_page_count)
         # 设置解析状态为完成
         set_parsing_status(db, current_user.id, "completed")
 
         return JSONResponse(content={
             "success": True,
             "resume_data": resume_data,
+            "source_page_count": source_page_count,
             "message": "简历解析并保存成功"
         })
     except Exception as e:
@@ -1049,6 +1091,7 @@ async def chat_endpoint(
     message: str = Form(""),
     files: list[UploadFile] = File(default=[]),
     session_id: str = Form(""),
+    request_id: str = Form(""),
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -1072,12 +1115,19 @@ async def chat_endpoint(
                 content={"error": "session_id 最长为 36 个字符"},
                 status_code=400,
             )
+        request_id = (request_id or str(uuid.uuid4())).strip()[:64]
 
         # 构建 graph 配置（用于状态追踪）
         config = {"configurable": {"thread_id": f"task_{task_id}_session_{session_id}"}}
 
         # 检测用户是否点击了确认按钮（必须在使用 message 之前）
         is_confirm_click = '[CONFIRM_REPLY:' in message.strip()
+
+        # A normal user message supersedes any older preview.  Clear it before
+        # loading graph state so stale confirmations cannot be re-emitted.
+        if not is_confirm_click:
+            from .database import clear_pending_confirmation
+            clear_pending_confirmation(db, current_user.id, session_id)
 
         print(f"[DEBUG] session_id: {session_id}")
         print(f"[DEBUG] is_confirm_click: {is_confirm_click}")
@@ -1159,6 +1209,7 @@ async def chat_endpoint(
             "pending_confirmation": initial_pending_confirmation,  # 从数据库加载待确认状态
             "user_id": current_user.id,  # 添加用户ID，用于数据隔离
             "task_id": task_id,
+            "proposal_error": None,
         }
         print(f"[InitState] initial_state 创建完成: {len(all_messages)} 条消息, pending_confirmation={initial_state.get('pending_confirmation') is not None}")
         for i, msg in enumerate(all_messages):
@@ -1304,10 +1355,24 @@ async def chat_endpoint(
             resume_data_result = {}
             pending_confirmation_result = None  # 保存待确认状态
             confirmation_processed = False
+            confirmation_success = False
             final_content = None
             accumulated_content = ""
             current_node = None
             node_start_time = {}
+            sent_progress_phases = set()
+            sent_confirm_ids = set()
+            confirmation_sent = False
+            proposal_error_result = None
+
+            def progress_event(phase, text):
+                sent_progress_phases.add(phase)
+                return 'data: ' + json.dumps({
+                    "type": "progress",
+                    "request_id": request_id,
+                    "phase": phase,
+                    "text": text,
+                }) + '\n\n'
 
             try:
                 # 统一使用 graph.astream_events
@@ -1321,6 +1386,9 @@ async def chat_endpoint(
                         current_node = node_name
                         node_start_time[node_name] = time.time()
                         print(f"[SSE] 节点开始: {node_name}")
+                        if node_name in {"tool_node", "direct_edit", "proposal_generator"} and not is_confirm_click:
+                            if "building_preview" not in sent_progress_phases:
+                                yield progress_event("building_preview", "正在生成修改预览…")
 
                     if event_type == "on_chat_model_stream" and current_node == "conversation_llm":
                         chunk = event.get("data", {}).get("chunk", {})
@@ -1341,7 +1409,7 @@ async def chat_endpoint(
 
                         if token:
                             accumulated_content += token
-                            yield f'data: {json.dumps({"type": "stream", "content": accumulated_content})}\n\n'
+                            yield f'data: {json.dumps({"type": "stream", "content": accumulated_content, "request_id": request_id})}\n\n'
 
                     elif event_type == "on_chain_end":
                         if node_name in node_start_time:
@@ -1351,59 +1419,89 @@ async def chat_endpoint(
                         if node_name in ["__start__", "entry_router"]:
                             continue
 
-                        if node_name == "tool_node":
-                            output_data = event.get('data', {}).get('output', {})
-                            output_keys = list(output_data.keys()) if isinstance(output_data, dict) else []
-                            print(f"[SSE] tool_node output keys: {output_keys}")
-                            if isinstance(event.get("data", {}).get("output"), dict):
-                                output = event["data"]["output"]
-                                output_messages = output.get("messages", [])
-                                if is_confirm_click and any(
-                                    isinstance(item, ToolMessage)
-                                    and getattr(item, "name", "") == "confirmation_handler"
-                                    for item in output_messages
-                                ):
-                                    confirmation_processed = True
-                                print(f"[SSE] pending_confirmation in output: {output.get('pending_confirmation')}")
-                                if "pending_confirmation" in output and output["pending_confirmation"]:
-                                    confirm_data = output["pending_confirmation"]
-                                    confirm_msg_id = str(uuid.uuid4())
-                                    # 同步保存 pending_confirmation 到数据库，确保立即可用
-                                    try:
-                                        from .database import get_conversation_context, save_conversation_context
-                                        # 先获取当前压缩上下文
-                                        current_context = get_conversation_context(db, current_user.id, session_id)
-                                        # 保存 pending_confirmation，保留当前上下文
-                                        save_conversation_context(db, current_user.id, session_id, current_context, confirm_data)
-                                        print(f"[SSE] 同步保存 pending_confirmation: confirm_id={confirm_data.get('confirm_id')}")
-                                    except Exception as e:
-                                        print(f"[Warning] 同步保存 pending_confirmation 失败: {e}")
-                                    pending_confirmation_result = confirm_data  # 保存待确认状态
-                                    yield 'data: ' + json.dumps({
-                                        "type": "confirm",
-                                        "id": confirm_msg_id,
-                                        "content": confirm_data["content"],
-                                        "options": confirm_data["options"],
-                                        "confirm_id": confirm_data["confirm_id"],
-                                        "session_id": session_id
-                                    }) + '\n\n'
-                                    if "messages" in output:
-                                        # 替换为最新消息，而不是追加（避免消息重复累积）
-                                        messages_list = list(output["messages"])
-                                    continue
+                        output = event.get("data", {}).get("output", {})
+                        if not isinstance(output, dict):
+                            continue
 
-                        if isinstance(event.get("data", {}).get("output"), dict):
-                            output = event["data"]["output"]
-                            if "messages" in output:
-                                # 替换为最新消息，而不是追加（避免消息重复累积）
-                                messages_list = list(output["messages"])
-                            if "resume_data" in output and not output.get("pending_confirmation"):
-                                resume_data_result = output["resume_data"]
-                            # 更新 pending_confirmation_result（包括 None，用于清除状态）
-                            if "pending_confirmation" in output:
-                                pending_confirmation_result = output["pending_confirmation"]
+                        if "messages" in output:
+                            messages_list = list(output["messages"])
 
-                if not accumulated_content:
+                        output_messages = output.get("messages", [])
+                        if node_name == "tool_node" and is_confirm_click and any(
+                            isinstance(item, ToolMessage)
+                            and getattr(item, "name", "") == "confirmation_handler"
+                            for item in output_messages
+                        ):
+                            confirmation_processed = True
+                            confirmation_success = bool(output.get("just_saved"))
+
+                        proposal_error = (
+                            output.get("proposal_error")
+                            if node_name == "proposal_generator"
+                            else None
+                        )
+                        if proposal_error and proposal_error != proposal_error_result:
+                            proposal_error_result = str(proposal_error)
+                            pending_confirmation_result = None
+                            yield 'data: ' + json.dumps({
+                                "type": "proposal_error",
+                                "request_id": request_id,
+                                "message": proposal_error_result,
+                                "retryable": True,
+                            }) + '\n\n'
+
+                        confirm_data = (
+                            output.get("pending_confirmation")
+                            if node_name in {"tool_node", "direct_edit", "proposal_generator"}
+                            else None
+                        )
+                        confirm_id = confirm_data.get("confirm_id") if isinstance(confirm_data, dict) else None
+                        if confirm_id and confirm_id not in sent_confirm_ids and not confirmation_sent:
+                            sent_confirm_ids.add(confirm_id)
+                            confirmation_sent = True
+                            if "validating" not in sent_progress_phases:
+                                yield progress_event("validating", "正在校验修改内容…")
+                            try:
+                                from .database import get_conversation_context, save_conversation_context
+                                current_context = get_conversation_context(db, current_user.id, session_id)
+                                save_conversation_context(db, current_user.id, session_id, current_context, confirm_data)
+                                print(f"[SSE] 同步保存 pending_confirmation: confirm_id={confirm_id}")
+                            except Exception as exc:
+                                pending_confirmation_result = None
+                                proposal_error_result = "修改预览暂时无法保存，请重试。"
+                                print(f"[Warning] 同步保存 pending_confirmation 失败: {exc}")
+                                yield 'data: ' + json.dumps({
+                                    "type": "proposal_error",
+                                    "request_id": request_id,
+                                    "message": proposal_error_result,
+                                    "retryable": True,
+                                }) + '\n\n'
+                            else:
+                                pending_confirmation_result = confirm_data
+                                yield progress_event("ready", "修改预览已准备好")
+                                yield 'data: ' + json.dumps({
+                                    "type": "confirm",
+                                    "request_id": request_id,
+                                    "id": str(uuid.uuid4()),
+                                    "content": confirm_data["content"],
+                                    "options": confirm_data["options"],
+                                    "changes": confirm_data.get("changes", []),
+                                    "confirm_id": confirm_id,
+                                    "session_id": session_id,
+                                }) + '\n\n'
+                        elif (
+                            node_name in {"tool_node", "direct_edit", "proposal_generator"}
+                            and "pending_confirmation" in output
+                            and not confirm_data
+                        ):
+                            pending_confirmation_result = None
+
+                        if "resume_data" in output and not confirm_data:
+                            resume_data_result = output["resume_data"]
+
+                if proposal_error_result:
+                    final_content = proposal_error_result
+                elif not accumulated_content:
                     for msg in reversed(messages_list):
                         if isinstance(msg, AIMessage) and msg.content and msg.content != "简历已成功保存到数据库":
                             final_content = str(msg.content)
@@ -1432,7 +1530,10 @@ async def chat_endpoint(
             yield 'data: ' + json.dumps({
                 "type": "final",
                 "content": final_content,
-                "session_id": session_id
+                "session_id": session_id,
+                "request_id": request_id,
+                "confirmation_processed": confirmation_processed,
+                "confirmation_success": confirmation_success,
             }) + '\n\n'
 
             # 保存消息到数据库（异步执行，不阻塞 SSE 响应）
@@ -1445,7 +1546,13 @@ async def chat_endpoint(
             ))
 
             print(f"[SSE] 准备发送 end 事件")
-            yield 'data: ' + json.dumps({"type": "end", "session_id": session_id}) + '\n\n'
+            yield 'data: ' + json.dumps({
+                "type": "end",
+                "session_id": session_id,
+                "request_id": request_id,
+                "confirmation_processed": confirmation_processed,
+                "confirmation_success": confirmation_success,
+            }) + '\n\n'
 
         return StreamingResponse(stream_response(config), media_type="text/event-stream")
 

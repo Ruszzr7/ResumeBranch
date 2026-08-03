@@ -12,10 +12,12 @@
 
 import os
 import json
+import re
 import uuid
 import asyncio
 import httpx
 import time
+from copy import deepcopy
 from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -28,7 +30,20 @@ from typing import List
 from pydantic import BaseModel, Field
 
 from .resume_data import normalize_resume_data
+from .resume_changes import apply_resume_changes, build_resume_changes, resume_digest
 from .llm_providers import active_profile, temperature_supported
+
+
+def record_assistant_revision(user_id, task_id, before_data, after_data, selected_change_ids):
+    """Persist an undo snapshot after the original save path succeeds."""
+    from .database import SessionLocal, record_resume_revision
+    revision_db = SessionLocal()
+    try:
+        return record_resume_revision(
+            revision_db, user_id, task_id, before_data, after_data, selected_change_ids
+        )
+    finally:
+        revision_db.close()
 
 
 def sanitize_for_log(content):
@@ -684,6 +699,7 @@ class AgentState:
     just_saved: bool = False  # 刚保存简历后设置为 True
     user_id: int = None  # 当前用户ID
     task_id: str = None  # 当前任务ID
+    proposal_error: str = None  # 候选修改生成失败时返回给前端的可恢复错误
 
 
 # =============================================================================
@@ -738,6 +754,323 @@ def extract_user_intent(state: AgentState) -> str:
     return "\n".join(conversation_history)
 
 
+_CHANGE_ACTION_RE = re.compile(
+    r"(?:修改|更改|改为|改成|替换|更新|填写|写入|新增|添加|删除|移除|补充|优化|调整|设置|设为|变更)"
+)
+_RESUME_DATA_FIELD_RE = re.compile(
+    r"(?:姓名|性别|年龄|电话|手机|邮箱|所在地|目标岗位|求职岗位|GPA|绩点|满绩|"
+    r"排名|平均分|学校|专业|学历|学位|教育经历|工作经历|实习经历|项目经历|项目|"
+    r"公司|职位|技能|证书|语言|自我评价|简历内容)"
+)
+_STYLE_ONLY_RE = re.compile(
+    r"(?:字体|字号|颜色|填充|背景|边距|行距|间距|模板|排版|页眉|页脚|标签样式)"
+)
+
+
+def latest_human_text(state: AgentState) -> str:
+    """Return the latest real user request, excluding confirmation markers."""
+    for message in reversed(state.messages or []):
+        if not isinstance(message, HumanMessage):
+            continue
+        content = getattr(message, "content", "") or ""
+        if isinstance(content, list):
+            content = "\n".join(
+                str(item.get("text", ""))
+                for item in content
+                if isinstance(item, dict) and item.get("type") == "text"
+            )
+        content = str(content).strip()
+        if content and "[CONFIRM_REPLY:" not in content:
+            return content
+    return ""
+
+
+def latest_human_message_text(state: AgentState) -> str:
+    """Return the latest human message, including confirmation markers."""
+    for message in reversed(state.messages or []):
+        if not isinstance(message, HumanMessage):
+            continue
+        content = getattr(message, "content", "") or ""
+        if isinstance(content, list):
+            content = "\n".join(
+                str(item.get("text", ""))
+                for item in content
+                if isinstance(item, dict) and item.get("type") == "text"
+            )
+        return str(content).strip()
+    return ""
+
+
+def is_explicit_resume_change_request(message: str) -> bool:
+    """High-precision local fallback gate for explicit resume-data mutations."""
+    text = str(message or "").strip()
+    if not text or "[CONFIRM_REPLY:" in text:
+        return False
+    if not (_CHANGE_ACTION_RE.search(text) and _RESUME_DATA_FIELD_RE.search(text)):
+        return False
+    # A request that only concerns presentation must stay in the normal dialog
+    # path. Mixed data + presentation requests may still produce a data preview.
+    data_without_style = _STYLE_ONLY_RE.sub("", text)
+    return bool(_RESUME_DATA_FIELD_RE.search(data_without_style))
+
+
+def _plain_response_text(content) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict):
+                value = item.get("text") or item.get("content")
+                if value:
+                    parts.append(str(value))
+            elif item:
+                parts.append(str(item))
+        return "\n".join(parts)
+    return str(content or "")
+
+
+def parse_resume_candidate(content) -> dict:
+    """Extract and validate a full resume JSON object from a plain LLM reply."""
+    text = _plain_response_text(content).strip()
+    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*```$", "", text)
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end <= start:
+        raise ValueError("模型没有返回完整的简历 JSON")
+    raw_json = text[start:end + 1]
+    try:
+        candidate = json.loads(raw_json)
+    except json.JSONDecodeError:
+        candidate = json.loads(fix_unquoted_json_strings(raw_json))
+    return normalize_and_validate_resume(candidate)
+
+
+_COMPLEX_EDIT_FIELD_RE = re.compile(
+    r"(?:工作经历|实习经历|项目经历|项目|技能|证书|语言|自我评价|论文|课程|奖项)"
+)
+_LOCAL_BASIC_PATTERNS = {
+    "name": re.compile(r"(?:将|把)?\s*姓名\s*(?:修改为|更改为|改为|改成|设置为|调整为)\s*([^，,。；;\n]+)"),
+    "target_position": re.compile(r"(?:将|把)?\s*(?:目标岗位|求职岗位|期望岗位)\s*(?:修改为|更改为|改为|改成|设置为|调整为)\s*([^，,。；;\n]+)"),
+    "phone": re.compile(r"(?:将|把)?\s*(?:电话|手机号|手机)\s*(?:修改为|更改为|改为|改成|设置为|调整为)\s*([^，,。；;\n]+)"),
+    "email": re.compile(r"(?:将|把)?\s*邮箱\s*(?:修改为|更改为|改为|改成|设置为|调整为)\s*([^，,。；;\n]+)"),
+    "gender": re.compile(r"(?:将|把)?\s*性别\s*(?:修改为|更改为|改为|改成|设置为|调整为)\s*([^，,。；;\n]+)"),
+}
+_LOCAL_BASIC_MENTIONS = {
+    "name": re.compile(r"姓名"),
+    "target_position": re.compile(r"(?:目标岗位|求职岗位|期望岗位)"),
+    "phone": re.compile(r"(?:电话|手机号|手机)"),
+    "email": re.compile(r"邮箱"),
+    "gender": re.compile(r"性别"),
+}
+_GPA_MENTION_RE = re.compile(r"(?:GPA|绩点)", re.IGNORECASE)
+_GPA_ASSIGN_RE = re.compile(
+    r"(?:(本科|学士|硕士|研究生|博士|专科|大专)[^，,。；;\n]{0,12})?"
+    r"(?:GPA|绩点)\s*(?:修改为|更改为|改为|改成|设置为|调整为)\s*"
+    r"(\d+(?:\.\d+)?)\s*(?:/|／)\s*(\d+(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+
+
+def _clean_local_value(value: str) -> str:
+    return str(value or "").strip().strip('"\'“”‘’ ')
+
+
+def _education_index_for_gpa(current: dict, qualifier: str | None, new_gpa: str) -> int | None:
+    education = current.get("education") or []
+    if not education:
+        return None
+    if qualifier:
+        groups = {
+            "本科": ("本科", "学士"), "学士": ("本科", "学士"),
+            "硕士": ("硕士", "研究生"), "研究生": ("硕士", "研究生"),
+            "博士": ("博士",), "专科": ("专科", "大专"), "大专": ("专科", "大专"),
+        }
+        needles = groups.get(qualifier, (qualifier,))
+        matches = [
+            index for index, item in enumerate(education)
+            if any(needle in str(item.get("degree", "")) for needle in needles)
+        ]
+        return matches[0] if len(matches) == 1 else None
+    if len(education) == 1:
+        return 0
+    same_value = [
+        index for index, item in enumerate(education)
+        if str(item.get("gpa", "")).strip() == new_gpa
+    ]
+    if len(same_value) == 1:
+        return same_value[0]
+    populated = [index for index, item in enumerate(education) if item.get("gpa")]
+    return populated[0] if len(populated) == 1 else None
+
+
+def build_local_edit_candidate(state: AgentState) -> dict | None:
+    """Return a candidate only when every requested edit is locally unambiguous."""
+    text = latest_human_text(state)
+    if not is_explicit_resume_change_request(text) or _COMPLEX_EDIT_FIELD_RE.search(text):
+        return None
+
+    current = normalize_resume_data(state.resume_data or {})
+    candidate = deepcopy(current)
+    parsed_fields: set[str] = set()
+    mentioned_fields = {
+        field_name for field_name, pattern in _LOCAL_BASIC_MENTIONS.items()
+        if pattern.search(text)
+    }
+
+    for field_name, pattern in _LOCAL_BASIC_PATTERNS.items():
+        match = pattern.search(text)
+        if not match:
+            continue
+        value = _clean_local_value(match.group(1))
+        if not value or (field_name == "gender" and value not in {"男", "女", "其他"}):
+            return None
+        candidate.setdefault("basics", {})[field_name] = value
+        parsed_fields.add(field_name)
+
+    if _GPA_MENTION_RE.search(text):
+        mentioned_fields.add("gpa")
+        gpa_match = _GPA_ASSIGN_RE.search(text)
+        if not gpa_match:
+            return None
+        qualifier, gpa, scale = gpa_match.groups()
+        education_index = _education_index_for_gpa(current, qualifier, gpa)
+        if education_index is None:
+            return None
+        candidate["education"][education_index]["gpa"] = gpa
+        candidate["education"][education_index]["gpa_scale"] = scale
+        parsed_fields.add("gpa")
+
+    if not mentioned_fields or parsed_fields != mentioned_fields:
+        return None
+    return normalize_and_validate_resume(candidate)
+
+
+def _preview_summary(changes: list[dict]) -> str:
+    lines = ["已根据你的要求生成修改预览：", ""]
+    lines.extend(
+        f"- {change['label']}：{change['before_display']} → {change['after_display']}"
+        for change in changes
+    )
+    lines.extend(["", "请在下方选择全部接受、仅应用选中项或全部拒绝。"])
+    return "\n".join(lines)
+
+
+def make_pending_confirmation(state: AgentState, candidate: dict) -> dict:
+    """Build the same pending-confirmation contract for tool and fallback paths."""
+    current = normalize_resume_data(state.resume_data or {})
+    changes = build_resume_changes(current, candidate)
+    if not changes:
+        raise ValueError("没有检测到可应用的简历修改")
+    confirm_id = str(uuid.uuid4())[:8]
+    tool_args = {
+        "content": json.dumps(candidate, ensure_ascii=False),
+        "user_id": state.user_id,
+        "task_id": state.task_id,
+    }
+    return {
+        "confirm_id": confirm_id,
+        "content": "是否确认修改简历？",
+        "options": [
+            {"label": "全部接受", "value": "confirm", "style": "primary"},
+            {"label": "全部拒绝", "value": "cancel", "style": "default"},
+        ],
+        "tool_name": "save_resume_tool",
+        "tool_args": tool_args,
+        "base_hash": resume_digest(current),
+        "changes": changes,
+        "status": "pending",
+    }
+
+
+async def direct_edit_node(state: AgentState) -> dict:
+    """Build a preview for unambiguous field assignments without calling an LLM."""
+    current = normalize_resume_data(state.resume_data or {})
+    candidate = build_local_edit_candidate(state)
+    if candidate is None:
+        raise ValueError("本地修改路由收到无法确定解析的请求")
+    changes = build_resume_changes(current, candidate)
+    if not changes:
+        assistant_message = AIMessage(content="当前简历已经符合这项要求，没有需要应用的修改。")
+        pending = None
+    else:
+        pending = make_pending_confirmation(state, candidate)
+        assistant_message = AIMessage(content=_preview_summary(changes))
+    print(f"[direct_edit] 本地生成完成, changes={len(changes)}")
+    return {
+        "messages": list(state.messages) + [assistant_message],
+        "resume_data": current,
+        "jd_data": state.jd_data or {},
+        "pending_confirmation": pending,
+        "proposal_error": None,
+        "just_saved": False,
+        "user_id": state.user_id,
+        "task_id": state.task_id,
+    }
+
+
+async def proposal_generator_node(state: AgentState) -> dict:
+    """Generate one structured candidate for a complex explicit edit request."""
+    start_time = time.time()
+    request_text = latest_human_text(state)
+    current = normalize_resume_data(state.resume_data or {})
+    prompt = f"""你是简历修改数据生成器。请根据用户的明确要求修改当前简历，并输出修改后的完整简历 JSON。
+
+严格规则：
+1. 只输出一个完整 JSON 对象，不要输出解释、Markdown 或代码块。
+2. 未被用户要求修改的内容必须原样保留，不得编造经历或事实。
+3. GPA 数值写入 gpa，满分写入 gpa_scale，排名写入 ranking，绝对不能写入 theses。
+4. 如果用户同时提出多项修改，必须一次性体现在同一份完整简历中。
+
+当前简历：
+{json.dumps(current, ensure_ascii=False, indent=2)}
+
+用户要求：
+{request_text}
+"""
+
+    try:
+        async with asyncio.timeout(90.0):
+            response = await conversation_llm.ainvoke([
+                SystemMessage(content="你只负责生成严格、完整、可校验的简历 JSON。"),
+                HumanMessage(content=prompt),
+            ])
+        candidate = parse_resume_candidate(response.content)
+        changes = build_resume_changes(current, candidate)
+        if not changes:
+            pending = None
+            assistant_message = AIMessage(content="当前简历已经符合这项要求，没有需要应用的修改。")
+        else:
+            pending = make_pending_confirmation(state, candidate)
+            assistant_message = AIMessage(content=_preview_summary(changes))
+        print(
+            f"[proposal_generator] 完成, 耗时={time.time() - start_time:.2f}s, "
+            f"changes={len(changes)}"
+        )
+        return {
+            "messages": list(state.messages) + [assistant_message],
+            "resume_data": current,
+            "jd_data": state.jd_data or {},
+            "pending_confirmation": pending,
+            "proposal_error": None,
+            "just_saved": False,
+            "user_id": state.user_id,
+            "task_id": state.task_id,
+        }
+    except Exception as exc:
+        print(f"[proposal_generator] 失败: {exc}")
+        return {
+            "messages": list(state.messages),
+            "resume_data": current,
+            "jd_data": state.jd_data or {},
+            "pending_confirmation": None,
+            "proposal_error": "本次修改无法安全生成确认预览，系统未对简历做任何更改。",
+            "just_saved": False,
+            "user_id": state.user_id,
+            "task_id": state.task_id,
+        }
+
+
 # =============================================================================
 # Nodes
 # =============================================================================
@@ -777,6 +1110,12 @@ async def conversation_node(state: AgentState) -> dict:
         system_content = CONVERSATION_PROMPT.replace("{{resume_data}}", f"\n{resume_json}\n")
     else:
         system_content = CONVERSATION_PROMPT.replace("{{resume_data}}", "\n（简历数据尚未加载）")
+
+    system_content += (
+        "\n\n【当前状态优先级】本轮系统消息中的简历 JSON 是当前数据库的唯一事实来源，"
+        "优先级高于全部历史对话。历史回复中的‘已修改’或‘已生效’可能已经被用户撤回，"
+        "不得据此判断当前简历状态。回答或生成修改前必须以本轮 JSON 为准。"
+    )
 
     # 注入 jd_data
     if state.jd_data:
@@ -908,11 +1247,7 @@ async def conversation_node(state: AgentState) -> dict:
     
     # 检查用户是否发送了新消息（不是确认回复）
     # 如果是，标记为需要清除 pending_confirmation
-    user_is_confirming = any(
-        '[CONFIRM_REPLY:' in (getattr(msg, 'content', '') or '')
-        for msg in state.messages
-        if isinstance(msg, HumanMessage)
-    )
+    user_is_confirming = '[CONFIRM_REPLY:' in latest_human_message_text(state)
     
     # 如果用户发送了新消息但不是确认回复，清除 pending_confirmation
     if not user_is_confirming and state.pending_confirmation is not None:
@@ -935,7 +1270,7 @@ async def conversation_node(state: AgentState) -> dict:
             self.messages = d.get("messages", [])
             self.resume_data = d.get("resume_data")
             self.jd_data = d.get("jd_data")
-            self.pending_confirmation = None
+            self.pending_confirmation = d.get("pending_confirmation")
     
     debug_print_state(DebugState(output_state), "conversation_node_EXIT")
     
@@ -968,11 +1303,12 @@ async def tool_node(state: AgentState) -> dict:
         print("[Tool] 检测到确认回复")
         updated_resume_data = None
         import re
-        match = re.search(r'\[CONFIRM_REPLY:([^:]+):([^:]+)\]', user_content)
+        match = re.search(r'\[CONFIRM_REPLY:([^:]+):([^:\]]+)(?::([^\]]*))?\]', user_content)
         
         if match:
             user_confirm_id = match.group(1)
             value = match.group(2)
+            selected_change_ids = [item for item in (match.group(3) or "").split(",") if item]
             print(f"[Tool] 用户发送的 confirm_id={user_confirm_id}, value={value}")
             print(f"[Tool] state.pending_confirmation confirm_id: {state.pending_confirmation.get('confirm_id') if state.pending_confirmation else None}")
             if state.pending_confirmation:
@@ -991,7 +1327,7 @@ async def tool_node(state: AgentState) -> dict:
                 if pending_task_id and pending_task_id != state.task_id:
                     result = "无效的确认请求：待确认修改不属于当前简历任务"
                     saved_resume = False
-                elif value == 'confirm':
+                elif value in {'confirm', 'confirm_all', 'confirm_selected'}:
                     # 执行保存
                     print("[Tool] 用户确认，执行保存")
                     try:
@@ -1003,48 +1339,79 @@ async def tool_node(state: AgentState) -> dict:
                             result = "保存失败：没有找到修改后的简历数据"
                             saved_resume = False
                         else:
-                            # 解析 JSON 数据，失败时尝试修复
+                            # 解析候选完整简历；这与原版流程一致。选择性接受只在解析后
+                            # 通过服务端生成的差异清单确定性应用，不再调用模型。
                             try:
-                                updated_resume_data = json.loads(content)
+                                candidate_resume_data = json.loads(content)
                             except json.JSONDecodeError as e:
                                 print(f"[Tool] 首次JSON解析失败，尝试修复: {e}")
                                 fixed_content = fix_unquoted_json_strings(content)
-                                try:
-                                    updated_resume_data = json.loads(fixed_content)
-                                    print(f"[Tool] 修复后解析成功")
-                                except json.JSONDecodeError as e2:
-                                    print(f"[Tool] 修复后仍然失败: {e2}")
-                                    result = f"保存失败：JSON 解析错误 - {str(e)}"
-                                    saved_resume = False
-                                    # 仍然需要设置 result 变量并返回，但这里已经返回了
-                                    # 直接跳到后面清除 pending_confirmation
-                                    pending_confirmation = None
-                                    return {
-                                        "messages": state.messages + [ToolMessage(
-                                            content=result,
-                                            tool_call_id="confirm",
-                                            name="confirmation_handler",
-                                        )],
-                                        "resume_data": state.resume_data,
-                                        "jd_data": state.jd_data,
-                                        "pending_confirmation": pending_confirmation,
-                                        "just_saved": False,
-                                        "user_id": state.user_id,
-                                        "task_id": state.task_id,
-                                    }
+                                candidate_resume_data = json.loads(fixed_content)
 
-                            # 直接调用 update_resume 保存
-                            from .tools import update_resume
-                            updated_resume_data = normalize_and_validate_resume(updated_resume_data)
-                            result = update_resume(
-                                updated_resume_data,
-                                user_id=state.user_id,
-                                task_id=state.task_id,
-                            )
-                            saved_resume = not (
-                                result.startswith("保存失败") or result.startswith("错误")
-                            )
-                            print(f"[Tool] 保存结果: {result}")
+                            candidate_resume_data = normalize_and_validate_resume(candidate_resume_data)
+                            changes = state.pending_confirmation.get("changes") or []
+                            base_hash = state.pending_confirmation.get("base_hash")
+                            if base_hash and resume_digest(state.resume_data or {}) != base_hash:
+                                result = "保存失败：简历已发生其他修改，请重新生成修改建议"
+                                saved_resume = False
+                            else:
+                                all_change_ids = [item.get("id") for item in changes if item.get("id")]
+                                if changes:
+                                    ids_to_apply = (
+                                        all_change_ids
+                                        if value in {'confirm', 'confirm_all'}
+                                        else [item for item in selected_change_ids if item in all_change_ids]
+                                    )
+                                    if not ids_to_apply:
+                                        result = "保存失败：请至少选择一项修改"
+                                        saved_resume = False
+                                    else:
+                                        updated_resume_data = apply_resume_changes(
+                                            state.resume_data or {}, changes, ids_to_apply
+                                        )
+                                else:
+                                    # 兼容升级前已生成的待确认记录。
+                                    ids_to_apply = []
+                                    updated_resume_data = candidate_resume_data
+
+                                if updated_resume_data is not None:
+                                    from .tools import update_resume
+                                    updated_resume_data = normalize_and_validate_resume(updated_resume_data)
+                                    before_resume_data = normalize_and_validate_resume(state.resume_data or {})
+                                    result = update_resume(
+                                        updated_resume_data,
+                                        user_id=state.user_id,
+                                        task_id=state.task_id,
+                                    )
+                                    saved_resume = not (
+                                        result.startswith("保存失败") or result.startswith("错误")
+                                    )
+                                    if saved_resume:
+                                        try:
+                                            record_assistant_revision(
+                                                state.user_id,
+                                                state.task_id,
+                                                before_resume_data,
+                                                updated_resume_data,
+                                                ids_to_apply,
+                                            )
+                                        except Exception as revision_error:
+                                            print(f"[Tool] 修改已保存，但记录撤回版本失败: {revision_error}")
+                                        if changes:
+                                            selected_changes = [
+                                                item for item in changes
+                                                if item.get("id") in ids_to_apply
+                                            ]
+                                            summaries = [
+                                                f"{item.get('label', '简历字段')}："
+                                                f"{item.get('before_display', '')} → "
+                                                f"{item.get('after_display', '')}"
+                                                for item in selected_changes
+                                            ]
+                                            result = f"已应用 {len(selected_changes)} 项修改"
+                                            if summaries:
+                                                result += "：\n- " + "\n- ".join(summaries)
+                                    print(f"[Tool] 保存结果: {result}")
                     except json.JSONDecodeError as e:
                         result = f"保存失败：JSON 解析错误 - {str(e)}"
                         saved_resume = False
@@ -1161,23 +1528,9 @@ async def tool_node(state: AgentState) -> dict:
                         updated_resume_data = None
                         result = f"保存失败：简历数据结构不合法 - {str(exc)}"
                     else:
-                        # 服务端覆盖身份参数，绝不信任模型生成的 user_id/task_id。
-                        tool_args['user_id'] = state.user_id
-                        tool_args['task_id'] = state.task_id
-
-                        # 生成确认标记，返回给前端
-                        confirm_id = str(uuid.uuid4())[:8]
-                        pending_confirmation = {
-                            "confirm_id": confirm_id,
-                            "content": "是否确认修改简历？",  # 固定提示文案
-                            "options": [
-                                {"label": "确认", "value": "confirm", "style": "primary"},
-                                {"label": "取消", "value": "cancel", "style": "default"}
-                            ],
-                            "tool_name": tool_name,
-                            "tool_args": tool_args,
-                            "status": "pending"
-                        }
+                        pending_confirmation = make_pending_confirmation(state, updated_resume_data)
+                        confirm_id = pending_confirmation["confirm_id"]
+                        tool_args = pending_confirmation["tool_args"]
 
                         # 返回确认标记
                         marker = {
@@ -1274,9 +1627,11 @@ def route_after_conversation(state: AgentState) -> str:
 
 graph_builder = StateGraph(AgentState)
 
-# 添加节点（两个节点）
+# 添加节点
 graph_builder.add_node("conversation_llm", conversation_node)
 graph_builder.add_node("tool_node", tool_node)
+graph_builder.add_node("direct_edit", direct_edit_node)
+graph_builder.add_node("proposal_generator", proposal_generator_node)
 
 # conversation_llm → tool_node / END
 graph_builder.add_conditional_edges(
@@ -1287,6 +1642,9 @@ graph_builder.add_conditional_edges(
         END: END
     }
 )
+
+graph_builder.add_edge("direct_edit", END)
+graph_builder.add_edge("proposal_generator", END)
 
 
 # =============================================================================
@@ -1300,6 +1658,8 @@ def entry_router(state: AgentState) -> str:
     Returns:
         'conversation_llm': 普通对话
         'tool_node': 确认按钮点击
+        'direct_edit': 可确定解析的字段赋值
+        'proposal_generator': 复杂的明确修改请求
     """
     if not state.messages:
         return "conversation_llm"
@@ -1310,6 +1670,15 @@ def entry_router(state: AgentState) -> str:
 
     if '[CONFIRM_REPLY:' in user_content:
         return "tool_node"
+
+    user_request = latest_human_text(state)
+    if is_explicit_resume_change_request(user_request):
+        try:
+            if build_local_edit_candidate(state) is not None:
+                return "direct_edit"
+        except Exception as exc:
+            print(f"[Route] 本地解析不可用，转入结构化生成: {exc}")
+        return "proposal_generator"
 
     return "conversation_llm"
 
@@ -1324,13 +1693,13 @@ def tool_node_router(state: AgentState) -> str:
     if getattr(state, 'pending_confirmation', None):
         return END
 
-    # 取消是确定性操作，不需要再次调用 LLM；直接把工具结果返回前端。
+    # 所有确认结果都是确定性操作，不再调用 LLM。否则模型可能错误总结
+    # 选择性接受的结果，或再次把历史修改请求路由到修改生成节点。
     if state.messages:
         last_message = state.messages[-1]
         if (
             isinstance(last_message, ToolMessage)
             and getattr(last_message, "name", "") == "confirmation_handler"
-            and last_message.content == "已取消保存"
         ):
             return END
 
@@ -1348,7 +1717,7 @@ graph_builder.add_conditional_edges(
 
 # 编译图（不使用 checkpointer，状态由数据库管理）
 graph = graph_builder.compile()
-print("[Graph] 图编译完成（单LLM节点架构）")
+print("[Graph] 图编译完成（本地字段修改 + 单次复杂修改生成）")
 # =============================================================================
 # 测试函数
 # =============================================================================

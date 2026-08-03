@@ -1,6 +1,6 @@
 <script setup>
 import { marked } from 'marked'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 
 // 配置 marked 使用 GitHub Flavored Markdown (gfm)
 marked.use({
@@ -72,14 +72,24 @@ const closePreview = () => {
 }
 
 // 确认按钮事件
-const emit = defineEmits(['optionClick'])
+const emit = defineEmits(['optionClick', 'undoClick'])
+
+const changes = computed(() => props.message.changes || [])
+const selectedChangeIds = ref([])
+
+watch(changes, (items) => {
+  selectedChangeIds.value = items.map(item => item.id)
+}, { immediate: true })
 
 const handleOptionClick = (option) => {
   emit('optionClick', {
     confirm_id: props.message.confirm_id,
-    value: option.value
+    value: option.value,
+    selected_change_ids: option.value === 'confirm_selected' ? [...selectedChangeIds.value] : []
   })
 }
+
+const handleUndoClick = () => emit('undoClick', { message_id: props.message.id })
 </script>
 
 <template>
@@ -98,7 +108,35 @@ const handleOptionClick = (option) => {
     <!-- 只有当消息未被处理过时才显示 -->
     <div v-if="props.message.type === 'confirm' && props.message.confirm_id && !props.message.handled" class="confirm-area">
       <p class="confirm-content">{{ props.message.content }}</p>
-      <div class="confirm-buttons">
+      <div v-if="changes.length" class="change-preview-list">
+        <label v-for="change in changes" :key="change.id" class="change-preview-item">
+          <input v-model="selectedChangeIds" type="checkbox" :value="change.id" />
+          <span class="change-preview-copy">
+            <strong>{{ change.label }}</strong>
+            <span class="change-values">
+              <del>{{ change.before_display }}</del>
+              <span aria-hidden="true">→</span>
+              <ins>{{ change.after_display }}</ins>
+            </span>
+          </span>
+        </label>
+      </div>
+      <div v-if="changes.length" class="confirm-buttons change-actions">
+        <button class="confirm-btn confirm-btn--primary" @click="handleOptionClick({ value: 'confirm_all' })">
+          全部接受
+        </button>
+        <button
+          class="confirm-btn confirm-btn--default"
+          :disabled="selectedChangeIds.length === 0"
+          @click="handleOptionClick({ value: 'confirm_selected' })"
+        >
+          应用已选（{{ selectedChangeIds.length }}）
+        </button>
+        <button class="confirm-btn confirm-btn--danger" @click="handleOptionClick({ value: 'cancel' })">
+          全部拒绝
+        </button>
+      </div>
+      <div v-else class="confirm-buttons">
         <button
           v-for="option in props.message.options"
           :key="option.value"
@@ -110,9 +148,14 @@ const handleOptionClick = (option) => {
       </div>
     </div>
 
+    <div v-if="props.message.type === 'undo'" class="undo-area">
+      <span>{{ props.message.content }}</span>
+      <button v-if="!props.message.handled" class="undo-btn" @click="handleUndoClick">撤回本次修改</button>
+    </div>
+
     <!-- 消息内容 - 无头像（confirm 类型不显示） -->
     <div
-      v-if="props.message.type !== 'confirm'"
+      v-if="props.message.type !== 'confirm' && props.message.type !== 'undo'"
       class="chat-message__content"
       :class="{
         'chat-message__content--user': props.message.role === 'user' && props.message.role !== '',
@@ -191,6 +234,8 @@ const handleOptionClick = (option) => {
 /* 基础消息样式 */
 .chat-message {
   display: flex;
+  width: 100%;
+  min-width: 0;
   margin-bottom: 12px;
   align-items: flex-start;
 }
@@ -463,14 +508,17 @@ const handleOptionClick = (option) => {
 
 /* 确认区域 - 像素风简洁样式 */
 .confirm-area {
+  display: block;
+  width: min(100%, 520px);
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   margin-top: 16px;
   padding: 20px 28px;
   background: linear-gradient(145deg, rgba(60, 79, 120, 0.2), rgba(255, 255, 255, 0.035));
   border-radius: 14px;
   border: 1px solid rgba(120, 166, 255, 0.18);
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22);
-  display: inline-block;
-  min-width: 300px;
 }
 
 .confirm-content {
@@ -560,6 +608,105 @@ const handleOptionClick = (option) => {
   color: #ff9a9a;
   box-shadow: none;
 }
+
+.change-preview-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  max-height: 330px;
+  margin: 0 0 18px;
+  overflow-y: auto;
+  text-align: left;
+}
+
+.change-preview-item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 11px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.12);
+  cursor: pointer;
+}
+
+.change-preview-item input {
+  margin-top: 3px;
+  accent-color: #a8bfff;
+}
+
+.change-preview-copy,
+.change-values {
+  display: flex;
+  min-width: 0;
+}
+
+.change-preview-copy {
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.change-preview-copy strong {
+  color: #f0f0f3;
+  font-size: 13px;
+}
+
+.change-values {
+  gap: 8px;
+  align-items: baseline;
+  color: #9fa0a8;
+  font-size: 12px;
+}
+
+.change-values del,
+.change-values ins {
+  max-width: 46%;
+  overflow-wrap: anywhere;
+}
+
+.change-values del { color: #d89595; }
+.change-values ins { color: #9fd1ae; text-decoration: none; }
+
+.change-actions { flex-wrap: wrap; }
+.change-actions .confirm-btn {
+  flex: 1 1 130px;
+  min-width: 0;
+  padding-inline: 16px;
+}
+.confirm-btn:disabled { cursor: not-allowed; opacity: 0.45; transform: none; }
+
+@media (max-width: 520px) {
+  .confirm-area { padding: 16px; }
+  .confirm-buttons { gap: 10px; }
+  .change-actions .confirm-btn { flex-basis: 100%; }
+}
+
+.undo-area {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid rgba(120, 166, 255, 0.18);
+  border-radius: 10px;
+  background: rgba(120, 166, 255, 0.08);
+  color: #d8d8dd;
+}
+
+.undo-btn {
+  border: 0;
+  background: transparent;
+  color: #a8bfff;
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.undo-btn:hover { color: #d5deff; }
 
 .confirm-btn--danger:hover {
   background: rgba(255, 100, 100, 0.14);

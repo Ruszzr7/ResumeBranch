@@ -34,6 +34,10 @@ export default defineConfig({
           }
         }
       },
+      '/resume-sources': {
+        target: 'http://localhost:8000',
+        changeOrigin: true
+      },
       '/tasks': {
         target: 'http://localhost:8000',
         changeOrigin: true

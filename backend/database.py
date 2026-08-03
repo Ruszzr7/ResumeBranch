@@ -5,7 +5,7 @@ SQLAlchemy 模型定义和数据库连接
 
 import os
 import uuid
-from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, JSON, Text
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, JSON, Text, inspect, text
 from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -29,6 +29,7 @@ elif database_backend == "mysql":
 engine = create_engine(DATABASE_URL, **engine_options)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+_PENDING_CONFIRMATION_UNSET = object()
 
 # MySQL TEXT is limited to 64 KiB, which is too small for base64 profile photos.
 large_text_type = Text().with_variant(LONGTEXT(), "mysql")
@@ -116,6 +117,7 @@ class ProjectTask(Base):
     resume_data = Column(JSON, default=dict)
     photo = Column(large_text_type, default="")
     parsing_status = Column(String(20), default="none")
+    source_page_count = Column(Integer, default=1, nullable=False)
     jd_data = Column(JSON, default=dict)
     messages = Column(JSON, default=list)
     compressed_context = Column(JSON, default=list)
@@ -123,6 +125,19 @@ class ProjectTask(Base):
     last_accessed = Column(DateTime, default=datetime.utcnow)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ResumeRevision(Base):
+    """A reversible snapshot created by an assistant-confirmed resume update."""
+    __tablename__ = "resume_revisions"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    task_id = Column(String(36), nullable=False, index=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    before_data = Column(JSON, nullable=False)
+    after_data = Column(JSON, nullable=False)
+    selected_change_ids = Column(JSON, default=list)
+    undone_at = Column(DateTime, default=None)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
 class WorkspaceState(Base):
@@ -145,7 +160,22 @@ def get_db():
 def init_db():
     """初始化数据库（创建所有表）"""
     Base.metadata.create_all(bind=engine)
+    migrate_project_task_source_page_count()
     migrate_resume_academic_fields()
+
+
+def migrate_project_task_source_page_count():
+    """Add automatic source-page metadata to existing SQLite/MySQL databases."""
+    inspector = inspect(engine)
+    if "project_tasks" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("project_tasks")}
+    if "source_page_count" in columns:
+        return
+    with engine.begin() as connection:
+        connection.execute(text(
+            "ALTER TABLE project_tasks ADD COLUMN source_page_count INTEGER NOT NULL DEFAULT 1"
+        ))
 
 
 def migrate_resume_academic_fields():
@@ -361,16 +391,37 @@ def list_project_tasks(db, user_id: int, project_id: str):
     ).order_by(ProjectTask.is_base.desc(), ProjectTask.updated_at.desc()).all()
 
 
+def list_user_resume_sources(db, user_id: int):
+    """List every resume task owned by the user as an independent copy source."""
+    return db.query(ProjectTask).filter(ProjectTask.user_id == user_id).order_by(
+        ProjectTask.updated_at.desc()
+    ).all()
+
+
 def create_resume_task(
     db,
     user_id: int,
     project_id: str,
     title: str = "新岗位版本",
     copy_base_resume: bool = True,
+    source_task_id: str | None = None,
+    jd_data: dict | None = None,
 ):
     project = get_resume_project(db, user_id, project_id)
     if not project:
         return None
+    source_task = None
+    if source_task_id:
+        source_task = get_resume_task(db, user_id, source_task_id)
+        if not source_task:
+            return None
+    elif copy_base_resume:
+        source_task = db.query(ProjectTask).filter(
+            ProjectTask.project_id == project_id,
+            ProjectTask.user_id == user_id,
+            ProjectTask.is_base.is_(True),
+        ).first()
+
     task_id = str(uuid.uuid4())
     task = ProjectTask(
         id=task_id,
@@ -379,8 +430,10 @@ def create_resume_task(
         title=(title or "新岗位版本").strip()[:120],
         is_base=False,
         session_id=task_id,
-        resume_data=(project.base_resume_data or {}) if copy_base_resume else {},
-        photo=(project.photo or "") if copy_base_resume else "",
+        resume_data=normalize_resume_data(source_task.resume_data or {}) if source_task else {},
+        photo=(source_task.photo or "") if source_task else "",
+        source_page_count=max(1, int(source_task.source_page_count or 1)) if source_task else 1,
+        jd_data=jd_data or {},
     )
     db.add(task)
     db.commit()
@@ -395,10 +448,81 @@ def get_resume_task(db, user_id: int, task_id: str):
     ).first()
 
 
+def record_resume_revision(
+    db,
+    user_id: int,
+    task_id: str,
+    before_data: dict,
+    after_data: dict,
+    selected_change_ids: list[str] | None = None,
+):
+    """Record a successful assistant update so it can be safely undone once."""
+    revision = ResumeRevision(
+        task_id=task_id,
+        user_id=user_id,
+        before_data=normalize_resume_data(before_data or {}),
+        after_data=normalize_resume_data(after_data or {}),
+        selected_change_ids=list(selected_change_ids or []),
+    )
+    db.add(revision)
+    db.commit()
+    db.refresh(revision)
+    return revision
+
+
+def undo_latest_resume_revision(db, user_id: int, task_id: str) -> tuple[str, dict | None]:
+    """Undo the latest revision only when no later edit has changed its result."""
+    from .resume_changes import resume_digest
+
+    task = get_resume_task(db, user_id, task_id)
+    if not task:
+        return "not_found", None
+    revision = db.query(ResumeRevision).filter(
+        ResumeRevision.task_id == task_id,
+        ResumeRevision.user_id == user_id,
+        ResumeRevision.undone_at.is_(None),
+    ).order_by(ResumeRevision.created_at.desc()).first()
+    if not revision:
+        return "no_revision", None
+    current_data = normalize_resume_data(task.resume_data or {})
+    if resume_digest(current_data) != resume_digest(revision.after_data or {}):
+        return "conflict", None
+
+    restored = normalize_resume_data(revision.before_data or {})
+    task.resume_data = restored
+    task.pending_confirmation = None
+    undo_event = {
+        "type": "system",
+        "content": (
+            "系统事件：用户已撤回上一轮简历修改。当前数据库中的简历内容已恢复；"
+            "后续判断必须以当前简历数据为准，不得沿用历史消息中‘修改已生效’的描述。"
+        ),
+    }
+    task.compressed_context = list(task.compressed_context or []) + [undo_event]
+    task.updated_at = datetime.utcnow()
+    if task.is_base:
+        project = db.query(ResumeProject).filter(ResumeProject.id == task.project_id).first()
+        if project:
+            project.base_resume_data = restored
+            project.updated_at = datetime.utcnow()
+    revision.undone_at = datetime.utcnow()
+    db.commit()
+    return "undone", restored
+
+
 def delete_resume_project(db, user_id: int, project_id: str) -> bool:
     project = get_resume_project(db, user_id, project_id)
     if not project:
         return False
+    task_ids = [row[0] for row in db.query(ProjectTask.id).filter(
+        ProjectTask.project_id == project_id,
+        ProjectTask.user_id == user_id,
+    ).all()]
+    if task_ids:
+        db.query(ResumeRevision).filter(
+            ResumeRevision.user_id == user_id,
+            ResumeRevision.task_id.in_(task_ids),
+        ).delete(synchronize_session=False)
     db.query(ProjectTask).filter(
         ProjectTask.project_id == project_id,
         ProjectTask.user_id == user_id,
@@ -414,6 +538,10 @@ def delete_resume_task(db, user_id: int, task_id: str) -> str:
         return "not_found"
     if task.is_base:
         return "base_task"
+    db.query(ResumeRevision).filter(
+        ResumeRevision.user_id == user_id,
+        ResumeRevision.task_id == task_id,
+    ).delete(synchronize_session=False)
     db.delete(task)
     db.commit()
     return "deleted"
@@ -464,6 +592,16 @@ def set_parsing_status(db, user_id: int, status: str):
         # 如果简历不存在，先创建
         resume = Resume(user_id=user_id, parsing_status=status)
         db.add(resume)
+    db.commit()
+
+
+def set_source_page_count(db, user_id: int, page_count: int):
+    """Store the uploaded source document page count for automatic layout."""
+    task = _active_task(db, user_id)
+    if not task:
+        return
+    task.source_page_count = max(1, int(page_count or 1))
+    task.updated_at = datetime.utcnow()
     db.commit()
 
 
@@ -628,12 +766,18 @@ def create_invite_code(db, code: str):
     return invite
 
 
-def save_conversation_context(db, user_id: int, session_id: str, compressed_context: list, pending_confirmation: dict = None):
+def save_conversation_context(
+    db,
+    user_id: int,
+    session_id: str,
+    compressed_context: list,
+    pending_confirmation=_PENDING_CONFIRMATION_UNSET,
+):
     """保存压缩后的上下文到数据库"""
     task = _active_task(db, user_id)
     if task:
         task.compressed_context = compressed_context
-        if pending_confirmation is not None:
+        if pending_confirmation is not _PENDING_CONFIRMATION_UNSET:
             task.pending_confirmation = pending_confirmation
         task.last_accessed = datetime.utcnow()
         task.updated_at = datetime.utcnow()
@@ -645,7 +789,7 @@ def save_conversation_context(db, user_id: int, session_id: str, compressed_cont
     ).first()
     if conv:
         conv.compressed_context = compressed_context
-        if pending_confirmation is not None:
+        if pending_confirmation is not _PENDING_CONFIRMATION_UNSET:
             conv.pending_confirmation = pending_confirmation
         conv.last_accessed = datetime.utcnow()
     else:
@@ -653,7 +797,11 @@ def save_conversation_context(db, user_id: int, session_id: str, compressed_cont
             user_id=user_id,
             session_id=session_id,
             compressed_context=compressed_context,
-            pending_confirmation=pending_confirmation,
+            pending_confirmation=(
+                None
+                if pending_confirmation is _PENDING_CONFIRMATION_UNSET
+                else pending_confirmation
+            ),
             messages=[]  # 初始化为空，由前端通过 /save_conversation 保存
         )
         db.add(conv)

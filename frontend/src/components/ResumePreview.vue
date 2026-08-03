@@ -37,6 +37,11 @@ const props = defineProps({
     type: String,
     required: false,
     default: ''
+  },
+  sourcePageCount: {
+    type: Number,
+    required: false,
+    default: 1
   }
 })
 
@@ -75,6 +80,44 @@ const marginHorizontal = ref(DEFAULT_STYLE.marginHorizontal)
 const moduleMargin = ref(DEFAULT_STYLE.moduleMargin)
 const lineHeight = ref(DEFAULT_STYLE.lineHeight)
 const fontSize = ref(DEFAULT_STYLE.fontSize)
+const overflowBeyondPageLimit = ref(false)
+const pageBreakBefore = ref('')
+
+function layoutStorageKey() {
+  return props.taskId ? `resume-layout:${props.taskId}` : ''
+}
+
+function loadLayoutSettings() {
+  const key = layoutStorageKey()
+  if (!key) return
+  try {
+    marginVertical.value = DEFAULT_STYLE.marginVertical
+    marginHorizontal.value = DEFAULT_STYLE.marginHorizontal
+    moduleMargin.value = DEFAULT_STYLE.moduleMargin
+    lineHeight.value = DEFAULT_STYLE.lineHeight
+    fontSize.value = DEFAULT_STYLE.fontSize
+    const saved = JSON.parse(localStorage.getItem(key) || '{}')
+    for (const [name, target] of Object.entries({
+      marginVertical, marginHorizontal, moduleMargin, lineHeight, fontSize
+    })) {
+      if (Number.isFinite(saved[name])) target.value = saved[name]
+    }
+  } catch (_) {
+    // Ignore malformed browser-local layout settings and use defaults.
+  }
+}
+
+function saveLayoutSettings() {
+  const key = layoutStorageKey()
+  if (!key) return
+  localStorage.setItem(key, JSON.stringify({
+    marginVertical: marginVertical.value,
+    marginHorizontal: marginHorizontal.value,
+    moduleMargin: moduleMargin.value,
+    lineHeight: lineHeight.value,
+    fontSize: fontSize.value
+  }))
+}
 
 function resetStyleSettings(event) {
   marginVertical.value = DEFAULT_STYLE.marginVertical
@@ -152,6 +195,96 @@ const observer = ref(null)
 const containerRef = ref(null)
 const contentRef = ref(null)
 const pageRanges = ref([])
+const overflowStartIndex = ref(null)
+const preferredSourcePages = computed(() => Number(props.sourcePageCount || 1) >= 2 ? 2 : 1)
+
+function buildSemanticUnits(elementHeights, capacity) {
+  const items = allItems.value
+  const groups = []
+  for (let index = 0; index < items.length;) {
+    const groupId = items[index].groupId
+    let end = index + 1
+    while (end < items.length && items[end].groupId === groupId) end++
+    const height = elementHeights.slice(index, end).reduce((sum, item) => sum + item.height, 0)
+    groups.push({ start: index, end, height, breakKey: items[index].breakKey || '' })
+    index = end
+  }
+
+  return groups.flatMap(group => {
+    if (group.height <= capacity || group.end - group.start <= 1) return [group]
+    const firstItem = items[group.start]
+    const keepCount = firstItem?.isSectionTitle ? Math.min(2, group.end - group.start) : 1
+    const units = []
+    const keptEnd = group.start + keepCount
+    units.push({
+      start: group.start,
+      end: keptEnd,
+      height: elementHeights.slice(group.start, keptEnd).reduce((sum, item) => sum + item.height, 0),
+      breakKey: group.breakKey
+    })
+    for (let index = keptEnd; index < group.end; index++) {
+      units.push({
+        start: index,
+        end: index + 1,
+        height: elementHeights[index].height,
+        breakKey: group.breakKey
+      })
+    }
+    return units
+  })
+}
+
+function paginateSemanticUnits(units, capacity) {
+  if (!units.length) return []
+  const ranges = []
+  let start = units[0].start
+  let end = start
+  let height = 0
+  for (const unit of units) {
+    if (height > 0 && height + unit.height > capacity) {
+      ranges.push({ start, end })
+      start = unit.start
+      height = 0
+    }
+    end = unit.end
+    height += unit.height
+  }
+  ranges.push({ start, end })
+  return ranges
+}
+
+function balanceOriginalTwoPageResume(units, ranges) {
+  if (preferredSourcePages.value !== 2 || ranges.length !== 1 || units.length < 2) return ranges
+  const totalHeight = units.reduce((sum, unit) => sum + unit.height, 0)
+  let runningHeight = 0
+  let bestIndex = 1
+  let bestDistance = Number.POSITIVE_INFINITY
+  for (let index = 1; index < units.length; index++) {
+    runningHeight += units[index - 1].height
+    const distance = Math.abs(totalHeight / 2 - runningHeight)
+    if (distance < bestDistance) {
+      bestDistance = distance
+      bestIndex = index
+    }
+  }
+  return [
+    { start: units[0].start, end: units[bestIndex - 1].end },
+    { start: units[bestIndex].start, end: units[units.length - 1].end }
+  ]
+}
+
+function applyAutomaticPagination(elementHeights, capacity) {
+  const units = buildSemanticUnits(elementHeights, capacity)
+  const naturalRanges = paginateSemanticUnits(units, capacity)
+  const ranges = balanceOriginalTwoPageResume(units, naturalRanges)
+  overflowBeyondPageLimit.value = ranges.length > 2
+  overflowStartIndex.value = ranges.length > 2 ? ranges[2].start : null
+  const visibleRanges = ranges.slice(0, 2)
+  pageRanges.value = visibleRanges
+  pageCount.value = Math.max(1, visibleRanges.length)
+  const secondPageItem = visibleRanges.length > 1 ? allItems.value[visibleRanges[1].start] : null
+  pageBreakBefore.value = secondPageItem?.breakKey || ''
+}
 
 // 扁平化的所有可分页项目
 const allItems = computed(() => {
@@ -160,70 +293,84 @@ const allItems = computed(() => {
   let index = 0
 
   if (props.data.basics) {
-    items.push({ type: 'basics', index: index++, visible: true })
+    items.push({ type: 'basics', groupId: 'basics', breakKey: '', index: index++, visible: true })
   }
 
   if (props.data.education && props.data.education.length) {
-    items.push({ type: 'education-title', index: index++, visible: true })
+    items.push({ type: 'education-title', groupId: 'education:0', breakKey: 'education:0', isSectionTitle: true, index: index++, visible: true })
     props.data.education.forEach((edu, i) => {
-      items.push({ type: 'education-item', dataIndex: i, index: index++, visible: true })
+      items.push({ type: 'education-item', dataIndex: i, groupId: `education:${i}`, breakKey: `education:${i}`, index: index++, visible: true })
       // 添加论文作为独立的可分页项
       if (edu.theses?.length) {
         edu.theses.forEach((_, tIdx) => {
-          items.push({ type: 'thesis-item', dataIndex: `${i}-${tIdx}`, index: index++, visible: true })
+          items.push({ type: 'thesis-item', dataIndex: `${i}-${tIdx}`, groupId: `education:${i}`, breakKey: `education:${i}`, index: index++, visible: true })
         })
       }
     })
   }
 
   if (props.data.work_experience && props.data.work_experience.length) {
-    items.push({ type: 'work-title', index: index++, visible: true })
+    items.push({ type: 'work-title', groupId: 'work_experience:0', breakKey: 'work_experience:0', isSectionTitle: true, index: index++, visible: true })
     props.data.work_experience.forEach((work, i) => {
-      items.push({ type: 'work-item', dataIndex: i, index: index++, visible: true })
+      items.push({ type: 'work-item', dataIndex: i, groupId: `work_experience:${i}`, breakKey: `work_experience:${i}`, index: index++, visible: true })
       // 添加工作详情作为独立的可分页项
       if (work.details?.length) {
-        items.push({ type: 'work-details', dataIndex: i, index: index++, visible: true })
+        items.push({ type: 'work-details', dataIndex: i, groupId: `work_experience:${i}`, breakKey: `work_experience:${i}`, index: index++, visible: true })
       }
     })
   }
 
   if ((props.data.project_experience || props.data.projects) && (props.data.project_experience || props.data.projects).length) {
-    items.push({ type: 'projects-title', index: index++, visible: true })
+    items.push({ type: 'projects-title', groupId: 'project_experience:0', breakKey: 'project_experience:0', isSectionTitle: true, index: index++, visible: true })
     const projects = props.data.project_experience || props.data.projects
     projects.forEach((proj, i) => {
-      items.push({ type: 'project-item', dataIndex: i, index: index++, visible: true })
+      items.push({ type: 'project-item', dataIndex: i, groupId: `project_experience:${i}`, breakKey: `project_experience:${i}`, index: index++, visible: true })
       // 添加项目详情作为独立的可分页项
       if (proj.details?.length) {
-        items.push({ type: 'project-details', dataIndex: i, index: index++, visible: true })
+        items.push({ type: 'project-details', dataIndex: i, groupId: `project_experience:${i}`, breakKey: `project_experience:${i}`, index: index++, visible: true })
       }
     })
   }
 
   if (props.data.others && (props.data.others.skills?.length || props.data.others.certificates?.length || props.data.others.languages?.length)) {
-    items.push({ type: 'others-title', index: index++, visible: true })
+    items.push({ type: 'others-title', groupId: 'others', breakKey: 'others', isSectionTitle: true, index: index++, visible: true })
     // 技能一行显示
     if (props.data.others.skills?.length) {
-      items.push({ type: 'skill-line', index: index++, visible: true })
+      items.push({ type: 'skill-line', groupId: 'others', breakKey: 'others', index: index++, visible: true })
     }
     // 证书一行显示
     if (props.data.others.certificates?.length) {
-      items.push({ type: 'cert-line', index: index++, visible: true })
+      items.push({ type: 'cert-line', groupId: 'others', breakKey: 'others', index: index++, visible: true })
     }
     // 语言一行显示
     if (props.data.others.languages?.length) {
-      items.push({ type: 'lang-line', index: index++, visible: true })
+      items.push({ type: 'lang-line', groupId: 'others', breakKey: 'others', index: index++, visible: true })
     }
   }
 
   // 每条{{ t.selfEvaluation }}独立分页
   if (props.data.self_evaluation && props.data.self_evaluation.length) {
-    items.push({ type: 'self-eval-title', index: index++, visible: true })
+    items.push({ type: 'self-eval-title', groupId: 'self_evaluation', breakKey: 'self_evaluation', isSectionTitle: true, index: index++, visible: true })
     props.data.self_evaluation.forEach((_, i) => {
-      items.push({ type: 'self-eval-item', dataIndex: i, index: index++, visible: true })
+      items.push({ type: 'self-eval-item', dataIndex: i, groupId: 'self_evaluation', breakKey: 'self_evaluation', index: index++, visible: true })
     })
   }
 
   return items
+})
+
+const overflowItemLabel = computed(() => {
+  const item = overflowStartIndex.value == null ? null : allItems.value[overflowStartIndex.value]
+  if (!item) return '后续内容'
+  const labelsByType = {
+    'education-title': '教育经历', 'education-item': '教育经历', 'thesis-item': '论文',
+    'work-title': '工作经历', 'work-item': '工作经历', 'work-details': '工作经历详情',
+    'projects-title': '项目经历', 'project-item': '项目经历', 'project-details': '项目经历详情',
+    'others-title': '其他信息', 'skill-line': '技能', 'cert-line': '证书', 'lang-line': '语言',
+    'self-eval-title': '自我评价', 'self-eval-item': '自我评价'
+  }
+  const suffix = Number.isInteger(item.dataIndex) ? `第 ${item.dataIndex + 1} 项` : ''
+  return `${labelsByType[item.type] || '后续内容'}${suffix}`
 })
 
 // 页面容器样式
@@ -300,53 +447,7 @@ const calculatePagination = async () => {
     }
   })
 
-  // 计算源内容总高度
-  const sourceHeight = container.scrollHeight
-
-  // 计算需要的页数
-  const estimatedPageCount = Math.max(1, Math.ceil(sourceHeight / pageContentHeight))
-
-  // 累积分页算法
-  const ranges = []
-  let currentStart = 0
-  let currentHeight = 0
-
-  for (let i = 0; i < elementHeights.length; i++) {
-    const elem = elementHeights[i]
-
-    // 检查加上这个元素是否超出页面
-    // 如果当前高度 + 这个元素高度 > 可用高度，需要分页
-    // 留更大余量（约120px），因为 margin collapse 可能累积，且每个页面顶部会损失更多
-    // 首行没有 margin-top，所以每个新页面会多出一些可用空间
-    const wouldExceed = currentHeight + elem.height > (pageContentHeight - 120)
-
-    if (currentStart === i && estimatedPageCount === 1) {
-      // 只有一页的情况，直接包含所有元素
-      currentHeight += elem.height
-    } else if (wouldExceed && i > 0) {
-      // 保存当前页
-      ranges.push({ start: currentStart, end: i })
-
-      // 开始新页面
-      currentStart = i
-      currentHeight = elem.height
-    } else {
-      currentHeight += elem.height
-    }
-  }
-
-  // 保存最后一页
-  if (currentStart < elementHeights.length) {
-    ranges.push({ start: currentStart, end: elementHeights.length })
-  }
-
-  // 确保至少有一页
-  if (ranges.length === 0 && elementHeights.length > 0) {
-    ranges.push({ start: 0, end: elementHeights.length })
-  }
-
-  pageRanges.value = ranges
-  pageCount.value = ranges.length
+  applyAutomaticPagination(elementHeights, pageContentHeight - 120)
 
   // 验证：测量实际渲染的页面高度，如果溢出则调整
   await nextTick()
@@ -356,45 +457,8 @@ const calculatePagination = async () => {
     const pageContents = document.querySelectorAll('.page-content')
     if (pageContents.length === 0) return
 
-    let adjusted = false
-    const availableHeight = pageContentHeight
-
-    pageContents.forEach((el, idx) => {
-      const actualHeight = el.scrollHeight
-      if (actualHeight > availableHeight + 50) {
-        // 标记需要重新计算
-        adjusted = true
-      }
-    })
-
-    // 如果有溢出，重新计算分页，使用更小的每页高度限制
-    if (adjusted) {
-      const newRanges = []
-      let currentStart = 0
-      let currentHeight = 0
-
-      for (let i = 0; i < elementHeights.length; i++) {
-        const elem = elementHeights[i]
-        const wouldExceed = currentHeight + elem.height > (availableHeight - 150)
-
-        if (wouldExceed && i > 0) {
-          newRanges.push({ start: currentStart, end: i })
-          currentStart = i
-          currentHeight = elem.height
-        } else {
-          currentHeight += elem.height
-        }
-      }
-
-      if (currentStart < elementHeights.length) {
-        newRanges.push({ start: currentStart, end: elementHeights.length })
-      }
-
-      if (newRanges.length > ranges.length) {
-        pageRanges.value = newRanges
-        pageCount.value = newRanges.length
-      }
-    }
+    const adjusted = Array.from(pageContents).some(el => el.scrollHeight > pageContentHeight + 50)
+    if (adjusted) applyAutomaticPagination(elementHeights, pageContentHeight - 150)
   }
 
   // 延迟验证，确保DOM已完全渲染
@@ -402,7 +466,7 @@ const calculatePagination = async () => {
 }
 
 // ========== 监听变化 ==========
-watch([() => props.data, marginVertical, marginHorizontal, moduleMargin, lineHeight, fontSize],
+watch([() => props.data, () => props.sourcePageCount, marginVertical, marginHorizontal, moduleMargin, lineHeight, fontSize],
   () => {
     // 增加延迟时间，确保字体变化后浏览器有足够时间重新渲染
     if (window.requestAnimationFrame) {
@@ -413,6 +477,12 @@ watch([() => props.data, marginVertical, marginHorizontal, moduleMargin, lineHei
       setTimeout(calculatePagination, 300)
     }
   }, { deep: true })
+
+watch([marginVertical, marginHorizontal, moduleMargin, lineHeight, fontSize], saveLayoutSettings)
+watch(() => props.taskId, () => {
+  loadLayoutSettings()
+  calculatePagination()
+})
 
 // ========== 高亮模块滚动 ==========
 watch(() => props.highlightedModule, async (newModule) => {
@@ -558,6 +628,11 @@ const lastExportFormat = ref('PDF')
 const exportDocument = async (format) => {
   if (!props.data) return
 
+  if (overflowBeyondPageLimit.value) {
+    exportError.value = '当前内容超出两页，请精简内容或调整排版后再导出。'
+    return
+  }
+
   const isPDF = format === 'pdf'
   if (isPDF) isExportingPDF.value = true
   else isExportingDOCX.value = true
@@ -570,7 +645,10 @@ const exportDocument = async (format) => {
       marginRight: marginHorizontal.value,
       moduleMargin: moduleMargin.value,
       lineHeight: lineHeight.value,
-      fontSize: fontSize.value
+      fontSize: fontSize.value,
+      pageMode: 'auto',
+      sourcePageCount: Number(props.sourcePageCount || 1),
+      pageBreakBefore: pageBreakBefore.value
     }
 
     // 调用后端API
@@ -624,6 +702,7 @@ const exportWord = () => exportDocument('docx')
 
 // ========== 生命周期 ==========
 onMounted(async () => {
+  loadLayoutSettings()
   await nextTick()
   setTimeout(async () => {
     await calculatePagination()
@@ -786,10 +865,6 @@ const getItemIndex = (type, dataIndex) => {
               </svg>
               <span>{{ zoomPercentage }}%</span>
             </button>
-            <button class="mobile-export-btn word-export-btn" @click="exportWord" :disabled="isExportingDOCX || !data">
-              <span v-if="isExportingDOCX" class="spinner"></span>
-              <span>{{ isExportingDOCX ? '导出中...' : '导出Word' }}</span>
-            </button>
             <div v-if="activeToolbarMenu === 'zoom'" class="compact-popover zoom-popover" @click.stop>
               <div class="compact-popover-title">页面缩放</div>
               <div class="zoom-mode-grid">
@@ -820,6 +895,7 @@ const getItemIndex = (type, dataIndex) => {
             </button>
             <div v-if="activeToolbarMenu === 'layout'" class="compact-popover layout-popover" @click.stop>
               <div class="compact-popover-title">排版设置</div>
+              <div class="auto-page-hint">页数自动识别，最多两页</div>
               <label class="compact-control">
                 <span>上下页边距 <strong>{{ marginVertical }}mm</strong></span>
                 <input type="range" v-model.number="marginVertical" min="3" max="12" step="0.25" class="slider">
@@ -966,47 +1042,43 @@ const getItemIndex = (type, dataIndex) => {
       <!-- {{ t.workExperience }} -->
       <template v-if="data.work_experience && data.work_experience.length">
         <h2 class="pageable-item section-title" :class="{ 'title-highlight': highlightedModule === 'work_experience' }" data-module="work_experience">{{ t.workExperience }}</h2>
-        <div v-for="(item, idx) in data.work_experience" :key="idx" class="pageable-item work-item">
-          <div class="work-header">
-            <div class="work-main">
-              <div class="company" v-html="formatText(item.company_name || '公司未填写')"></div>
-              <div class="position" v-html="formatText(`${item.job_title || ''} ${item.job_type ? `(${item.job_type})` : ''}`)"></div>
+        <template v-for="(item, idx) in data.work_experience" :key="'source-work-'+idx">
+          <div class="pageable-item work-item">
+            <div class="work-header">
+              <div class="work-main">
+                <div class="company" v-html="formatText(item.company_name || '公司未填写')"></div>
+                <div class="position" v-html="formatText(`${item.job_title || ''} ${item.job_type ? `(${item.job_type})` : ''}`)"></div>
+              </div>
+              <span class="work-period">{{ item.date_range?.[0] || '' }} - {{ item.date_range?.[1] || '至今' }}</span>
             </div>
-            <span class="work-period">{{ item.date_range?.[0] || '' }} - {{ item.date_range?.[1] || '至今' }}</span>
           </div>
-        </div>
-        <template v-if="data.work_experience">
-          <template v-for="(item, idx) in data.work_experience">
-            <div v-if="item.details" :key="'details-'+idx" class="pageable-item work-details">
-              <ul class="list-items">
-                <li v-for="(detail, dIdx) in item.details" :key="dIdx" class="list-item" v-html="formatText(detail)"></li>
-              </ul>
-            </div>
-          </template>
+          <div v-if="item.details?.length" class="pageable-item work-details">
+            <ul class="list-items">
+              <li v-for="(detail, dIdx) in item.details" :key="dIdx" class="list-item" v-html="formatText(detail)"></li>
+            </ul>
+          </div>
         </template>
       </template>
 
       <!-- {{ t.projectExperience }} -->
       <template v-if="(data.project_experience || data.projects) && (data.project_experience || data.projects).length">
         <h2 class="pageable-item section-title" :class="{ 'title-highlight': highlightedModule === 'project_experience' }" data-module="project_experience">{{ t.projectExperience }}</h2>
-        <div v-for="(item, idx) in (data.project_experience || data.projects)" :key="idx" class="pageable-item project-item">
-          <div class="project-header">
-            <div class="project-name" v-html="formatText(item.project_name || item.name || '项目未填写')"></div>
-            <div class="project-role">
-              <span v-if="item.date_range?.length" v-html="formatText(`${item.role || '角色'} | ${item.date_range[0]} - ${item.date_range[1] || '至今'}`)"></span>
-              <span v-else-if="item.start_date || item.end_date" v-html="formatText(`${item.role || '角色'} | ${item.start_date || ''} - ${item.end_date || '至今'}`)"></span>
-              <span v-else v-html="formatText(item.role || '项目')"></span>
+        <template v-for="(item, idx) in (data.project_experience || data.projects)" :key="'source-project-'+idx">
+          <div class="pageable-item project-item">
+            <div class="project-header">
+              <div class="project-name" v-html="formatText(item.project_name || item.name || '项目未填写')"></div>
+              <div class="project-role">
+                <span v-if="item.date_range?.length" v-html="formatText(`${item.role || '角色'} | ${item.date_range[0]} - ${item.date_range[1] || '至今'}`)"></span>
+                <span v-else-if="item.start_date || item.end_date" v-html="formatText(`${item.role || '角色'} | ${item.start_date || ''} - ${item.end_date || '至今'}`)"></span>
+                <span v-else v-html="formatText(item.role || '项目')"></span>
+              </div>
             </div>
           </div>
-        </div>
-        <template v-if="data.project_experience || data.projects">
-          <template v-for="(item, idx) in (data.project_experience || data.projects)">
-            <div v-if="item.details" :key="'details-'+idx" class="pageable-item project-details">
-              <ul class="list-items">
-                <li v-for="(detail, dIdx) in item.details" :key="dIdx" class="list-item" v-html="formatText(detail)"></li>
-              </ul>
-            </div>
-          </template>
+          <div v-if="item.details?.length" class="pageable-item project-details">
+            <ul class="list-items">
+              <li v-for="(detail, dIdx) in item.details" :key="dIdx" class="list-item" v-html="formatText(detail)"></li>
+            </ul>
+          </div>
         </template>
       </template>
 
@@ -1323,6 +1395,9 @@ const getItemIndex = (type, dataIndex) => {
     </div>
     </div>
     <div v-if="pageCount > 1" class="page-indicator">共 {{ pageCount }} 页</div>
+    <div v-if="overflowBeyondPageLimit" class="page-overflow-warning" role="status">
+      当前内容超出两页，未排入内容从“{{ overflowItemLabel }}”开始。请精简内容或调小字体、间距后再导出。
+    </div>
     </div>
     </template>
 
@@ -1776,6 +1851,30 @@ const getItemIndex = (type, dataIndex) => {
 
 .layout-popover {
   width: 255px;
+}
+
+.auto-page-hint {
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  color: #9ea4b2;
+  font-size: 12px;
+  line-height: 1.4;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 8px;
+}
+
+.page-overflow-warning {
+  width: min(560px, calc(100% - 24px));
+  margin: 10px auto 0;
+  padding: 9px 12px;
+  color: #ffc1a8;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+  background: rgba(255, 126, 82, 0.1);
+  border: 1px solid rgba(255, 144, 104, 0.22);
+  border-radius: 9px;
 }
 
 .edit-popover {

@@ -126,11 +126,18 @@ def generate_docx(resume_data: dict, style: dict | None = None, photo: str | Non
     """Return a fully editable DOCX using the same content and layout controls as PDF export."""
     data = normalize_resume_data(resume_data)
     labels = LABELS.get(lang, LABELS["zh"])
-    style = style or {}
+    from .layout import apply_page_mode_defaults
+    style = apply_page_mode_defaults(style)
     font_size = float(style.get("fontSize", 11))
     module_spacing = float(style.get("moduleMargin", 1))
+    page_break_before = style.get("pageBreakBefore", "")
 
     document = Document()
+
+    def maybe_page_break(key: str) -> None:
+        if page_break_before == key:
+            document.add_page_break()
+
     section = document.sections[0]
     section.start_type = WD_SECTION.NEW_PAGE
     section.page_width = Mm(210)
@@ -188,8 +195,11 @@ def generate_docx(resume_data: dict, style: dict | None = None, photo: str | Non
 
     education = data.get("education") or []
     if education:
+        maybe_page_break("education:0")
         _section_title(document, labels["education"], font_size, module_spacing)
-        for item in education:
+        for item_index, item in enumerate(education):
+            if item_index > 0:
+                maybe_page_break(f"education:{item_index}")
             title = " · ".join(value for value in (item.get("school_name", ""), item.get("degree", ""), item.get("major", "")) if value)
             _two_column_line(document, title or labels["schoolNotSet"], _date_range(item), font_size)
             metrics = []
@@ -221,8 +231,11 @@ def generate_docx(resume_data: dict, style: dict | None = None, photo: str | Non
 
     work = data.get("work_experience") or []
     if work:
+        maybe_page_break("work_experience:0")
         _section_title(document, labels["workExperience"], font_size, module_spacing)
-        for item in work:
+        for item_index, item in enumerate(work):
+            if item_index > 0:
+                maybe_page_break(f"work_experience:{item_index}")
             left = " · ".join(value for value in (item.get("company_name", ""), item.get("job_title", ""), item.get("job_type", "")) if value)
             _two_column_line(document, left or labels["companyNotSet"], _date_range(item), font_size)
             for detail in item.get("details") or []:
@@ -230,8 +243,11 @@ def generate_docx(resume_data: dict, style: dict | None = None, photo: str | Non
 
     projects = data.get("project_experience") or []
     if projects:
+        maybe_page_break("project_experience:0")
         _section_title(document, labels["projectExperience"], font_size, module_spacing)
-        for item in projects:
+        for item_index, item in enumerate(projects):
+            if item_index > 0:
+                maybe_page_break(f"project_experience:{item_index}")
             name = item.get("project_name") or item.get("name") or labels["projectNotSet"]
             role = item.get("role", "")
             left = f"{name} · {role}" if role else name
@@ -241,6 +257,7 @@ def generate_docx(resume_data: dict, style: dict | None = None, photo: str | Non
 
     others = data.get("others") or {}
     if any(others.get(key) for key in ("skills", "certificates", "languages")):
+        maybe_page_break("others")
         _section_title(document, labels["others"], font_size, module_spacing)
         for key, label in (("skills", labels["skills"]), ("certificates", labels["certificates"]), ("languages", labels["language"])):
             values = others.get(key) or []
@@ -252,6 +269,7 @@ def generate_docx(resume_data: dict, style: dict | None = None, photo: str | Non
 
     evaluations = data.get("self_evaluation") or []
     if evaluations:
+        maybe_page_break("self_evaluation")
         _section_title(document, labels["selfEvaluation"], font_size, module_spacing)
         for value in evaluations:
             p = document.add_paragraph()
