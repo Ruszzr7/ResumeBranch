@@ -85,6 +85,42 @@ DENSITY_VALUES = {
     "comfortable": {"fontSize": 11.5, "lineHeight": 1.75, "moduleMargin": 1.25},
 }
 
+LAYOUT_TEMPLATES = {
+    "classic-professional": {
+        "label": "经典专业",
+        "density": "standard",
+        "global": {"titleStyle": "underline", "marginVertical": 10.0, "marginHorizontal": 10.0},
+        "basics": {"preset": "centered", "contactLayout": "inline"},
+        "education": {"preset": "classic", "schoolTagStyle": "outline", "metricsPlacement": "below"},
+        "work_experience": {"preset": "classic", "detailsStyle": "bullets", "datePosition": "right"},
+        "project_experience": {"preset": "classic", "detailsStyle": "bullets", "datePosition": "right"},
+        "others": {"preset": "inline", "separator": "dot"},
+        "self_evaluation": {"preset": "paragraphs"},
+    },
+    "modern-clean": {
+        "label": "简洁现代",
+        "density": "standard",
+        "global": {"titleStyle": "plain", "marginVertical": 10.0, "marginHorizontal": 10.0},
+        "basics": {"preset": "left-aligned", "contactLayout": "inline"},
+        "education": {"preset": "three-column", "schoolTagStyle": "text", "metricsPlacement": "info-column"},
+        "work_experience": {"preset": "classic", "detailsStyle": "bullets", "datePosition": "right"},
+        "project_experience": {"preset": "classic", "detailsStyle": "bullets", "datePosition": "right"},
+        "others": {"preset": "inline", "separator": "dot"},
+        "self_evaluation": {"preset": "paragraphs"},
+    },
+    "compact-tech": {
+        "label": "紧凑技术",
+        "density": "compact",
+        "global": {"titleStyle": "plain", "marginVertical": 8.5, "marginHorizontal": 9.0},
+        "basics": {"preset": "left-aligned", "contactLayout": "inline"},
+        "education": {"preset": "compact", "schoolTagStyle": "outline", "metricsPlacement": "with-degree"},
+        "work_experience": {"preset": "compact", "detailsStyle": "bullets", "datePosition": "right"},
+        "project_experience": {"preset": "compact", "detailsStyle": "bullets", "datePosition": "right"},
+        "others": {"preset": "tags", "separator": "dot"},
+        "self_evaluation": {"preset": "compact"},
+    },
+}
+
 ENUMS = {
     ("global", "density"): set(DENSITY_VALUES),
     ("global", "titleStyle"): {"underline", "plain"},
@@ -124,7 +160,7 @@ MODULE_LABELS = {
 
 VALUE_LABELS = {
     "compact": "紧凑", "standard": "标准", "comfortable": "舒展",
-    "underline": "下划线标题", "plain": "纯文字标题",
+    "underline": "强调标题", "plain": "简洁标题",
     "centered": "居中式", "left-aligned": "左对齐式",
     "inline": "同行", "stacked": "纵向", "right": "右侧", "hidden": "隐藏",
     "classic": "经典", "three-column": "三列", "filled": "实心标签",
@@ -312,6 +348,17 @@ def apply_density(config: dict, density: str) -> dict:
         return result
     result["global"]["density"] = density
     result["global"].update(DENSITY_VALUES[density])
+    return normalize_layout_config(result)
+
+
+def apply_layout_template(config: dict | None, template_id: str) -> dict:
+    """Apply a curated visual bundle while preserving content visibility and section order."""
+    template = LAYOUT_TEMPLATES.get(template_id)
+    if template is None:
+        return normalize_layout_config(config)
+    result = apply_density(config or {}, template["density"])
+    for section in ("global", "basics", "education", "work_experience", "project_experience", "others", "self_evaluation"):
+        result[section].update(deepcopy(template.get(section, {})))
     return normalize_layout_config(result)
 
 

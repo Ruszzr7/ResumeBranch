@@ -33,6 +33,7 @@ from .resume_data import normalize_resume_data
 from .resume_changes import apply_resume_changes, build_resume_changes, resume_digest
 from .layout_config import (
     apply_density,
+    apply_layout_template,
     apply_layout_change_groups,
     build_layout_changes,
     default_layout_config,
@@ -829,7 +830,7 @@ def is_explicit_resume_change_request(message: str) -> bool:
 
 _LAYOUT_ACTION_RE = re.compile(
     r"(?:布局|排版|样式|位置|对齐|居中|左对齐|右边|同一行|分行|紧凑|舒展|"
-    r"标签|黑底|描边|普通文字|隐藏|显示|顺序|放到|移到|标题|圆点|段落|恢复默认|重置)"
+    r"标签|黑底|描边|普通文字|隐藏|显示|顺序|放到|移到|标题|圆点|段落|模板|恢复默认|重置)"
 )
 _LAYOUT_SECTION_NAMES = {
     "教育经历": "education", "教育背景": "education",
@@ -853,6 +854,15 @@ def build_local_layout_candidate(state: AgentState) -> dict | None:
         return None
     current = normalize_layout_config(state.layout_data)
     candidate = deepcopy(current)
+
+    for template_label, template_id in (
+        ("经典专业", "classic-professional"),
+        ("简洁现代", "modern-clean"),
+        ("紧凑技术", "compact-tech"),
+    ):
+        if re.search(rf"(?:使用|应用|切换到|改成|换成)?.{{0,4}}{template_label}(?:模板|排版|风格)?", text):
+            candidate = apply_layout_template(candidate, template_id)
+            break
 
     reset_match = re.search(r"(?:恢复|重置)(?:(教育经历|工作经历|实习经历|项目经历|其他信息|自我评价|基本信息))?(?:布局|排版|样式)?(?:为)?默认", text)
     if reset_match:

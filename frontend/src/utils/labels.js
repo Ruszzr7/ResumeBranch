@@ -62,7 +62,7 @@ export const labels = {
 
     // 弹窗
     translateConfirmTitle: '翻译确认',
-    translateConfirmMessage: '是否将简历内容翻译为英文？翻译后的内容将覆盖当前简历。',
+    translateConfirmMessage: '是否切换为英文简历？确认后固定标签会立即显示英文，其余内容将在对话确认框中由你确认后再修改。',
 
     // PDF
     resume: '简历',

@@ -325,14 +325,13 @@ def generate_docx(
         paragraph = document.add_paragraph()
         _paragraph_spacing(paragraph, before=max(2, module_spacing * 2.5), after=3, line=1)
         _set_font(paragraph.add_run(text), font_size * 1.1, bold=True)
-        if global_layout["titleStyle"] != "plain":
-            p_pr = paragraph._p.get_or_add_pPr()
-            borders = OxmlElement("w:pBdr")
-            bottom = OxmlElement("w:bottom")
-            for key, value in (("val", "single"), ("sz", "12"), ("space", "3"), ("color", "333333")):
-                bottom.set(qn(f"w:{key}"), value)
-            borders.append(bottom)
-            p_pr.append(borders)
+        p_pr = paragraph._p.get_or_add_pPr()
+        borders = OxmlElement("w:pBdr")
+        bottom = OxmlElement("w:bottom")
+        for key, value in (("val", "single"), ("sz", "6"), ("space", "3"), ("color", "333333")):
+            bottom.set(qn(f"w:{key}"), value)
+        borders.append(bottom)
+        p_pr.append(borders)
 
     def maybe_break(key: str) -> None:
         if page_break_before == key:
@@ -413,16 +412,19 @@ def generate_docx(
                 metrics.append(f'{labels["ranking"]}{colon}{item["ranking"]}')
             if item.get("average_score") and "average_score" not in hidden_metrics:
                 metrics.append(f'{labels["averageScore"]}{colon}{item["average_score"]}')
-            if cfg["preset"] == "three-column":
-                table = document.add_table(rows=1, cols=3)
+            if cfg["preset"] in {"three-column", "compact"}:
+                table = document.add_table(rows=1, cols=4)
+                table.autofit = False
+                for column, width in zip(table.columns, (Mm(47), Mm(47), Mm(55), Mm(36))):
+                    column.width = width
                 for cell in table.rows[0].cells:
                     _set_cell_borderless(cell)
                     _set_cell_margins(cell)
-                values = [" ".join(v for v in (school, tag_text) if v), "\n".join(v for v in (degree, " | ".join(metrics)) if v), date]
+                values = [" ".join(v for v in (school, tag_text) if v), degree, " · ".join(metrics), date]
                 for cell, value in zip(table.rows[0].cells, values):
                     p = cell.paragraphs[0]
                     _set_font(p.add_run(value), font_size, bold=cell is table.cell(0, 0))
-                table.cell(0, 2).paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                table.cell(0, 3).paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
             else:
                 left = " · ".join(v for v in (school, tag_text, degree) if v)
                 _two_column_line(document, left, date, font_size)

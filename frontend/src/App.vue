@@ -18,6 +18,11 @@ let resizeObserver = null
 // 语言状态
 const currentLang = ref('zh')
 const showTranslateConfirm = ref(false)
+const translationSourceData = ref(null)
+const pendingTranslationConfirmId = ref('')
+const translationApplied = ref(false)
+const TRANSLATE_MESSAGE = '请将简历内容翻译为英文，需要符合英文表达习惯，保留原汁原味，不要添加或虚构内容。'
+const TRANSLATION_SESSION_PREFIX = 'resumeTranslationSession:'
 
 // 检测是否为移动端视图
 function checkMobileView() {
@@ -46,26 +51,121 @@ function hideTooltip() {
   tooltipState.value.visible = false
 }
 
-// 语言切换函数
-function switchLang(lang) {
-  // 即时切换语言
-  currentLang.value = lang
+function cloneResumeData(data) {
+  return data ? JSON.parse(JSON.stringify(data)) : null
+}
 
-  // 如果是从中文切换到英文，弹窗询问是否翻译
+function translationSessionKey(taskId = currentTaskId.value) {
+  return taskId ? `${TRANSLATION_SESSION_PREFIX}${taskId}` : ''
+}
+
+function persistTranslationSession() {
+  const key = translationSessionKey()
+  if (!key || !translationSourceData.value) return
+  localStorage.setItem(key, JSON.stringify({
+    source_data: translationSourceData.value,
+    language: currentLang.value,
+    applied: translationApplied.value
+  }))
+}
+
+function clearTranslationSession() {
+  const key = translationSessionKey()
+  if (key) localStorage.removeItem(key)
+  translationSourceData.value = null
+  pendingTranslationConfirmId.value = ''
+  translationApplied.value = false
+}
+
+function restoreTranslationSession() {
+  const key = translationSessionKey()
+  if (!key) return
+  try {
+    const saved = JSON.parse(localStorage.getItem(key) || 'null')
+    if (!saved?.source_data || saved.language !== 'en') return
+    translationSourceData.value = saved.source_data
+    translationApplied.value = Boolean(saved.applied)
+    currentLang.value = 'en'
+  } catch (error) {
+    console.warn('恢复语言切换状态失败:', error)
+    localStorage.removeItem(key)
+  }
+}
+
+async function restoreChineseResume() {
+  const sourceData = cloneResumeData(translationSourceData.value)
+  currentLang.value = 'zh'
+  showTranslateConfirm.value = false
+
+  if (pendingTranslationConfirmId.value) {
+    await handleOptionClick({
+      confirm_id: pendingTranslationConfirmId.value,
+      value: 'cancel',
+      selected_change_ids: []
+    })
+    if (pendingTranslationConfirmId.value) {
+      currentLang.value = 'en'
+      persistTranslationSession()
+      return
+    }
+  }
+
+  if (translationApplied.value && sourceData) {
+    try {
+      const response = await fetch('/save_resume', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ resume_data: sourceData })
+      })
+      if (!response.ok) throw new Error('中文简历恢复失败')
+      resumeData.value = sourceData
+      previewResumeData.value = null
+      previewLayoutConfig.value = null
+      const undoIndex = [...messages.value].reverse().findIndex(
+        message => message.type === 'undo' && !message.handled
+      )
+      if (undoIndex !== -1) {
+        const actualIndex = messages.value.length - 1 - undoIndex
+        messages.value[actualIndex] = {
+          ...messages.value[actualIndex],
+          handled: true,
+          content: '已切回中文版本。'
+        }
+      }
+    } catch (error) {
+      currentLang.value = 'en'
+      persistTranslationSession()
+      showNotice(error.message || '切换中文失败，请重试')
+      return
+    }
+  }
+
+  clearTranslationSession()
+}
+
+// 语言切换函数：进入英文先确认；英文返回中文时直接恢复中文基线。
+async function switchLang(lang) {
   if (lang === 'en') {
+    if (currentLang.value === 'en') return
     showTranslateConfirm.value = true
+    return
+  }
+  if (lang === 'zh' && currentLang.value === 'en') {
+    await restoreChineseResume()
   }
 }
 
 // 确认翻译
 function confirmTranslate() {
   showTranslateConfirm.value = false
+  translationSourceData.value = cloneResumeData(resumeData.value)
+  pendingTranslationConfirmId.value = ''
+  translationApplied.value = false
+  currentLang.value = 'en'
+  persistTranslationSession()
 
-  // 在聊天区域发送翻译请求
-  const translateMessage = "请将简历内容翻译为英文，需要符合英文表达习惯，保留原汁原味，不要添加或虚构内容。"
-
-  // 调用现有的发送消息逻辑
-  userInput.value = translateMessage
+  // 固定标签立即改为英文；实际内容仍通过现有确认框决定是否保存。
+  userInput.value = TRANSLATE_MESSAGE
   sendMessage()
 }
 
@@ -416,6 +516,11 @@ watch(() => route.fullPath, async () => {
 })
 
 async function loadWorkspace() {
+  currentLang.value = 'zh'
+  showTranslateConfirm.value = false
+  translationSourceData.value = null
+  pendingTranslationConfirmId.value = ''
+  translationApplied.value = false
   messages.value = []
   resumeData.value = null
   jdData.value = null
@@ -440,6 +545,7 @@ async function loadWorkspace() {
   }
   sessionId.value = task.session_id
   await loadInitialData()
+  restoreTranslationSession()
 }
 
 async function createProjectTask() {
@@ -595,6 +701,11 @@ function useLayoutPrompt(prompt) {
   userInput.value = prompt
   showNotice('排版示例已填入输入框，可修改后发送', 'success')
   nextTick(() => document.querySelector('.textarea-container textarea:not(:disabled)')?.focus())
+}
+
+function requestLayoutTemplate(prompt) {
+  userInput.value = prompt
+  nextTick(() => sendMessage())
 }
 
 // 加载初始数据的函数（同时检查首次访问）
@@ -902,6 +1013,7 @@ async function sendMessage() {
   }
 
   const input = userInput.value.trim()
+  const isTranslationRequest = input === TRANSLATE_MESSAGE
   userInput.value = ''
 
   // 先保存附件
@@ -1101,6 +1213,10 @@ async function sendMessage() {
                   handled: false,
                   streaming: false
                 }
+                if (isTranslationRequest) {
+                  pendingTranslationConfirmId.value = data.confirm_id
+                  persistTranslationSession()
+                }
                 previewResumeData.value = data.resume_candidate || null
                 previewLayoutConfig.value = data.layout_candidate
                   ? normalizeLayoutConfig(data.layout_candidate)
@@ -1193,6 +1309,7 @@ async function sendMessage() {
 
 // 处理确认按钮点击
 async function handleOptionClick({ confirm_id, value, selected_change_ids = [] }) {
+  const isTranslationConfirmation = confirm_id === pendingTranslationConfirmId.value
   const confirmMsgIndex = messages.value.findIndex(m => m.type === 'confirm' && m.confirm_id === confirm_id)
   if (confirmMsgIndex !== -1) {
     messages.value[confirmMsgIndex] = {
@@ -1308,6 +1425,15 @@ async function handleOptionClick({ confirm_id, value, selected_change_ids = [] }
         content: '本次修改已应用。',
         handled: false
       })
+    }
+    if (isTranslationConfirmation) {
+      if (value === 'cancel') {
+        translationApplied.value = false
+      } else if (confirmationProcessed && confirmationSucceeded && resumeRefreshed) {
+        translationApplied.value = true
+      }
+      pendingTranslationConfirmId.value = ''
+      persistTranslationSession()
     }
   } catch (error) {
     console.error('确认操作失败:', error)
@@ -3251,7 +3377,7 @@ watch(
       <!-- 右侧简历预览区 -->
       <div class="resume-section">
         <div class="resume-content">
-          <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :highlighted-module="highlightedModule" :jd-data="jdData" :lang="currentLang" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" />
+          <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :highlighted-module="highlightedModule" :jd-data="jdData" :lang="currentLang" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @request-layout-template="requestLayoutTemplate" />
         </div>
       </div>
       </template>
@@ -3342,7 +3468,7 @@ watch(
 
           <!-- 简历 Tab 内容 -->
           <div v-else-if="currentTab === 'resume'" class="mobile-resume-view" key="resume">
-            <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :highlighted-module="highlightedModule" :jd-data="jdData" :is-mobile-view="isMobileView" :lang="currentLang" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" />
+            <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :highlighted-module="highlightedModule" :jd-data="jdData" :is-mobile-view="isMobileView" :lang="currentLang" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @request-layout-template="requestLayoutTemplate" />
           </div>
         </Transition>
 

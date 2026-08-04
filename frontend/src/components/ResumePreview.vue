@@ -94,7 +94,7 @@ function academicMetrics(item) {
   return metrics
 }
 
-const emit = defineEmits(['open-jd-dialog', 'open-resume-edit', 'toggle-lang', 'use-layout-prompt'])
+const emit = defineEmits(['open-jd-dialog', 'open-resume-edit', 'toggle-lang', 'use-layout-prompt', 'request-layout-template'])
 
 // 检测是否为移动端视图
 const isMobile = computed(() => props.isMobileView || window.innerWidth < 1200)
@@ -201,14 +201,11 @@ function resetStyleSettings(event) {
 const isStylePanelExpanded = ref(false)
 const activeToolbarMenu = ref(null)
 const showLayoutGuide = ref(false)
-const layoutPresetGroups = [
-  { title: '整体与标题', description: '紧凑、标准或舒展；下划线或纯文字标题；模块排序与隐藏。', prompt: '将整体排版改为紧凑，模块标题使用纯文字样式。' },
-  { title: '基本信息', description: '居中或左对齐；联系方式同行或纵向；可隐藏照片及联系方式字段。', prompt: '基本信息改为左对齐，联系方式纵向排列。' },
-  { title: '教育经历', description: '经典、紧凑或三列；学校标签可用实心、描边、文字或隐藏。', prompt: '教育经历使用三列布局，专业和 GPA 放在学校右边，学校标签改为普通文字。' },
-  { title: '工作与实习', description: '经典或紧凑；描述使用圆点列表或段落；工作与实习可合并或拆分。', prompt: '工作经历使用紧凑布局，描述改为圆点列表，并将实习经历单独成章。' },
-  { title: '项目经历', description: '经典或紧凑；描述使用圆点列表或段落；可控制角色和日期。', prompt: '项目经历使用紧凑布局，保留角色和日期，描述使用圆点列表。' },
-  { title: '技能、证书与语言', description: '同行、标签或纵向；支持调整顺序、隐藏字段和分隔符。', prompt: '技能、证书和语言使用同行布局，以圆点分隔，技能排在最前。' },
-  { title: '自我评价', description: '分段、圆点列表或紧凑单段。', prompt: '自我评价改为紧凑单段布局。' }
+const enlargedLayoutTemplate = ref(null)
+const layoutTemplates = [
+  { id: 'classic-professional', title: '经典专业', description: '信息层级稳定，适合通用校招、职能和传统行业。', prompt: '请应用经典专业模板。' },
+  { id: 'modern-clean', title: '简洁现代', description: '左对齐与横向教育信息，适合互联网和现代技术岗位。', prompt: '请应用简洁现代模板。' },
+  { id: 'compact-tech', title: '紧凑技术', description: '提高信息密度，适合项目和技术经历较多的候选人。', prompt: '请应用紧凑技术模板。' }
 ]
 
 function openLayoutGuide() {
@@ -216,9 +213,10 @@ function openLayoutGuide() {
   showLayoutGuide.value = true
 }
 
-function usePresetPrompt(prompt) {
+function applyTemplatePrompt(prompt) {
   showLayoutGuide.value = false
-  emit('use-layout-prompt', prompt)
+  enlargedLayoutTemplate.value = null
+  emit('request-layout-template', prompt)
 }
 
 function toggleStylePanel() {
@@ -1108,11 +1106,11 @@ const getItemIndex = (type, dataIndex) => {
                 <span v-for="(tag, tIdx) in item.school_tags" :key="tIdx" class="school-tag" :class="`tag-${moduleLayout('education').schoolTagStyle}`" v-html="formatText(tag)"></span>
               </div>
             </div>
-            <div class="education-info-column">
-              <div class="degree-major" v-html="formatText(`${item.degree || ''} ${item.major || ''}`)"></div>
-              <div v-if="academicMetrics(item).length" class="academic-metrics">
-                <span v-for="metric in academicMetrics(item)" :key="metric" v-html="formatText(metric)"></span>
-              </div>
+            <div class="education-degree-column">
+              <div class="degree-major" v-html="formatText([item.degree, item.major].filter(Boolean).join(' · '))"></div>
+            </div>
+            <div v-if="academicMetrics(item).length" class="education-metrics-column academic-metrics">
+              <span v-for="metric in academicMetrics(item)" :key="metric" v-html="formatText(metric)"></span>
             </div>
             <span class="graduation-date">{{ item.date_range?.[0] || '' }} - {{ item.date_range?.[1] || '至今' }}</span>
           </div>
@@ -1349,11 +1347,11 @@ const getItemIndex = (type, dataIndex) => {
                         <span v-for="(tag, tIdx) in item.school_tags" :key="tIdx" class="school-tag" :class="`tag-${moduleLayout('education').schoolTagStyle}`" v-html="formatText(tag)"></span>
                       </div>
                     </div>
-                    <div class="education-info-column">
-                      <div class="degree-major" v-html="formatText(`${item.degree || ''} ${item.major || ''}`)"></div>
-                      <div v-if="academicMetrics(item).length" class="academic-metrics">
-                        <span v-for="metric in academicMetrics(item)" :key="metric" v-html="formatText(metric)"></span>
-                      </div>
+                    <div class="education-degree-column">
+                      <div class="degree-major" v-html="formatText([item.degree, item.major].filter(Boolean).join(' · '))"></div>
+                    </div>
+                    <div v-if="academicMetrics(item).length" class="education-metrics-column academic-metrics">
+                      <span v-for="metric in academicMetrics(item)" :key="metric" v-html="formatText(metric)"></span>
                     </div>
                     <span class="graduation-date">{{ item.date_range?.[0] || '' }} - {{ item.date_range?.[1] || '至今' }}</span>
                   </div>
@@ -1471,19 +1469,50 @@ const getItemIndex = (type, dataIndex) => {
     <div class="layout-guide-dialog" role="dialog" aria-modal="true" aria-labelledby="layout-guide-title">
       <div class="layout-guide-header">
         <div>
-          <h3 id="layout-guide-title">可用排版预设</h3>
-          <p>系统会把自然语言需求映射到以下受控预设，并在确认框中列出实际匹配结果。右侧先预览，接受后才保存。</p>
+          <h3 id="layout-guide-title">选择整套简历模板</h3>
+          <p>每张示意图展示完整简历结构。应用后会先在右侧生成临时预览，确认接受才会保存。</p>
         </div>
         <button class="layout-guide-close" aria-label="关闭" @click="showLayoutGuide = false">×</button>
       </div>
       <div class="layout-guide-grid">
-        <article v-for="group in layoutPresetGroups" :key="group.title" class="layout-guide-card">
-          <h4>{{ group.title }}</h4>
-          <p>{{ group.description }}</p>
-          <button @click="usePresetPrompt(group.prompt)">使用示例</button>
+        <article v-for="template in layoutTemplates" :key="template.id" class="layout-guide-card">
+          <button class="template-sheet-button" :aria-label="`放大查看${template.title}模板`" @click="enlargedLayoutTemplate = template">
+            <div class="template-sheet" :class="`template-${template.id}`">
+              <header class="template-sheet-header">
+                <div class="template-header-copy"><strong>张伟</strong><span>后端开发 · 138****8888 · name@example.com</span></div>
+                <span class="template-avatar" role="img" aria-label="头像位置">🖼️</span>
+              </header>
+              <section><h5>教育经历</h5><div class="template-education-line"><b>示例大学</b><span>硕士 · 计算机科学</span><span>GPA 3.8/4.0 · 前10%</span><i>2022—2025</i></div></section>
+              <section><h5>工作经历</h5><div class="template-entry-title"><b>示例科技有限公司 · 后端开发</b><i>2024—至今</i></div><ul><li>负责核心服务与接口性能优化，稳定支撑业务增长</li><li>设计自动化工具并提升团队交付效率</li></ul></section>
+              <section><h5>项目经历</h5><div class="template-entry-title"><b>智能简历助手 · 核心开发</b><i>2023—2024</i></div><ul><li>完成对话修改、排版预览与文档导出能力</li></ul></section>
+              <section><h5>技能与证书</h5><p>Python · FastAPI · Vue · MySQL · CET-6</p></section>
+            </div>
+          </button>
+          <h4>{{ template.title }}</h4>
+          <p>{{ template.description }}</p>
+          <div class="template-card-actions">
+            <button class="template-secondary-btn" @click="enlargedLayoutTemplate = template">放大查看</button>
+            <button @click="applyTemplatePrompt(template.prompt)">应用模板</button>
+          </div>
         </article>
       </div>
-      <p class="layout-guide-footnote">若需求无法由现有预设准确实现，确认框只会展示实际匹配到的方案；不满意可直接拒绝，不会修改简历。</p>
+      <p class="layout-guide-footnote">应用模板不会删除、隐藏或改写简历内容；后续仍可通过对话单独调整某个模块。</p>
+      <div v-if="enlargedLayoutTemplate" class="template-zoom-overlay" @click.self="enlargedLayoutTemplate = null">
+        <div class="template-zoom-dialog">
+          <div class="template-zoom-heading"><strong>{{ enlargedLayoutTemplate.title }}</strong><button aria-label="关闭模板大图" @click="enlargedLayoutTemplate = null">×</button></div>
+          <div class="template-sheet template-sheet-large" :class="`template-${enlargedLayoutTemplate.id}`">
+            <header class="template-sheet-header">
+              <div class="template-header-copy"><strong>张伟</strong><span>后端开发 · 138****8888 · name@example.com</span></div>
+              <span class="template-avatar" role="img" aria-label="头像位置">🖼️</span>
+            </header>
+            <section><h5>教育经历</h5><div class="template-education-line"><b>示例大学</b><span>硕士 · 计算机科学</span><span>GPA 3.8/4.0 · 前10%</span><i>2022—2025</i></div></section>
+            <section><h5>工作经历</h5><div class="template-entry-title"><b>示例科技有限公司 · 后端开发</b><i>2024—至今</i></div><ul><li>负责核心服务与接口性能优化，稳定支撑业务增长</li><li>设计自动化工具并提升团队交付效率</li></ul></section>
+            <section><h5>项目经历</h5><div class="template-entry-title"><b>智能简历助手 · 核心开发</b><i>2023—2024</i></div><ul><li>完成对话修改、排版预览与文档导出能力</li></ul></section>
+            <section><h5>技能与证书</h5><p>Python · FastAPI · Vue · MySQL · CET-6</p></section>
+          </div>
+          <button class="template-zoom-apply" @click="applyTemplatePrompt(enlargedLayoutTemplate.prompt)">应用该模板</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -2267,7 +2296,7 @@ const getItemIndex = (type, dataIndex) => {
   margin: 0 0 var(--module-margin, 0.5em) 0;
   color: #212529;
   padding-bottom: 0.25em;
-  border-bottom: 2px solid #333;
+  border-bottom: 1px solid #333;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
@@ -2329,7 +2358,12 @@ const getItemIndex = (type, dataIndex) => {
 }
 .school-tag.tag-outline { background: transparent; color: #333; border: 1px solid #333; }
 .school-tag.tag-text { background: transparent; color: #333; padding: 0; border-radius: 0; }
-.section-title.title-plain { border-bottom: 0; padding-bottom: 0; }
+.section-title.title-plain {
+  border-bottom: 1px solid #333;
+  padding-bottom: 0.2em;
+  text-transform: none;
+  letter-spacing: 0;
+}
 .education-item .education-header {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -2337,21 +2371,27 @@ const getItemIndex = (type, dataIndex) => {
   align-items: start;
 }
 .education-item .school-info { grid-column: 1; grid-row: 1; }
-.education-item .education-info-column { grid-column: 1; grid-row: 2; }
+.education-item .education-degree-column { grid-column: 1; grid-row: 2; }
+.education-item .education-metrics-column { grid-column: 1; grid-row: 3; }
 .education-item .graduation-date { grid-column: 2; grid-row: 1; }
 .education-item.preset-compact .education-header {
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, 1.05fr) auto;
   column-gap: 0.65em;
+  align-items: baseline;
 }
-.education-item.preset-compact .education-info-column { grid-column: 2; grid-row: 1; }
-.education-item.preset-compact .graduation-date { grid-column: 3; grid-row: 1; }
+.education-item.preset-compact .education-degree-column { grid-column: 2; grid-row: 1; }
+.education-item.preset-compact .education-metrics-column { grid-column: 3; grid-row: 1; }
+.education-item.preset-compact .graduation-date { grid-column: 4; grid-row: 1; }
 .education-item.preset-three-column .education-header {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr) auto;
-  column-gap: 0.8em;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.05fr) minmax(0, 1.15fr) auto;
+  column-gap: 1.1em;
+  align-items: baseline;
 }
-.education-item.preset-three-column .education-info-column { grid-column: 2; grid-row: 1; }
-.education-item.preset-three-column .graduation-date { grid-column: 3; grid-row: 1; }
-.education-info-column .academic-metrics { margin-top: 0.15em; }
+.education-item.preset-three-column .education-degree-column { grid-column: 2; grid-row: 1; }
+.education-item.preset-three-column .education-metrics-column { grid-column: 3; grid-row: 1; }
+.education-item.preset-three-column .graduation-date { grid-column: 4; grid-row: 1; }
+.education-item.preset-compact .academic-metrics,
+.education-item.preset-three-column .academic-metrics { margin-top: 0; }
 .academic-metrics {
   display: flex;
   flex-wrap: wrap;
@@ -2567,21 +2607,30 @@ const getItemIndex = (type, dataIndex) => {
   width: 34px;
   height: 34px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 0;
   color: #d8dbe2;
-  background: rgba(255, 255, 255, 0.06);
+  background: transparent;
+  box-shadow: none;
+  appearance: none;
   font-size: 24px;
   cursor: pointer;
 }
+.layout-guide-close:hover,
+.layout-guide-close:focus-visible {
+  color: #ffffff;
+  background: transparent;
+  outline: none;
+  box-shadow: none;
+}
 .layout-guide-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
   margin: 20px 0 16px;
 }
 .layout-guide-card { padding: 14px; background: #2b2e36; border: 1px solid #3e424d; border-radius: 12px; }
 .layout-guide-card h4 { margin: 0 0 6px; font-size: 14px; }
-.layout-guide-card p { min-height: 42px; margin: 0 0 12px; color: #b5bac5; font-size: 12px; line-height: 1.55; }
+.layout-guide-card > p { min-height: 56px; margin: 0 0 12px; color: #b5bac5; font-size: 12px; line-height: 1.55; }
 .layout-guide-card button {
   border: 0;
   padding: 7px 10px;
@@ -2592,9 +2641,134 @@ const getItemIndex = (type, dataIndex) => {
   cursor: pointer;
 }
 .layout-guide-card button:hover { background: #4a70b2; }
-@media (max-width: 680px) {
+.template-sheet-button {
+  display: block;
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 0 !important;
+  overflow: hidden;
+  border: 0 !important;
+  border-radius: 7px !important;
+  background: transparent !important;
+}
+.template-sheet {
+  aspect-ratio: 210 / 297;
+  overflow: hidden;
+  padding: 16px 15px;
+  color: #20242a;
+  background: #fff;
+  box-shadow: inset 0 0 0 1px #d7dbe0;
+  text-align: left;
+  font-size: 6.5px;
+  line-height: 1.35;
+}
+.template-sheet-header {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px;
+  gap: 7px;
+  align-items: center;
+  min-height: 26px;
+  margin-bottom: 8px;
+  text-align: center;
+}
+.template-header-copy { display: grid; gap: 2px; }
+.template-sheet-header strong { font-size: 11px; }
+.template-sheet-header span { color: #666e78; }
+.template-sheet-header .template-avatar {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 28px;
+  border: 1px solid #c8cdd4;
+  border-radius: 2px;
+  background: #f2f4f6;
+  font-size: 12px;
+  line-height: 1;
+}
+.template-sheet section { margin-top: 7px; }
+.template-sheet h5 { margin: 0 0 4px; padding-bottom: 2px; border-bottom: 1px solid #333; font-size: 7px; }
+.template-sheet p { margin: 0; color: #535a64; font-size: inherit; }
+.template-education-line {
+  display: grid;
+  grid-template-columns: max-content minmax(max-content, 1fr) minmax(max-content, 1fr) max-content;
+  gap: 4px;
+  align-items: baseline;
+  white-space: nowrap;
+}
+.template-sheet i { color: #8a929e; font-style: normal; white-space: nowrap; }
+.template-entry-title { display: flex; justify-content: space-between; gap: 5px; }
+.template-sheet ul { margin: 3px 0 0; padding-left: 10px; color: #535a64; }
+.template-modern-clean .template-sheet-header,
+.template-compact-tech .template-sheet-header { text-align: left; }
+.template-compact-tech { padding: 10px; font-size: 5.7px; line-height: 1.25; }
+.template-compact-tech section { margin-top: 5px; }
+.template-compact-tech .template-sheet-header { margin-bottom: 5px; }
+.template-compact-tech h5 { margin-bottom: 2px; }
+.template-compact-tech ul { margin-top: 2px; }
+.template-card-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.layout-guide-card .template-secondary-btn { color: #c8ccd4; background: rgba(255,255,255,.07); }
+.template-zoom-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(7,8,11,.78);
+}
+.template-zoom-dialog {
+  width: min(420px, 92vw);
+  max-height: 88vh;
+  overflow-y: auto;
+  padding: 14px;
+  border: 1px solid #424650;
+  border-radius: 14px;
+  background: #25272e;
+}
+.template-zoom-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.template-zoom-heading button {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 0;
+  color: #ddd;
+  background: transparent;
+  box-shadow: none;
+  appearance: none;
+  font-size: 22px;
+  cursor: pointer;
+}
+.template-zoom-heading button:hover,
+.template-zoom-heading button:focus-visible { color: #fff; background: transparent; outline: none; box-shadow: none; }
+.template-sheet-large {
+  box-sizing: border-box;
+  width: min(330px, 72vw);
+  margin: 0 auto;
+  padding: 22px 20px;
+  font-size: 8.5px;
+}
+.template-sheet-large .template-sheet-header strong { font-size: 16px; }
+.template-sheet-large .template-sheet-header { grid-template-columns: minmax(0, 1fr) 34px; min-height: 39px; }
+.template-sheet-large .template-sheet-header .template-avatar { width: 34px; height: 39px; font-size: 18px; }
+.template-sheet-large h5 { font-size: 10px; }
+.template-zoom-apply {
+  display: block;
+  margin: 10px auto 0;
+  border: 0;
+  padding: 7px 14px;
+  border-radius: 7px;
+  color: #fff;
+  background: #3b5f9f;
+  font-size: 14px;
+  line-height: 1.25;
+  cursor: pointer;
+}
+@media (max-width: 820px) {
   .layout-guide-grid { grid-template-columns: 1fr; }
   .layout-guide-dialog { padding: 18px; }
+  .template-sheet { aspect-ratio: 210 / 297; }
 }
 
 .success-icon.error-icon {

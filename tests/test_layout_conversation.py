@@ -51,6 +51,21 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pending["resume_candidate"]["basics"]["name"], "测试用户")
         self.assertEqual(pending["layout_candidate"]["education"]["preset"], "three-column")
 
+    async def test_complete_template_request_is_local_and_uses_existing_presets(self):
+        state = AgentState(
+            messages=[HumanMessage(content="请应用简洁现代模板。")],
+            resume_data=resume_payload(), layout_data=default_layout_config(),
+            user_id=7, task_id="task-1",
+        )
+        self.assertEqual(entry_router(state), "direct_edit")
+        with patch("backend.resume_agent.conversation_llm") as llm:
+            result = await direct_edit_node(state)
+        llm.ainvoke.assert_not_called()
+        candidate = result["pending_confirmation"]["layout_candidate"]
+        self.assertEqual(candidate["basics"]["preset"], "left-aligned")
+        self.assertEqual(candidate["education"]["preset"], "three-column")
+        self.assertEqual(candidate["work_experience"]["preset"], "classic")
+
     async def test_mixed_content_and_layout_request_uses_one_local_preview(self):
         state = AgentState(
             messages=[HumanMessage(content="把姓名改为张伟，学校标签不要黑底")],

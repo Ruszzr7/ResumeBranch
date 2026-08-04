@@ -89,11 +89,17 @@ class LayoutRuleTests(unittest.TestCase):
         self.assertIn("preset-three-column", html)
         header_start = html.index('<div class="education-header">')
         header_end = html.index('</div>', html.index('<div class="graduation-date">', header_start))
-        self.assertIn('<div class="education-info-column">', html[header_start:header_end])
+        self.assertIn('<div class="education-degree-column">', html[header_start:header_end])
+        self.assertIn('education-metrics-column academic-metrics', html[header_start:header_end])
         self.assertIn('GPA：3.8/4.0', html[header_start:header_end])
         self.assertIn("tag-text", html)
         self.assertIn("details-paragraph", html)
         self.assertIn("title-plain", html)
+        self.assertIn("border-bottom: 1px solid #333333", html)
+
+        with ZipFile(BytesIO(generate_docx(data, layout_config=layout))) as archive:
+            document_xml = archive.read("word/document.xml").decode("utf-8")
+        self.assertIn('w:color="333333"', document_xml)
 
     def test_word_applies_section_order_and_hidden_sections(self):
         data = resume_with_two_jobs()

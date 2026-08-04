@@ -1,7 +1,9 @@
 import unittest
 
 from backend.layout_config import (
+    LAYOUT_TEMPLATES,
     apply_density,
+    apply_layout_template,
     apply_layout_change_groups,
     build_layout_changes,
     default_layout_config,
@@ -47,6 +49,31 @@ class LayoutConfigTests(unittest.TestCase):
         config = apply_density({}, "compact")
         self.assertEqual(config["global"]["fontSize"], 10)
         self.assertEqual(config["global"]["lineHeight"], 1.3)
+
+    def test_curated_template_reuses_presets_and_preserves_content_visibility(self):
+        config = default_layout_config()
+        config["global"]["hiddenSections"] = ["self_evaluation"]
+        config["basics"]["hiddenFields"] = ["gender"]
+        result = apply_layout_template(config, "modern-clean")
+        self.assertEqual(result["basics"]["preset"], "left-aligned")
+        self.assertEqual(result["education"]["preset"], "three-column")
+        self.assertEqual(result["education"]["schoolTagStyle"], "text")
+        self.assertEqual(result["global"]["hiddenSections"], ["self_evaluation"])
+        self.assertEqual(result["basics"]["hiddenFields"], ["gender"])
+
+    def test_all_curated_templates_resolve_to_supported_module_presets(self):
+        expected = {
+            "classic-professional": ("centered", "classic", "classic"),
+            "modern-clean": ("left-aligned", "three-column", "classic"),
+            "compact-tech": ("left-aligned", "compact", "compact"),
+        }
+        self.assertEqual(set(LAYOUT_TEMPLATES), set(expected))
+        for template_id, presets in expected.items():
+            result = apply_layout_template(default_layout_config(), template_id)
+            self.assertEqual(
+                (result["basics"]["preset"], result["education"]["preset"], result["work_experience"]["preset"]),
+                presets,
+            )
 
     def test_layout_changes_are_atomic_per_module(self):
         before = default_layout_config()

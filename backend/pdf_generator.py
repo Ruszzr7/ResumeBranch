@@ -139,20 +139,20 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
                 html_parts.append('</div>')
 
             html_parts.append('</div>')
-            html_parts.append('<div class="education-info-column">')
+            html_parts.append('<div class="education-degree-column">')
             degree_major = []
             if edu.get("degree"):
                 degree_major.append(edu["degree"])
             if edu.get("major"):
                 degree_major.append(edu["major"])
             if degree_major:
-                html_parts.append(f'<div class="degree-major">{" ".join(degree_major)}</div>')
+                html_parts.append(f'<div class="degree-major">{" · ".join(degree_major)}</div>')
+            html_parts.append('</div>')
             if academic_metrics:
-                html_parts.append('<div class="academic-metrics">')
+                html_parts.append('<div class="education-metrics-column academic-metrics">')
                 for metric in academic_metrics:
                     html_parts.append(f'<span>{format_markdown(metric)}</span>')
                 html_parts.append('</div>')
-            html_parts.append('</div>')
 
             date_range = edu.get("date_range", [])
             date_str = ""
@@ -428,14 +428,14 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         margin: 0 0 0.5em 0;
         color: #212529;
         padding-bottom: 0.25em;
-        border-bottom: 2px solid #333333;
+        border-bottom: 1px solid #333333;
         text-transform: uppercase;
         letter-spacing: 0.05em;
     }}
 
     .section-title.title-plain {{
-        border-bottom: 0;
-        padding-bottom: 0;
+        border-bottom: 1px solid #333333;
+        padding-bottom: 0.2em;
         text-transform: none;
         letter-spacing: 0;
     }}
@@ -515,22 +515,28 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         align-items: start;
     }}
     .education-item .school-info {{ grid-column: 1; grid-row: 1; }}
-    .education-item .education-info-column {{ grid-column: 1; grid-row: 2; }}
+    .education-item .education-degree-column {{ grid-column: 1; grid-row: 2; }}
+    .education-item .education-metrics-column {{ grid-column: 1; grid-row: 3; }}
     .education-item .graduation-date {{ grid-column: 2; grid-row: 1; }}
     .education-item.preset-compact .education-header {{
-        grid-template-columns: auto minmax(0, 1fr) auto;
-        gap: 0.25em;
+        grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, 1.05fr) auto;
+        gap: 0.65em;
+        align-items: baseline;
     }}
     .education-item.preset-compact .school-info {{ grid-column: 1; grid-row: 1; gap: 0.3em; }}
-    .education-item.preset-compact .education-info-column {{ grid-column: 2; grid-row: 1; }}
-    .education-item.preset-compact .graduation-date {{ grid-column: 3; grid-row: 1; }}
+    .education-item.preset-compact .education-degree-column {{ grid-column: 2; grid-row: 1; }}
+    .education-item.preset-compact .education-metrics-column {{ grid-column: 3; grid-row: 1; }}
+    .education-item.preset-compact .graduation-date {{ grid-column: 4; grid-row: 1; }}
     .education-item.preset-three-column .education-header {{
-        grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) auto;
-        align-items: start;
+        grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.05fr) minmax(0, 1.15fr) auto;
+        column-gap: 1.1em;
+        align-items: baseline;
     }}
-    .education-item.preset-three-column .education-info-column {{ grid-column: 2; grid-row: 1; }}
-    .education-item.preset-three-column .graduation-date {{ grid-column: 3; }}
-    .education-info-column .academic-metrics {{ margin-top: 0.15em; }}
+    .education-item.preset-three-column .education-degree-column {{ grid-column: 2; grid-row: 1; }}
+    .education-item.preset-three-column .education-metrics-column {{ grid-column: 3; grid-row: 1; }}
+    .education-item.preset-three-column .graduation-date {{ grid-column: 4; grid-row: 1; }}
+    .education-item.preset-compact .academic-metrics,
+    .education-item.preset-three-column .academic-metrics {{ margin-top: 0; }}
 
     .degree-major {{
         font-size: 0.8em;
