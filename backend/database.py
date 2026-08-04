@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 from .resume_data import normalize_resume_data
+from .layout_config import default_layout_config, normalize_layout_config
 
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/deepagents.db")
@@ -122,6 +123,7 @@ class ProjectTask(Base):
     messages = Column(JSON, default=list)
     compressed_context = Column(JSON, default=list)
     pending_confirmation = Column(JSON, default=None)
+    layout_config = Column(JSON, default=dict)
     last_accessed = Column(DateTime, default=datetime.utcnow)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -136,6 +138,8 @@ class ResumeRevision(Base):
     before_data = Column(JSON, nullable=False)
     after_data = Column(JSON, nullable=False)
     selected_change_ids = Column(JSON, default=list)
+    before_layout = Column(JSON, default=None)
+    after_layout = Column(JSON, default=None)
     undone_at = Column(DateTime, default=None)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
@@ -161,6 +165,7 @@ def init_db():
     """初始化数据库（创建所有表）"""
     Base.metadata.create_all(bind=engine)
     migrate_project_task_source_page_count()
+    migrate_layout_config_fields()
     migrate_resume_academic_fields()
 
 
@@ -176,6 +181,23 @@ def migrate_project_task_source_page_count():
         connection.execute(text(
             "ALTER TABLE project_tasks ADD COLUMN source_page_count INTEGER NOT NULL DEFAULT 1"
         ))
+
+
+def migrate_layout_config_fields():
+    """Add layout configuration and reversible layout snapshots."""
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    with engine.begin() as connection:
+        if "project_tasks" in tables:
+            columns = {column["name"] for column in inspector.get_columns("project_tasks")}
+            if "layout_config" not in columns:
+                connection.execute(text("ALTER TABLE project_tasks ADD COLUMN layout_config JSON"))
+        if "resume_revisions" in tables:
+            columns = {column["name"] for column in inspector.get_columns("resume_revisions")}
+            if "before_layout" not in columns:
+                connection.execute(text("ALTER TABLE resume_revisions ADD COLUMN before_layout JSON"))
+            if "after_layout" not in columns:
+                connection.execute(text("ALTER TABLE resume_revisions ADD COLUMN after_layout JSON"))
 
 
 def migrate_resume_academic_fields():
@@ -434,6 +456,10 @@ def create_resume_task(
         photo=(source_task.photo or "") if source_task else "",
         source_page_count=max(1, int(source_task.source_page_count or 1)) if source_task else 1,
         jd_data=jd_data or {},
+        layout_config=(
+            normalize_layout_config(source_task.layout_config)
+            if source_task else default_layout_config()
+        ),
     )
     db.add(task)
     db.commit()
@@ -455,6 +481,8 @@ def record_resume_revision(
     before_data: dict,
     after_data: dict,
     selected_change_ids: list[str] | None = None,
+    before_layout: dict | None = None,
+    after_layout: dict | None = None,
 ):
     """Record a successful assistant update so it can be safely undone once."""
     revision = ResumeRevision(
@@ -463,6 +491,8 @@ def record_resume_revision(
         before_data=normalize_resume_data(before_data or {}),
         after_data=normalize_resume_data(after_data or {}),
         selected_change_ids=list(selected_change_ids or []),
+        before_layout=(normalize_layout_config(before_layout) if before_layout is not None else None),
+        after_layout=(normalize_layout_config(after_layout) if after_layout is not None else None),
     )
     db.add(revision)
     db.commit()
@@ -470,26 +500,34 @@ def record_resume_revision(
     return revision
 
 
-def undo_latest_resume_revision(db, user_id: int, task_id: str) -> tuple[str, dict | None]:
+def undo_latest_resume_revision(db, user_id: int, task_id: str) -> tuple[str, dict | None, dict | None]:
     """Undo the latest revision only when no later edit has changed its result."""
     from .resume_changes import resume_digest
 
     task = get_resume_task(db, user_id, task_id)
     if not task:
-        return "not_found", None
+        return "not_found", None, None
     revision = db.query(ResumeRevision).filter(
         ResumeRevision.task_id == task_id,
         ResumeRevision.user_id == user_id,
         ResumeRevision.undone_at.is_(None),
     ).order_by(ResumeRevision.created_at.desc()).first()
     if not revision:
-        return "no_revision", None
+        return "no_revision", None, None
     current_data = normalize_resume_data(task.resume_data or {})
     if resume_digest(current_data) != resume_digest(revision.after_data or {}):
-        return "conflict", None
+        return "conflict", None, None
+    current_layout = normalize_layout_config(task.layout_config)
+    if revision.after_layout is not None and current_layout != normalize_layout_config(revision.after_layout):
+        return "conflict", None, None
 
     restored = normalize_resume_data(revision.before_data or {})
     task.resume_data = restored
+    restored_layout = (
+        normalize_layout_config(revision.before_layout)
+        if revision.before_layout is not None else current_layout
+    )
+    task.layout_config = restored_layout
     task.pending_confirmation = None
     undo_event = {
         "type": "system",
@@ -507,7 +545,25 @@ def undo_latest_resume_revision(db, user_id: int, task_id: str) -> tuple[str, di
             project.updated_at = datetime.utcnow()
     revision.undone_at = datetime.utcnow()
     db.commit()
-    return "undone", restored
+    return "undone", restored, restored_layout
+
+
+def get_task_layout_config(db, user_id: int, task_id: str) -> dict | None:
+    task = get_resume_task(db, user_id, task_id)
+    if not task:
+        return None
+    return normalize_layout_config(task.layout_config)
+
+
+def save_task_layout_config(db, user_id: int, task_id: str, config: dict) -> dict | None:
+    task = get_resume_task(db, user_id, task_id)
+    if not task:
+        return None
+    normalized = normalize_layout_config(config)
+    task.layout_config = normalized
+    task.updated_at = datetime.utcnow()
+    db.commit()
+    return normalized
 
 
 def delete_resume_project(db, user_id: int, project_id: str) -> bool:

@@ -122,10 +122,11 @@ def _bullet(document, text: object, font_size: float) -> None:
     _add_markdown_runs(paragraph, str(text).lstrip("• "), font_size)
 
 
-def generate_docx(resume_data: dict, style: dict | None = None, photo: str | None = None, lang: str = "zh") -> bytes:
+def _generate_docx_legacy(resume_data: dict, style: dict | None = None, photo: str | None = None, lang: str = "zh") -> bytes:
     """Return a fully editable DOCX using the same content and layout controls as PDF export."""
     data = normalize_resume_data(resume_data)
     labels = LABELS.get(lang, LABELS["zh"])
+    colon = "：" if lang == "zh" else ": "
     from .layout import apply_page_mode_defaults
     style = apply_page_mode_defaults(style)
     font_size = float(style.get("fontSize", 11))
@@ -275,6 +276,250 @@ def generate_docx(resume_data: dict, style: dict | None = None, photo: str | Non
             p = document.add_paragraph()
             _paragraph_spacing(p, after=1.5, line=1.15)
             _add_markdown_runs(p, value, font_size)
+
+    output = BytesIO()
+    document.save(output)
+    return output.getvalue()
+
+
+def generate_docx(
+    resume_data: dict,
+    style: dict | None = None,
+    photo: str | None = None,
+    lang: str = "zh",
+    layout_config: dict | None = None,
+) -> bytes:
+    """Return an editable DOCX that follows the controlled layout configuration."""
+    from .layout import apply_page_mode_defaults
+    from .layout_config import normalize_layout_config
+
+    data = normalize_resume_data(resume_data)
+    labels = LABELS.get(lang, LABELS["zh"])
+    colon = "：" if lang == "zh" else ": "
+    layout = normalize_layout_config(layout_config)
+    global_layout = layout["global"]
+    style = apply_page_mode_defaults(style)
+    font_size = float(style.get("fontSize", global_layout["fontSize"]))
+    module_spacing = float(style.get("moduleMargin", global_layout["moduleMargin"]))
+    page_break_before = style.get("pageBreakBefore", "")
+    hidden_sections = set(global_layout["hiddenSections"])
+
+    document = Document()
+    section = document.sections[0]
+    section.start_type = WD_SECTION.NEW_PAGE
+    section.page_width, section.page_height = Mm(210), Mm(297)
+    section.top_margin = Mm(float(style.get("marginTop", global_layout["marginVertical"])))
+    section.bottom_margin = Mm(float(style.get("marginBottom", global_layout["marginVertical"])))
+    section.left_margin = Mm(float(style.get("marginLeft", global_layout["marginHorizontal"])))
+    section.right_margin = Mm(float(style.get("marginRight", global_layout["marginHorizontal"])))
+
+    normal = document.styles["Normal"]
+    normal.font.name = "Arial"
+    normal._element.rPr.rFonts.set(qn("w:eastAsia"), "Microsoft YaHei")
+    normal.font.size = Pt(font_size)
+    normal.paragraph_format.space_after = Pt(0)
+    normal.paragraph_format.line_spacing = float(style.get("lineHeight", global_layout["lineHeight"]))
+
+    def title(section_id: str, fallback: str) -> None:
+        text = global_layout.get("titleOverrides", {}).get(section_id, {}).get(lang, fallback)
+        paragraph = document.add_paragraph()
+        _paragraph_spacing(paragraph, before=max(2, module_spacing * 2.5), after=3, line=1)
+        _set_font(paragraph.add_run(text), font_size * 1.1, bold=True)
+        if global_layout["titleStyle"] != "plain":
+            p_pr = paragraph._p.get_or_add_pPr()
+            borders = OxmlElement("w:pBdr")
+            bottom = OxmlElement("w:bottom")
+            for key, value in (("val", "single"), ("sz", "12"), ("space", "3"), ("color", "333333")):
+                bottom.set(qn(f"w:{key}"), value)
+            borders.append(bottom)
+            p_pr.append(borders)
+
+    def maybe_break(key: str) -> None:
+        if page_break_before == key:
+            document.add_page_break()
+
+    def add_details(details, details_style: str) -> None:
+        for detail in details or []:
+            if details_style == "paragraph":
+                paragraph = document.add_paragraph()
+                _paragraph_spacing(paragraph, after=1.5, line=1.12)
+                _add_markdown_runs(paragraph, detail, font_size)
+            else:
+                _bullet(document, detail, font_size)
+
+    basics = data.get("basics") or {}
+    basics_layout = layout["basics"]
+    hidden_basics = set(basics_layout["hiddenFields"])
+    show_photo = (photo or basics.get("photo")) and "photo" not in hidden_basics
+    header = document.add_table(rows=1, cols=3)
+    header.autofit = False
+    header.columns[0].width, header.columns[1].width, header.columns[2].width = Mm(25), Mm(135), Mm(25)
+    for cell in header.rows[0].cells:
+        _set_cell_borderless(cell)
+        _set_cell_margins(cell)
+    content_cell = header.cell(0, 0) if basics_layout["preset"] == "left-aligned" else header.cell(0, 1)
+    alignment = WD_ALIGN_PARAGRAPH.LEFT if basics_layout["preset"] == "left-aligned" else WD_ALIGN_PARAGRAPH.CENTER
+    name_p = content_cell.paragraphs[0]
+    name_p.alignment = alignment
+    _paragraph_spacing(name_p, after=2, line=1)
+    _set_font(name_p.add_run(basics.get("name") or labels["nameNotSet"]), font_size * 1.5, bold=True)
+    contact_values = [str(basics.get(key)) for key in ("gender", "phone", "email") if basics.get(key) and key not in hidden_basics]
+    if contact_values:
+        if basics_layout["contactLayout"] == "stacked":
+            for value in contact_values:
+                p = content_cell.add_paragraph()
+                p.alignment = alignment
+                _set_font(p.add_run(value), font_size * 0.82, color="6B7280")
+        else:
+            p = content_cell.add_paragraph()
+            p.alignment = alignment
+            _set_font(p.add_run(" | ".join(contact_values)), font_size * 0.82, color="6B7280")
+    if basics.get("target_position") and "target_position" not in hidden_basics:
+        p = content_cell.add_paragraph()
+        p.alignment = alignment
+        _set_font(p.add_run(f'{labels["targetPosition"]}{colon}{basics["target_position"]}'), font_size * 0.85, bold=True)
+    if show_photo:
+        try:
+            encoded = (photo or basics.get("photo")).split(",", 1)[-1]
+            p = header.cell(0, 2).paragraphs[0]
+            p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            p.add_run().add_picture(BytesIO(base64.b64decode(encoded)), width=Mm(21), height=Mm(26))
+        except (ValueError, TypeError):
+            pass
+
+    def render_education() -> None:
+        items = data.get("education") or []
+        if not items or "education" in hidden_sections:
+            return
+        cfg = layout["education"]
+        hidden_metrics = set(cfg["hiddenMetrics"])
+        maybe_break("education:0")
+        title("education", labels["education"])
+        for index, item in enumerate(items):
+            if index:
+                maybe_break(f"education:{index}")
+            school = item.get("school_name") or labels["schoolNotSet"]
+            tags = item.get("school_tags") or []
+            tag_text = " ".join(f"[{tag}]" if cfg["schoolTagStyle"] == "outline" else str(tag) for tag in tags)
+            if cfg["schoolTagStyle"] == "hidden":
+                tag_text = ""
+            degree = " · ".join(value for value in (item.get("degree", ""), item.get("major", "")) if value)
+            date = _date_range(item)
+            metrics = []
+            if item.get("gpa") and "gpa" not in hidden_metrics:
+                value = str(item["gpa"]) + (f'/{item["gpa_scale"]}' if item.get("gpa_scale") else "")
+                metrics.append(f'{labels["gpa"]}{colon}{value}')
+            if item.get("ranking") and "ranking" not in hidden_metrics:
+                metrics.append(f'{labels["ranking"]}{colon}{item["ranking"]}')
+            if item.get("average_score") and "average_score" not in hidden_metrics:
+                metrics.append(f'{labels["averageScore"]}{colon}{item["average_score"]}')
+            if cfg["preset"] == "three-column":
+                table = document.add_table(rows=1, cols=3)
+                for cell in table.rows[0].cells:
+                    _set_cell_borderless(cell)
+                    _set_cell_margins(cell)
+                values = [" ".join(v for v in (school, tag_text) if v), "\n".join(v for v in (degree, " | ".join(metrics)) if v), date]
+                for cell, value in zip(table.rows[0].cells, values):
+                    p = cell.paragraphs[0]
+                    _set_font(p.add_run(value), font_size, bold=cell is table.cell(0, 0))
+                table.cell(0, 2).paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            else:
+                left = " · ".join(v for v in (school, tag_text, degree) if v)
+                _two_column_line(document, left, date, font_size)
+                if metrics:
+                    p = document.add_paragraph()
+                    _set_font(p.add_run(" | ".join(metrics)), font_size * 0.9, color="4B5563")
+            if cfg["thesisDisplay"] != "hidden":
+                for thesis in item.get("theses") or []:
+                    if not isinstance(thesis, dict):
+                        continue
+                    if thesis.get("title"):
+                        p = document.add_paragraph()
+                        _set_font(p.add_run(f'{labels["thesis"]}{colon}{thesis["title"]}'), font_size * 0.92, bold=True)
+                    if cfg["thesisDisplay"] == "expanded":
+                        add_details(thesis.get("details"), "bullets")
+
+    def work_groups():
+        items = list(data.get("work_experience") or [])
+        if not global_layout["splitWorkExperience"]:
+            return [("work_experience", labels["workExperience"], items)]
+        regular = [item for item in items if not re.search(r"实习|intern", str(item.get("job_type", "")), re.I)]
+        interns = [item for item in items if re.search(r"实习|intern", str(item.get("job_type", "")), re.I)]
+        return [("work_experience", labels["workExperience"], regular), ("internship_experience", "Internship Experience" if lang == "en" else "实习经历", interns)]
+
+    def render_work(section_id: str, fallback: str, items: list) -> None:
+        if not items or section_id in hidden_sections:
+            return
+        cfg = layout["work_experience"]
+        maybe_break(f"{section_id}:0")
+        title(section_id, fallback)
+        for index, item in enumerate(items):
+            if index:
+                maybe_break(f"{section_id}:{index}")
+            pieces = [item.get("company_name", ""), item.get("job_title", "")]
+            if cfg["showJobType"]:
+                pieces.append(item.get("job_type", ""))
+            _two_column_line(document, " · ".join(v for v in pieces if v), _date_range(item), font_size)
+            add_details(item.get("details"), cfg["detailsStyle"])
+
+    def render_projects() -> None:
+        items = data.get("project_experience") or []
+        if not items or "project_experience" in hidden_sections:
+            return
+        cfg = layout["project_experience"]
+        maybe_break("project_experience:0")
+        title("project_experience", labels["projectExperience"])
+        for index, item in enumerate(items):
+            if index:
+                maybe_break(f"project_experience:{index}")
+            values = [item.get("project_name") or item.get("name") or labels["projectNotSet"]]
+            if cfg["showRole"] and item.get("role"):
+                values.append(item["role"])
+            _two_column_line(document, " · ".join(values), _date_range(item) if cfg["showDate"] else "", font_size)
+            add_details(item.get("details"), cfg["detailsStyle"])
+
+    def render_others() -> None:
+        values = data.get("others") or {}
+        cfg = layout["others"]
+        fields = [key for key in cfg["fieldOrder"] if key not in cfg["hiddenFields"] and values.get(key)]
+        if not fields or "others" in hidden_sections:
+            return
+        maybe_break("others")
+        title("others", labels["others"])
+        field_labels = {"skills": labels["skills"], "certificates": labels["certificates"], "languages": labels["language"]}
+        separator = " · " if cfg["separator"] == "dot" else " | "
+        for key in fields:
+            p = document.add_paragraph()
+            _set_font(p.add_run(f'{field_labels[key]}{colon}'), font_size, bold=True)
+            content = separator.join(str(value) for value in values[key])
+            if cfg["preset"] == "tags":
+                content = "  ".join(f"[{value}]" for value in values[key])
+            _add_markdown_runs(p, content, font_size)
+
+    def render_self() -> None:
+        values = data.get("self_evaluation") or []
+        if not values or "self_evaluation" in hidden_sections:
+            return
+        cfg = layout["self_evaluation"]
+        maybe_break("self_evaluation")
+        title("self_evaluation", labels["selfEvaluation"])
+        if cfg["preset"] == "compact":
+            values = [" ".join(str(value) for value in values)]
+        for value in values:
+            if cfg["preset"] == "bullets":
+                _bullet(document, value, font_size)
+            else:
+                p = document.add_paragraph()
+                _add_markdown_runs(p, value, font_size)
+
+    renderers = {"education": render_education, "project_experience": render_projects, "others": render_others, "self_evaluation": render_self}
+    work_by_id = {section_id: (fallback, items) for section_id, fallback, items in work_groups()}
+    for section_id in global_layout["sectionOrder"]:
+        if section_id in work_by_id:
+            fallback, items = work_by_id[section_id]
+            render_work(section_id, fallback, items)
+        elif section_id in renderers:
+            renderers[section_id]()
 
     output = BytesIO()
     document.save(output)

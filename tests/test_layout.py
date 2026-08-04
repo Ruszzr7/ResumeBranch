@@ -1,6 +1,7 @@
 import unittest
 from io import BytesIO
 from zipfile import ZipFile
+from docx import Document
 
 from backend.layout import (
     apply_page_mode_defaults,
@@ -12,6 +13,7 @@ from backend.layout import (
 )
 from backend.docx_generator import generate_docx
 from backend.pdf_generator import render_resume_to_html
+from backend.layout_config import default_layout_config
 
 
 def resume_with_two_jobs():
@@ -68,6 +70,51 @@ class LayoutRuleTests(unittest.TestCase):
         with ZipFile(BytesIO(docx)) as archive:
             document_xml = archive.read("word/document.xml").decode("utf-8")
         self.assertIn('w:type="page"', document_xml)
+
+    def test_pdf_applies_controlled_layout_presets(self):
+        data = resume_with_two_jobs()
+        data["education"] = [{
+            "school_name": "示例大学", "school_tags": ["211"], "degree": "本科",
+            "major": "计算机", "date_range": ["2020", "2024"],
+            "gpa": "3.8", "gpa_scale": "4.0", "theses": [],
+        }]
+        layout = default_layout_config()
+        layout["basics"]["preset"] = "left-aligned"
+        layout["education"]["preset"] = "three-column"
+        layout["education"]["schoolTagStyle"] = "text"
+        layout["work_experience"]["detailsStyle"] = "paragraph"
+        layout["global"]["titleStyle"] = "plain"
+        html = render_resume_to_html(data, layout_config=layout)
+        self.assertIn("basics-left-aligned", html)
+        self.assertIn("preset-three-column", html)
+        header_start = html.index('<div class="education-header">')
+        header_end = html.index('</div>', html.index('<div class="graduation-date">', header_start))
+        self.assertIn('<div class="education-info-column">', html[header_start:header_end])
+        self.assertIn('GPA：3.8/4.0', html[header_start:header_end])
+        self.assertIn("tag-text", html)
+        self.assertIn("details-paragraph", html)
+        self.assertIn("title-plain", html)
+
+    def test_word_applies_section_order_and_hidden_sections(self):
+        data = resume_with_two_jobs()
+        data["project_experience"] = [{
+            "project_name": "先展示项目", "role": "开发", "date_range": [], "details": []
+        }]
+        data["self_evaluation"] = ["不应出现"]
+        layout = default_layout_config()
+        layout["global"]["sectionOrder"] = [
+            "project_experience", "work_experience", "education", "others", "self_evaluation"
+        ]
+        layout["global"]["hiddenSections"] = ["self_evaluation"]
+        document = Document(BytesIO(generate_docx(data, layout_config=layout)))
+        combined = "\n".join(
+            [paragraph.text for paragraph in document.paragraphs]
+            + [cell.text for table in document.tables for row in table.rows for cell in row.cells]
+        )
+        self.assertNotIn("不应出现", combined)
+        with ZipFile(BytesIO(generate_docx(data, layout_config=layout))) as archive:
+            xml = archive.read("word/document.xml").decode("utf-8")
+        self.assertLess(xml.index("先展示项目"), xml.index("甲"))
 
 
 if __name__ == "__main__":

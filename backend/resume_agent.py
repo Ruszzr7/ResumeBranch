@@ -31,16 +31,28 @@ from pydantic import BaseModel, Field
 
 from .resume_data import normalize_resume_data
 from .resume_changes import apply_resume_changes, build_resume_changes, resume_digest
+from .layout_config import (
+    apply_density,
+    apply_layout_change_groups,
+    build_layout_changes,
+    default_layout_config,
+    normalize_layout_config,
+    reset_layout_section,
+)
 from .llm_providers import active_profile, temperature_supported
 
 
-def record_assistant_revision(user_id, task_id, before_data, after_data, selected_change_ids):
+def record_assistant_revision(
+    user_id, task_id, before_data, after_data, selected_change_ids,
+    before_layout=None, after_layout=None,
+):
     """Persist an undo snapshot after the original save path succeeds."""
     from .database import SessionLocal, record_resume_revision
     revision_db = SessionLocal()
     try:
         return record_resume_revision(
-            revision_db, user_id, task_id, before_data, after_data, selected_change_ids
+            revision_db, user_id, task_id, before_data, after_data, selected_change_ids,
+            before_layout, after_layout,
         )
     finally:
         revision_db.close()
@@ -695,6 +707,7 @@ class AgentState:
     messages: list = field(default_factory=list)
     resume_data: dict = None  # None 表示尚未读取简历
     jd_data: dict = None  # None 表示尚未加载JD
+    layout_data: dict = None
     pending_confirmation: dict = None  # 待确认状态
     just_saved: bool = False  # 刚保存简历后设置为 True
     user_id: int = None  # 当前用户ID
@@ -814,6 +827,152 @@ def is_explicit_resume_change_request(message: str) -> bool:
     return bool(_RESUME_DATA_FIELD_RE.search(data_without_style))
 
 
+_LAYOUT_ACTION_RE = re.compile(
+    r"(?:布局|排版|样式|位置|对齐|居中|左对齐|右边|同一行|分行|紧凑|舒展|"
+    r"标签|黑底|描边|普通文字|隐藏|显示|顺序|放到|移到|标题|圆点|段落|恢复默认|重置)"
+)
+_LAYOUT_SECTION_NAMES = {
+    "教育经历": "education", "教育背景": "education",
+    "工作经历": "work_experience", "实习经历": "internship_experience",
+    "项目经历": "project_experience", "其他信息": "others",
+    "技能证书": "others", "自我评价": "self_evaluation", "个人总结": "self_evaluation",
+}
+
+
+def is_explicit_layout_change_request(message: str) -> bool:
+    text = str(message or "").strip()
+    if not text or "[CONFIRM_REPLY:" in text:
+        return False
+    return bool(_LAYOUT_ACTION_RE.search(text))
+
+
+def build_local_layout_candidate(state: AgentState) -> dict | None:
+    """Map common natural-language layout requests to the bounded preset contract."""
+    text = latest_human_text(state)
+    if not is_explicit_layout_change_request(text):
+        return None
+    current = normalize_layout_config(state.layout_data)
+    candidate = deepcopy(current)
+
+    reset_match = re.search(r"(?:恢复|重置)(?:(教育经历|工作经历|实习经历|项目经历|其他信息|自我评价|基本信息))?(?:布局|排版|样式)?(?:为)?默认", text)
+    if reset_match:
+        name = reset_match.group(1)
+        reset_map = {
+            "基本信息": "basics", "教育经历": "education", "工作经历": "work_experience",
+            "实习经历": "work_experience", "项目经历": "project_experience",
+            "其他信息": "others", "自我评价": "self_evaluation",
+        }
+        candidate = reset_layout_section(candidate, reset_map.get(name, "all"))
+
+    if re.search(r"(?:整体|全局|整份简历)?.{0,6}(?:更紧凑|紧凑一些|紧凑版)", text):
+        candidate = apply_density(candidate, "compact")
+    if re.search(r"(?:整体|全局|整份简历)?.{0,6}(?:更舒展|宽松一些|舒展版)", text):
+        candidate = apply_density(candidate, "comfortable")
+    if re.search(r"(?:标准密度|恢复标准间距)", text):
+        candidate = apply_density(candidate, "standard")
+    if re.search(r"(?:模块|章节)?标题.{0,8}(?:不要下划线|去掉下划线|纯文字)", text):
+        candidate["global"]["titleStyle"] = "plain"
+    if re.search(r"(?:模块|章节)?标题.{0,8}(?:加下划线|使用下划线)", text):
+        candidate["global"]["titleStyle"] = "underline"
+
+    if re.search(r"(?:姓名|基本信息|页眉).{0,8}左对齐|左对齐.{0,8}(?:姓名|基本信息|页眉)", text):
+        candidate["basics"]["preset"] = "left-aligned"
+    if re.search(r"(?:姓名|基本信息|页眉).{0,8}居中|居中.{0,8}(?:姓名|基本信息|页眉)", text):
+        candidate["basics"]["preset"] = "centered"
+    if re.search(r"(?:联系方式).{0,8}(?:分行|竖排|纵向)", text):
+        candidate["basics"]["contactLayout"] = "stacked"
+    if re.search(r"(?:联系方式).{0,8}(?:同一行|横排|行内)", text):
+        candidate["basics"]["contactLayout"] = "inline"
+    if re.search(r"(?:隐藏|不要|去掉).{0,5}(?:照片|头像)|(?:照片|头像).{0,5}(?:隐藏|不要|去掉)", text):
+        candidate["basics"]["photoPosition"] = "hidden"
+        if "photo" not in candidate["basics"]["hiddenFields"]:
+            candidate["basics"]["hiddenFields"].append("photo")
+    for label, field_name in (("性别", "gender"), ("电话", "phone"), ("手机号", "phone"), ("邮箱", "email"), ("目标岗位", "target_position")):
+        if re.search(rf"(?:隐藏|不要|去掉).{{0,5}}{label}|{label}.{{0,5}}(?:隐藏|不要|去掉)", text):
+            if field_name not in candidate["basics"]["hiddenFields"]:
+                candidate["basics"]["hiddenFields"].append(field_name)
+
+    if re.search(r"(?:学校|院校|211|985).{0,10}(?:不要黑底|普通文字|纯文字)", text):
+        candidate["education"]["schoolTagStyle"] = "text"
+    if re.search(r"(?:学校|院校|211|985).{0,10}(?:描边|边框)", text):
+        candidate["education"]["schoolTagStyle"] = "outline"
+    if re.search(r"(?:学校|院校|211|985).{0,10}(?:使用黑底|改成黑底|设为黑底|实心)", text):
+        candidate["education"]["schoolTagStyle"] = "filled"
+    if re.search(r"(?:隐藏|不要|去掉).{0,5}(?:学校标签|211|985)", text):
+        candidate["education"]["schoolTagStyle"] = "hidden"
+    for label, field_name in (("GPA", "gpa"), ("绩点", "gpa"), ("排名", "ranking"), ("平均分", "average_score")):
+        if re.search(rf"(?:隐藏|不要|去掉).{{0,5}}{label}|{label}.{{0,5}}(?:隐藏|不要|去掉)", text, re.I):
+            if field_name not in candidate["education"]["hiddenMetrics"]:
+                candidate["education"]["hiddenMetrics"].append(field_name)
+    if re.search(r"(?:GPA|绩点|专业|学历).{0,15}(?:学校|院校).{0,6}(?:右边|右侧)|(?:学校|院校).{0,15}(?:GPA|绩点|专业|学历).{0,6}(?:右边|右侧)", text, re.I):
+        candidate["education"]["preset"] = "three-column"
+        candidate["education"]["metricsPlacement"] = "info-column"
+    elif re.search(r"教育经历.{0,8}紧凑|紧凑.{0,8}教育经历", text):
+        candidate["education"]["preset"] = "compact"
+    elif re.search(r"教育经历.{0,8}(?:经典|默认)", text):
+        candidate["education"]["preset"] = "classic"
+
+    if re.search(r"(?:工作|实习)经历.{0,8}紧凑|紧凑.{0,8}(?:工作|实习)经历", text):
+        candidate["work_experience"]["preset"] = "compact"
+    if re.search(r"项目经历.{0,8}紧凑|紧凑.{0,8}项目经历", text):
+        candidate["project_experience"]["preset"] = "compact"
+    if re.search(r"(?:工作|实习)经历.{0,10}(?:不要圆点|改成段落|段落形式)", text):
+        candidate["work_experience"]["detailsStyle"] = "paragraph"
+    if re.search(r"项目经历.{0,10}(?:不要圆点|改成段落|段落形式)", text):
+        candidate["project_experience"]["detailsStyle"] = "paragraph"
+    if re.search(r"(?:工作|实习)经历.{0,10}(?:圆点|列表)", text):
+        candidate["work_experience"]["detailsStyle"] = "bullets"
+    if re.search(r"(?:隐藏|不要|去掉).{0,5}(?:工作类型|实习类型|全职兼职)", text):
+        candidate["work_experience"]["showJobType"] = False
+    if re.search(r"项目经历.{0,10}(?:圆点|列表)", text):
+        candidate["project_experience"]["detailsStyle"] = "bullets"
+    if re.search(r"项目经历.{0,10}(?:隐藏|不要|去掉).{0,4}(?:角色|职责)", text):
+        candidate["project_experience"]["showRole"] = False
+    if re.search(r"项目经历.{0,10}(?:隐藏|不要|去掉).{0,4}(?:日期|时间)", text):
+        candidate["project_experience"]["showDate"] = False
+    if re.search(r"(?:工作|实习).{0,5}(?:拆开|分开|分别显示)", text):
+        candidate["global"]["splitWorkExperience"] = True
+    if re.search(r"(?:工作|实习).{0,5}(?:合并|放在一起)", text):
+        candidate["global"]["splitWorkExperience"] = False
+
+    if re.search(r"(?:技能|证书|语言|其他信息).{0,8}标签", text):
+        candidate["others"]["preset"] = "tags"
+    if re.search(r"(?:技能|证书|语言|其他信息).{0,8}(?:分行|纵向)", text):
+        candidate["others"]["preset"] = "stacked"
+    if re.search(r"(?:技能|证书|语言|其他信息).{0,8}(?:同一行|行内)", text):
+        candidate["others"]["preset"] = "inline"
+    if re.search(r"自我评价.{0,8}(?:圆点|列表)", text):
+        candidate["self_evaluation"]["preset"] = "bullets"
+    if re.search(r"自我评价.{0,8}(?:紧凑|一段)", text):
+        candidate["self_evaluation"]["preset"] = "compact"
+    if re.search(r"自我评价.{0,8}(?:分段|段落)", text):
+        candidate["self_evaluation"]["preset"] = "paragraphs"
+
+    for label, section_id in _LAYOUT_SECTION_NAMES.items():
+        if re.search(rf"(?:隐藏|不要|去掉).{{0,5}}{re.escape(label)}|{re.escape(label)}.{{0,5}}(?:隐藏|不要|去掉)", text):
+            if section_id not in candidate["global"]["hiddenSections"]:
+                candidate["global"]["hiddenSections"].append(section_id)
+        if re.search(rf"(?:显示|恢复显示).{{0,5}}{re.escape(label)}|{re.escape(label)}.{{0,5}}(?:显示|恢复显示)", text):
+            candidate["global"]["hiddenSections"] = [value for value in candidate["global"]["hiddenSections"] if value != section_id]
+
+    order_match = re.search(r"(教育经历|工作经历|实习经历|项目经历|其他信息|自我评价).{0,8}(?:放到|移到)(教育经历|工作经历|实习经历|项目经历|其他信息|自我评价)(前面|后面)", text)
+    if order_match:
+        source = _LAYOUT_SECTION_NAMES[order_match.group(1)]
+        target = _LAYOUT_SECTION_NAMES[order_match.group(2)]
+        order = [value for value in candidate["global"]["sectionOrder"] if value != source]
+        target_index = order.index(target) if target in order else len(order)
+        order.insert(target_index + (1 if order_match.group(3) == "后面" else 0), source)
+        candidate["global"]["sectionOrder"] = order
+
+    title_match = re.search(r"(教育经历|工作经历|实习经历|项目经历|其他信息|自我评价)(?:的)?标题(?:改为|改成|叫做)\s*([^，。；;\n]+)", text)
+    if title_match:
+        section_id = _LAYOUT_SECTION_NAMES[title_match.group(1)]
+        candidate["global"].setdefault("titleOverrides", {}).setdefault(section_id, {})["zh"] = title_match.group(2).strip()
+
+    candidate = normalize_layout_config(candidate)
+    return candidate if candidate != current else None
+
+
 def _plain_response_text(content) -> str:
     if isinstance(content, str):
         return content
@@ -844,6 +1003,27 @@ def parse_resume_candidate(content) -> dict:
     except json.JSONDecodeError:
         candidate = json.loads(fix_unquoted_json_strings(raw_json))
     return normalize_and_validate_resume(candidate)
+
+
+def parse_edit_candidate(content, current_resume: dict, current_layout: dict) -> tuple[dict, dict]:
+    """Parse a combined resume/layout proposal while preserving omitted domains."""
+    text = _plain_response_text(content).strip()
+    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*```$", "", text)
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end <= start:
+        raise ValueError("模型没有返回完整的修改 JSON")
+    raw = text[start:end + 1]
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        payload = json.loads(fix_unquoted_json_strings(raw))
+    if "resume_data" not in payload and "layout_config" not in payload:
+        return normalize_and_validate_resume(payload), normalize_layout_config(current_layout)
+    return (
+        normalize_and_validate_resume(payload.get("resume_data", current_resume)),
+        normalize_layout_config(payload.get("layout_config", current_layout)),
+    )
 
 
 _COMPLEX_EDIT_FIELD_RE = re.compile(
@@ -947,24 +1127,51 @@ def build_local_edit_candidate(state: AgentState) -> dict | None:
 
 
 def _preview_summary(changes: list[dict]) -> str:
-    lines = ["已根据你的要求生成修改预览：", ""]
+    has_layout_change = any(change.get("kind") == "layout" for change in changes)
+    lines = [
+        "已根据你的要求匹配排版预设并生成临时预览："
+        if has_layout_change else "已根据你的要求生成修改预览：",
+        "",
+    ]
     lines.extend(
-        f"- {change['label']}：{change['before_display']} → {change['after_display']}"
+        (
+            f"- {change['label']}："
+            + (
+                "；".join(
+                    f"{detail.get('field_label', detail['field'])}：{detail['before_display']} → {detail['after_display']}"
+                    for detail in change.get("details", [])
+                )
+                if change.get("kind") == "layout"
+                else f"{change['before_display']} → {change['after_display']}"
+            )
+        )
         for change in changes
     )
-    lines.extend(["", "请在下方选择全部接受、仅应用选中项或全部拒绝。"])
+    lines.extend(["", "右侧已显示临时预览；接受前不会保存。请在下方选择全部接受、仅应用选中项或全部拒绝。"])
     return "\n".join(lines)
 
 
-def make_pending_confirmation(state: AgentState, candidate: dict) -> dict:
+def make_pending_confirmation(
+    state: AgentState,
+    candidate: dict | None = None,
+    layout_candidate: dict | None = None,
+) -> dict:
     """Build the same pending-confirmation contract for tool and fallback paths."""
     current = normalize_resume_data(state.resume_data or {})
-    changes = build_resume_changes(current, candidate)
+    current_layout = normalize_layout_config(state.layout_data)
+    candidate = normalize_resume_data(candidate if candidate is not None else current)
+    layout_candidate = normalize_layout_config(
+        layout_candidate if layout_candidate is not None else current_layout
+    )
+    resume_changes = build_resume_changes(current, candidate)
+    layout_changes = build_layout_changes(current_layout, layout_candidate)
+    changes = resume_changes + layout_changes
     if not changes:
         raise ValueError("没有检测到可应用的简历修改")
     confirm_id = str(uuid.uuid4())[:8]
     tool_args = {
         "content": json.dumps(candidate, ensure_ascii=False),
+        "layout_content": json.dumps(layout_candidate, ensure_ascii=False),
         "user_id": state.user_id,
         "task_id": state.task_id,
     }
@@ -978,6 +1185,9 @@ def make_pending_confirmation(state: AgentState, candidate: dict) -> dict:
         "tool_name": "save_resume_tool",
         "tool_args": tool_args,
         "base_hash": resume_digest(current),
+        "base_layout": current_layout,
+        "resume_candidate": candidate,
+        "layout_candidate": layout_candidate,
         "changes": changes,
         "status": "pending",
     }
@@ -986,21 +1196,26 @@ def make_pending_confirmation(state: AgentState, candidate: dict) -> dict:
 async def direct_edit_node(state: AgentState) -> dict:
     """Build a preview for unambiguous field assignments without calling an LLM."""
     current = normalize_resume_data(state.resume_data or {})
-    candidate = build_local_edit_candidate(state)
-    if candidate is None:
+    current_layout = normalize_layout_config(state.layout_data)
+    resume_candidate = build_local_edit_candidate(state)
+    local_layout_candidate = build_local_layout_candidate(state)
+    candidate = resume_candidate if resume_candidate is not None else current
+    layout_candidate = local_layout_candidate if local_layout_candidate is not None else current_layout
+    if resume_candidate is None and local_layout_candidate is None:
         raise ValueError("本地修改路由收到无法确定解析的请求")
-    changes = build_resume_changes(current, candidate)
+    changes = build_resume_changes(current, candidate) + build_layout_changes(current_layout, layout_candidate)
     if not changes:
         assistant_message = AIMessage(content="当前简历已经符合这项要求，没有需要应用的修改。")
         pending = None
     else:
-        pending = make_pending_confirmation(state, candidate)
+        pending = make_pending_confirmation(state, candidate, layout_candidate)
         assistant_message = AIMessage(content=_preview_summary(changes))
     print(f"[direct_edit] 本地生成完成, changes={len(changes)}")
     return {
         "messages": list(state.messages) + [assistant_message],
         "resume_data": current,
         "jd_data": state.jd_data or {},
+        "layout_data": current_layout,
         "pending_confirmation": pending,
         "proposal_error": None,
         "just_saved": False,
@@ -1014,16 +1229,22 @@ async def proposal_generator_node(state: AgentState) -> dict:
     start_time = time.time()
     request_text = latest_human_text(state)
     current = normalize_resume_data(state.resume_data or {})
-    prompt = f"""你是简历修改数据生成器。请根据用户的明确要求修改当前简历，并输出修改后的完整简历 JSON。
+    current_layout = normalize_layout_config(state.layout_data)
+    prompt = f"""你是简历内容与排版配置生成器。请根据用户的明确要求输出一个 JSON 对象，包含 resume_data 和 layout_config。
 
 严格规则：
-1. 只输出一个完整 JSON 对象，不要输出解释、Markdown 或代码块。
+1. 只输出一个完整 JSON 对象，不要输出解释、Markdown 或代码块；格式必须是 {{"resume_data": 完整简历, "layout_config": 完整布局配置}}。
 2. 未被用户要求修改的内容必须原样保留，不得编造经历或事实。
 3. GPA 数值写入 gpa，满分写入 gpa_scale，排名写入 ranking，绝对不能写入 theses。
 4. 如果用户同时提出多项修改，必须一次性体现在同一份完整简历中。
+5. 排版只能修改给定 layout_config 已存在的键和值；禁止输出 CSS、HTML、坐标或新增字段。
+6. 可选值：density=compact/standard/comfortable；titleStyle=underline/plain；basics.preset=centered/left-aligned；contactLayout=inline/stacked；education.preset=classic/compact/three-column；schoolTagStyle=filled/outline/text/hidden；metricsPlacement=below/with-degree/info-column；work/project preset=classic/compact；detailsStyle=bullets/paragraph；datePosition=right/inline；others.preset=inline/tags/stacked；self_evaluation.preset=paragraphs/bullets/compact。
 
 当前简历：
 {json.dumps(current, ensure_ascii=False, indent=2)}
+
+当前布局配置：
+{json.dumps(current_layout, ensure_ascii=False, indent=2)}
 
 用户要求：
 {request_text}
@@ -1032,16 +1253,16 @@ async def proposal_generator_node(state: AgentState) -> dict:
     try:
         async with asyncio.timeout(90.0):
             response = await conversation_llm.ainvoke([
-                SystemMessage(content="你只负责生成严格、完整、可校验的简历 JSON。"),
+                SystemMessage(content="你只负责生成严格、完整、可校验的简历与受控布局 JSON。"),
                 HumanMessage(content=prompt),
             ])
-        candidate = parse_resume_candidate(response.content)
-        changes = build_resume_changes(current, candidate)
+        candidate, layout_candidate = parse_edit_candidate(response.content, current, current_layout)
+        changes = build_resume_changes(current, candidate) + build_layout_changes(current_layout, layout_candidate)
         if not changes:
             pending = None
             assistant_message = AIMessage(content="当前简历已经符合这项要求，没有需要应用的修改。")
         else:
-            pending = make_pending_confirmation(state, candidate)
+            pending = make_pending_confirmation(state, candidate, layout_candidate)
             assistant_message = AIMessage(content=_preview_summary(changes))
         print(
             f"[proposal_generator] 完成, 耗时={time.time() - start_time:.2f}s, "
@@ -1051,6 +1272,7 @@ async def proposal_generator_node(state: AgentState) -> dict:
             "messages": list(state.messages) + [assistant_message],
             "resume_data": current,
             "jd_data": state.jd_data or {},
+            "layout_data": current_layout,
             "pending_confirmation": pending,
             "proposal_error": None,
             "just_saved": False,
@@ -1063,6 +1285,7 @@ async def proposal_generator_node(state: AgentState) -> dict:
             "messages": list(state.messages),
             "resume_data": current,
             "jd_data": state.jd_data or {},
+            "layout_data": current_layout,
             "pending_confirmation": None,
             "proposal_error": "本次修改无法安全生成确认预览，系统未对简历做任何更改。",
             "just_saved": False,
@@ -1302,6 +1525,7 @@ async def tool_node(state: AgentState) -> dict:
     if '[CONFIRM_REPLY:' in user_content:
         print("[Tool] 检测到确认回复")
         updated_resume_data = None
+        updated_layout_data = None
         import re
         match = re.search(r'\[CONFIRM_REPLY:([^:]+):([^:\]]+)(?::([^\]]*))?\]', user_content)
         
@@ -1349,10 +1573,21 @@ async def tool_node(state: AgentState) -> dict:
                                 candidate_resume_data = json.loads(fixed_content)
 
                             candidate_resume_data = normalize_and_validate_resume(candidate_resume_data)
+                            candidate_layout_data = normalize_layout_config(
+                                json.loads(tool_args.get("layout_content", "{}"))
+                                if tool_args.get("layout_content") else state.layout_data
+                            )
                             changes = state.pending_confirmation.get("changes") or []
                             base_hash = state.pending_confirmation.get("base_hash")
+                            before_layout_data = normalize_layout_config(state.layout_data)
+                            base_layout = normalize_layout_config(
+                                state.pending_confirmation.get("base_layout")
+                            )
                             if base_hash and resume_digest(state.resume_data or {}) != base_hash:
                                 result = "保存失败：简历已发生其他修改，请重新生成修改建议"
+                                saved_resume = False
+                            elif state.pending_confirmation.get("base_layout") is not None and before_layout_data != base_layout:
+                                result = "保存失败：简历布局已发生其他修改，请重新生成修改建议"
                                 saved_resume = False
                             else:
                                 all_change_ids = [item.get("id") for item in changes if item.get("id")]
@@ -1366,13 +1601,18 @@ async def tool_node(state: AgentState) -> dict:
                                         result = "保存失败：请至少选择一项修改"
                                         saved_resume = False
                                     else:
+                                        resume_changes = [item for item in changes if item.get("kind") != "layout"]
                                         updated_resume_data = apply_resume_changes(
-                                            state.resume_data or {}, changes, ids_to_apply
+                                            state.resume_data or {}, resume_changes, ids_to_apply
+                                        )
+                                        updated_layout_data = apply_layout_change_groups(
+                                            before_layout_data, candidate_layout_data, ids_to_apply
                                         )
                                 else:
                                     # 兼容升级前已生成的待确认记录。
                                     ids_to_apply = []
                                     updated_resume_data = candidate_resume_data
+                                    updated_layout_data = before_layout_data
 
                                 if updated_resume_data is not None:
                                     from .tools import update_resume
@@ -1388,26 +1628,49 @@ async def tool_node(state: AgentState) -> dict:
                                     )
                                     if saved_resume:
                                         try:
+                                            if any(str(change_id).startswith("layout-") for change_id in ids_to_apply):
+                                                from .database import SessionLocal, save_task_layout_config
+                                                layout_db = SessionLocal()
+                                                try:
+                                                    saved_layout = save_task_layout_config(
+                                                        layout_db, state.user_id, state.task_id,
+                                                        updated_layout_data or before_layout_data,
+                                                    )
+                                                finally:
+                                                    layout_db.close()
+                                                if saved_layout is None:
+                                                    raise ValueError("当前简历任务不存在")
+                                                updated_layout_data = saved_layout
                                             record_assistant_revision(
                                                 state.user_id,
                                                 state.task_id,
                                                 before_resume_data,
                                                 updated_resume_data,
                                                 ids_to_apply,
+                                                before_layout_data,
+                                                updated_layout_data,
                                             )
                                         except Exception as revision_error:
-                                            print(f"[Tool] 修改已保存，但记录撤回版本失败: {revision_error}")
+                                            print(f"[Tool] 修改已保存，但布局或撤回版本记录失败: {revision_error}")
                                         if changes:
                                             selected_changes = [
                                                 item for item in changes
                                                 if item.get("id") in ids_to_apply
                                             ]
-                                            summaries = [
-                                                f"{item.get('label', '简历字段')}："
-                                                f"{item.get('before_display', '')} → "
-                                                f"{item.get('after_display', '')}"
-                                                for item in selected_changes
-                                            ]
+                                            summaries = []
+                                            for item in selected_changes:
+                                                if item.get("kind") == "layout":
+                                                    detail = "；".join(
+                                                        f"{row.get('before_display', '')} → {row.get('after_display', '')}"
+                                                        for row in item.get("details", [])
+                                                    )
+                                                    summaries.append(f"{item.get('label', '布局')}：{detail}")
+                                                else:
+                                                    summaries.append(
+                                                        f"{item.get('label', '简历字段')}："
+                                                        f"{item.get('before_display', '')} → "
+                                                        f"{item.get('after_display', '')}"
+                                                    )
                                             result = f"已应用 {len(selected_changes)} 项修改"
                                             if summaries:
                                                 result += "：\n- " + "\n- ".join(summaries)
@@ -1457,11 +1720,13 @@ async def tool_node(state: AgentState) -> dict:
 
         # 保存成功时使用 updated_resume_data，否则使用原来的 state.resume_data
         final_resume_data = updated_resume_data if (saved_resume and updated_resume_data) else (state.resume_data or {})
+        final_layout_data = updated_layout_data if (saved_resume and updated_layout_data) else normalize_layout_config(state.layout_data)
 
         return {
             "messages": list(state.messages) + new_messages,
             "resume_data": final_resume_data,
             "jd_data": state.jd_data or {},
+            "layout_data": final_layout_data,
             "pending_confirmation": pending_confirmation,
             "just_saved": saved_resume,
             "user_id": state.user_id,
@@ -1477,6 +1742,7 @@ async def tool_node(state: AgentState) -> dict:
             "messages": list(state.messages),
             "resume_data": state.resume_data or {},
             "jd_data": state.jd_data or {},
+            "layout_data": normalize_layout_config(state.layout_data),
             "user_id": state.user_id,
             "task_id": state.task_id,
         }
@@ -1672,9 +1938,13 @@ def entry_router(state: AgentState) -> str:
         return "tool_node"
 
     user_request = latest_human_text(state)
-    if is_explicit_resume_change_request(user_request):
+    resume_change = is_explicit_resume_change_request(user_request)
+    layout_change = is_explicit_layout_change_request(user_request)
+    if resume_change or layout_change:
         try:
-            if build_local_edit_candidate(state) is not None:
+            local_resume = build_local_edit_candidate(state) if resume_change else None
+            local_layout = build_local_layout_candidate(state) if layout_change else None
+            if (not resume_change or local_resume is not None) and (not layout_change or local_layout is not None):
                 return "direct_edit"
         except Exception as exc:
             print(f"[Route] 本地解析不可用，转入结构化生成: {exc}")

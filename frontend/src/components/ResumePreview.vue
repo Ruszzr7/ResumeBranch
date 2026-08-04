@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, watch, nextTick, onUnmounted } from 'vue'
 import { labels } from '../utils/labels.js'
 import { buildAuthorizationHeaders } from '../config/appMode.js'
+import { normalizeLayoutConfig, sectionTitle, sectionOrder, isSectionHidden } from '../utils/layoutConfig.js'
 
 const props = defineProps({
   data: {
@@ -33,6 +34,11 @@ const props = defineProps({
     required: false,
     default: 'zh'
   },
+  layoutConfig: {
+    type: Object,
+    required: false,
+    default: () => ({})
+  },
   taskId: {
     type: String,
     required: false,
@@ -47,22 +53,48 @@ const props = defineProps({
 
 // 获取当前语言的标签
 const t = computed(() => labels[props.lang] || labels.zh)
+const layout = computed(() => normalizeLayoutConfig(props.layoutConfig))
+const moduleLayout = name => layout.value[name] || {}
+const hiddenSection = name => isSectionHidden(layout.value, name)
+const displayTitle = (name, fallback) => sectionTitle(layout.value, name, props.lang, fallback)
+const moduleOrder = name => ({ order: sectionOrder(layout.value, name) })
+const hiddenBasicField = field => moduleLayout('basics').hiddenFields?.includes(field)
+const workSections = computed(() => {
+  const make = (id, fallback) => ({ id, title: displayTitle(id, fallback), entries: workEntries(id) })
+  if (layout.value.global.splitWorkExperience) {
+    return [
+      make('work_experience', props.lang === 'en' ? 'Work Experience' : '工作经历'),
+      make('internship_experience', props.lang === 'en' ? 'Internship Experience' : '实习经历')
+    ].filter(section => !hiddenSection(section) && section.entries.length)
+  }
+  return hiddenSection('work_experience') ? [] : [make('work_experience', t.value.workExperience)]
+})
+const workTypePrefix = sectionId => sectionId === 'internship_experience' ? 'internship' : 'work'
+const visibleOtherFields = computed(() => (moduleLayout('others').fieldOrder || [])
+  .filter(field => !moduleLayout('others').hiddenFields?.includes(field) && props.data?.others?.[field]?.length))
+const otherFieldLabel = field => ({ skills: t.value.skills, certificates: t.value.certificates, languages: t.value.language }[field] || field)
+const otherSeparator = computed(() => moduleLayout('others').separator === 'dot' ? ' · ' : ' | ')
+const selfEvaluationValues = computed(() => {
+  const values = props.data?.self_evaluation || []
+  return moduleLayout('self_evaluation').preset === 'compact' ? [values.join(' ')] : values
+})
 
 function academicMetrics(item) {
   const metrics = []
-  if (item?.gpa) {
+  const hidden = moduleLayout('education').hiddenMetrics || []
+  if (item?.gpa && !hidden.includes('gpa')) {
     metrics.push(`${t.value.gpa}：${item.gpa}${item.gpa_scale ? `/${item.gpa_scale}` : ''}`)
   }
-  if (item?.ranking) {
+  if (item?.ranking && !hidden.includes('ranking')) {
     metrics.push(`${t.value.ranking}：${item.ranking}`)
   }
-  if (item?.average_score) {
+  if (item?.average_score && !hidden.includes('average_score')) {
     metrics.push(`${t.value.averageScore}：${item.average_score}`)
   }
   return metrics
 }
 
-const emit = defineEmits(['open-jd-dialog', 'open-resume-edit', 'toggle-lang'])
+const emit = defineEmits(['open-jd-dialog', 'open-resume-edit', 'toggle-lang', 'use-layout-prompt'])
 
 // 检测是否为移动端视图
 const isMobile = computed(() => props.isMobileView || window.innerWidth < 1200)
@@ -88,35 +120,72 @@ function layoutStorageKey() {
 }
 
 function loadLayoutSettings() {
+  const global = layout.value.global
+  marginVertical.value = Number(global.marginVertical ?? DEFAULT_STYLE.marginVertical)
+  marginHorizontal.value = Number(global.marginHorizontal ?? DEFAULT_STYLE.marginHorizontal)
+  moduleMargin.value = Number(global.moduleMargin ?? DEFAULT_STYLE.moduleMargin)
+  lineHeight.value = Number(global.lineHeight ?? DEFAULT_STYLE.lineHeight)
+  fontSize.value = Number(global.fontSize ?? DEFAULT_STYLE.fontSize)
+}
+
+async function migrateLegacyLayoutSettings() {
   const key = layoutStorageKey()
   if (!key) return
+  const raw = localStorage.getItem(key)
+  if (!raw) return
   try {
-    marginVertical.value = DEFAULT_STYLE.marginVertical
-    marginHorizontal.value = DEFAULT_STYLE.marginHorizontal
-    moduleMargin.value = DEFAULT_STYLE.moduleMargin
-    lineHeight.value = DEFAULT_STYLE.lineHeight
-    fontSize.value = DEFAULT_STYLE.fontSize
-    const saved = JSON.parse(localStorage.getItem(key) || '{}')
-    for (const [name, target] of Object.entries({
-      marginVertical, marginHorizontal, moduleMargin, lineHeight, fontSize
-    })) {
-      if (Number.isFinite(saved[name])) target.value = saved[name]
+    const legacy = JSON.parse(raw)
+    const serverGlobal = layout.value.global
+    const isServerDefault = ['marginVertical', 'marginHorizontal', 'moduleMargin', 'lineHeight', 'fontSize']
+      .every(field => Number(serverGlobal[field]) === Number(DEFAULT_STYLE[field]))
+    if (isServerDefault) {
+      const candidate = normalizeLayoutConfig(layout.value)
+      for (const field of ['marginVertical', 'marginHorizontal', 'moduleMargin', 'lineHeight', 'fontSize']) {
+        if (Number.isFinite(Number(legacy[field]))) candidate.global[field] = Number(legacy[field])
+      }
+      const response = await fetch(`/tasks/${props.taskId}/layout`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...buildAuthorizationHeaders() },
+        body: JSON.stringify({ layout_config: candidate })
+      })
+      if (response.ok) {
+        marginVertical.value = candidate.global.marginVertical
+        marginHorizontal.value = candidate.global.marginHorizontal
+        moduleMargin.value = candidate.global.moduleMargin
+        lineHeight.value = candidate.global.lineHeight
+        fontSize.value = candidate.global.fontSize
+      }
     }
-  } catch (_) {
-    // Ignore malformed browser-local layout settings and use defaults.
+    localStorage.removeItem(key)
+  } catch (error) {
+    console.warn('迁移旧排版设置失败:', error)
   }
 }
 
+let layoutSaveTimer = null
+let syncingLayoutProps = false
 function saveLayoutSettings() {
-  const key = layoutStorageKey()
-  if (!key) return
-  localStorage.setItem(key, JSON.stringify({
-    marginVertical: marginVertical.value,
-    marginHorizontal: marginHorizontal.value,
-    moduleMargin: moduleMargin.value,
-    lineHeight: lineHeight.value,
-    fontSize: fontSize.value
-  }))
+  if (!props.taskId || syncingLayoutProps) return
+  clearTimeout(layoutSaveTimer)
+  layoutSaveTimer = setTimeout(async () => {
+    const candidate = normalizeLayoutConfig(layout.value)
+    Object.assign(candidate.global, {
+      marginVertical: marginVertical.value,
+      marginHorizontal: marginHorizontal.value,
+      moduleMargin: moduleMargin.value,
+      lineHeight: lineHeight.value,
+      fontSize: fontSize.value
+    })
+    try {
+      await fetch(`/tasks/${props.taskId}/layout`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...buildAuthorizationHeaders() },
+        body: JSON.stringify({ layout_config: candidate })
+      })
+    } catch (error) {
+      console.error('保存排版设置失败:', error)
+    }
+  }, 350)
 }
 
 function resetStyleSettings(event) {
@@ -131,6 +200,26 @@ function resetStyleSettings(event) {
 // 移动端样式面板展开状态
 const isStylePanelExpanded = ref(false)
 const activeToolbarMenu = ref(null)
+const showLayoutGuide = ref(false)
+const layoutPresetGroups = [
+  { title: '整体与标题', description: '紧凑、标准或舒展；下划线或纯文字标题；模块排序与隐藏。', prompt: '将整体排版改为紧凑，模块标题使用纯文字样式。' },
+  { title: '基本信息', description: '居中或左对齐；联系方式同行或纵向；可隐藏照片及联系方式字段。', prompt: '基本信息改为左对齐，联系方式纵向排列。' },
+  { title: '教育经历', description: '经典、紧凑或三列；学校标签可用实心、描边、文字或隐藏。', prompt: '教育经历使用三列布局，专业和 GPA 放在学校右边，学校标签改为普通文字。' },
+  { title: '工作与实习', description: '经典或紧凑；描述使用圆点列表或段落；工作与实习可合并或拆分。', prompt: '工作经历使用紧凑布局，描述改为圆点列表，并将实习经历单独成章。' },
+  { title: '项目经历', description: '经典或紧凑；描述使用圆点列表或段落；可控制角色和日期。', prompt: '项目经历使用紧凑布局，保留角色和日期，描述使用圆点列表。' },
+  { title: '技能、证书与语言', description: '同行、标签或纵向；支持调整顺序、隐藏字段和分隔符。', prompt: '技能、证书和语言使用同行布局，以圆点分隔，技能排在最前。' },
+  { title: '自我评价', description: '分段、圆点列表或紧凑单段。', prompt: '自我评价改为紧凑单段布局。' }
+]
+
+function openLayoutGuide() {
+  closeToolbarMenu()
+  showLayoutGuide.value = true
+}
+
+function usePresetPrompt(prompt) {
+  showLayoutGuide.value = false
+  emit('use-layout-prompt', prompt)
+}
 
 function toggleStylePanel() {
   isStylePanelExpanded.value = !isStylePanelExpanded.value
@@ -286,76 +375,66 @@ function applyAutomaticPagination(elementHeights, capacity) {
   pageBreakBefore.value = secondPageItem?.breakKey || ''
 }
 
-// 扁平化的所有可分页项目
+const isInternship = item => /实习|intern/i.test(String(item?.job_type || ''))
+const workEntries = section => (props.data?.work_experience || [])
+  .map((item, dataIndex) => ({ item, dataIndex }))
+  .filter(({ item }) => {
+    if (!layout.value.global.splitWorkExperience) return section === 'work_experience'
+    return section === 'internship_experience' ? isInternship(item) : !isInternship(item)
+  })
+
+// 扁平化的所有可分页项目，顺序由 layout_config 控制。
 const allItems = computed(() => {
   if (!props.data) return []
   const items = []
-  let index = 0
+  const push = item => items.push({ ...item, index: items.length, visible: true })
+  if (props.data.basics) push({ type: 'basics', groupId: 'basics', breakKey: '' })
 
-  if (props.data.basics) {
-    items.push({ type: 'basics', groupId: 'basics', breakKey: '', index: index++, visible: true })
-  }
-
-  if (props.data.education && props.data.education.length) {
-    items.push({ type: 'education-title', groupId: 'education:0', breakKey: 'education:0', isSectionTitle: true, index: index++, visible: true })
-    props.data.education.forEach((edu, i) => {
-      items.push({ type: 'education-item', dataIndex: i, groupId: `education:${i}`, breakKey: `education:${i}`, index: index++, visible: true })
-      // 添加论文作为独立的可分页项
-      if (edu.theses?.length) {
-        edu.theses.forEach((_, tIdx) => {
-          items.push({ type: 'thesis-item', dataIndex: `${i}-${tIdx}`, groupId: `education:${i}`, breakKey: `education:${i}`, index: index++, visible: true })
+  for (const section of layout.value.global.sectionOrder) {
+    if (hiddenSection(section)) continue
+    if (section === 'education' && props.data.education?.length) {
+      push({ type: 'education-title', groupId: 'education:0', breakKey: 'education:0', isSectionTitle: true })
+      props.data.education.forEach((edu, i) => {
+        push({ type: 'education-item', dataIndex: i, groupId: `education:${i}`, breakKey: `education:${i}` })
+        if (moduleLayout('education').thesisDisplay !== 'hidden') {
+          ;(edu.theses || []).forEach((_, tIdx) => push({ type: 'thesis-item', dataIndex: `${i}-${tIdx}`, groupId: `education:${i}`, breakKey: `education:${i}` }))
+        }
+      })
+    }
+    if ((section === 'work_experience' || section === 'internship_experience')) {
+      const entries = workEntries(section)
+      if (entries.length) {
+        const prefix = section === 'internship_experience' ? 'internship' : 'work'
+        push({ type: `${prefix}-title`, groupId: `${section}:${entries[0].dataIndex}`, breakKey: `${section}:${entries[0].dataIndex}`, isSectionTitle: true })
+        entries.forEach(({ item, dataIndex }) => {
+          push({ type: `${prefix}-item`, dataIndex, groupId: `${section}:${dataIndex}`, breakKey: `${section}:${dataIndex}` })
+          if (item.details?.length) push({ type: `${prefix}-details`, dataIndex, groupId: `${section}:${dataIndex}`, breakKey: `${section}:${dataIndex}` })
         })
       }
-    })
-  }
-
-  if (props.data.work_experience && props.data.work_experience.length) {
-    items.push({ type: 'work-title', groupId: 'work_experience:0', breakKey: 'work_experience:0', isSectionTitle: true, index: index++, visible: true })
-    props.data.work_experience.forEach((work, i) => {
-      items.push({ type: 'work-item', dataIndex: i, groupId: `work_experience:${i}`, breakKey: `work_experience:${i}`, index: index++, visible: true })
-      // 添加工作详情作为独立的可分页项
-      if (work.details?.length) {
-        items.push({ type: 'work-details', dataIndex: i, groupId: `work_experience:${i}`, breakKey: `work_experience:${i}`, index: index++, visible: true })
+    }
+    if (section === 'project_experience') {
+      const projects = props.data.project_experience || props.data.projects || []
+      if (projects.length) {
+        push({ type: 'projects-title', groupId: 'project_experience:0', breakKey: 'project_experience:0', isSectionTitle: true })
+        projects.forEach((proj, i) => {
+          push({ type: 'project-item', dataIndex: i, groupId: `project_experience:${i}`, breakKey: `project_experience:${i}` })
+          if (proj.details?.length) push({ type: 'project-details', dataIndex: i, groupId: `project_experience:${i}`, breakKey: `project_experience:${i}` })
+        })
       }
-    })
-  }
-
-  if ((props.data.project_experience || props.data.projects) && (props.data.project_experience || props.data.projects).length) {
-    items.push({ type: 'projects-title', groupId: 'project_experience:0', breakKey: 'project_experience:0', isSectionTitle: true, index: index++, visible: true })
-    const projects = props.data.project_experience || props.data.projects
-    projects.forEach((proj, i) => {
-      items.push({ type: 'project-item', dataIndex: i, groupId: `project_experience:${i}`, breakKey: `project_experience:${i}`, index: index++, visible: true })
-      // 添加项目详情作为独立的可分页项
-      if (proj.details?.length) {
-        items.push({ type: 'project-details', dataIndex: i, groupId: `project_experience:${i}`, breakKey: `project_experience:${i}`, index: index++, visible: true })
+    }
+    if (section === 'others' && props.data.others) {
+      const visibleFields = moduleLayout('others').fieldOrder.filter(field => !moduleLayout('others').hiddenFields.includes(field) && props.data.others[field]?.length)
+      if (visibleFields.length) {
+        push({ type: 'others-title', groupId: 'others', breakKey: 'others', isSectionTitle: true })
+        visibleFields.forEach(field => push({ type: `${field}-line`, dataIndex: field, groupId: 'others', breakKey: 'others' }))
       }
-    })
-  }
-
-  if (props.data.others && (props.data.others.skills?.length || props.data.others.certificates?.length || props.data.others.languages?.length)) {
-    items.push({ type: 'others-title', groupId: 'others', breakKey: 'others', isSectionTitle: true, index: index++, visible: true })
-    // 技能一行显示
-    if (props.data.others.skills?.length) {
-      items.push({ type: 'skill-line', groupId: 'others', breakKey: 'others', index: index++, visible: true })
     }
-    // 证书一行显示
-    if (props.data.others.certificates?.length) {
-      items.push({ type: 'cert-line', groupId: 'others', breakKey: 'others', index: index++, visible: true })
-    }
-    // 语言一行显示
-    if (props.data.others.languages?.length) {
-      items.push({ type: 'lang-line', groupId: 'others', breakKey: 'others', index: index++, visible: true })
+    if (section === 'self_evaluation' && props.data.self_evaluation?.length) {
+      push({ type: 'self-eval-title', groupId: 'self_evaluation', breakKey: 'self_evaluation', isSectionTitle: true })
+      const values = moduleLayout('self_evaluation').preset === 'compact' ? [props.data.self_evaluation.join(' ')] : props.data.self_evaluation
+      values.forEach((_, i) => push({ type: 'self-eval-item', dataIndex: i, groupId: 'self_evaluation', breakKey: 'self_evaluation' }))
     }
   }
-
-  // 每条{{ t.selfEvaluation }}独立分页
-  if (props.data.self_evaluation && props.data.self_evaluation.length) {
-    items.push({ type: 'self-eval-title', groupId: 'self_evaluation', breakKey: 'self_evaluation', isSectionTitle: true, index: index++, visible: true })
-    props.data.self_evaluation.forEach((_, i) => {
-      items.push({ type: 'self-eval-item', dataIndex: i, groupId: 'self_evaluation', breakKey: 'self_evaluation', index: index++, visible: true })
-    })
-  }
-
   return items
 })
 
@@ -430,9 +509,15 @@ const calculatePagination = async () => {
   const pageContentHeight = PAGE_HEIGHT - topMargin - bottomMargin
 
   // 只获取直接子元素中的 pageable-item
-  const children = Array.from(container.children).filter(el => {
-    return el.classList.contains('pageable-item')
-  })
+  const children = Array.from(container.children)
+    .map((element, domIndex) => ({ element, domIndex }))
+    .filter(({ element }) => element.classList.contains('pageable-item'))
+    .sort((left, right) => {
+      const leftOrder = Number.parseInt(getComputedStyle(left.element).order || '0', 10)
+      const rightOrder = Number.parseInt(getComputedStyle(right.element).order || '0', 10)
+      return leftOrder - rightOrder || left.domIndex - right.domIndex
+    })
+    .map(({ element }) => element)
 
   if (children.length === 0) {
     pageCount.value = 1
@@ -466,7 +551,7 @@ const calculatePagination = async () => {
 }
 
 // ========== 监听变化 ==========
-watch([() => props.data, () => props.sourcePageCount, marginVertical, marginHorizontal, moduleMargin, lineHeight, fontSize],
+watch([() => props.data, () => props.sourcePageCount, () => props.layoutConfig, marginVertical, marginHorizontal, moduleMargin, lineHeight, fontSize],
   () => {
     // 增加延迟时间，确保字体变化后浏览器有足够时间重新渲染
     if (window.requestAnimationFrame) {
@@ -479,6 +564,11 @@ watch([() => props.data, () => props.sourcePageCount, marginVertical, marginHori
   }, { deep: true })
 
 watch([marginVertical, marginHorizontal, moduleMargin, lineHeight, fontSize], saveLayoutSettings)
+watch(() => props.layoutConfig, () => {
+  syncingLayoutProps = true
+  loadLayoutSettings()
+  nextTick(() => { syncingLayoutProps = false })
+}, { deep: true, immediate: true })
 watch(() => props.taskId, () => {
   loadLayoutSettings()
   calculatePagination()
@@ -662,6 +752,7 @@ const exportDocument = async (format) => {
       body: JSON.stringify({
         resume_data: props.data,
         style: style,
+        layout_config: layout.value,
         lang: props.lang
       })
     })
@@ -703,6 +794,7 @@ const exportWord = () => exportDocument('docx')
 // ========== 生命周期 ==========
 onMounted(async () => {
   loadLayoutSettings()
+  await migrateLegacyLayoutSettings()
   await nextTick()
   setTimeout(async () => {
     await calculatePagination()
@@ -916,6 +1008,7 @@ const getItemIndex = (type, dataIndex) => {
                 <span>字体大小 <strong>{{ fontSize }}pt</strong></span>
                 <input type="range" v-model.number="fontSize" min="9" max="14" step="0.5" class="slider">
               </label>
+              <button class="layout-guide-btn" @click="openLayoutGuide">查看可用排版预设</button>
               <button class="compact-reset-btn" @click="resetStyleSettings">恢复默认排版</button>
             </div>
           </div>
@@ -988,49 +1081,49 @@ const getItemIndex = (type, dataIndex) => {
       <!-- 隐藏的完整内容（用于测量） -->
       <div ref="contentRef" class="content-source" :style="[pageStyles, pagePaddingStyle]">
       <!-- 个人信息 -->
-      <div v-if="data.basics" class="pageable-item personal-info" :class="{ 'module-highlight': highlightedModule === 'basics' }" data-module="basics">
+      <div v-if="data.basics" class="pageable-item personal-info" :class="[`basics-${moduleLayout('basics').preset}`, `contact-${moduleLayout('basics').contactLayout}`, { 'module-highlight': highlightedModule === 'basics' }]" data-module="basics">
         <!-- 证件照绝对定位（不参与居中计算） -->
-        <div v-if="data.basics.photo" class="photo-container">
+        <div v-if="data.basics.photo && !hiddenBasicField('photo')" class="photo-container">
           <img :src="data.basics.photo" class="profile-photo" alt="证件照" />
         </div>
         <h1 class="name">{{ data.basics.name || '姓名未填写' }}</h1>
         <div class="contact-info">
-          <span v-if="data.basics?.gender" v-html="formatText(data.basics.gender)"></span>
-          <span v-if="data.basics?.gender || data.basics?.phone" class="separator">|</span>
-          <span v-if="data.basics?.phone" v-html="formatText(data.basics.phone)"></span>
-          <span v-if="(data.basics?.gender || data.basics?.phone) && data.basics?.email" class="separator">|</span>
-          <span v-if="data.basics?.email" v-html="formatText(data.basics.email)"></span>
+          <span v-if="data.basics?.gender && !hiddenBasicField('gender')" v-html="formatText(data.basics.gender)"></span>
+          <span v-if="data.basics?.phone && !hiddenBasicField('phone')" v-html="formatText(data.basics.phone)"></span>
+          <span v-if="data.basics?.email && !hiddenBasicField('email')" v-html="formatText(data.basics.email)"></span>
         </div>
-        <div v-if="data.basics?.target_position" class="target-position">
+        <div v-if="data.basics?.target_position && !hiddenBasicField('target_position')" class="target-position">
           {{ t.targetPosition }}：<span v-html="formatText(data.basics.target_position)"></span>
         </div>
       </div>
 
       <!-- {{ t.education }} -->
-      <template v-if="data.education && data.education.length">
-        <h2 class="pageable-item section-title" :class="{ 'title-highlight': highlightedModule === 'education' }" data-module="education">{{ t.education }}</h2>
-        <div v-for="(item, idx) in data.education" :key="idx" class="pageable-item education-item">
+      <template v-if="data.education && data.education.length && !hiddenSection('education')">
+        <h2 class="pageable-item section-title" :class="[`title-${layout.global.titleStyle}`, { 'title-highlight': highlightedModule === 'education' }]" :style="moduleOrder('education')" data-module="education">{{ displayTitle('education', t.education) }}</h2>
+        <div v-for="(item, idx) in data.education" :key="idx" class="pageable-item education-item" :class="`preset-${moduleLayout('education').preset}`" :style="moduleOrder('education')">
           <div class="education-header">
             <div class="school-info">
               <span class="school" v-html="formatText(item.school_name || '学校未填写')"></span>
-              <div v-if="item.school_tags?.length" class="school-tags">
-                <span v-for="(tag, tIdx) in item.school_tags" :key="tIdx" class="school-tag" v-html="formatText(tag)"></span>
+              <div v-if="item.school_tags?.length && moduleLayout('education').schoolTagStyle !== 'hidden'" class="school-tags">
+                <span v-for="(tag, tIdx) in item.school_tags" :key="tIdx" class="school-tag" :class="`tag-${moduleLayout('education').schoolTagStyle}`" v-html="formatText(tag)"></span>
+              </div>
+            </div>
+            <div class="education-info-column">
+              <div class="degree-major" v-html="formatText(`${item.degree || ''} ${item.major || ''}`)"></div>
+              <div v-if="academicMetrics(item).length" class="academic-metrics">
+                <span v-for="metric in academicMetrics(item)" :key="metric" v-html="formatText(metric)"></span>
               </div>
             </div>
             <span class="graduation-date">{{ item.date_range?.[0] || '' }} - {{ item.date_range?.[1] || '至今' }}</span>
           </div>
-          <div class="degree-major" v-html="formatText(`${item.degree || ''} ${item.major || ''}`)"></div>
-          <div v-if="academicMetrics(item).length" class="academic-metrics">
-            <span v-for="metric in academicMetrics(item)" :key="metric" v-html="formatText(metric)"></span>
-          </div>
         </div>
         <template v-if="data.education">
           <template v-for="(item, idx) in data.education">
-            <template v-if="item.theses?.length">
-              <div v-for="(thesis, tIdx) in item.theses" :key="'thesis-'+idx+'-'+tIdx" class="pageable-item thesis-item">
+            <template v-if="item.theses?.length && moduleLayout('education').thesisDisplay !== 'hidden'">
+                <div v-for="(thesis, tIdx) in item.theses" :key="'thesis-'+idx+'-'+tIdx" class="pageable-item thesis-item" :style="moduleOrder('education')">
                 <h4 class="subfield-title">{{ t.thesis }}</h4>
                 <div class="thesis-title" v-html="formatText(thesis.title)"></div>
-                <ul v-if="thesis.details?.length" class="list-items">
+                  <ul v-if="thesis.details?.length && moduleLayout('education').thesisDisplay === 'expanded'" class="list-items">
                   <li v-for="(detail, dIdx) in thesis.details" :key="dIdx" class="list-item" v-html="formatText(detail)"></li>
                 </ul>
               </div>
@@ -1040,31 +1133,31 @@ const getItemIndex = (type, dataIndex) => {
       </template>
 
       <!-- {{ t.workExperience }} -->
-      <template v-if="data.work_experience && data.work_experience.length">
-        <h2 class="pageable-item section-title" :class="{ 'title-highlight': highlightedModule === 'work_experience' }" data-module="work_experience">{{ t.workExperience }}</h2>
-        <template v-for="(item, idx) in data.work_experience" :key="'source-work-'+idx">
-          <div class="pageable-item work-item">
+      <template v-for="section in workSections" :key="`source-${section.id}`">
+        <h2 class="pageable-item section-title" :class="[`title-${layout.global.titleStyle}`, { 'title-highlight': highlightedModule === 'work_experience' }]" :style="moduleOrder(section.id)" :data-module="section.id">{{ section.title }}</h2>
+        <template v-for="entry in section.entries" :key="`source-${section.id}-${entry.dataIndex}`">
+          <div class="pageable-item work-item" :class="[`preset-${moduleLayout('work_experience').preset}`, `date-${moduleLayout('work_experience').datePosition}`]" :style="moduleOrder(section.id)">
             <div class="work-header">
               <div class="work-main">
-                <div class="company" v-html="formatText(item.company_name || '公司未填写')"></div>
-                <div class="position" v-html="formatText(`${item.job_title || ''} ${item.job_type ? `(${item.job_type})` : ''}`)"></div>
+                <div class="company" v-html="formatText(entry.item.company_name || '公司未填写')"></div>
+                <div class="position" v-html="formatText(`${entry.item.job_title || ''} ${entry.item.job_type && moduleLayout('work_experience').showJobType ? `(${entry.item.job_type})` : ''}`)"></div>
               </div>
-              <span class="work-period">{{ item.date_range?.[0] || '' }} - {{ item.date_range?.[1] || '至今' }}</span>
+              <span class="work-period">{{ entry.item.date_range?.[0] || '' }} - {{ entry.item.date_range?.[1] || '至今' }}</span>
             </div>
           </div>
-          <div v-if="item.details?.length" class="pageable-item work-details">
+          <div v-if="entry.item.details?.length" class="pageable-item work-details" :class="`details-${moduleLayout('work_experience').detailsStyle}`" :style="moduleOrder(section.id)">
             <ul class="list-items">
-              <li v-for="(detail, dIdx) in item.details" :key="dIdx" class="list-item" v-html="formatText(detail)"></li>
+              <li v-for="(detail, dIdx) in entry.item.details" :key="dIdx" class="list-item" v-html="formatText(detail)"></li>
             </ul>
           </div>
         </template>
       </template>
 
       <!-- {{ t.projectExperience }} -->
-      <template v-if="(data.project_experience || data.projects) && (data.project_experience || data.projects).length">
-        <h2 class="pageable-item section-title" :class="{ 'title-highlight': highlightedModule === 'project_experience' }" data-module="project_experience">{{ t.projectExperience }}</h2>
+      <template v-if="(data.project_experience || data.projects) && (data.project_experience || data.projects).length && !hiddenSection('project_experience')">
+        <h2 class="pageable-item section-title" :class="[`title-${layout.global.titleStyle}`, { 'title-highlight': highlightedModule === 'project_experience' }]" :style="moduleOrder('project_experience')" data-module="project_experience">{{ displayTitle('project_experience', t.projectExperience) }}</h2>
         <template v-for="(item, idx) in (data.project_experience || data.projects)" :key="'source-project-'+idx">
-          <div class="pageable-item project-item">
+          <div class="pageable-item project-item" :class="[`preset-${moduleLayout('project_experience').preset}`, `date-${moduleLayout('project_experience').datePosition}`]" :style="moduleOrder('project_experience')">
             <div class="project-header">
               <div class="project-name" v-html="formatText(item.project_name || item.name || '项目未填写')"></div>
               <div class="project-role">
@@ -1074,7 +1167,7 @@ const getItemIndex = (type, dataIndex) => {
               </div>
             </div>
           </div>
-          <div v-if="item.details?.length" class="pageable-item project-details">
+          <div v-if="item.details?.length" class="pageable-item project-details" :class="`details-${moduleLayout('project_experience').detailsStyle}`" :style="moduleOrder('project_experience')">
             <ul class="list-items">
               <li v-for="(detail, dIdx) in item.details" :key="dIdx" class="list-item" v-html="formatText(detail)"></li>
             </ul>
@@ -1083,43 +1176,22 @@ const getItemIndex = (type, dataIndex) => {
       </template>
 
       <!-- 其他 -->
-      <template v-if="data.others && (data.others.skills?.length || data.others.certificates?.length || data.others.languages?.length)">
-        <h2 class="pageable-item section-title" :class="{ 'title-highlight': highlightedModule === 'others' }" data-module="others">其他</h2>
-        <!-- 技能一行显示 -->
-        <template v-if="data.others.skills?.length">
-          <div class="pageable-item cert-lang-line">
-            <span class="cert-lang-label">{{ t.skills }}：</span>
-            <template v-for="(skill, sIdx) in data.others.skills">
-              <span v-html="formatText(skill)"></span><span v-if="sIdx < data.others.skills.length - 1" class="cert-lang-separator"> | </span>
-            </template>
-          </div>
-        </template>
-        <!-- 证书一行显示 -->
-        <template v-if="data.others.certificates?.length">
-          <div class="pageable-item cert-lang-line">
-            <span class="cert-lang-label">{{ t.certificates }}：</span>
-            <template v-for="(cert, cIdx) in data.others.certificates">
-              <span v-html="formatText(cert)"></span><span v-if="cIdx < data.others.certificates.length - 1" class="cert-lang-separator"> | </span>
-            </template>
-          </div>
-        </template>
-        <!-- 语言一行显示 -->
-        <template v-if="data.others.languages?.length">
-          <div class="pageable-item cert-lang-line">
-            <span class="cert-lang-label">{{ t.language }}：</span>
-            <template v-for="(lang, lIdx) in data.others.languages">
-              <span v-html="formatText(lang)"></span><span v-if="lIdx < data.others.languages.length - 1" class="cert-lang-separator"> | </span>
-            </template>
-          </div>
-        </template>
+      <template v-if="data.others && visibleOtherFields.length && !hiddenSection('others')">
+        <h2 class="pageable-item section-title" :class="[`title-${layout.global.titleStyle}`, { 'title-highlight': highlightedModule === 'others' }]" :style="moduleOrder('others')" data-module="others">{{ displayTitle('others', props.lang === 'en' ? 'Other' : '其他') }}</h2>
+        <div v-for="field in visibleOtherFields" :key="`source-other-${field}`" class="pageable-item cert-lang-line" :class="`others-${moduleLayout('others').preset}`" :style="moduleOrder('others')">
+          <span class="cert-lang-label">{{ otherFieldLabel(field) }}：</span>
+          <template v-for="(value, valueIndex) in data.others[field]" :key="`${field}-${valueIndex}`">
+            <span class="other-value" v-html="formatText(value)"></span><span v-if="valueIndex < data.others[field].length - 1" class="cert-lang-separator">{{ otherSeparator }}</span>
+          </template>
+        </div>
       </template>
 
       <!-- {{ t.selfEvaluation }} -->
-      <template v-if="data.self_evaluation && data.self_evaluation.length">
-        <h2 class="pageable-item section-title" :class="{ 'title-highlight': highlightedModule === 'self_evaluation' }" data-module="self_evaluation">{{ t.selfEvaluation }}</h2>
+      <template v-if="selfEvaluationValues.length && !hiddenSection('self_evaluation')">
+        <h2 class="pageable-item section-title" :class="[`title-${layout.global.titleStyle}`, { 'title-highlight': highlightedModule === 'self_evaluation' }]" :style="moduleOrder('self_evaluation')" data-module="self_evaluation">{{ displayTitle('self_evaluation', t.selfEvaluation) }}</h2>
         <!-- 每条{{ t.selfEvaluation }}独立分页 -->
-        <template v-for="(item, idx) in data.self_evaluation">
-          <div v-if="item" :key="'self-eval-'+idx" class="pageable-item self-eval-item">
+        <template v-for="(item, idx) in selfEvaluationValues">
+          <div v-if="item" :key="'self-eval-'+idx" class="pageable-item self-eval-item" :class="`self-${moduleLayout('self_evaluation').preset}`" :style="moduleOrder('self_evaluation')">
             <span v-html="formatText(item)"></span>
           </div>
         </template>
@@ -1250,49 +1322,49 @@ const getItemIndex = (type, dataIndex) => {
         <div class="page-inner" :style="pagePaddingStyle">
           <div class="page-content" :style="pageStyles">
             <!-- 个人信息 -->
-            <div v-if="data.basics && isItemVisible({index: getItemIndex('basics', 0)}, page - 1)" class="personal-info" :class="{ 'module-highlight': highlightedModule === 'basics' }" data-module="basics">
-              <div v-if="data.basics.photo" class="photo-container">
+            <div v-if="data.basics && isItemVisible({index: getItemIndex('basics', 0)}, page - 1)" class="personal-info" :class="[`basics-${moduleLayout('basics').preset}`, `contact-${moduleLayout('basics').contactLayout}`, { 'module-highlight': highlightedModule === 'basics' }]" data-module="basics">
+              <div v-if="data.basics.photo && !hiddenBasicField('photo')" class="photo-container">
                 <img :src="data.basics.photo" class="profile-photo" alt="证件照" />
               </div>
               <h1 class="name">{{ data.basics.name || '姓名未填写' }}</h1>
               <div class="contact-info">
-                <span v-if="data.basics.gender" v-html="formatText(data.basics.gender)"></span>
-                <span v-if="data.basics.gender || data.basics.phone" class="separator">|</span>
-                <span v-if="data.basics.phone" v-html="formatText(data.basics.phone)"></span>
-                <span v-if="(data.basics.gender || data.basics.phone) && data.basics.email" class="separator">|</span>
-                <span v-if="data.basics.email" v-html="formatText(data.basics.email)"></span>
+                <span v-if="data.basics.gender && !hiddenBasicField('gender')" v-html="formatText(data.basics.gender)"></span>
+                <span v-if="data.basics.phone && !hiddenBasicField('phone')" v-html="formatText(data.basics.phone)"></span>
+                <span v-if="data.basics.email && !hiddenBasicField('email')" v-html="formatText(data.basics.email)"></span>
               </div>
-              <div v-if="data.basics.target_position" class="target-position">
+              <div v-if="data.basics.target_position && !hiddenBasicField('target_position')" class="target-position">
                 {{ t.targetPosition }}：<span v-html="formatText(data.basics.target_position)"></span>
               </div>
             </div>
 
             <!-- {{ t.education }} -->
-            <template v-if="data.education && data.education.length">
-              <h2 v-if="isItemVisible({index: getItemIndex('education-title', 0)}, page - 1)" class="section-title" :class="{ 'title-highlight': highlightedModule === 'education' }" data-module="education">{{ t.education }}</h2>
+            <template v-if="data.education && data.education.length && !hiddenSection('education')">
+              <h2 v-if="isItemVisible({index: getItemIndex('education-title', 0)}, page - 1)" class="section-title" :class="[`title-${layout.global.titleStyle}`, { 'title-highlight': highlightedModule === 'education' }]" :style="moduleOrder('education')" data-module="education">{{ displayTitle('education', t.education) }}</h2>
               <template v-for="(item, idx) in data.education">
-                <div v-if="isItemVisible({index: getItemIndex('education-item', idx)}, page - 1)" :key="'edu-'+idx" class="education-item" :class="{ 'content-highlight': highlightedModule === 'education' }">
+                <div v-if="isItemVisible({index: getItemIndex('education-item', idx)}, page - 1)" :key="'edu-'+idx" class="education-item" :class="[`preset-${moduleLayout('education').preset}`, { 'content-highlight': highlightedModule === 'education' }]" :style="moduleOrder('education')">
                   <div class="education-header">
                     <div class="school-info">
                       <span class="school" v-html="formatText(item.school_name || '学校未填写')"></span>
-                      <div v-if="item.school_tags?.length" class="school-tags">
-                        <span v-for="(tag, tIdx) in item.school_tags" :key="tIdx" class="school-tag" v-html="formatText(tag)"></span>
+                      <div v-if="item.school_tags?.length && moduleLayout('education').schoolTagStyle !== 'hidden'" class="school-tags">
+                        <span v-for="(tag, tIdx) in item.school_tags" :key="tIdx" class="school-tag" :class="`tag-${moduleLayout('education').schoolTagStyle}`" v-html="formatText(tag)"></span>
+                      </div>
+                    </div>
+                    <div class="education-info-column">
+                      <div class="degree-major" v-html="formatText(`${item.degree || ''} ${item.major || ''}`)"></div>
+                      <div v-if="academicMetrics(item).length" class="academic-metrics">
+                        <span v-for="metric in academicMetrics(item)" :key="metric" v-html="formatText(metric)"></span>
                       </div>
                     </div>
                     <span class="graduation-date">{{ item.date_range?.[0] || '' }} - {{ item.date_range?.[1] || '至今' }}</span>
                   </div>
-                  <div class="degree-major" v-html="formatText(`${item.degree || ''} ${item.major || ''}`)"></div>
-                  <div v-if="academicMetrics(item).length" class="academic-metrics">
-                    <span v-for="metric in academicMetrics(item)" :key="metric" v-html="formatText(metric)"></span>
-                  </div>
                 </div>
                 <!-- 论文（独立分页项） -->
-                <template v-if="item.theses?.length">
+                <template v-if="item.theses?.length && moduleLayout('education').thesisDisplay !== 'hidden'">
                   <template v-for="(thesis, tIdx) in item.theses">
-                    <div v-if="isItemVisible({index: getItemIndex('thesis-item', `${idx}-${tIdx}`)}, page - 1)" :key="'thesis-'+idx+'-'+tIdx" class="thesis-item">
+                    <div v-if="isItemVisible({index: getItemIndex('thesis-item', `${idx}-${tIdx}`)}, page - 1)" :key="'thesis-'+idx+'-'+tIdx" class="thesis-item" :style="moduleOrder('education')">
                       <h4 class="subfield-title">{{ t.thesis }}</h4>
                       <div class="thesis-title" v-html="formatText(thesis.title)"></div>
-                      <ul v-if="thesis.details?.length" class="list-items">
+                      <ul v-if="thesis.details?.length && moduleLayout('education').thesisDisplay === 'expanded'" class="list-items">
                         <li v-for="(detail, dIdx) in thesis.details" :key="dIdx" class="list-item" v-html="formatText(detail)"></li>
                       </ul>
                     </div>
@@ -1302,43 +1374,42 @@ const getItemIndex = (type, dataIndex) => {
             </template>
 
             <!-- {{ t.workExperience }} -->
-            <template v-if="data.work_experience && data.work_experience.length">
-              <h2 v-if="isItemVisible({index: getItemIndex('work-title', 0)}, page - 1)" class="section-title" :class="{ 'title-highlight': highlightedModule === 'work_experience' }" data-module="work_experience">{{ t.workExperience }}</h2>
-              <template v-for="(item, idx) in data.work_experience">
-                <div v-if="isItemVisible({index: getItemIndex('work-item', idx)}, page - 1)" :key="'work-'+idx" class="work-item" :class="{ 'content-highlight': highlightedModule === 'work_experience' }">
+            <template v-for="section in workSections" :key="`page-${page}-${section.id}`">
+              <h2 v-if="isItemVisible({index: getItemIndex(`${workTypePrefix(section.id)}-title`, 0)}, page - 1)" class="section-title" :class="[`title-${layout.global.titleStyle}`, { 'title-highlight': highlightedModule === 'work_experience' }]" :style="moduleOrder(section.id)" :data-module="section.id">{{ section.title }}</h2>
+              <template v-for="entry in section.entries" :key="`${section.id}-${entry.dataIndex}`">
+                <div v-if="isItemVisible({index: getItemIndex(`${workTypePrefix(section.id)}-item`, entry.dataIndex)}, page - 1)" class="work-item" :class="[`preset-${moduleLayout('work_experience').preset}`, `date-${moduleLayout('work_experience').datePosition}`, { 'content-highlight': highlightedModule === 'work_experience' }]" :style="moduleOrder(section.id)">
                   <div class="work-header">
                     <div class="work-main">
-                      <div class="company" v-html="formatText(item.company_name || '公司未填写')"></div>
-                      <div class="position" v-html="formatText(`${item.job_title || ''} ${item.job_type ? `(${item.job_type})` : ''}`)"></div>
+                      <div class="company" v-html="formatText(entry.item.company_name || '公司未填写')"></div>
+                      <div class="position" v-html="formatText(`${entry.item.job_title || ''} ${entry.item.job_type && moduleLayout('work_experience').showJobType ? `(${entry.item.job_type})` : ''}`)"></div>
                     </div>
-                    <span class="work-period">{{ item.date_range?.[0] || '' }} - {{ item.date_range?.[1] || '至今' }}</span>
+                    <span class="work-period">{{ entry.item.date_range?.[0] || '' }} - {{ entry.item.date_range?.[1] || '至今' }}</span>
                   </div>
                 </div>
                 <!-- 工作详情（独立分页项） -->
-                <div v-if="item.details && isItemVisible({index: getItemIndex('work-details', idx)}, page - 1)" :key="'work-details-'+idx" class="work-details">
+                <div v-if="entry.item.details && isItemVisible({index: getItemIndex(`${workTypePrefix(section.id)}-details`, entry.dataIndex)}, page - 1)" class="work-details" :class="`details-${moduleLayout('work_experience').detailsStyle}`" :style="moduleOrder(section.id)">
                   <ul class="list-items">
-                    <li v-for="(detail, dIdx) in item.details" :key="dIdx" class="list-item" v-html="formatText(detail)"></li>
+                    <li v-for="(detail, dIdx) in entry.item.details" :key="dIdx" class="list-item" v-html="formatText(detail)"></li>
                   </ul>
                 </div>
               </template>
             </template>
 
             <!-- {{ t.projectExperience }} -->
-            <template v-if="(data.project_experience || data.projects) && (data.project_experience || data.projects).length">
-              <h2 v-if="isItemVisible({index: getItemIndex('projects-title', 0)}, page - 1)" class="section-title" :class="{ 'title-highlight': highlightedModule === 'project_experience' }" data-module="project_experience">{{ t.projectExperience }}</h2>
+            <template v-if="(data.project_experience || data.projects) && (data.project_experience || data.projects).length && !hiddenSection('project_experience')">
+              <h2 v-if="isItemVisible({index: getItemIndex('projects-title', 0)}, page - 1)" class="section-title" :class="[`title-${layout.global.titleStyle}`, { 'title-highlight': highlightedModule === 'project_experience' }]" :style="moduleOrder('project_experience')" data-module="project_experience">{{ displayTitle('project_experience', t.projectExperience) }}</h2>
               <template v-for="(item, idx) in (data.project_experience || data.projects)">
-                <div v-if="isItemVisible({index: getItemIndex('project-item', idx)}, page - 1)" :key="'proj-'+idx" class="project-item" :class="{ 'content-highlight': highlightedModule === 'project_experience' }">
+                <div v-if="isItemVisible({index: getItemIndex('project-item', idx)}, page - 1)" :key="'proj-'+idx" class="project-item" :class="[`preset-${moduleLayout('project_experience').preset}`, `date-${moduleLayout('project_experience').datePosition}`, { 'content-highlight': highlightedModule === 'project_experience' }]" :style="moduleOrder('project_experience')">
                   <div class="project-header">
                     <div class="project-name" v-html="formatText(item.project_name || item.name || '项目未填写')"></div>
-                    <div class="project-role">
-                      <span v-if="item.date_range?.length" v-html="formatText(`${item.role || '角色'} | ${item.date_range[0]} - ${item.date_range[1] || '至今'}`)"></span>
-                      <span v-else-if="item.start_date || item.end_date" v-html="formatText(`${item.role || '角色'} | ${item.start_date || ''} - ${item.end_date || '至今'}`)"></span>
-                      <span v-else v-html="formatText(item.role || '项目')"></span>
+                    <div v-if="moduleLayout('project_experience').showRole || moduleLayout('project_experience').showDate" class="project-role">
+                      <span v-if="item.date_range?.length" v-html="formatText(`${moduleLayout('project_experience').showRole ? (item.role || '角色') : ''}${moduleLayout('project_experience').showRole && moduleLayout('project_experience').showDate ? ' | ' : ''}${moduleLayout('project_experience').showDate ? `${item.date_range[0]} - ${item.date_range[1] || '至今'}` : ''}`)"></span>
+                      <span v-else-if="moduleLayout('project_experience').showRole" v-html="formatText(item.role || '项目')"></span>
                     </div>
                   </div>
                 </div>
                 <!-- 项目详情（独立分页项） -->
-                <div v-if="item.details && isItemVisible({index: getItemIndex('project-details', idx)}, page - 1)" :key="'proj-details-'+idx" class="project-details">
+                <div v-if="item.details && isItemVisible({index: getItemIndex('project-details', idx)}, page - 1)" :key="'proj-details-'+idx" class="project-details" :class="`details-${moduleLayout('project_experience').detailsStyle}`" :style="moduleOrder('project_experience')">
                   <ul class="list-items">
                     <li v-for="(detail, dIdx) in item.details" :key="dIdx" class="list-item" v-html="formatText(detail)"></li>
                   </ul>
@@ -1347,43 +1418,24 @@ const getItemIndex = (type, dataIndex) => {
             </template>
 
             <!-- 其他 -->
-            <template v-if="data.others && (data.others.skills?.length || data.others.certificates?.length || data.others.languages?.length)">
-              <h2 v-if="isItemVisible({index: getItemIndex('others-title', 0)}, page - 1)" class="section-title" :class="{ 'title-highlight': highlightedModule === 'others' }" data-module="others">其他</h2>
-              <!-- 技能一行显示 -->
-              <template v-if="data.others.skills?.length">
-                <div v-if="isItemVisible({index: getItemIndex('skill-line', 0)}, page - 1)" class="cert-lang-line">
-                  <span class="cert-lang-label">{{ t.skills }}：</span>
-                  <template v-for="(skill, sIdx) in data.others.skills">
-                    <span v-html="formatText(skill)"></span><span v-if="sIdx < data.others.skills.length - 1" class="cert-lang-separator"> | </span>
-                  </template>
-                </div>
-              </template>
-              <!-- 证书一行显示 -->
-              <template v-if="data.others.certificates?.length">
-                <div v-if="isItemVisible({index: getItemIndex('cert-line', 0)}, page - 1)" class="cert-lang-line">
-                  <span class="cert-lang-label">{{ t.certificates }}：</span>
-                  <template v-for="(cert, cIdx) in data.others.certificates">
-                    <span v-html="formatText(cert)"></span><span v-if="cIdx < data.others.certificates.length - 1" class="cert-lang-separator"> | </span>
-                  </template>
-                </div>
-              </template>
-              <!-- 语言一行显示 -->
-              <template v-if="data.others.languages?.length">
-                <div v-if="isItemVisible({index: getItemIndex('lang-line', 0)}, page - 1)" class="cert-lang-line">
-                  <span class="cert-lang-label">{{ t.language }}：</span>
-                  <template v-for="(lang, lIdx) in data.others.languages">
-                    <span v-html="formatText(lang)"></span><span v-if="lIdx < data.others.languages.length - 1" class="cert-lang-separator"> | </span>
+            <template v-if="data.others && visibleOtherFields.length && !hiddenSection('others')">
+              <h2 v-if="isItemVisible({index: getItemIndex('others-title', 0)}, page - 1)" class="section-title" :class="[`title-${layout.global.titleStyle}`, { 'title-highlight': highlightedModule === 'others' }]" :style="moduleOrder('others')" data-module="others">{{ displayTitle('others', props.lang === 'en' ? 'Other' : '其他') }}</h2>
+              <template v-for="field in visibleOtherFields" :key="`page-${page}-other-${field}`">
+                <div v-if="isItemVisible({index: getItemIndex(`${field}-line`, field)}, page - 1)" class="cert-lang-line" :class="`others-${moduleLayout('others').preset}`" :style="moduleOrder('others')">
+                  <span class="cert-lang-label">{{ otherFieldLabel(field) }}：</span>
+                  <template v-for="(value, valueIndex) in data.others[field]" :key="`${field}-${valueIndex}`">
+                    <span class="other-value" v-html="formatText(value)"></span><span v-if="valueIndex < data.others[field].length - 1" class="cert-lang-separator">{{ otherSeparator }}</span>
                   </template>
                 </div>
               </template>
             </template>
 
             <!-- {{ t.selfEvaluation }} -->
-            <template v-if="data.self_evaluation && data.self_evaluation.length">
-              <h2 v-if="isItemVisible({index: getItemIndex('self-eval-title', 0)}, page - 1)" class="section-title" :class="{ 'title-highlight': highlightedModule === 'self_evaluation' }" data-module="self_evaluation">{{ t.selfEvaluation }}</h2>
+            <template v-if="selfEvaluationValues.length && !hiddenSection('self_evaluation')">
+              <h2 v-if="isItemVisible({index: getItemIndex('self-eval-title', 0)}, page - 1)" class="section-title" :class="[`title-${layout.global.titleStyle}`, { 'title-highlight': highlightedModule === 'self_evaluation' }]" :style="moduleOrder('self_evaluation')" data-module="self_evaluation">{{ displayTitle('self_evaluation', t.selfEvaluation) }}</h2>
               <!-- 每条{{ t.selfEvaluation }}独立分页 -->
-              <template v-for="(item, idx) in data.self_evaluation">
-                <div v-if="item && isItemVisible({index: getItemIndex('self-eval-item', idx)}, page - 1)" :key="'self-eval-'+idx" class="self-eval-item" :class="{ 'content-highlight': highlightedModule === 'self_evaluation' }">
+              <template v-for="(item, idx) in selfEvaluationValues">
+                <div v-if="item && isItemVisible({index: getItemIndex('self-eval-item', idx)}, page - 1)" :key="'self-eval-'+idx" class="self-eval-item" :class="[`self-${moduleLayout('self_evaluation').preset}`, { 'content-highlight': highlightedModule === 'self_evaluation' }]" :style="moduleOrder('self_evaluation')">
                   <span v-html="formatText(item)"></span>
                 </div>
               </template>
@@ -1415,6 +1467,26 @@ const getItemIndex = (type, dataIndex) => {
   </div>
 
   <!-- 成功提示弹窗 -->
+  <div v-if="showLayoutGuide" class="success-dialog-overlay layout-guide-overlay" @click.self="showLayoutGuide = false">
+    <div class="layout-guide-dialog" role="dialog" aria-modal="true" aria-labelledby="layout-guide-title">
+      <div class="layout-guide-header">
+        <div>
+          <h3 id="layout-guide-title">可用排版预设</h3>
+          <p>系统会把自然语言需求映射到以下受控预设，并在确认框中列出实际匹配结果。右侧先预览，接受后才保存。</p>
+        </div>
+        <button class="layout-guide-close" aria-label="关闭" @click="showLayoutGuide = false">×</button>
+      </div>
+      <div class="layout-guide-grid">
+        <article v-for="group in layoutPresetGroups" :key="group.title" class="layout-guide-card">
+          <h4>{{ group.title }}</h4>
+          <p>{{ group.description }}</p>
+          <button @click="usePresetPrompt(group.prompt)">使用示例</button>
+        </article>
+      </div>
+      <p class="layout-guide-footnote">若需求无法由现有预设准确实现，确认框只会展示实际匹配到的方案；不满意可直接拒绝，不会修改简历。</p>
+    </div>
+  </div>
+
   <div v-if="showSuccessDialog" class="success-dialog-overlay" @click.self="showSuccessDialog = false">
     <div class="success-dialog">
       <div class="success-icon">
@@ -1920,6 +1992,19 @@ const getItemIndex = (type, dataIndex) => {
   background: rgba(255, 255, 255, 0.11);
 }
 
+.layout-guide-btn {
+  width: 100%;
+  min-height: 34px;
+  margin-top: 12px;
+  border: 1px solid rgba(126, 166, 255, 0.35);
+  border-radius: 9px;
+  color: #dce7ff;
+  background: rgba(88, 132, 230, 0.12);
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+.layout-guide-btn:hover { background: rgba(88, 132, 230, 0.2); }
+
 .compact-zoom-stepper button:disabled {
   opacity: 0.35;
   cursor: default;
@@ -2076,6 +2161,8 @@ const getItemIndex = (type, dataIndex) => {
   box-sizing: border-box;
   background: white;
   pointer-events: none;
+  display: flex;
+  flex-direction: column;
 }
 .pages-wrapper {
   display: flex;
@@ -2120,11 +2207,21 @@ const getItemIndex = (type, dataIndex) => {
   box-sizing: border-box;
   word-wrap: break-word;
   overflow-wrap: break-word;
+  display: flex;
+  flex-direction: column;
 }
 .personal-info {
   text-align: center;
   position: relative;
   min-height: 110px;
+}
+.personal-info.basics-left-aligned { text-align: left; }
+.personal-info.basics-left-aligned .contact-info { justify-content: flex-start; }
+.personal-info.contact-stacked .contact-info { flex-direction: column; gap: 0.1em; }
+.personal-info.contact-inline .contact-info > span + span::before {
+  content: '|';
+  margin-right: 0.5em;
+  color: #9ca3af;
 }
 
 .personal-info .name {
@@ -2230,6 +2327,31 @@ const getItemIndex = (type, dataIndex) => {
   color: #6c757d;
   font-weight: 500;
 }
+.school-tag.tag-outline { background: transparent; color: #333; border: 1px solid #333; }
+.school-tag.tag-text { background: transparent; color: #333; padding: 0; border-radius: 0; }
+.section-title.title-plain { border-bottom: 0; padding-bottom: 0; }
+.education-item .education-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.15em 0.8em;
+  align-items: start;
+}
+.education-item .school-info { grid-column: 1; grid-row: 1; }
+.education-item .education-info-column { grid-column: 1; grid-row: 2; }
+.education-item .graduation-date { grid-column: 2; grid-row: 1; }
+.education-item.preset-compact .education-header {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  column-gap: 0.65em;
+}
+.education-item.preset-compact .education-info-column { grid-column: 2; grid-row: 1; }
+.education-item.preset-compact .graduation-date { grid-column: 3; grid-row: 1; }
+.education-item.preset-three-column .education-header {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr) auto;
+  column-gap: 0.8em;
+}
+.education-item.preset-three-column .education-info-column { grid-column: 2; grid-row: 1; }
+.education-item.preset-three-column .graduation-date { grid-column: 3; grid-row: 1; }
+.education-info-column .academic-metrics { margin-top: 0.15em; }
 .academic-metrics {
   display: flex;
   flex-wrap: wrap;
@@ -2258,6 +2380,27 @@ const getItemIndex = (type, dataIndex) => {
   color: #333;
   font-weight: bold;
 }
+.details-paragraph .list-item { padding-left: 0; list-style: none; }
+.details-paragraph .list-item::before { content: none; }
+.work-item.preset-compact .work-main { display: flex; align-items: baseline; gap: 0.5em; }
+.work-item.preset-compact .position::before { content: '· '; }
+.project-item.preset-compact .project-header { justify-content: flex-start; }
+.project-item.preset-compact .project-role { flex: 1; }
+.work-item.date-inline .work-header,
+.project-item.date-inline .project-header { justify-content: flex-start; }
+.work-item.date-inline .work-period,
+.project-item.date-inline .project-role { margin-left: 0.55em; }
+.others-tags .other-value {
+  display: inline-block;
+  padding: 0.08em 0.45em;
+  margin: 0.1em 0.2em 0.1em 0;
+  border: 1px solid #9ca3af;
+  border-radius: 999px;
+}
+.others-tags .cert-lang-separator { display: none; }
+.others-stacked { display: flex; flex-direction: column; align-items: flex-start; }
+.self-bullets { position: relative; padding-left: 1.25em; }
+.self-bullets::before { content: '•'; position: absolute; left: 0; font-weight: 700; }
 .self-eval-item {
   font-size: 0.8em;
   line-height: var(--line-height, 1.6);
@@ -2401,6 +2544,57 @@ const getItemIndex = (type, dataIndex) => {
   width: 32px;
   height: 32px;
   color: #22c55e;
+}
+
+.layout-guide-overlay { padding: 24px; background: rgba(7, 8, 11, 0.72); }
+.layout-guide-dialog {
+  width: min(820px, 96vw);
+  max-height: min(760px, 90vh);
+  overflow: auto;
+  padding: 24px;
+  color: #f1f2f5;
+  background: #24262d;
+  border: 1px solid #40434d;
+  border-radius: 16px;
+  box-shadow: 0 26px 80px rgba(0, 0, 0, 0.5);
+}
+.layout-guide-header { display: flex; justify-content: space-between; gap: 24px; }
+.layout-guide-header h3 { margin: 0 0 8px; font-size: 18px; }
+.layout-guide-header p,
+.layout-guide-footnote { margin: 0; color: #aeb3c0; font-size: 13px; line-height: 1.6; }
+.layout-guide-close {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 8px;
+  color: #d8dbe2;
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 24px;
+  cursor: pointer;
+}
+.layout-guide-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 20px 0 16px;
+}
+.layout-guide-card { padding: 14px; background: #2b2e36; border: 1px solid #3e424d; border-radius: 12px; }
+.layout-guide-card h4 { margin: 0 0 6px; font-size: 14px; }
+.layout-guide-card p { min-height: 42px; margin: 0 0 12px; color: #b5bac5; font-size: 12px; line-height: 1.55; }
+.layout-guide-card button {
+  border: 0;
+  padding: 7px 10px;
+  border-radius: 7px;
+  color: #e8efff;
+  background: #3b5f9f;
+  font-size: 12px;
+  cursor: pointer;
+}
+.layout-guide-card button:hover { background: #4a70b2; }
+@media (max-width: 680px) {
+  .layout-guide-grid { grid-template-columns: 1fr; }
+  .layout-guide-dialog { padding: 18px; }
 }
 
 .success-icon.error-icon {

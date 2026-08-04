@@ -108,15 +108,24 @@ const handleUndoClick = () => emit('undoClick', { message_id: props.message.id }
     <!-- 只有当消息未被处理过时才显示 -->
     <div v-if="props.message.type === 'confirm' && props.message.confirm_id && !props.message.handled" class="confirm-area">
       <p class="confirm-content">{{ props.message.content }}</p>
+      <p class="preview-status">右侧已显示本次修改的临时预览，接受前不会保存。</p>
       <div v-if="changes.length" class="change-preview-list">
         <label v-for="change in changes" :key="change.id" class="change-preview-item">
           <input v-model="selectedChangeIds" type="checkbox" :value="change.id" />
           <span class="change-preview-copy">
             <strong>{{ change.label }}</strong>
-            <span class="change-values">
+            <span v-if="change.kind !== 'layout'" class="change-values">
               <del>{{ change.before_display }}</del>
               <span aria-hidden="true">→</span>
               <ins>{{ change.after_display }}</ins>
+            </span>
+            <span v-else class="layout-change-details">
+              <span v-for="detail in change.details || []" :key="detail.field" class="change-values">
+                <small>{{ detail.field_label || detail.field }}</small>
+                <del>{{ detail.before_display }}</del>
+                <span aria-hidden="true">→</span>
+                <ins>{{ detail.after_display }}</ins>
+              </span>
             </span>
           </span>
         </label>
@@ -609,6 +618,17 @@ const handleUndoClick = () => emit('undoClick', { message_id: props.message.id }
   box-shadow: none;
 }
 
+.preview-status {
+  margin: -4px 0 14px;
+  padding: 9px 11px;
+  border: 1px solid rgba(103, 146, 235, 0.24);
+  border-radius: 8px;
+  color: #b9c8e8;
+  background: rgba(77, 112, 184, 0.08);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
 .change-preview-list {
   display: flex;
   flex-direction: column;
@@ -643,6 +663,17 @@ const handleUndoClick = () => emit('undoClick', { message_id: props.message.id }
 .change-values {
   display: flex;
   min-width: 0;
+}
+
+.layout-change-details {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.layout-change-details .change-values small {
+  min-width: 82px;
+  color: #b8b9c0;
 }
 
 .change-preview-copy {

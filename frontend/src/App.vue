@@ -8,6 +8,7 @@ import MobileTabBar from './components/MobileTabBar.vue'
 import BrandLogo from './components/BrandLogo.vue'
 import { labels } from './utils/labels.js'
 import { buildAuthorizationHeaders, loadAppConfig } from './config/appMode.js'
+import { normalizeLayoutConfig } from './utils/layoutConfig.js'
 
 // 响应式布局状态
 const isMobileView = ref(false)
@@ -95,6 +96,10 @@ const currentTaskId = computed(() => isWorkspaceRoute.value ? String(route.param
 const currentProject = ref(null)
 const projectTasks = ref([])
 const currentTask = computed(() => projectTasks.value.find(task => task.id === currentTaskId.value) || null)
+const previewLayoutConfig = ref(null)
+const activeLayoutConfig = computed(() => normalizeLayoutConfig(
+  previewLayoutConfig.value || currentTask.value?.layout_config || {}
+))
 const showTaskCreateDialog = ref(false)
 const newTaskTitle = ref('')
 const taskCreateMode = ref('copy')
@@ -143,6 +148,9 @@ const userInput = ref('')
 const uploadedFiles = ref([])
 // 简历数据
 const resumeData = ref(null)
+// 确认框出现期间使用的未保存简历候选，仅用于右侧临时预览
+const previewResumeData = ref(null)
+const activeResumeData = computed(() => previewResumeData.value || resumeData.value)
 // JD数据（新增）
 const jdData = ref(null)
 // 加载状态
@@ -413,6 +421,8 @@ async function loadWorkspace() {
   jdData.value = null
   showStartDialog.value = false
   hasConfirmArea.value = false
+  previewLayoutConfig.value = null
+  previewResumeData.value = null
 
   const response = await fetch(`/projects/${route.params.projectId}`, {
     headers: getAuthorizationHeaders()
@@ -579,6 +589,12 @@ function showNotice(message, type = 'error') {
   uiNoticeTimer = setTimeout(() => {
     uiNotice.value.visible = false
   }, 3600)
+}
+
+function useLayoutPrompt(prompt) {
+  userInput.value = prompt
+  showNotice('排版示例已填入输入框，可修改后发送', 'success')
+  nextTick(() => document.querySelector('.textarea-container textarea:not(:disabled)')?.focus())
 }
 
 // 加载初始数据的函数（同时检查首次访问）
@@ -881,6 +897,8 @@ async function sendMessage() {
         : message
     ))
     hasConfirmArea.value = false
+    previewResumeData.value = null
+    previewLayoutConfig.value = null
   }
 
   const input = userInput.value.trim()
@@ -1083,6 +1101,10 @@ async function sendMessage() {
                   handled: false,
                   streaming: false
                 }
+                previewResumeData.value = data.resume_candidate || null
+                previewLayoutConfig.value = data.layout_candidate
+                  ? normalizeLayoutConfig(data.layout_candidate)
+                  : null
                 const existingConfirmIndex = messages.value.findIndex(
                   message => message.type === 'confirm' && message.confirm_id === data.confirm_id
                 )
@@ -1094,6 +1116,8 @@ async function sendMessage() {
                 // 标记有 confirm area，禁用输入
                 hasConfirmArea.value = true
               } else if (data.type === 'proposal_error') {
+                previewResumeData.value = null
+                previewLayoutConfig.value = null
                 if (loadingTextInterval) {
                   clearTimeout(loadingTextInterval)
                   loadingTextInterval = null
@@ -1177,6 +1201,10 @@ async function handleOptionClick({ confirm_id, value, selected_change_ids = [] }
     }
   }
   hasConfirmArea.value = false
+  if (value === 'cancel') {
+    previewResumeData.value = null
+    previewLayoutConfig.value = null
+  }
 
   const selectedSuffix = selected_change_ids.length ? `:${selected_change_ids.join(',')}` : ''
   const confirmMessage = `[CONFIRM_REPLY:${confirm_id}:${value}${selectedSuffix}]`
@@ -1332,6 +1360,8 @@ async function handleUndoClick({ message_id }) {
         : message
     ))
     hasConfirmArea.value = false
+    previewResumeData.value = null
+    previewLayoutConfig.value = null
     await updateResumeData()
     showNotice('已撤回本次修改', 'success')
     await fetch('/save_conversation', {
@@ -1378,6 +1408,25 @@ async function updateResumeData() {
 
     // 先更新数据
     resumeData.value = newData
+
+    if (currentTaskId.value) {
+      const layoutResponse = await fetch(`/tasks/${currentTaskId.value}/layout`, {
+        headers: getAuthorizationHeaders()
+      })
+      if (layoutResponse.ok) {
+        const layoutPayload = await layoutResponse.json()
+        const normalizedLayout = normalizeLayoutConfig(layoutPayload.layout_config)
+        projectTasks.value = projectTasks.value.map(task => (
+          task.id === currentTaskId.value
+            ? { ...task, layout_config: normalizedLayout }
+            : task
+        ))
+      }
+    }
+    if (!hasConfirmArea.value) {
+      previewResumeData.value = null
+      previewLayoutConfig.value = null
+    }
 
     // 检测变化并触发高亮
     const changedModule = detectChangedModule(oldData, newData)
@@ -3202,7 +3251,7 @@ watch(
       <!-- 右侧简历预览区 -->
       <div class="resume-section">
         <div class="resume-content">
-          <ResumePreview :data="resumeData" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :highlighted-module="highlightedModule" :jd-data="jdData" :lang="currentLang" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @toggle-lang="switchLang" />
+          <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :highlighted-module="highlightedModule" :jd-data="jdData" :lang="currentLang" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" />
         </div>
       </div>
       </template>
@@ -3293,7 +3342,7 @@ watch(
 
           <!-- 简历 Tab 内容 -->
           <div v-else-if="currentTab === 'resume'" class="mobile-resume-view" key="resume">
-            <ResumePreview :data="resumeData" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :highlighted-module="highlightedModule" :jd-data="jdData" :is-mobile-view="isMobileView" :lang="currentLang" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @toggle-lang="switchLang" />
+            <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :highlighted-module="highlightedModule" :jd-data="jdData" :is-mobile-view="isMobileView" :lang="currentLang" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" />
           </div>
         </Transition>
 

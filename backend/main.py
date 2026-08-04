@@ -57,7 +57,8 @@ from .database import (
     get_parsing_status, set_parsing_status, set_source_page_count, get_user_photo,
     list_resume_projects, create_resume_project, get_resume_project,
     list_project_tasks, list_user_resume_sources, create_resume_task, get_resume_task,
-    delete_resume_project, delete_resume_task, undo_latest_resume_revision
+    delete_resume_project, delete_resume_task, undo_latest_resume_revision,
+    get_task_layout_config, save_task_layout_config
 )
 from .auth import (
     verify_password, get_password_hash, create_access_token,
@@ -196,6 +197,14 @@ class CreateTaskRequest(BaseModel):
     jd_data: dict | None = None
 
 
+class SaveLayoutRequest(BaseModel):
+    layout_config: dict
+
+
+class ResetLayoutRequest(BaseModel):
+    section: str = "all"
+
+
 class LLMSettingsRequest(BaseModel):
     """本地 LLM 服务商配置。api_key 为空时保留该服务商的现有密钥。"""
     provider: str = "kimi_api"
@@ -206,6 +215,7 @@ class LLMSettingsRequest(BaseModel):
 
 
 def serialize_task(task):
+    from .layout_config import normalize_layout_config
     resume_data = task.resume_data or {}
     basics = resume_data.get("basics", {}) if isinstance(resume_data, dict) else {}
     jd_data = task.jd_data or {}
@@ -222,6 +232,7 @@ def serialize_task(task):
         ),
         "message_count": len(task.messages or []),
         "source_page_count": max(1, int(task.source_page_count or 1)),
+        "layout_config": normalize_layout_config(task.layout_config),
         "created_at": task.created_at.isoformat() if task.created_at else None,
         "updated_at": task.updated_at.isoformat() if task.updated_at else None,
     }
@@ -698,14 +709,61 @@ async def undo_task_resume_change(
     current_user = Depends(get_current_user),
 ):
     """Undo the latest assistant-applied revision when it is still current."""
-    result, resume_data = undo_latest_resume_revision(db, current_user.id, task_id)
+    result, resume_data, layout_config = undo_latest_resume_revision(db, current_user.id, task_id)
     if result == "not_found":
         raise HTTPException(status_code=404, detail="岗位版本不存在")
     if result == "no_revision":
         raise HTTPException(status_code=409, detail="没有可以撤回的修改")
     if result == "conflict":
         raise HTTPException(status_code=409, detail="简历在本次修改后又发生了变化，无法直接撤回")
-    return {"success": True, "message": "已撤回本次修改", "resume_data": resume_data}
+    return {
+        "success": True,
+        "message": "已撤回本次修改",
+        "resume_data": resume_data,
+        "layout_config": layout_config,
+    }
+
+
+@app.get("/tasks/{task_id}/layout")
+async def get_task_layout(
+    task_id: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    config = get_task_layout_config(db, current_user.id, task_id)
+    if config is None:
+        raise HTTPException(status_code=404, detail="岗位版本不存在")
+    return {"layout_config": config}
+
+
+@app.put("/tasks/{task_id}/layout")
+async def put_task_layout(
+    task_id: str,
+    request: SaveLayoutRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    config = save_task_layout_config(db, current_user.id, task_id, request.layout_config)
+    if config is None:
+        raise HTTPException(status_code=404, detail="岗位版本不存在")
+    return {"success": True, "layout_config": config}
+
+
+@app.post("/tasks/{task_id}/layout/reset")
+async def reset_task_layout(
+    task_id: str,
+    request: ResetLayoutRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    from .layout_config import reset_layout_section
+    current = get_task_layout_config(db, current_user.id, task_id)
+    if current is None:
+        raise HTTPException(status_code=404, detail="岗位版本不存在")
+    config = save_task_layout_config(
+        db, current_user.id, task_id, reset_layout_section(current, request.section)
+    )
+    return {"success": True, "layout_config": config}
 
 
 @app.post("/health")
@@ -1038,7 +1096,9 @@ async def export_pdf_endpoint(request: Request, db: Session = Depends(get_db), c
         photo = get_user_photo(db, current_user.id) or None
 
         generate_pdf = get_pdf_generator()
-        pdf_bytes = generate_pdf(resume_data, style, photo, lang)
+        pdf_bytes = generate_pdf(
+            resume_data, style, photo, lang, request_data.get("layout_config")
+        )
 
         return StreamingResponse(
             iter([pdf_bytes]),
@@ -1071,6 +1131,7 @@ async def export_docx_endpoint(request: Request, db: Session = Depends(get_db), 
             request_data.get("style", {}),
             get_user_photo(db, current_user.id) or None,
             request_data.get("lang", "zh"),
+            request_data.get("layout_config"),
         )
         return StreamingResponse(
             iter([docx_bytes]),
@@ -1190,6 +1251,7 @@ async def chat_endpoint(
         # 使用数据库中的数据
         initial_resume_data = resume_data if resume_data else (get_user_resume(db, current_user.id) or {})
         initial_jd_data = jd_data if jd_data else (get_user_jd(db, current_user.id) or {})
+        initial_layout_data = get_task_layout_config(db, current_user.id, task_id)
 
         # 从数据库获取待确认状态
         from .database import get_pending_confirmation
@@ -1206,6 +1268,7 @@ async def chat_endpoint(
             "messages": all_messages,  # 保留完整的历史消息
             "resume_data": initial_resume_data,
             "jd_data": initial_jd_data,
+            "layout_data": initial_layout_data,
             "pending_confirmation": initial_pending_confirmation,  # 从数据库加载待确认状态
             "user_id": current_user.id,  # 添加用户ID，用于数据隔离
             "task_id": task_id,
@@ -1353,6 +1416,7 @@ async def chat_endpoint(
             messages_list = list(all_messages)  # 从 initial_state 开始
             print(f"[StreamResponse] messages_list 初始化: {len(messages_list)} 条消息")
             resume_data_result = {}
+            layout_data_result = initial_layout_data
             pending_confirmation_result = None  # 保存待确认状态
             confirmation_processed = False
             confirmation_success = False
@@ -1486,6 +1550,8 @@ async def chat_endpoint(
                                     "content": confirm_data["content"],
                                     "options": confirm_data["options"],
                                     "changes": confirm_data.get("changes", []),
+                                    "resume_candidate": confirm_data.get("resume_candidate"),
+                                    "layout_candidate": confirm_data.get("layout_candidate"),
                                     "confirm_id": confirm_id,
                                     "session_id": session_id,
                                 }) + '\n\n'
@@ -1498,6 +1564,8 @@ async def chat_endpoint(
 
                         if "resume_data" in output and not confirm_data:
                             resume_data_result = output["resume_data"]
+                        if "layout_data" in output and not confirm_data:
+                            layout_data_result = output["layout_data"]
 
                 if proposal_error_result:
                     final_content = proposal_error_result
@@ -1534,6 +1602,7 @@ async def chat_endpoint(
                 "request_id": request_id,
                 "confirmation_processed": confirmation_processed,
                 "confirmation_success": confirmation_success,
+                "layout_config": layout_data_result,
             }) + '\n\n'
 
             # 保存消息到数据库（异步执行，不阻塞 SSE 响应）
@@ -1552,6 +1621,7 @@ async def chat_endpoint(
                 "request_id": request_id,
                 "confirmation_processed": confirmation_processed,
                 "confirmation_success": confirmation_success,
+                "layout_config": layout_data_result,
             }) + '\n\n'
 
         return StreamingResponse(stream_response(config), media_type="text/event-stream")
