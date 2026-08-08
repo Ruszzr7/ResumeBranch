@@ -1,6 +1,10 @@
 // 中英文语言字典
 export const labels = {
   zh: {
+    researchInterests: '研究方向',
+    honors: '主要荣誉',
+    skillsSection: '专业技能',
+    birthDate: '出生年月',
     // 区块标题
     education: '教育经历',
     workExperience: '工作经历',
@@ -68,6 +72,10 @@ export const labels = {
     resume: '简历',
   },
   en: {
+    researchInterests: 'Research Interests',
+    honors: 'Honors',
+    skillsSection: 'Professional Skills',
+    birthDate: 'Date of Birth',
     // 区块标题
     education: 'Education',
     workExperience: 'Work Experience',

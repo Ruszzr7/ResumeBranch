@@ -10,8 +10,9 @@ set "PID_FILE=%RUN_DIR%\backend.pid"
 set "OUT_LOG=%RUN_DIR%\backend.out.log"
 set "ERR_LOG=%RUN_DIR%\backend.err.log"
 set "NO_PAUSE=0"
+set "RESTART=1"
 if /I "%~1"=="--worker" goto worker
-if /I "%~1"=="--no-pause" set "NO_PAUSE=1"
+call :parse_args %*
 
 echo ============================================================
 echo Resume Assistant - Backend
@@ -37,13 +38,23 @@ if errorlevel 1 (
 )
 if not exist "%RUN_DIR%" mkdir "%RUN_DIR%"
 
+if "%RESTART%"=="1" (
+  call :backend_ready
+  if not errorlevel 1 (
+    call :stop_backend
+    if errorlevel 1 goto failed
+  ) else (
+    echo [INFO] Backend is not running; starting it now.
+  )
+)
+
 call :backend_ready
 if not errorlevel 1 (
   call :record_pid
   echo [OK] Backend is already running.
   goto ready
 )
-call :port_in_use
+netstat.exe -ano -p tcp | findstr /R /C:":8000 .*LISTENING" >nul 2>&1
 if not errorlevel 1 (
   echo [ERROR] Port 8000 is occupied by another process.
   echo Stop that process, then run this script again.
@@ -93,15 +104,48 @@ exit /b 1
 curl.exe --silent --fail --max-time 2 -X POST http://127.0.0.1:8000/health >nul 2>&1
 exit /b %errorlevel%
 
-:port_in_use
-netstat.exe -ano -p tcp | findstr /R /C:":8000 .*LISTENING" >nul 2>&1
-exit /b %errorlevel%
-
 :record_pid
 set "SERVICE_PID="
 for /f "tokens=5" %%P in ('netstat.exe -ano -p tcp ^| findstr /R /C:":8000 .*LISTENING"') do if not defined SERVICE_PID set "SERVICE_PID=%%P"
 if defined SERVICE_PID >"%PID_FILE%" echo !SERVICE_PID!
 exit /b 0
+
+:stop_backend
+call :record_pid
+if not defined SERVICE_PID (
+  echo [ERROR] Backend responded on port 8000, but its process ID could not be determined.
+  exit /b 1
+)
+echo [INFO] Restart requested. Stopping backend process !SERVICE_PID!...
+taskkill.exe /PID !SERVICE_PID! /T /F >nul 2>&1
+if errorlevel 1 (
+  echo [ERROR] Unable to stop backend process !SERVICE_PID!.
+  exit /b 1
+)
+set /a STOP_WAIT_COUNT=0
+:wait_backend_stop
+netstat.exe -ano -p tcp | findstr /R /C:":8000 .*LISTENING" >nul 2>&1
+if errorlevel 1 (
+  del /q "%PID_FILE%" >nul 2>&1
+  set "SERVICE_PID="
+  echo [OK] Previous backend process stopped.
+  exit /b 0
+)
+set /a STOP_WAIT_COUNT+=1
+if !STOP_WAIT_COUNT! GEQ 15 (
+  echo [ERROR] Port 8000 is still occupied after stopping the backend.
+  exit /b 1
+)
+ping.exe -n 2 127.0.0.1 >nul
+goto wait_backend_stop
+
+:parse_args
+if "%~1"=="" exit /b 0
+if /I "%~1"=="--no-pause" set "NO_PAUSE=1"
+if /I "%~1"=="--restart" set "RESTART=1"
+if /I "%~1"=="--start-only" set "RESTART=0"
+shift
+goto parse_args
 
 :maybe_pause
 if "%NO_PAUSE%"=="0" (

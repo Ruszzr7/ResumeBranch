@@ -1,10 +1,12 @@
 import unittest
 from io import BytesIO
+from unittest.mock import patch
 
 from docx import Document
 
 from backend.docx_generator import generate_docx
-from backend.llm_providers import public_registry, temperature_supported, validate_profile
+from backend.llm_providers import PROVIDERS, public_registry, role_temperature, temperature_supported, validate_profile
+from backend import resume_agent
 
 
 class DocxGeneratorTests(unittest.TestCase):
@@ -37,20 +39,33 @@ class DocxGeneratorTests(unittest.TestCase):
 
 class ProviderRulesTests(unittest.TestCase):
     def test_public_provider_registry_does_not_publish_stale_models_or_urls(self):
+        for definition in PROVIDERS.values():
+            self.assertNotIn("models", definition)
+            self.assertNotIn("default_model", definition)
         for provider in public_registry():
             self.assertNotIn("models", provider)
             self.assertNotIn("default_model", provider)
             self.assertNotIn("base_url", provider)
 
     def test_model_specific_temperature_rules(self):
-        self.assertFalse(temperature_supported("kimi_coding", "k3"))
+        self.assertTrue(temperature_supported("kimi_coding", "k3"))
         self.assertFalse(temperature_supported("openai", "gpt-5.2"))
         self.assertTrue(temperature_supported("openai", "gpt-4.1"))
         self.assertFalse(temperature_supported("deepseek", "deepseek-reasoner"))
+        self.assertEqual(role_temperature("openai_chat", "k3-256k", 0.0), 1.0)
+        self.assertEqual(role_temperature("openai_chat", "kimi-for-coding", 0.1), 1.0)
 
-    def test_glm_rejects_zero_temperature(self):
-        with self.assertRaisesRegex(ValueError, "temperature"):
-            validate_profile("glm", "glm-5.2", "https://open.bigmodel.cn/api/paas/v4/", 0.0)
+    def test_validation_no_longer_depends_on_vendor_temperature_ranges(self):
+        validate_profile("openai_chat", "glm-5.2", "https://open.bigmodel.cn/api/paas/v4/", 0.0)
+
+    def test_role_temperature_is_not_overridden_by_saved_profile(self):
+        with (
+            patch.object(resume_agent, "LLM_TEMPERATURE", 1.0),
+            patch.object(resume_agent, "create_llm_for_config", return_value=object()) as factory,
+        ):
+            resume_agent.create_llm(temperature=0.0)
+
+        self.assertEqual(factory.call_args.kwargs["temperature"], 0.0)
 
 
 if __name__ == "__main__":

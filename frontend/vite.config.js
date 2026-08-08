@@ -2,6 +2,8 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { fileURLToPath, URL } from 'node:url'
 
+const apiTarget = process.env.VITE_API_TARGET || 'http://localhost:8000'
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [vue()],
@@ -13,15 +15,15 @@ export default defineConfig({
   server: {
     proxy: {
       '/app': {
-        target: 'http://localhost:8000',
+        target: apiTarget,
         changeOrigin: true
       },
       '/auth': {
-        target: 'http://localhost:8000',
+        target: apiTarget,
         changeOrigin: true
       },
       '/projects': {
-        target: 'http://localhost:8000',
+        target: apiTarget,
         changeOrigin: true,
         bypass(req) {
           // The workspace page and the Projects API intentionally share the
@@ -35,67 +37,67 @@ export default defineConfig({
         }
       },
       '/resume-sources': {
-        target: 'http://localhost:8000',
+        target: apiTarget,
         changeOrigin: true
       },
       '/tasks': {
-        target: 'http://localhost:8000',
+        target: apiTarget,
         changeOrigin: true
       },
       '/settings': {
-        target: 'http://localhost:8000',
+        target: apiTarget,
         changeOrigin: true
       },
       '/health': {
-        target: 'http://localhost:8000',
+        target: apiTarget,
         changeOrigin: true
       },
       '/load_resume': {
-        target: 'http://localhost:8000',
+        target: apiTarget,
         changeOrigin: true
       },
       '/save_resume': {
-        target: 'http://localhost:8000',
+        target: apiTarget,
         changeOrigin: true
       },
       '/load_jd': {
-        target: 'http://localhost:8000',
+        target: apiTarget,
         changeOrigin: true
       },
       '/save_jd': {
-        target: 'http://localhost:8000',
+        target: apiTarget,
         changeOrigin: true
       },
       '/load_conversation': {
-        target: 'http://localhost:8000',
+        target: apiTarget,
         changeOrigin: true
       },
       '/save_conversation': {
-        target: 'http://localhost:8000',
+        target: apiTarget,
         changeOrigin: true
       },
       '/chat': {
-        target: 'http://localhost:8000',
+        target: apiTarget,
         changeOrigin: true
       },
       '/parse_jd': {
-        target: 'http://localhost:8000',
+        target: apiTarget,
         changeOrigin: true
       },
       '/export_pdf': {
-        target: 'http://localhost:8000',
+        target: apiTarget,
         changeOrigin: true
       },
       '/export_docx': {
-        target: 'http://localhost:8000',
+        target: apiTarget,
         changeOrigin: true
       },
       '/confirm': {
-        target: 'http://localhost:8000',
+        target: apiTarget,
         changeOrigin: true
       },
       '/api': {
-        target: 'http://localhost:8000',
+        target: apiTarget,
         changeOrigin: true
       },
       '/ws': {

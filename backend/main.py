@@ -13,13 +13,17 @@
 import json
 import asyncio
 import base64
+import hashlib
 import platform
 import subprocess
 import os
 import sys
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
+
+import httpx
 
 
 def _configure_console_encoding():
@@ -39,15 +43,12 @@ from fastapi import FastAPI, Request, UploadFile, File, Form, Depends, HTTPExcep
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
-
 # 导入 resume_agent 中的 graph 和 conversation_llm
 from . import resume_agent
 from .resume_agent import LLM_ENABLED, conversation_llm, graph
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, SystemMessage
-from langchain_core.prompts import ChatPromptTemplate
 
 # 导入自定义模块
 from .database import (
@@ -66,13 +67,34 @@ from .auth import (
 )
 from .config import APP_MODE, LOCAL_USER_EMAIL, is_local_mode
 from .llm_providers import (
+    gateway_config,
+    get_role_config,
     load_profiles,
-    save_profile,
+    save_role_config,
     serialize_settings,
-    temperature_supported,
-    validate_profile,
+    validate_role_config,
 )
-from .multimodal_files import build_file_message_part
+from .llm_gateway import test_chat_connection
+from .parser_capability import verify_parser_capabilities
+from .model_discovery import discover_models
+from .llm_gateway import invoke_document, parse_json_output
+from .harness.memory import (
+    CompressionState,
+    compress_context_with_llm as _compress_context_with_llm,
+    notify_compression_complete as _notify_compression_complete,
+    wait_for_compression as _wait_for_compression,
+)
+from .harness.persistence import persist_turn_state
+from .harness.workflow import WorkflowCheckpointManager, build_workflow_thread_id
+from .harness.interview import (
+    INTERVIEW_ACTIONS,
+    INTERVIEW_MODES,
+    interview_feature_config,
+    is_active_interview_workflow,
+    resolve_interview_action,
+    workflow_public_state,
+)
+from .harness.observability import harness_metrics
 
 # PDF 生成器 - 懒加载（在 API 调用时才导入）
 _pdf_generator = None
@@ -81,34 +103,16 @@ _pdf_generator = None
 # 上下文压缩状态管理
 # =============================================================================
 
-class CompressionState:
-    """全局压缩状态管理"""
-    compressing = False  # 是否正在压缩
-    pending_futures = []  # 等待压缩完成的 Future 列表
-
 compression_state = CompressionState()
-
-# 上下文压缩配置
-MAX_HUMAN_MESSAGES = 20  # 最多保留20条HumanMessage，提早触发压缩
-KEEP_RECENT = 5  # 保留最近5条不压缩，减少上下文大小
-
 
 def wait_for_compression():
     """等待当前压缩完成（如果正在压缩）"""
-    if compression_state.compressing:
-        future = asyncio.get_event_loop().create_future()
-        compression_state.pending_futures.append(future)
-        return future
-    return None
+    return _wait_for_compression(compression_state)
 
 
 def notify_compression_complete():
     """通知压缩完成，处理等待中的请求"""
-    compression_state.compressing = False
-    for future in compression_state.pending_futures:
-        if not future.done():
-            future.set_result(True)
-    compression_state.pending_futures.clear()
+    _notify_compression_complete(compression_state)
 
 
 def _setup_weasyprint_env():
@@ -206,12 +210,26 @@ class ResetLayoutRequest(BaseModel):
 
 
 class LLMSettingsRequest(BaseModel):
-    """本地 LLM 服务商配置。api_key 为空时保留该服务商的现有密钥。"""
-    provider: str = "kimi_api"
+    """Role-specific LLM configuration. Empty api_key preserves the stored key."""
+    role: str = "chat"
     model: str
     base_url: str
     api_key: str | None = None
-    temperature: float | None = None
+    adapter: str = "auto"
+    verified: bool = False
+    capabilities: dict = Field(default_factory=dict)
+
+
+class LLMModelsRequest(BaseModel):
+    """Best-effort model listing; api_key may reuse the stored provider key."""
+    role: str = "chat"
+    base_url: str
+    api_key: str | None = None
+
+
+class ConfirmResumeImportRequest(BaseModel):
+    resume_data: dict
+    source_page_count: int = 1
 
 
 def serialize_task(task):
@@ -257,105 +275,45 @@ def serialize_project(project, task_count=0):
 # =============================================================================
 
 async def compress_context_with_llm(messages, max_summary_length=1000):
-    """
-    使用 LLM 对早期对话进行语义压缩
-    """
-    if len(messages) <= 5:
-        return messages
-
-    early_messages = messages[:-5]
-    recent_messages = messages[-5:]
-
-    conversation_text = ""
-    for msg in early_messages:
-        role = getattr(msg, 'role', 'unknown') if hasattr(msg, 'role') else type(msg).__name__
-        content = getattr(msg, 'content', str(msg))
-        if isinstance(content, list):
-            text_content = []
-            for c in content:
-                if isinstance(c, dict):
-                    type_key = 'type'
-                    if type_key in c and c[type_key] == 'text':
-                        text_content.append(c)
-            content = str(text_content)
-        conversation_text += f"【{role}】{str(content)[:300]}\n"
-
-    summary_prompt = ChatPromptTemplate.from_messages([
-        ("system", f"""
-        你是高效的对话压缩专家。你的任务是将对话压缩到指定长度，保留最有价值的关键信息与个性化信息。
-
-## 压缩目标
-- 输出摘要长度：不超过{max_summary_length}个汉字（但也不要太短）
-- 每个字都要有价值
-
-## 必须保留的信息（按优先级）
-## 必须保留的信息（按优先级）
-
-1. **讨论过的话题**
-   - 用户和 AI 讨论过哪些主题/话题
-   - 每个话题的关键结论或进展
-   - 哪些话题已结束、哪些还在进行中
-
-2. **用户明确表达的要求和偏好**
-   - 用户对简历的具体修改要求
-   - 用户提到的工作偏好、城市偏好、薪资期望等
-   - 用户明确拒绝或喜欢的风格
-
-3. **用户提及的个人背景**
-   - 用户在对话中提到的额外经历、故事
-   - 用户口头补充的信息（不在简历中的）
-   - 用户的职业规划、转型原因等
-
-4. **用户的性格特点**
-   - 用户的沟通风格（简洁话唠严肃幽默等）
-   - 用户做决策的方式（犹豫果断犹豫等）
-   - 用户的特殊习惯或偏好
-
-5. **修改历史和决策**
-   - 用户确认过的修改点
-   - 用户拒绝过的建议
-   - 用户特别满意的修改
-
-6. **当前上下文**
-   - 用户当前最关心的问题
-   - 当前对话的主题
-
-## 可以丢弃的信息
-- 简历中已有的结构化信息（姓名、岗位、技能等）
-- 客套话、寒暄
-- LLM 的解释性内容
-- 重复的表达
-
-## 输出格式
-【讨论话题】列出所有讨论过的话题及关键结论
-【用户个性化信息】用户提及的个人要求、偏好、背景等
-【修改决策】确认的修改点、拒绝的建议
-【当前状态】用户当前的需求和关注点
-【重要备注】其他需要记住的个性化信息
-"""),
-        ("human", f"待压缩的对话：\n\n{conversation_text}")
-    ])
-
-    try:
-        summary_chain = summary_prompt | conversation_llm
-        summary_result = await summary_chain.ainvoke({})
-        summary_content = summary_result.content.strip()
-        print(f"[Context] LLM 摘要生成成功: {len(summary_content)}字")
-        print(f"[Context] 摘要内容:\n{summary_content}")
-
-        summary_message = SystemMessage(content=summary_content)
-        return [summary_message] + recent_messages
-
-    except Exception as e:
-        print(f"[Context] LLM 摘要生成失败: {e}")
-        return list(messages[-10:])
+    """Compatibility wrapper for the extracted legacy compression behavior."""
+    return await _compress_context_with_llm(
+        messages,
+        conversation_llm,
+        max_summary_length=max_summary_length,
+    )
 
 
 # =============================================================================
 # FastAPI 应用
 # =============================================================================
 
-app = FastAPI(title="ResumeBranch API", version="2.0.0")
+@asynccontextmanager
+async def app_lifespan(app_instance: FastAPI):
+    """Own the durable workflow checkpointer for the server process."""
+    manager = WorkflowCheckpointManager()
+    try:
+        await manager.start()
+        removed = await manager.cleanup_stale()
+        if removed:
+            harness_metrics.increment("workflow_cleanup_threads_total", removed)
+            print(f"[WorkflowCheckpoint] 已清理 {removed} 个过期控制线程")
+    except Exception as exc:
+        # Checkpoint failure must not make existing resume operations unusable.
+        print(f"[WorkflowCheckpoint] 启动失败，本进程将保持无状态兼容运行: {exc}")
+        manager.enabled = False
+    app_instance.state.workflow_checkpoints = manager
+    try:
+        yield
+    finally:
+        await manager.close()
+
+
+app = FastAPI(title="ResumeBranch API", version="2.0.0", lifespan=app_lifespan)
+
+
+def get_workflow_checkpoint_manager():
+    """Return the lifespan-owned manager; direct unit calls may not have one."""
+    return getattr(app.state, "workflow_checkpoints", None)
 
 
 def require_llm_configured():
@@ -406,6 +364,12 @@ async def get_llm_settings(current_user=Depends(get_current_user)):
     return serialize_settings()
 
 
+@app.get("/settings/harness-metrics")
+async def get_harness_metrics(current_user=Depends(get_current_user)):
+    """Expose process-local, data-free counters for operational monitoring."""
+    return harness_metrics.snapshot()
+
+
 @app.post("/settings/llm/test", dependencies=[Depends(require_local_settings)])
 async def test_llm_settings(
     request: LLMSettingsRequest,
@@ -413,33 +377,52 @@ async def test_llm_settings(
 ):
     model = request.model.strip()
     base_url = request.base_url.strip()
-    stored = load_profiles().get("profiles", {}).get(request.provider, {})
+    stored = get_role_config(request.role)
     api_key = (request.api_key or stored.get("api_key", "")).strip()
     try:
-        validate_profile(request.provider, model, base_url, request.temperature)
+        validate_role_config(request.role, model, base_url, request.adapter)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not api_key:
         raise HTTPException(status_code=400, detail="请填写该服务商的 API Key")
 
     try:
-        test_llm = resume_agent.create_llm_for_config(
-            api_key=api_key,
+        candidate = gateway_config(
+            request.role,
+            api_key_override=api_key,
             base_url=base_url,
             model=model,
-            temperature=request.temperature,
-            provider=request.provider,
+            adapter=request.adapter,
         )
-        await asyncio.wait_for(
-            test_llm.ainvoke([HumanMessage(content="Reply with OK only.")]),
-            timeout=35,
+        result = (
+            await verify_parser_capabilities(candidate)
+            if request.role == "parser"
+            else await test_chat_connection(candidate)
         )
     except asyncio.TimeoutError as exc:
         raise HTTPException(status_code=504, detail="连接超时，请检查接口地址或网络") from exc
+    except ValueError as exc:
+        print(f"[Settings] LLM capability test rejected: {exc}")
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         print(f"[Settings] LLM connection test failed: {exc}")
         raise HTTPException(status_code=400, detail="连接失败，请检查模型、接口地址和密钥") from exc
-    return {"success": True, "model": model, "provider": request.provider}
+    return {"model": model, **result}
+
+
+@app.post("/settings/llm/models", dependencies=[Depends(require_local_settings)])
+async def list_llm_models(
+    request: LLMModelsRequest,
+    current_user=Depends(get_current_user),
+):
+    if request.role not in {"chat", "parser"}:
+        raise HTTPException(status_code=400, detail="配置角色必须是 chat 或 parser")
+    stored = get_role_config(request.role)
+    api_key = (request.api_key or stored.get("api_key", "")).strip()
+    try:
+        return await discover_models(request.base_url, api_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.put("/settings/llm", dependencies=[Depends(require_local_settings)])
@@ -449,25 +432,30 @@ async def update_llm_settings(
 ):
     global LLM_ENABLED, conversation_llm
 
-    provider = request.provider.strip()
+    role = request.role.strip()
     model = request.model.strip()
     base_url = request.base_url.strip()
     try:
-        validate_profile(provider, model, base_url, request.temperature)
+        validate_role_config(role, model, base_url, request.adapter)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    save_profile(provider, {
+    save_role_config(role, {
         "model": model,
         "base_url": base_url,
         "api_key": (request.api_key or "").strip(),
-        "temperature": request.temperature if temperature_supported(provider, model) else None,
+        "adapter": request.adapter,
+        "verified": bool(request.verified),
+        "capabilities": request.capabilities if request.verified else {},
+        "verified_at": datetime.now().isoformat() if request.verified else None,
     })
 
-    runtime = resume_agent.reload_llm_config()
-    # Keep legacy references in this module in sync for context compression.
-    LLM_ENABLED = resume_agent.LLM_ENABLED
-    conversation_llm = resume_agent.conversation_llm
+    runtime = {"configured": True}
+    if role == "chat":
+        runtime = resume_agent.reload_llm_config()
+        # Keep legacy references in this module in sync for context compression.
+        LLM_ENABLED = resume_agent.LLM_ENABLED
+        conversation_llm = resume_agent.conversation_llm
     return {
         **serialize_settings(),
         "configured": runtime["configured"],
@@ -650,8 +638,16 @@ async def delete_project(
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user),
 ):
+    task_ids = [task.id for task in list_project_tasks(db, current_user.id, project_id)]
     if not delete_resume_project(db, current_user.id, project_id):
         raise HTTPException(status_code=404, detail="主简历不存在")
+    manager = get_workflow_checkpoint_manager()
+    if manager:
+        for task_id in task_ids:
+            try:
+                await manager.delete_thread(current_user.id, task_id)
+            except Exception as exc:
+                print(f"[WorkflowCheckpoint] 项目删除后清理失败 task={task_id}: {exc}")
     return {"success": True}
 
 
@@ -688,6 +684,30 @@ async def get_task(
     return serialize_task(task)
 
 
+@app.get("/tasks/{task_id}/workflow")
+async def get_task_workflow(
+    task_id: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    """Restore only the public interview control projection after a refresh."""
+    task = get_resume_task(db, current_user.id, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    manager = get_workflow_checkpoint_manager()
+    state = await manager.load_state(current_user.id, task_id) if manager else {}
+    from .database import AgentMemoryState
+    memory_row = db.query(AgentMemoryState).filter(
+        AgentMemoryState.scope_id == f"task:{task_id}",
+        AgentMemoryState.user_id == current_user.id,
+    ).first()
+    interview_memory = memory_row.interview_memory if memory_row else {}
+    return {
+        "state": workflow_public_state(state, interview_memory),
+        "feature": interview_feature_config(current_user.id, task_id),
+    }
+
+
 @app.delete("/tasks/{task_id}")
 async def delete_task(
     task_id: str,
@@ -699,6 +719,12 @@ async def delete_task(
         raise HTTPException(status_code=404, detail="岗位版本不存在")
     if result == "base_task":
         raise HTTPException(status_code=400, detail="基础简历不能单独删除，请删除整份主简历")
+    manager = get_workflow_checkpoint_manager()
+    if manager:
+        try:
+            await manager.delete_thread(current_user.id, task_id)
+        except Exception as exc:
+            print(f"[WorkflowCheckpoint] 任务删除后清理失败 task={task_id}: {exc}")
     return {"success": True}
 
 
@@ -986,6 +1012,7 @@ async def parse_jd_endpoint(request: Request, current_user = Depends(get_current
 @app.post("/api/resume/parse_and_save")
 async def parse_and_save_resume_endpoint(
     file: UploadFile = File(...),
+    draft_only: bool = Form(False),
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
@@ -993,10 +1020,7 @@ async def parse_and_save_resume_endpoint(
     解析简历图片并保存（首次上传流程）
     支持 multipart/form-data 上传文件
     """
-    require_llm_configured()
     try:
-        import re
-
         if not file:
             return JSONResponse(content={"success": False, "error": "未收到文件"}, status_code=400)
 
@@ -1005,50 +1029,46 @@ async def parse_and_save_resume_endpoint(
         if not content_type.startswith('image/') and content_type != 'application/pdf':
             return JSONResponse(content={"success": False, "error": "只支持图片或PDF文件"}, status_code=400)
 
-        # 读取文件内容并保留原始 PDF；原版生产链路由模型原生解析 PDF。
+        parser_profile = get_role_config("parser")
+        if not parser_profile.get("api_key") or not parser_profile.get("base_url") or not parser_profile.get("model"):
+            return JSONResponse(
+                content={"success": False, "error": "尚未配置解析 API，请先在 API 设置的“解析 API”中完成配置和测试。", "error_code": "parser_not_configured"},
+                status_code=409,
+            )
+        if not parser_profile.get("verified"):
+            return JSONResponse(
+                content={"success": False, "error": "解析 API 尚未通过 PDF 与图片能力测试，请先完成测试后再导入。", "error_code": "parser_not_verified"},
+                status_code=409,
+            )
+
         file_content = await file.read()
         from .source_documents import detect_source_page_count
         source_page_count = detect_source_page_count(file_content, content_type)
 
-        from .resume_agent import RESUME_FULL_EXTRACT_PROMPT, jd_parser_llm
+        from .resume_agent import build_resume_extract_prompt, normalize_and_validate_resume
 
         # 设置解析状态为进行中
         set_parsing_status(db, current_user.id, "parsing")
 
-        message_content = [
-            {"type": "text", "text": "请完整提取这份简历中的所有信息，**不要省略任何内容**。"}
-        ]
-        message_content.append(build_file_message_part(
-            file_content,
-            content_type,
-            normalize_image_type=True,
-        ))
+        schema_prompt = build_resume_extract_prompt()
+        parser_gateway = gateway_config("parser")
+        raw = await invoke_document(
+            parser_gateway,
+            content=file_content,
+            mime_type=content_type,
+            filename=file.filename or ("resume.pdf" if content_type == "application/pdf" else "resume.png"),
+            prompt=schema_prompt,
+            timeout=150,
+        )
+        resume_data = normalize_and_validate_resume(parse_json_output(raw), include_defaults=True)
+        text_volume = len(json.dumps(resume_data, ensure_ascii=False).replace('"', '').replace(':', ''))
+        basics = resume_data.get("basics", {})
+        if text_volume < 60 or not any(str(basics.get(key, "")).strip() for key in ("name", "phone", "email")):
+            raise ValueError("解析结果缺少足够的简历内容，请更换更清晰的文件或解析模型后重试。")
 
-        message = HumanMessage(content=message_content)
-
-        # 调用 LLM 解析
-        response = await jd_parser_llm.ainvoke([
-            SystemMessage(content=RESUME_FULL_EXTRACT_PROMPT),
-            message
-        ])
-
-        # 清理 JSON
-        content = response.content.strip()
-        content = re.sub(r'^```json\s*', '', content)
-        content = re.sub(r'^```\s*', '', content)
-        content = re.sub(r'\s*```$', '', content)
-
-        try:
-            resume_data = json.loads(content)
-        except json.JSONDecodeError:
-            # 解析失败
-            set_parsing_status(db, current_user.id, "failed")
-            return JSONResponse(content={"success": False, "error": "解析失败", "raw": content}, status_code=500)
-
-        # 保存到数据库
-        from .database import save_user_resume
-        save_user_resume(db, current_user.id, resume_data)
-        set_source_page_count(db, current_user.id, source_page_count)
+        if not draft_only:
+            save_user_resume(db, current_user.id, resume_data)
+            set_source_page_count(db, current_user.id, source_page_count)
         # 设置解析状态为完成
         set_parsing_status(db, current_user.id, "completed")
 
@@ -1056,14 +1076,45 @@ async def parse_and_save_resume_endpoint(
             "success": True,
             "resume_data": resume_data,
             "source_page_count": source_page_count,
-            "message": "简历解析并保存成功"
+            "source_fingerprint": hashlib.sha256(file_content).hexdigest()[:12],
+            "parser_adapter": parser_gateway.resolved_adapter(),
+            "parser_transport": {
+                "gemini_native": "Gemini Native（PDF 原生）",
+                "openai_responses": "OpenAI Responses（文件输入）",
+                "openai_chat": "OpenAI Chat（图片视觉）",
+            }.get(parser_gateway.resolved_adapter(), parser_gateway.resolved_adapter()),
+            "draft": bool(draft_only),
+            "message": "简历解析完成" if draft_only else "简历解析并保存成功"
         })
     except Exception as e:
         import traceback
         traceback.print_exc()
         # 解析失败
         set_parsing_status(db, current_user.id, "failed")
-        return JSONResponse(content={"success": False, "error": str(e)}, status_code=500)
+        error_message = str(e).strip()
+        if not error_message and isinstance(e, (asyncio.TimeoutError, TimeoutError, httpx.TimeoutException)):
+            error_message = "解析 API 响应超时，请稍后重试；若持续出现，请更换解析模型或接口。"
+        if not error_message:
+            error_message = "解析失败，请检查解析 API 状态后重试。"
+        return JSONResponse(content={"success": False, "error": error_message}, status_code=500)
+
+
+@app.post("/api/resume/confirm_import")
+async def confirm_resume_import_endpoint(
+    request: ConfirmResumeImportRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    from .resume_agent import normalize_and_validate_resume
+    try:
+        resume_data = normalize_and_validate_resume(request.resume_data, include_defaults=True)
+        save_user_resume(db, current_user.id, resume_data)
+        page_count = max(1, min(1000, int(request.source_page_count or 1)))
+        set_source_page_count(db, current_user.id, page_count)
+        set_parsing_status(db, current_user.id, "completed")
+        return {"success": True, "resume_data": resume_data, "source_page_count": page_count}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"导入草稿校验失败：{exc}") from exc
 
 
 @app.get("/api/resume/parsing_status")
@@ -1153,6 +1204,8 @@ async def chat_endpoint(
     files: list[UploadFile] = File(default=[]),
     session_id: str = Form(""),
     request_id: str = Form(""),
+    interaction_mode: str = Form(""),
+    interaction_action: str = Form(""),
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -1177,9 +1230,19 @@ async def chat_endpoint(
                 status_code=400,
             )
         request_id = (request_id or str(uuid.uuid4())).strip()[:64]
+        requested_mode = interaction_mode.strip().lower() if isinstance(interaction_mode, str) else ""
+        requested_action = interaction_action.strip().lower() if isinstance(interaction_action, str) else ""
+        if requested_mode and requested_mode not in INTERVIEW_MODES:
+            return JSONResponse(content={"error": "不支持的助手模式"}, status_code=400)
+        if requested_action and requested_action not in INTERVIEW_ACTIONS:
+            return JSONResponse(content={"error": "不支持的助手动作"}, status_code=400)
 
-        # 构建 graph 配置（用于状态追踪）
-        config = {"configurable": {"thread_id": f"task_{task_id}_session_{session_id}"}}
+        # 执行图本身不持久化业务载荷；配置与工作流检查点统一使用 user + task 隔离键。
+        config = {
+            "configurable": {
+                "thread_id": build_workflow_thread_id(current_user.id, task_id),
+            }
+        }
 
         # 检测用户是否点击了确认按钮（必须在使用 message 之前）
         is_confirm_click = '[CONFIRM_REPLY:' in message.strip()
@@ -1225,9 +1288,12 @@ async def chat_endpoint(
             # 只有文本
             current_message = HumanMessage(content=message.strip())
 
-        # 从数据库获取压缩后的上下文（这是唯一的消息来源）
-        from .database import get_conversation_context
-        db_context_raw = get_conversation_context(db, current_user.id, session_id)
+        # 从分层记忆读取摘要、近期完整对话和乐观版本；旧任务会自动回退旧上下文。
+        from .database import get_agent_memory_state
+        memory_state = get_agent_memory_state(db, current_user.id, session_id)
+        db_context_raw = memory_state.get("recent_messages", [])
+        memory_summary = str(memory_state.get("summary", "") or "")
+        memory_version = int(memory_state.get("version", 0) or 0)
 
         # 转换数据库中的消息为 Message 对象
         historical_messages = []
@@ -1261,150 +1327,123 @@ async def chat_endpoint(
         else:
             print(f"[InitState] 从数据库加载 pending_confirmation: None")
 
-        # 创建初始状态
-        # 注意：当用户点击确认时，initial_state 包含完整的消息历史
-        # 这样 tool_node 和 conversation_llm 才能正确访问上下文
+        # 只把模式、阶段等控制状态写入 Checkpointer。简历、JD、消息、
+        # 附件和确认候选仍只存在业务数据库/本次执行内存中。
+        workflow_manager = get_workflow_checkpoint_manager()
+        workflow_start_error = None
+        workflow_state = {}
+        selected_interview_mode = ""
+        selected_interview_action = ""
+        feature_config = interview_feature_config(current_user.id, task_id)
+        if workflow_manager:
+            try:
+                if hasattr(workflow_manager, "load_state"):
+                    workflow_state = await workflow_manager.load_state(current_user.id, task_id)
+                active_interview = is_active_interview_workflow(workflow_state)
+                explicit_legacy_change = (
+                    resume_agent.is_explicit_resume_change_request(message)
+                    or resume_agent.is_explicit_layout_change_request(message)
+                )
+                if feature_config["enabled"] and not is_confirm_click and not explicit_legacy_change:
+                    if requested_mode:
+                        selected_interview_mode = requested_mode
+                    elif active_interview:
+                        selected_interview_mode = str(workflow_state.get("interaction_mode", "coaching"))
+                    if selected_interview_mode:
+                        selected_interview_action = resolve_interview_action(
+                            requested_action, workflow_state, requested_mode or None,
+                        )
+
+                legacy_workflow_mode = None
+                if not selected_interview_mode:
+                    if (
+                        is_confirm_click
+                        or resume_agent.is_explicit_resume_change_request(message)
+                        or resume_agent.is_explicit_layout_change_request(message)
+                    ):
+                        legacy_workflow_mode = "chat"
+                    elif resume_agent.is_resume_coaching_request(message):
+                        legacy_workflow_mode = "jd_review" if "jd" in message.lower() else "coaching"
+
+                workflow_state = await workflow_manager.record_turn(
+                    current_user.id,
+                    task_id,
+                    session_id=session_id,
+                    request_id=request_id,
+                    interaction_mode=(
+                        selected_interview_mode
+                        if selected_interview_action == "start"
+                        else legacy_workflow_mode
+                    ),
+                )
+                if selected_interview_action in {"start", "answer"}:
+                    workflow_state = await workflow_manager.update_state(
+                        current_user.id,
+                        task_id,
+                        interaction_mode=selected_interview_mode,
+                        status="active",
+                        phase=(
+                            "diagnosing" if selected_interview_action == "start"
+                            else "synthesizing"
+                        ),
+                        last_node="interview_coach_pending",
+                    )
+                if feature_config["shadow"]:
+                    print(
+                        "[InterviewShadow] "
+                        f"task={task_id} enabled={feature_config['enabled']} "
+                        f"mode={selected_interview_mode or 'legacy'} action={selected_interview_action or '-'}"
+                    )
+                if selected_interview_mode:
+                    harness_metrics.increment("interview_turns_total")
+            except Exception as exc:
+                workflow_start_error = str(exc)
+                harness_metrics.increment("workflow_errors_total")
+                print(f"[WorkflowCheckpoint] 回合恢复/登记失败: {exc}")
+
+        # 创建初始状态。确认点击仍保留完整消息历史；结构化深度打磨仅通过显式
+        # 模式或已恢复的活动状态进入，不改变普通聊天/修改请求的入口。
         initial_state = {
-            "messages": all_messages,  # 保留完整的历史消息
+            "messages": all_messages,
             "resume_data": initial_resume_data,
             "jd_data": initial_jd_data,
             "layout_data": initial_layout_data,
-            "pending_confirmation": initial_pending_confirmation,  # 从数据库加载待确认状态
-            "user_id": current_user.id,  # 添加用户ID，用于数据隔离
+            "pending_confirmation": initial_pending_confirmation,
+            "user_id": current_user.id,
             "task_id": task_id,
             "proposal_error": None,
+            "memory_summary": memory_summary,
+            "memory_version": memory_version,
+            "interview_memory": memory_state.get("interview_memory", {}),
+            "workflow_state": workflow_state,
+            "workflow_updates": None,
+            "interaction_mode": selected_interview_mode,
+            "interaction_action": selected_interview_action,
+            "request_id": request_id,
         }
         print(f"[InitState] initial_state 创建完成: {len(all_messages)} 条消息, pending_confirmation={initial_state.get('pending_confirmation') is not None}")
         for i, msg in enumerate(all_messages):
             print(f"  {i}: {type(msg).__name__}: {getattr(msg, 'content', '')[:30]}...")
 
-        def filter_images_from_content(content):
-            """过滤消息内容中的图片，只保留文本"""
-            if isinstance(content, list):
-                # 过滤掉图片，只保留文本
-                filtered = []
-                for item in content:
-                    if isinstance(item, dict):
-                        if item.get("type") == "text":
-                            filtered.append(item)
-                        # 跳过 type == "image_url" 的图片
-                return filtered if filtered else ""
-            return content
-
-        def filter_images_from_message(msg):
-            """过滤消息中的图片内容"""
-            content = getattr(msg, 'content', '')
-            filtered_content = filter_images_from_content(content)
-
-            # 创建新的消息对象，只包含过滤后的内容
-            if isinstance(msg, HumanMessage):
-                return HumanMessage(content=filtered_content)
-            elif isinstance(msg, AIMessage):
-                return AIMessage(content=filtered_content)
-            elif isinstance(msg, SystemMessage):
-                return SystemMessage(content=filtered_content)
-            return msg
-
-        async def save_state_async(db, user_id, session_id, messages_list, resume_data_result, initial_jd_data, pending_confirmation=None):
-            """异步保存状态到数据库，不阻塞 SSE 响应"""
-            try:
-                if pending_confirmation:
-                    print(f"[SaveStateAsync] 开始保存状态, confirm_id={pending_confirmation.get('confirm_id')}")
-                else:
-                    print(f"[SaveStateAsync] 开始保存状态, pending_confirmation=None")
-
-                # 过滤掉消息中的图片
-                filtered_messages_list = [filter_images_from_message(msg) for msg in messages_list]
-
-                # 从 filtered_messages_list 中提取 HumanMessage 和 AIMessage（跳过 ToolMessage）
-                all_human = [msg for msg in filtered_messages_list if isinstance(msg, HumanMessage)]
-                all_ai = [msg for msg in filtered_messages_list if isinstance(msg, AIMessage)]
-
-                # 提取最后一条 AIMessage
-                new_ai = all_ai[-1] if all_ai else None
-
-                # 确定最终数据
-                final_resume_data = resume_data_result if resume_data_result else {}
-                final_jd_data = initial_jd_data if initial_jd_data else {}
-
-                print(f"[SaveState] 待保存: {len(all_human)} HumanMessage, {len(all_ai)} AIMessage, pending_confirmation={pending_confirmation is not None}")
-
-                # 保存到数据库
-                if final_resume_data:
-                    save_user_resume(db, user_id, final_resume_data)
-                if final_jd_data:
-                    save_user_jd(db, user_id, final_jd_data)
-
-                # 保存上下文（带压缩逻辑）
-                from .database import save_conversation_context
-
-                # 1. 构建压缩上下文（按原始顺序保存 HumanMessage 和 AIMessage）
-                compressed_context = []
-                for msg in filtered_messages_list:
-                    if isinstance(msg, HumanMessage):
-                        if hasattr(msg, 'model_dump'):
-                            compressed_context.append({**msg.model_dump(), "type": "human"})
-                        else:
-                            compressed_context.append({**dict(msg), "type": "human"})
-                    elif isinstance(msg, AIMessage):
-                        if hasattr(msg, 'model_dump'):
-                            compressed_context.append({**msg.model_dump(), "type": "ai"})
-                        else:
-                            compressed_context.append({**dict(msg), "type": "ai"})
-                    elif isinstance(msg, SystemMessage):
-                        if hasattr(msg, 'model_dump'):
-                            compressed_context.append({**msg.model_dump(), "type": "system"})
-                        else:
-                            compressed_context.append({**dict(msg), "type": "system"})
-
-                # 检查是否需要压缩
-                if len(all_human) > MAX_HUMAN_MESSAGES:
-                    # 设置压缩状态
-                    compression_state.compressing = True
-                    print(f"[Context Compression] 开始压缩上下文 ({len(all_human)} 条 HumanMessage)")
-
-                    try:
-                        # 压缩前 N-K 条为摘要
-                        to_compress = all_human[:-(KEEP_RECENT)]
-                        recent = all_human[-(KEEP_RECENT):]  # 最近 K 条 HumanMessage
-                        compressed = await compress_context_with_llm(to_compress)
-
-                        # 将压缩结果转换为字典
-                        new_compressed_context = []
-                        for msg in compressed:
-                            if hasattr(msg, 'model_dump'):
-                                msg_dict = {**msg.model_dump(), "type": type(msg).__name__.lower()}
-                            else:
-                                msg_dict = {**dict(msg), "type": type(msg).__name__.lower()}
-                            new_compressed_context.append(msg_dict)
-
-                        # 添加最近 K 条 HumanMessage
-                        for msg in recent:
-                            if hasattr(msg, 'model_dump'):
-                                new_compressed_context.append({**msg.model_dump(), "type": "human"})
-                            else:
-                                new_compressed_context.append({**dict(msg), "type": "human"})
-
-                        # 添加最后一条 AIMessage
-                        if new_ai:
-                            if hasattr(new_ai, 'model_dump'):
-                                new_compressed_context.append({**new_ai.model_dump(), "type": "ai"})
-                            else:
-                                new_compressed_context.append({**dict(new_ai), "type": "ai"})
-
-                        # 替换 compressed_context 为压缩后的版本
-                        compressed_context = new_compressed_context
-                    finally:
-                        # 通知压缩完成
-                        notify_compression_complete()
-
-                # 保存到数据库
-                save_conversation_context(db, user_id, session_id, compressed_context, pending_confirmation)
-
-            except Exception as e:
-                print(f"[Warning] 异步保存失败: {e}")
-                import traceback
-                traceback.print_exc()
+        async def save_state_async(
+            db, user_id, session_id, messages_list, resume_data_result,
+            initial_jd_data, pending_confirmation=None, interview_memory=None,
+        ):
+            """Compatibility wrapper around the extracted turn persistence service."""
+            await persist_turn_state(
+                db,
+                user_id,
+                session_id,
+                messages_list,
+                resume_data_result,
+                initial_jd_data,
+                pending_confirmation,
+                conversation_llm=conversation_llm,
+                compression_state=compression_state,
+                previous_summary=memory_summary,
+                expected_version=memory_version,
+                interview_memory=interview_memory or memory_state.get("interview_memory", {}),
+            )
 
         async def stream_response(config):
             """流式生成响应"""
@@ -1428,6 +1467,8 @@ async def chat_endpoint(
             sent_confirm_ids = set()
             confirmation_sent = False
             proposal_error_result = None
+            interview_memory_result = memory_state.get("interview_memory", {})
+            workflow_updates_result = None
 
             def progress_event(phase, text):
                 sent_progress_phases.add(phase)
@@ -1450,9 +1491,14 @@ async def chat_endpoint(
                         current_node = node_name
                         node_start_time[node_name] = time.time()
                         print(f"[SSE] 节点开始: {node_name}")
-                        if node_name in {"tool_node", "direct_edit", "proposal_generator"} and not is_confirm_click:
+                        preview_node = node_name in {"tool_node", "direct_edit", "proposal_generator"} or (
+                            node_name == "interview_coach" and selected_interview_action == "apply"
+                        )
+                        if preview_node and not is_confirm_click:
                             if "building_preview" not in sent_progress_phases:
                                 yield progress_event("building_preview", "正在生成修改预览…")
+                        elif node_name == "interview_coach" and "analyzing" not in sent_progress_phases:
+                            yield progress_event("analyzing", "正在分析简历证据与薄弱项…")
 
                     if event_type == "on_chat_model_stream" and current_node == "conversation_llm":
                         chunk = event.get("data", {}).get("chunk", {})
@@ -1489,6 +1535,9 @@ async def chat_endpoint(
 
                         if "messages" in output:
                             messages_list = list(output["messages"])
+                        if node_name == "interview_coach":
+                            interview_memory_result = output.get("interview_memory", interview_memory_result)
+                            workflow_updates_result = output.get("workflow_updates")
 
                         output_messages = output.get("messages", [])
                         if node_name == "tool_node" and is_confirm_click and any(
@@ -1516,7 +1565,7 @@ async def chat_endpoint(
 
                         confirm_data = (
                             output.get("pending_confirmation")
-                            if node_name in {"tool_node", "direct_edit", "proposal_generator"}
+                            if node_name in {"tool_node", "direct_edit", "proposal_generator", "interview_coach"}
                             else None
                         )
                         confirm_id = confirm_data.get("confirm_id") if isinstance(confirm_data, dict) else None
@@ -1556,15 +1605,15 @@ async def chat_endpoint(
                                     "session_id": session_id,
                                 }) + '\n\n'
                         elif (
-                            node_name in {"tool_node", "direct_edit", "proposal_generator"}
+                            node_name in {"tool_node", "direct_edit", "proposal_generator", "interview_coach"}
                             and "pending_confirmation" in output
                             and not confirm_data
                         ):
                             pending_confirmation_result = None
 
-                        if "resume_data" in output and not confirm_data:
+                        if "resume_data" in output and not confirm_data and node_name != "interview_coach":
                             resume_data_result = output["resume_data"]
-                        if "layout_data" in output and not confirm_data:
+                        if "layout_data" in output and not confirm_data and node_name != "interview_coach":
                             layout_data_result = output["layout_data"]
 
                 if proposal_error_result:
@@ -1594,6 +1643,78 @@ async def chat_endpoint(
                 from .database import clear_pending_confirmation
                 clear_pending_confirmation(db, current_user.id, session_id)
 
+            # Persist before final/end so a following request cannot observe a
+            # stale context. Optimistic version conflicts fail closed instead
+            # of overwriting newer memory.
+            resume_data_to_persist = {} if confirmation_processed else resume_data_result
+            try:
+                await save_state_async(
+                    db,
+                    current_user.id,
+                    session_id,
+                    messages_list,
+                    resume_data_to_persist,
+                    initial_jd_data,
+                    pending_confirmation_result,
+                    interview_memory_result,
+                )
+            except Exception as exc:
+                print(f"[Persistence] 回合状态保存失败: {exc}")
+                harness_metrics.increment("persistence_errors_total")
+                yield 'data: ' + json.dumps({
+                    "type": "persistence_error",
+                    "request_id": request_id,
+                    "message": "对话状态未能安全保存，请重新发送上一条消息。",
+                    "retryable": True,
+                }) + '\n\n'
+
+            workflow_error = workflow_start_error
+            workflow_state_result = workflow_state
+            if workflow_manager and not workflow_error:
+                try:
+                    workflow_updates = dict(workflow_updates_result or {})
+                    workflow_updates.setdefault("last_node", current_node or "")
+                    if pending_confirmation_result:
+                        workflow_updates["status"] = "awaiting_confirmation"
+                    elif confirmation_processed:
+                        if workflow_state.get("interaction_mode") in INTERVIEW_MODES:
+                            workflow_updates.update({
+                                "interaction_mode": workflow_state.get("interaction_mode"),
+                                "status": "active",
+                                "phase": "questioning",
+                            })
+                        else:
+                            workflow_updates["status"] = "ready"
+                    elif proposal_error_result:
+                        workflow_updates["status"] = "error"
+                    workflow_state_result = await workflow_manager.update_state(
+                        current_user.id,
+                        task_id,
+                        **workflow_updates,
+                    )
+                except Exception as exc:
+                    workflow_error = str(exc)
+                    harness_metrics.increment("workflow_errors_total")
+                    print(f"[WorkflowCheckpoint] 回合控制状态保存失败: {exc}")
+            if workflow_error:
+                yield 'data: ' + json.dumps({
+                    "type": "workflow_error",
+                    "request_id": request_id,
+                    "message": "工作流进度未能保存，本轮对话内容仍已处理。",
+                    "retryable": False,
+                }) + '\n\n'
+            elif selected_interview_mode or workflow_updates_result or (
+                confirmation_processed and workflow_state.get("interaction_mode") in INTERVIEW_MODES
+            ):
+                yield 'data: ' + json.dumps({
+                    "type": "workflow_state",
+                    "request_id": request_id,
+                    "state": workflow_public_state(
+                        workflow_state_result,
+                        interview_memory_result,
+                    ),
+                }) + '\n\n'
+
             print(f"[SSE] 准备发送 final 事件, pending_confirmation={pending_confirmation_result is not None}")
             yield 'data: ' + json.dumps({
                 "type": "final",
@@ -1604,15 +1725,6 @@ async def chat_endpoint(
                 "confirmation_success": confirmation_success,
                 "layout_config": layout_data_result,
             }) + '\n\n'
-
-            # 保存消息到数据库（异步执行，不阻塞 SSE 响应）
-            import asyncio
-            # tool_node 已经执行过确认保存/取消，不再由状态持久化重复写简历。
-            resume_data_to_persist = {} if confirmation_processed else resume_data_result
-            asyncio.create_task(save_state_async(
-                db, current_user.id, session_id,
-                messages_list, resume_data_to_persist, initial_jd_data, pending_confirmation_result
-            ))
 
             print(f"[SSE] 准备发送 end 事件")
             yield 'data: ' + json.dumps({

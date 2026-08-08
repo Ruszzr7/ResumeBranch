@@ -9,6 +9,7 @@ import BrandLogo from './components/BrandLogo.vue'
 import { labels } from './utils/labels.js'
 import { buildAuthorizationHeaders, loadAppConfig } from './config/appMode.js'
 import { normalizeLayoutConfig } from './utils/layoutConfig.js'
+import { hasMeaningfulResumeContent } from './utils/resumePresence.js'
 
 // 响应式布局状态
 const isMobileView = ref(false)
@@ -23,6 +24,36 @@ const pendingTranslationConfirmId = ref('')
 const translationApplied = ref(false)
 const TRANSLATE_MESSAGE = '请将简历内容翻译为英文，需要符合英文表达习惯，保留原汁原味，不要添加或虚构内容。'
 const TRANSLATION_SESSION_PREFIX = 'resumeTranslationSession:'
+const WELCOME_MESSAGE = '你好！我是你的简历助手。你可以让我检查简历中的不足、进行深度打磨、结合 JD 分析匹配度，也可以直接修改简历内容和排版。告诉我你的目标岗位或具体需求，或者从下方选择一项开始。如原简历含头像，建议在“编辑简历”中自行上传清晰原图，避免自动裁剪造成模糊。'
+const conversationMessagesForSave = () => messages.value.filter(message => !message.localOnly)
+const assistantActions = [
+  {
+    label: '全面诊断',
+    mode: 'diagnosis',
+    action: 'start',
+    prompt: '请先对当前简历做一次全面诊断：指出最影响通过率的不足，按优先级给出具体改进建议；先不要修改简历，诊断后只追问我一个最关键的问题。'
+  },
+  {
+    label: '深度打磨',
+    mode: 'coaching',
+    action: 'start',
+    prompt: '请以严格面试官视角深度打磨我的简历：从最薄弱、最影响求职结果的一项经历开始，每次只问一个问题，持续追问到能形成真实、具体、可量化的简历表述；先不要修改简历。'
+  },
+  {
+    label: '对照 JD',
+    mode: 'jd_review',
+    action: 'start',
+    prompt: '请结合当前目标岗位 JD 分析简历匹配度：区分已经证明的匹配项、简历尚未证明的能力和确实缺失的条件，按优先级给建议；先不要修改简历，最后只问我一个最关键的问题。'
+  },
+  {
+    label: '修改简历',
+    prompt: '我想修改简历内容。请先询问我希望修改的模块和目标，不要在需求明确前直接改写。'
+  },
+  {
+    label: '排版建议',
+    prompt: '请分析当前简历排版是否清晰、紧凑、重点突出，并给出可执行的排版建议。请说明建议涉及字号、间距、模块样式还是模块顺序；本轮只分析，不修改简历。'
+  }
+]
 
 // 检测是否为移动端视图
 function checkMobileView() {
@@ -196,6 +227,25 @@ const currentTaskId = computed(() => isWorkspaceRoute.value ? String(route.param
 const currentProject = ref(null)
 const projectTasks = ref([])
 const currentTask = computed(() => projectTasks.value.find(task => task.id === currentTaskId.value) || null)
+const workflowState = ref(null)
+const pendingAssistantAction = ref(null)
+const workflowVisible = computed(() => (
+  workflowState.value
+  && ['diagnosis', 'coaching', 'jd_review'].includes(workflowState.value.interaction_mode)
+  && workflowState.value.phase !== 'idle'
+))
+const workflowModeLabel = computed(() => ({
+  diagnosis: '全面诊断',
+  coaching: '深度打磨',
+  jd_review: 'JD 对照'
+}[workflowState.value?.interaction_mode] || '简历分析'))
+const workflowStatusLabel = computed(() => ({
+  active: '进行中',
+  paused: '已暂停',
+  awaiting_confirmation: '待确认',
+  completed: '已结束',
+  error: '需重试'
+}[workflowState.value?.status] || '就绪'))
 const previewLayoutConfig = ref(null)
 const activeLayoutConfig = computed(() => normalizeLayoutConfig(
   previewLayoutConfig.value || currentTask.value?.layout_config || {}
@@ -206,6 +256,8 @@ const taskCreateMode = ref('copy')
 const taskCreateStep = ref(1)
 const taskSourceId = ref('')
 const taskResumeSources = ref([])
+const taskImportFile = ref(null)
+const taskImportInput = ref(null)
 const taskJDText = ref('')
 const taskJDData = ref({})
 const isParsingTaskJD = ref(false)
@@ -318,10 +370,13 @@ const newSkill = ref('') // 用于添加技能标签
 // 简历编辑弹窗状态（新增）
 const isResumeEditDialogOpen = ref(false)
 const resumeFormData = ref({
-  basics: { name: '', gender: '', phone: '', email: '', target_position: '', photo: '' },
+  basics: { name: '', gender: '', birth_date: '', phone: '', email: '', target_position: '', photo: '', additional_fields: [] },
   education: [],
+  research_interests: [],
+  honors: [],
   work_experience: [],
   project_experience: [],
+  custom_sections: [],
   others: { skills: [], certificates: [], languages: [] },
   self_evaluation: []
 })
@@ -335,6 +390,8 @@ const newResumeLang = ref('')
 // 多行文本编辑（临时存储）
 const workDetailsText = ref('')
 const projectDetailsText = ref('')
+const researchInterestsText = ref('')
+const honorsText = ref('')
 const selfEvalText = ref('')
 
 // 首次进入选择弹窗状态
@@ -344,6 +401,8 @@ const resumeImageFile = ref(null) // 选择的图片文件
 const resumeImagePreview = ref('') // 图片预览
 const isResumePdf = ref(false) // 是否是PDF文件
 const isParsingResume = ref(false) // 解析中状态
+const resumeImportDraft = ref(null)
+const resumeImportError = ref('')
 const resumeFileInput = ref(null) // 简历文件输入元素引用
 const hasResumeFileSelected = ref(false) // 是否已选择简历文件（上传流程已开始，不可返回）
 const isLoadingInitialData = ref(false) // 防止 loadInitialData 重复调用
@@ -545,12 +604,14 @@ async function loadWorkspace() {
   }
   sessionId.value = task.session_id
   await loadInitialData()
+  await loadWorkflowState()
   restoreTranslationSession()
 }
 
 async function createProjectTask() {
   newTaskTitle.value = ''
   taskCreateMode.value = 'copy'
+  taskImportFile.value = null
   taskCreateStep.value = 1
   taskJDText.value = ''
   taskJDData.value = {}
@@ -572,12 +633,38 @@ async function createProjectTask() {
 function closeTaskCreateDialog() {
   if (isCreatingTask.value) return
   showTaskCreateDialog.value = false
+  taskImportFile.value = null
+  taskCreateError.value = ''
+}
+
+function selectTaskImportFile() {
+  taskImportInput.value?.click()
+}
+
+function handleTaskImportFile(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+  const allowedTypes = new Set(['application/pdf', 'image/jpeg', 'image/png'])
+  if (!allowedTypes.has(file.type)) {
+    taskCreateError.value = '仅支持 JPG、PNG 或 PDF 简历'
+    return
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    taskCreateError.value = '文件大小不能超过 5MB'
+    return
+  }
+  taskImportFile.value = file
   taskCreateError.value = ''
 }
 
 function goToTaskJDStep() {
   if (taskCreateMode.value === 'copy' && !taskSourceId.value) {
     taskCreateError.value = '请选择要复制的简历'
+    return
+  }
+  if (taskCreateMode.value === 'import' && !taskImportFile.value) {
+    taskCreateError.value = '请选择要导入的简历文件'
     return
   }
   taskCreateError.value = ''
@@ -616,6 +703,7 @@ async function confirmCreateProjectTask() {
   const title = newTaskTitle.value.trim() || '新岗位版本'
   isCreatingTask.value = true
   taskCreateError.value = ''
+  let createdTask = null
   try {
     const response = await fetch(`/projects/${route.params.projectId}/tasks`, {
       method: 'POST',
@@ -632,10 +720,37 @@ async function confirmCreateProjectTask() {
       throw new Error(data.detail || '创建岗位版本失败，请重试')
     }
     const task = await response.json()
+    createdTask = task
+    if (taskCreateMode.value === 'import') {
+      const formData = new FormData()
+      formData.append('file', taskImportFile.value)
+      const importHeaders = buildAuthorizationHeaders(token.value)
+      importHeaders['X-Task-ID'] = task.id
+      const importResponse = await fetch('/api/resume/parse_and_save', {
+        method: 'POST',
+        headers: importHeaders,
+        body: formData
+      })
+      const importData = await importResponse.json().catch(() => ({}))
+      if (!importResponse.ok || !importData.success) {
+        throw new Error(importData.error || importData.detail || '简历导入失败，请重试')
+      }
+    }
     isCreatingTask.value = false
     showTaskCreateDialog.value = false
+    taskImportFile.value = null
     await router.push(`/projects/${task.project_id}/tasks/${task.id}`)
   } catch (error) {
+    if (createdTask) {
+      try {
+        await fetch(`/tasks/${createdTask.id}`, {
+          method: 'DELETE',
+          headers: getAuthorizationHeaders()
+        })
+      } catch (rollbackError) {
+        console.error('清理导入失败的版本时出错:', rollbackError)
+      }
+    }
     taskCreateError.value = error.message || '创建岗位版本失败，请重试'
   } finally {
     isCreatingTask.value = false
@@ -703,9 +818,54 @@ function useLayoutPrompt(prompt) {
   nextTick(() => document.querySelector('.textarea-container textarea:not(:disabled)')?.focus())
 }
 
+function runAssistantAction(action) {
+  if (isLoading.value || isResponding.value) return
+  pendingAssistantAction.value = action.mode ? { mode: action.mode, action: action.action } : null
+  userInput.value = action.prompt
+  nextTick(() => sendMessage())
+}
+
+function runWorkflowAction(action) {
+  if (isLoading.value || isResponding.value || !workflowState.value) return
+  const prompts = {
+    pause: '暂停本轮打磨',
+    resume: '继续本轮打磨',
+    end: '结束本轮打磨',
+    apply: '应用当前改写建议'
+  }
+  pendingAssistantAction.value = {
+    mode: workflowState.value.interaction_mode,
+    action
+  }
+  userInput.value = prompts[action]
+  nextTick(() => sendMessage())
+}
+
+async function loadWorkflowState() {
+  if (!currentTaskId.value) {
+    workflowState.value = null
+    return
+  }
+  try {
+    const response = await fetch(`/tasks/${currentTaskId.value}/workflow`, {
+      headers: getAuthorizationHeaders()
+    })
+    if (!response.ok) return
+    const data = await response.json()
+    workflowState.value = data.state || null
+  } catch (error) {
+    console.warn('恢复深度打磨状态失败:', error)
+  }
+}
+
 function requestLayoutTemplate(prompt) {
   userInput.value = prompt
   nextTick(() => sendMessage())
+}
+
+function handleLayoutUpdated(layoutConfig) {
+  if (currentTask.value) currentTask.value.layout_config = normalizeLayoutConfig(layoutConfig)
+  previewLayoutConfig.value = null
 }
 
 // 加载初始数据的函数（同时检查首次访问）
@@ -776,9 +936,8 @@ async function loadInitialData() {
 
     // 检查是否首次进入（无简历且无聊天记录）
     // 修正判断逻辑：检查basics中是否有有效字段
-    const { parsing_status, basics, ...rest } = data
-    const hasResume = basics && (basics.name || basics.target_position || Object.keys(rest).length > 0)
-    console.log(`[DEBUG] loadInitialData: hasResume=${hasResume}, basics=${JSON.stringify(basics)}`)
+    const hasResume = hasMeaningfulResumeContent(data)
+    console.log(`[DEBUG] loadInitialData: hasResume=${hasResume}`)
 
     // 加载对话历史
     try {
@@ -796,7 +955,7 @@ async function loadInitialData() {
       console.log(`[DEBUG] loadInitialData: hasChatHistory=${hasChatHistory}`)
 
       // 首次进入检测：无简历且无聊天记录
-      if (!hasResume && !hasChatHistory) {
+      if (!hasResume && (!hasChatHistory || route.query.new === '1')) {
         console.log('[DEBUG] 首次进入，显示开始选择弹窗')
         showStartDialog.value = true
         return
@@ -808,14 +967,16 @@ async function loadInitialData() {
         messages.value = [{
           id: Date.now(),
           role: 'assistant',
-          content: '你好！我是简历助手，有什么可以帮助你的吗？你可以询问简历信息等。简历内容、修改'
+          content: WELCOME_MESSAGE,
+          localOnly: true
         }]
       }
     } catch (convError) {
       messages.value = [{
         id: Date.now(),
         role: 'assistant',
-        content: '你好！我是简历助手，有什么可以帮助你的吗？你可以询问简历内容、修改简历信息等。'
+        content: WELCOME_MESSAGE,
+        localOnly: true
       }]
     }
   } catch (error) {
@@ -857,67 +1018,10 @@ async function pollParsingStatus() {
       // 重新加载简历
       await loadResumeData()
 
-      // 刷新页面后首次加载时，需要调用 first_message_from_resume 生成首次提问
-      // 检查是否已有聊天历史，如果没有则调用
+      // 导入完成只更新简历，不触发 LLM、不改变聊天记录。用户明确提问
+      // 或点击快捷入口后，助手才开始工作。
       if (messages.value.length === 0) {
-        console.log('📋 轮询检测到解析完成，调用 first_message_from_resume...')
-        isLoading.value = true
-        try {
-          const firstMsgResponse = await fetch('/api/chat/first_message_from_resume', {
-            method: 'POST',
-            headers: getAuthHeaders(),
-            body: JSON.stringify({
-              session_id: sessionId.value || ''
-            })
-          })
-
-          const firstMsgData = await firstMsgResponse.json()
-          isLoading.value = false
-
-          if (!firstMsgData.error && firstMsgData.message) {
-            const aiMessage = firstMsgData.message || firstMsgData.content
-            messages.value = [{
-              id: Date.now(),
-              role: 'assistant',
-              content: aiMessage
-            }]
-
-            if (firstMsgData.session_id) {
-              sessionId.value = firstMsgData.session_id
-            }
-
-            // 保存对话到数据库
-            try {
-              await fetch('/save_conversation', {
-                method: 'POST',
-                headers: getAuthHeaders(),
-                body: JSON.stringify({
-                  session_id: sessionId.value,
-                  messages: [{ type: 'ai', content: aiMessage }]
-                })
-              })
-            } catch (saveError) {
-              console.error('保存对话失败:', saveError)
-            }
-
-            // 保存到数据库和上下文
-            try {
-              await fetch('/api/chat/save_ai_message', {
-                method: 'POST',
-                headers: getAuthHeaders(),
-                body: JSON.stringify({
-                  message: aiMessage,
-                  session_id: sessionId.value || ''
-                })
-              })
-            } catch (saveAiError) {
-              console.error('保存 AI 消息失败:', saveAiError)
-            }
-          }
-        } catch (firstMsgError) {
-          isLoading.value = false
-          console.error('获取首次提问失败:', firstMsgError)
-        }
+        messages.value = [{ id: Date.now(), role: 'assistant', content: WELCOME_MESSAGE, localOnly: true }]
       }
     } else if (status === 'failed') {
       // 解析失败
@@ -1013,6 +1117,8 @@ async function sendMessage() {
   }
 
   const input = userInput.value.trim()
+  const structuredAction = pendingAssistantAction.value
+  pendingAssistantAction.value = null
   const isTranslationRequest = input === TRANSLATE_MESSAGE
   userInput.value = ''
 
@@ -1075,6 +1181,8 @@ async function sendMessage() {
     formData.append('message', input)
     formData.append('session_id', sessionId.value)
     formData.append('request_id', requestId)
+    if (structuredAction?.mode) formData.append('interaction_mode', structuredAction.mode)
+    if (structuredAction?.action) formData.append('interaction_action', structuredAction.action)
 
     // 添加上传的文件
     // 注意：uploadedFiles 在函数开头已被清空，这里附件信息已保存在 currentAttachments 中
@@ -1249,6 +1357,12 @@ async function sendMessage() {
                 isLoading.value = false
                 isResponding.value = false
                 finishProcessing(data.request_id)
+              } else if (data.type === 'persistence_error') {
+                showNotice(data.message || '对话状态未能安全保存，请重新发送上一条消息。')
+              } else if (data.type === 'workflow_error') {
+                showNotice(data.message || '工作流进度未能保存，本轮对话内容仍已处理。')
+              } else if (data.type === 'workflow_state') {
+                workflowState.value = data.state || null
               } else if (data.type === 'end') {
                 console.log('[前端] 收到 end 事件, isResponding before:', isResponding.value, 'isLoading:', isLoading.value)
                 // 结束信号，关闭连接
@@ -1292,7 +1406,7 @@ async function sendMessage() {
 
     // 保存对话历史（过滤掉未处理的 confirm 消息，已处理的 confirm 消息保留 handled 状态）
     try {
-      const messagesToSave = messages.value.filter(m => !(m.type === 'confirm' && m.confirm_id && !m.handled))
+      const messagesToSave = conversationMessagesForSave().filter(m => !(m.type === 'confirm' && m.confirm_id && !m.handled))
       await fetch('/save_conversation', {
         method: 'POST',
         headers: getAuthHeaders(),
@@ -1406,6 +1520,10 @@ async function handleOptionClick({ confirm_id, value, selected_change_ids = [] }
             await updateResumeData()
             resumeRefreshed = true
           }
+        } else if (data.type === 'persistence_error') {
+          showNotice(data.message || '对话状态未能安全保存，请重新发送上一条消息。')
+        } else if (data.type === 'workflow_error') {
+          showNotice(data.message || '工作流进度未能保存，本轮对话内容仍已处理。')
         } else if (data.type === 'end') {
           confirmationProcessed = confirmationProcessed || Boolean(data.confirmation_processed)
           confirmationSucceeded = confirmationSucceeded || Boolean(data.confirmation_success)
@@ -1460,7 +1578,7 @@ async function handleOptionClick({ confirm_id, value, selected_change_ids = [] }
       await fetch('/save_conversation', {
         method: 'POST',
         headers: getAuthHeaders(),
-        body: JSON.stringify({ session_id: sessionId.value, messages: messages.value })
+        body: JSON.stringify({ session_id: sessionId.value, messages: conversationMessagesForSave() })
       })
     } catch (saveError) {
       console.error('保存确认消息失败:', saveError)
@@ -1493,7 +1611,7 @@ async function handleUndoClick({ message_id }) {
     await fetch('/save_conversation', {
       method: 'POST',
       headers: getAuthHeaders(),
-      body: JSON.stringify({ session_id: sessionId.value, messages: messages.value })
+      body: JSON.stringify({ session_id: sessionId.value, messages: conversationMessagesForSave() })
     })
   } catch (error) {
     showNotice(error.message || '撤回失败，请重试')
@@ -1504,7 +1622,7 @@ async function handleUndoClick({ message_id }) {
 function detectChangedModule(oldData, newData) {
   if (!oldData || !newData) return ''
 
-  const modules = ['basics', 'education', 'work_experience', 'project_experience', 'others', 'self_evaluation']
+  const modules = ['basics', 'education', 'research_interests', 'honors', 'work_experience', 'project_experience', 'custom_sections', 'others', 'self_evaluation']
 
   for (const module of modules) {
     const oldVal = JSON.stringify(oldData[module] || {})
@@ -1716,6 +1834,65 @@ function closeJDDialog() {
 
 // ==================== 简历编辑功能（新增） ====================
 
+function initializeProjectContentEditor(proj) {
+  const blocks = Array.isArray(proj.content_blocks) ? proj.content_blocks : []
+  const intro = blocks.find(block => block?.type === 'paragraph' && /简介|背景|概述|说明/.test(block.label || ''))
+  const duties = blocks.find(block => block?.type === 'numbered_list' && /职责|负责内容/.test(block.label || ''))
+  const extraBlocks = blocks.filter(block => block !== intro && block !== duties)
+  proj._introLabel = intro?.label || '项目简介'
+  proj._dutiesLabel = duties?.label || '项目职责'
+  proj._introText = intro?.text || ''
+  proj._dutiesText = arrayToMultiline(duties?.items || [])
+  proj._extraDetailsText = arrayToMultiline(extraBlocks.flatMap(block => block?.items?.length ? block.items : (block?.text ? [block.text] : [])))
+
+  if (!blocks.length && Array.isArray(proj.details)) {
+    let dutyMode = false
+    const extras = []
+    const dutiesFromLegacy = []
+    for (const raw of proj.details) {
+      const text = String(raw || '').trim()
+      const introMatch = text.match(/^(项目简介|项目背景|项目概述|项目说明)\s*[：:]\s*(.*)$/)
+      const dutyMatch = text.match(/^(项目职责|主要职责|个人职责|负责内容)\s*[：:]?\s*(.*)$/)
+      if (introMatch) {
+        proj._introLabel = introMatch[1]
+        proj._introText = introMatch[2]
+        dutyMode = false
+      } else if (dutyMatch) {
+        proj._dutiesLabel = dutyMatch[1]
+        dutyMode = true
+        if (dutyMatch[2]) dutiesFromLegacy.push(dutyMatch[2].replace(/^\s*[（(]?\d+[）).、]\s*/, ''))
+      } else if (dutyMode || /^\s*[（(]?\d+[）).、]/.test(text)) {
+        dutiesFromLegacy.push(text.replace(/^\s*[（(]?\d+[）).、]\s*/, ''))
+      } else if (text) {
+        extras.push(text)
+      }
+    }
+    proj._dutiesText = arrayToMultiline(dutiesFromLegacy)
+    proj._extraDetailsText = arrayToMultiline(extras)
+  }
+}
+
+function contentBlocksToEditableLines(item) {
+  const blocks = Array.isArray(item?.content_blocks) ? item.content_blocks : []
+  if (!blocks.length) return item?.details || []
+  const lines = []
+  blocks.forEach(block => {
+    const label = String(block?.label || '').trim()
+    if (block?.type === 'paragraph') {
+      const text = String(block?.text || '').trim()
+      if (label || text) lines.push(label ? `${label}：${text}` : text)
+      return
+    }
+    if (label) lines.push(`${label}：`)
+    ;(block?.items || []).forEach((detail, index) => {
+      const text = String(detail || '').trim()
+      if (!text) return
+      lines.push(block.type === 'numbered_list' ? `(${index + 1}) ${text}` : text)
+    })
+  })
+  return lines
+}
+
 // 打开简历编辑弹窗
 function openResumeEditDialog() {
   // 深拷贝当前简历数据
@@ -1724,19 +1901,28 @@ function openResumeEditDialog() {
   } else {
     // 使用空结构
     resumeFormData.value = {
-      basics: { name: '', gender: '', phone: '', email: '', target_position: '' },
+      basics: { name: '', gender: '', birth_date: '', phone: '', email: '', target_position: '', photo: '', additional_fields: [] },
       education: [],
+      research_interests: [],
+      honors: [],
       work_experience: [],
       project_experience: [],
+      custom_sections: [],
       others: { skills: [], certificates: [], languages: [] },
       self_evaluation: []
     }
   }
 
   // 确保所有必要字段都存在（防御性编程）
+  resumeFormData.value.basics = resumeFormData.value.basics || {}
+  resumeFormData.value.basics.birth_date = resumeFormData.value.basics.birth_date || ''
+  resumeFormData.value.basics.additional_fields = resumeFormData.value.basics.additional_fields || []
   resumeFormData.value.education = resumeFormData.value.education || []
+  resumeFormData.value.research_interests = resumeFormData.value.research_interests || []
+  resumeFormData.value.honors = resumeFormData.value.honors || []
   resumeFormData.value.work_experience = resumeFormData.value.work_experience || []
   resumeFormData.value.project_experience = resumeFormData.value.project_experience || []
+  resumeFormData.value.custom_sections = resumeFormData.value.custom_sections || []
   resumeFormData.value.others = resumeFormData.value.others || { skills: [], certificates: [], languages: [] }
   resumeFormData.value.self_evaluation = resumeFormData.value.self_evaluation || []
 
@@ -1757,13 +1943,13 @@ function openResumeEditDialog() {
   // 为每项工作经历初始化日期
   resumeFormData.value.work_experience.forEach(work => {
     initDateRange(work)
-    work._detailsText = arrayToMultiline(work.details || [])
+    work._detailsText = arrayToMultiline(contentBlocksToEditableLines(work))
   })
 
   // 为每项项目经历初始化日期
   resumeFormData.value.project_experience.forEach(proj => {
     initDateRange(proj)
-    proj._detailsText = arrayToMultiline(proj.details || [])
+    initializeProjectContentEditor(proj)
   })
 
   // 为每项教育经历初始化日期
@@ -1775,6 +1961,12 @@ function openResumeEditDialog() {
     edu.average_score = edu.average_score || ''
   })
 
+  resumeFormData.value.custom_sections.forEach(section => {
+    section._itemsText = arrayToMultiline(section.items || [])
+  })
+
+  researchInterestsText.value = arrayToMultiline(resumeFormData.value.research_interests)
+  honorsText.value = arrayToMultiline(resumeFormData.value.honors)
   // 转换自我评价为多行文本
   selfEvalText.value = arrayToMultiline(resumeFormData.value.self_evaluation || [])
 
@@ -1980,23 +2172,19 @@ function addProject() {
     project_name: '',
     role: '',
     date_range: ['', ''],
-    details: ['']
+    content_blocks: [],
+    details: [],
+    _introLabel: '项目简介',
+    _dutiesLabel: '项目职责',
+    _introText: '',
+    _dutiesText: '',
+    _extraDetailsText: ''
   })
 }
 
 // 删除项目经历
 function removeProject(index) {
   resumeFormData.value.project_experience.splice(index, 1)
-}
-
-// 添加项目内容
-function addProjectDetail(proj) {
-  proj.details.push('')
-}
-
-// 删除项目内容
-function removeProjectDetail(proj, index) {
-  proj.details.splice(index, 1)
 }
 
 // 标签添加方法
@@ -2057,6 +2245,22 @@ function multilineToArray(text) {
   return text.split('\n').map(line => line.trim()).filter(line => line)
 }
 
+function addCustomSection() {
+  resumeFormData.value.custom_sections.push({ title: '', items: [], _itemsText: '' })
+}
+
+function removeCustomSection(index) {
+  resumeFormData.value.custom_sections.splice(index, 1)
+}
+
+function addBasicAdditionalField() {
+  resumeFormData.value.basics.additional_fields.push({ label: '', value: '' })
+}
+
+function removeBasicAdditionalField(index) {
+  resumeFormData.value.basics.additional_fields.splice(index, 1)
+}
+
 // 保存简历
 async function saveResume() {
   isSaving.value = true
@@ -2078,17 +2282,35 @@ async function saveResume() {
       // 将多行文本转换回数组
       if (work._detailsText !== undefined) {
         work.details = multilineToArray(work._detailsText)
+        work.content_blocks = []
         delete work._detailsText
       }
     })
     dataToSave.project_experience?.forEach(proj => {
       convertDateRangeToSave(proj)
-      // 将多行文本转换回数组
-      if (proj._detailsText !== undefined) {
-        proj.details = multilineToArray(proj._detailsText)
-        delete proj._detailsText
-      }
+      const introText = String(proj._introText || '').trim()
+      const duties = multilineToArray(proj._dutiesText)
+      const extras = multilineToArray(proj._extraDetailsText)
+      proj.content_blocks = []
+      if (introText) proj.content_blocks.push({ type: 'paragraph', label: proj._introLabel || '项目简介', label_bold: true, text: introText, items: [] })
+      if (duties.length) proj.content_blocks.push({ type: 'numbered_list', label: proj._dutiesLabel || '项目职责', label_bold: true, text: '', items: duties })
+      if (extras.length) proj.content_blocks.push({ type: 'bullet_list', label: '', label_bold: true, text: '', items: extras })
+      proj.details = []
+      delete proj._introLabel
+      delete proj._dutiesLabel
+      delete proj._introText
+      delete proj._dutiesText
+      delete proj._extraDetailsText
     })
+
+    dataToSave.research_interests = multilineToArray(researchInterestsText.value)
+    dataToSave.honors = multilineToArray(honorsText.value)
+    dataToSave.custom_sections = (dataToSave.custom_sections || [])
+      .map(section => ({
+        title: String(section.title || '').trim(),
+        items: multilineToArray(section._itemsText !== undefined ? section._itemsText : arrayToMultiline(section.items || []))
+      }))
+      .filter(section => section.title && section.items.length)
 
     // 将自我评价多行文本转换回数组
     dataToSave.self_evaluation = multilineToArray(selfEvalText.value)
@@ -2545,6 +2767,8 @@ function showUploadResumeDialog() {
   resumeImageFile.value = null
   isResumePdf.value = false
   hasResumeFileSelected.value = false  // 重置，允许返回
+  resumeImportDraft.value = null
+  resumeImportError.value = ''
 }
 
 // 触发文件选择器
@@ -2559,6 +2783,8 @@ function closeUploadDialog() {
   resumeImageFile.value = null
   isResumePdf.value = false
   hasResumeFileSelected.value = false
+  resumeImportDraft.value = null
+  resumeImportError.value = ''
 }
 
 // 返回上一步（回到开始选择弹窗）
@@ -2577,6 +2803,8 @@ function reselectResumeFile() {
   resumeImageFile.value = null
   isResumePdf.value = false
   hasResumeFileSelected.value = false  // 重置，允许返回
+  resumeImportDraft.value = null
+  resumeImportError.value = ''
 }
 
 // 处理简历图片选择
@@ -2615,35 +2843,32 @@ function handleResumeImageSelect(event) {
 }
 
 // 解析并保存简历
-async function parseAndSaveResume() {
-  if (!resumeImageFile.value) {
+async function parseAndSaveResume(confirmedData = null) {
+  if (!confirmedData || confirmedData.success !== true) confirmedData = null
+  if (!confirmedData && !resumeImageFile.value) {
     showNotice('请先选择简历图片')
     return
   }
 
   isParsingResume.value = true
-  resumeImagePreview.value = ''
+  resumeImportError.value = ''
 
   try {
-    // 使用 FormData 直接上传文件
-    const formData = new FormData()
-    formData.append('file', resumeImageFile.value)
-
-    // 构建 headers（不设置 Content-Type，让浏览器自动处理 multipart/form-data）
-    const headers = {}
-    if (token.value) {
-      headers['Authorization'] = `Bearer ${token.value}`
+    let data = confirmedData
+    if (!data) {
+      const formData = new FormData()
+      formData.append('file', resumeImageFile.value)
+      formData.append('draft_only', 'true')
+      const response = await fetch('/api/resume/parse_and_save', {
+        method: 'POST', headers: getAuthorizationHeaders(), body: formData
+      })
+      data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.error || data.detail || '解析失败')
     }
 
-    const response = await fetch('/api/resume/parse_and_save', {
-      method: 'POST',
-      headers: headers,
-      body: formData
-    })
-
-    const data = await response.json()
-
-    if (data.success) {
+    if (data.success && data.draft) {
+      resumeImportDraft.value = data
+    } else if (data.success) {
       // 更新简历数据
       resumeData.value = data.resume_data
       const task = projectTasks.value.find(item => item.id === currentTaskId.value)
@@ -2651,91 +2876,47 @@ async function parseAndSaveResume() {
       closeUploadDialog()
       await completeNewProjectOnboarding()
 
-      // 获取 AI 的首次针对性提问
-      isLoading.value = true
-      try {
-        const firstMsgResponse = await fetch('/api/chat/first_message_from_resume', {
-          method: 'POST',
-          headers: getAuthHeaders(),
-          body: JSON.stringify({
-            session_id: sessionId.value || ''
-          })
-        })
-
-        const firstMsgData = await firstMsgResponse.json()
-
-        isLoading.value = false
-
-        if (firstMsgData.error) {
-          // 如果获取首次提问失败，使用通用欢迎消息
-          messages.value = [{
-            id: Date.now(),
-            role: 'assistant',
-            content: '简历已解析完成！我是简历助手，有什么可以帮助你的吗？'
-          }]
-        } else {
-          // 显示 AI 的首次针对性提问
-          const aiMessage = firstMsgData.message || firstMsgData.content
-          messages.value = [{
-            id: Date.now(),
-            role: 'assistant',
-            content: aiMessage
-          }]
-
-          // 保存 session_id 到全局
-          if (firstMsgData.session_id) {
-            sessionId.value = firstMsgData.session_id
-          }
-
-          // 保存对话到数据库
-          try {
-            await fetch('/save_conversation', {
-              method: 'POST',
-              headers: getAuthHeaders(),
-              body: JSON.stringify({
-                session_id: sessionId.value,
-                messages: [{ type: 'ai', content: aiMessage }]
-              })
-            })
-          } catch (saveError) {
-            console.error('保存对话失败:', saveError)
-          }
-
-          // 调用后端保存 AI 消息（保存到数据库和上下文）
-          try {
-            await fetch('/api/chat/save_ai_message', {
-              method: 'POST',
-              headers: getAuthHeaders(),
-              body: JSON.stringify({
-                message: aiMessage,
-                session_id: sessionId.value || ''
-              })
-            })
-          } catch (saveAiError) {
-            console.error('保存 AI 消息失败:', saveAiError)
-          }
-        }
-      } catch (firstMsgError) {
-        isLoading.value = false
-        console.error('获取首次提问失败:', firstMsgError)
-        // 使用通用欢迎消息
-        messages.value = [{
-          id: Date.now(),
-          role: 'assistant',
-          content: '简历已解析完成！我是简历助手，有什么可以帮助你的吗？'
-        }]
+      if (messages.value.length === 0) {
+        messages.value = [{ id: Date.now(), role: 'assistant', content: WELCOME_MESSAGE, localOnly: true }]
       }
+      showNotice('简历已成功导入', 'success')
     } else {
-      showNotice('解析失败：' + data.error)
+      resumeImportError.value = data.error || '解析失败'
+      showNotice('解析失败：' + resumeImportError.value)
       // 解析失败，保留状态让用户可以重试
     }
   } catch (error) {
     console.error('解析简历失败:', error)
-    showNotice('解析简历失败，请稍后重试')
+    resumeImportError.value = error.message || '解析简历失败，请稍后重试'
+    showNotice(resumeImportError.value)
   } finally {
-    // 重置前端状态
+    // 失败时保留文件和预览，便于用户切换模型后直接重试。
+    // 成功时 closeUploadDialog 已经完整重置这些状态。
     isParsingResume.value = false
-    hasResumeFileSelected.value = false
+  }
+}
+
+async function confirmResumeImport() {
+  if (!resumeImportDraft.value || isParsingResume.value) return
+  isParsingResume.value = true
+  resumeImportError.value = ''
+  try {
+    const response = await fetch('/api/resume/confirm_import', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        resume_data: resumeImportDraft.value.resume_data,
+        source_page_count: resumeImportDraft.value.source_page_count || 1
+      })
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok || !data.success) throw new Error(data.detail || '保存导入结果失败')
+    resumeImportDraft.value = null
+    await parseAndSaveResume(data)
+  } catch (error) {
+    resumeImportError.value = error.message || '保存导入结果失败'
+  } finally {
+    isParsingResume.value = false
   }
 }
 
@@ -2838,6 +3019,11 @@ watch(
                 <span class="copy-mode-icon">＋</span>
                 <span><strong>创建空白版本</strong><small>不带入任何简历内容。</small></span>
               </label>
+              <label :class="['copy-mode-card', { active: taskCreateMode === 'import' }]">
+                <input v-model="taskCreateMode" type="radio" value="import" />
+                <span class="copy-mode-icon">⇧</span>
+                <span><strong>导入现有简历</strong><small>上传 JPG、PNG 或 PDF，自动解析为新版本。</small></span>
+              </label>
             </fieldset>
 
             <div v-if="taskCreateMode === 'copy'" class="resume-source-picker">
@@ -2856,6 +3042,19 @@ watch(
                   </label>
                 </div>
               </details>
+            </div>
+            <div v-else-if="taskCreateMode === 'import'" class="task-import-picker">
+              <input
+                ref="taskImportInput"
+                type="file"
+                accept="image/jpeg,image/png,application/pdf"
+                class="hidden-input"
+                @change="handleTaskImportFile"
+              />
+              <button type="button" class="task-import-button" @click="selectTaskImportFile">
+                <strong>{{ taskImportFile ? taskImportFile.name : '选择简历文件' }}</strong>
+                <small>{{ taskImportFile ? '点击可重新选择' : '支持 JPG、PNG、PDF，最大 5MB' }}</small>
+              </button>
             </div>
           </section>
 
@@ -2877,7 +3076,7 @@ watch(
               <input v-model="newTaskTitle" maxlength="80" placeholder="例如：字节跳动 · 后端开发" />
             </label>
             <dl class="task-review-list">
-              <div><dt>简历来源</dt><dd>{{ taskCreateMode === 'blank' ? '空白简历' : `${selectedTaskSource?.project_title || ''} / ${selectedTaskSource?.is_base ? '基础简历' : selectedTaskSource?.title || ''}` }}</dd></div>
+              <div><dt>简历来源</dt><dd>{{ taskCreateMode === 'blank' ? '空白简历' : taskCreateMode === 'import' ? `导入：${taskImportFile?.name || ''}` : `${selectedTaskSource?.project_title || ''} / ${selectedTaskSource?.is_base ? '基础简历' : selectedTaskSource?.title || ''}` }}</dd></div>
               <div><dt>目标岗位</dt><dd>{{ taskJDData.position || '暂未添加 JD' }}</dd></div>
               <div v-if="taskJDData.company"><dt>公司</dt><dd>{{ taskJDData.company }}</dd></div>
             </dl>
@@ -2894,7 +3093,7 @@ watch(
               </button>
             </template>
             <button v-else type="submit" class="workspace-btn primary" :disabled="isCreatingTask">
-              {{ isCreatingTask ? '创建中…' : '创建版本' }}
+              {{ isCreatingTask ? (taskCreateMode === 'import' ? '导入并创建中…' : '创建中…') : '创建版本' }}
             </button>
           </div>
         </form>
@@ -2970,7 +3169,7 @@ watch(
                 </svg>
               </div>
               <div class="option-content">
-                <span class="option-label">上传已有简历</span>
+                <span class="option-label">导入现有简历</span>
                 <span class="option-sublabel">支持图片或 PDF，自动解析</span>
               </div>
               <svg class="option-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -3117,7 +3316,7 @@ watch(
                 <line x1="12" y1="3" x2="12" y2="15"></line>
               </svg>
             </div>
-            <h2>上传简历</h2>
+            <h2>导入简历</h2>
             <div class="modal-actions">
               <!-- 未选择文件且不在解析中时显示返回按钮 -->
               <button v-if="!hasResumeFileSelected && !isParsingResume" @click="backToStartDialog" class="modal-back">
@@ -3145,12 +3344,18 @@ watch(
               <span class="upload-formats">支持 JPG、PNG、PDF</span>
             </div>
             <!-- 解析中状态显示 -->
-            <div v-if="isParsingResume && !resumeImagePreview" class="parsing-status">
+            <div v-if="isParsingResume" class="parsing-status">
               <div class="parsing-spinner"></div>
               <p class="parsing-text">简历正在解析中...</p>
               <p class="parsing-hint">请稍候，解析完成后将自动显示结果</p>
             </div>
-            <div v-else-if="!isParsingResume && resumeImagePreview" class="preview-box">
+            <div v-else-if="resumeImportDraft" class="import-draft-review">
+              <h3>请确认解析结果</h3>
+              <p>姓名：{{ resumeImportDraft.resume_data?.basics?.name || '未识别' }}</p>
+              <p>教育 {{ resumeImportDraft.resume_data?.education?.length || 0 }} 段 · 工作 {{ resumeImportDraft.resume_data?.work_experience?.length || 0 }} 段 · 项目 {{ resumeImportDraft.resume_data?.project_experience?.length || 0 }} 段</p>
+              <small>为避免裁剪后模糊或误识别，系统不自动提取头像。导入后可在“编辑简历”中上传清晰原图。</small>
+            </div>
+            <div v-else-if="resumeImagePreview" class="preview-box">
               <!-- PDF文件预览 -->
               <div v-if="isResumePdf" class="pdf-preview">
                 <div class="pdf-icon-wrapper">
@@ -3177,8 +3382,12 @@ watch(
               </button>
             </div>
           </div>
+          <p v-if="resumeImportError" class="import-persistent-error">{{ resumeImportError }}</p>
           <div class="modal-footer" v-if="resumeImagePreview || isParsingResume">
-            <button @click="parseAndSaveResume" :disabled="isParsingResume" class="btn-primary full-width">
+            <button v-if="resumeImportDraft" @click="confirmResumeImport" :disabled="isParsingResume" class="btn-primary full-width">
+              {{ isParsingResume ? '保存中...' : '确认并导入' }}
+            </button>
+            <button v-else @click="parseAndSaveResume" :disabled="isParsingResume" class="btn-primary full-width">
               {{ isParsingResume ? '解析中...' : '开始解析' }}
             </button>
           </div>
@@ -3284,6 +3493,30 @@ watch(
             <span class="processing-track" aria-hidden="true"><span></span></span>
             <span>{{ processingText }}</span>
           </div>
+          <div v-if="workflowVisible" class="workflow-status" aria-live="polite">
+            <div class="workflow-status-main">
+              <strong>{{ workflowModeLabel }}</strong>
+              <span>{{ workflowStatusLabel }}</span>
+              <span v-if="workflowState.focus_section">聚焦：{{ workflowState.focus_section }}</span>
+              <span>已核实 {{ workflowState.fact_count || 0 }} 条事实</span>
+            </div>
+            <div class="workflow-status-actions">
+              <button v-if="workflowState.status === 'active'" type="button" :disabled="isLoading || isResponding" @click="runWorkflowAction('pause')">暂停</button>
+              <button v-if="workflowState.status === 'paused'" type="button" :disabled="isLoading || isResponding" @click="runWorkflowAction('resume')">继续</button>
+              <button v-if="workflowState.has_suggestion && workflowState.status !== 'completed'" type="button" :disabled="isLoading || isResponding" @click="runWorkflowAction('apply')">应用建议</button>
+              <button v-if="workflowState.status !== 'completed'" type="button" :disabled="isLoading || isResponding" @click="runWorkflowAction('end')">结束</button>
+            </div>
+          </div>
+          <div class="assistant-actions" aria-label="简历分析快捷操作">
+            <button
+              v-for="action in assistantActions"
+              :key="action.label"
+              type="button"
+              :disabled="isLoading || isResponding"
+              :title="action.prompt"
+              @click="runAssistantAction(action)"
+            >{{ action.label }}</button>
+          </div>
           <!-- 文件上传区域 -->
           <div v-if="uploadedFiles.length > 0" class="uploaded-files">
             <div v-for="file in uploadedFiles" :key="file.id" class="file-thumbnail">
@@ -3377,7 +3610,7 @@ watch(
       <!-- 右侧简历预览区 -->
       <div class="resume-section">
         <div class="resume-content">
-          <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :highlighted-module="highlightedModule" :jd-data="jdData" :lang="currentLang" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @request-layout-template="requestLayoutTemplate" />
+          <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :highlighted-module="highlightedModule" :jd-data="jdData" :lang="currentLang" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @open-resume-import="showUploadResumeDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @request-layout-template="requestLayoutTemplate" @layout-updated="handleLayoutUpdated" />
         </div>
       </div>
       </template>
@@ -3430,6 +3663,29 @@ watch(
                 <span class="processing-track" aria-hidden="true"><span></span></span>
                 <span>{{ processingText }}</span>
               </div>
+              <div v-if="workflowVisible" class="workflow-status" aria-live="polite">
+                <div class="workflow-status-main">
+                  <strong>{{ workflowModeLabel }}</strong>
+                  <span>{{ workflowStatusLabel }}</span>
+                  <span v-if="workflowState.focus_section">聚焦：{{ workflowState.focus_section }}</span>
+                  <span>已核实 {{ workflowState.fact_count || 0 }} 条事实</span>
+                </div>
+                <div class="workflow-status-actions">
+                  <button v-if="workflowState.status === 'active'" type="button" :disabled="isLoading || isResponding" @click="runWorkflowAction('pause')">暂停</button>
+                  <button v-if="workflowState.status === 'paused'" type="button" :disabled="isLoading || isResponding" @click="runWorkflowAction('resume')">继续</button>
+                  <button v-if="workflowState.has_suggestion && workflowState.status !== 'completed'" type="button" :disabled="isLoading || isResponding" @click="runWorkflowAction('apply')">应用建议</button>
+                  <button v-if="workflowState.status !== 'completed'" type="button" :disabled="isLoading || isResponding" @click="runWorkflowAction('end')">结束</button>
+                </div>
+              </div>
+              <div class="assistant-actions" aria-label="简历分析快捷操作">
+                <button
+                  v-for="action in assistantActions"
+                  :key="action.label"
+                  type="button"
+                  :disabled="isLoading || isResponding"
+                  @click="runAssistantAction(action)"
+                >{{ action.label }}</button>
+              </div>
               <div v-if="uploadedFiles.length > 0" class="uploaded-files">
                 <div v-for="file in uploadedFiles" :key="file.id" class="file-thumbnail">
                   <div v-if="file.type.startsWith('image/')" class="file-icon image-icon" :style="{ cursor: 'pointer' }" @click="openImagePreview(file)">
@@ -3468,7 +3724,7 @@ watch(
 
           <!-- 简历 Tab 内容 -->
           <div v-else-if="currentTab === 'resume'" class="mobile-resume-view" key="resume">
-            <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :highlighted-module="highlightedModule" :jd-data="jdData" :is-mobile-view="isMobileView" :lang="currentLang" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @request-layout-template="requestLayoutTemplate" />
+            <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :highlighted-module="highlightedModule" :jd-data="jdData" :is-mobile-view="isMobileView" :lang="currentLang" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @open-resume-import="showUploadResumeDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @request-layout-template="requestLayoutTemplate" @layout-updated="handleLayoutUpdated" />
           </div>
         </Transition>
 
@@ -3771,6 +4027,10 @@ watch(
                 </el-select>
               </div>
               <div class="field-group">
+                <label>出生年月</label>
+                <input v-model="resumeFormData.basics.birth_date" placeholder="例如 2002.06" class="element-input" />
+              </div>
+              <div class="field-group">
                 <label>手机</label>
                 <input v-model="resumeFormData.basics.phone" placeholder="请输入" class="element-input" />
               </div>
@@ -3781,6 +4041,15 @@ watch(
               <div class="field-group full-width">
                 <label>期望岗位</label>
                 <input v-model="resumeFormData.basics.target_position" placeholder="请输入" class="element-input" />
+              </div>
+              <div class="field-group full-width">
+                <label>其他基本信息</label>
+                <div v-for="(field, fieldIndex) in resumeFormData.basics.additional_fields" :key="`basic-extra-${fieldIndex}`" class="inline-edit-row">
+                  <input v-model="field.label" placeholder="字段名，如籍贯" class="element-input" />
+                  <input v-model="field.value" placeholder="字段内容" class="element-input" />
+                  <button type="button" class="remove-btn" @click="removeBasicAdditionalField(fieldIndex)">删除</button>
+                </div>
+                <button type="button" class="add-btn" @click="addBasicAdditionalField">+ 添加基本信息</button>
               </div>
             </div>
 
@@ -3870,6 +4139,20 @@ watch(
               </div>
             </div>
             <button @click="addEducation" class="add-btn">+ 添加学历</button>
+
+            <h4 class="section-title">研究方向</h4>
+            <RichTextEditor
+              v-model="researchInterestsText"
+              placeholder="每行一条研究方向，导入内容会按原文保留"
+              class="rich-editor-field"
+            />
+
+            <h4 class="section-title">主要荣誉</h4>
+            <RichTextEditor
+              v-model="honorsText"
+              placeholder="每行一项奖学金、竞赛奖项或荣誉"
+              class="rich-editor-field"
+            />
 
             <!-- 工作经历 -->
             <h4 class="section-title">工作经历</h4>
@@ -3984,21 +4267,58 @@ watch(
               </div>
               <!-- 项目内容 -->
               <div class="array-item-nested">
-                <label>项目内容</label>
+                <label>项目简介</label>
                 <RichTextEditor
-                  v-model="proj._detailsText"
-                  placeholder="请输入项目内容，支持换行和 Ctrl+B 加粗"
+                  v-model="proj._introText"
+                  placeholder="简要说明项目背景和目标"
+                  class="rich-editor-field"
+                />
+              </div>
+              <div class="array-item-nested">
+                <label>项目职责（每行一条，模板自动编号）</label>
+                <RichTextEditor
+                  v-model="proj._dutiesText"
+                  placeholder="每行填写一项职责，不需要手动输入序号"
+                  class="rich-editor-field"
+                />
+              </div>
+              <div class="array-item-nested">
+                <label>其他项目内容（可选）</label>
+                <RichTextEditor
+                  v-model="proj._extraDetailsText"
+                  placeholder="不属于项目简介或项目职责的补充内容，每行一条"
                   class="rich-editor-field"
                 />
               </div>
             </div>
             <button @click="addProject" class="add-btn">+ 添加项目经历</button>
 
-            <!-- 其他信息 -->
-            <h4 class="section-title">其他信息</h4>
+            <h4 class="section-title">其他原始栏目</h4>
+            <div v-for="(section, sectionIndex) in resumeFormData.custom_sections" :key="`custom-section-${sectionIndex}`" class="array-item">
+              <div class="array-item-header">
+                <span>自定义栏目 {{ sectionIndex + 1 }}</span>
+                <button type="button" @click="removeCustomSection(sectionIndex)" class="remove-btn">删除</button>
+              </div>
+              <div class="field-group full-width">
+                <label>栏目标题</label>
+                <input v-model="section.title" placeholder="保留原简历栏目标题" class="element-input" />
+              </div>
+              <div class="array-item-nested">
+                <label>栏目内容</label>
+                <RichTextEditor
+                  v-model="section._itemsText"
+                  placeholder="每行一条，按原简历阅读顺序保留"
+                  class="rich-editor-field"
+                />
+              </div>
+            </div>
+            <button type="button" @click="addCustomSection" class="add-btn">+ 添加自定义栏目</button>
+
+            <!-- 专业技能 -->
+            <h4 class="section-title">专业技能</h4>
             <div class="others-section">
               <div class="field-group full-width">
-                <label>技能</label>
+                <label>技能条目</label>
                 <div class="tags-input">
                   <span v-for="(skill, i) in resumeFormData.others.skills" :key="i" class="tag">
                     {{ skill }}
@@ -4007,6 +4327,11 @@ watch(
                   <input v-model="newResumeSkill" @keydown.enter="addResumeSkill" placeholder="回车添加技能" class="tag-input" />
                 </div>
               </div>
+            </div>
+
+            <!-- 补充信息 -->
+            <h4 class="section-title">证书与语言</h4>
+            <div class="others-section">
               <div class="field-group full-width">
                 <label>证书</label>
                 <div class="tags-input">
@@ -4593,6 +4918,94 @@ watch(
   background: linear-gradient(to top, #0c0c0e 72%, rgba(12, 12, 14, 0));
   border-top: 1px solid rgba(255, 255, 255, 0.025);
   flex-shrink: 0;
+}
+
+.workflow-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 2px 8px;
+  padding: 7px 9px;
+  color: #cbd6ed;
+  background: rgba(83, 125, 202, 0.1);
+  border: 1px solid rgba(126, 164, 234, 0.2);
+  border-radius: 9px;
+  font-size: 11px;
+}
+
+.workflow-status-main,
+.workflow-status-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.workflow-status-main strong {
+  color: #f3f6ff;
+}
+
+.workflow-status-actions {
+  justify-content: flex-end;
+}
+
+.workflow-status-actions button {
+  padding: 3px 7px;
+  color: #dce6ff;
+  background: rgba(126, 164, 234, 0.13);
+  border: 1px solid rgba(126, 164, 234, 0.25);
+  border-radius: 6px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.workflow-status-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.assistant-actions {
+  display: flex;
+  gap: 7px;
+  margin: 0 2px 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.assistant-actions::-webkit-scrollbar {
+  display: none;
+}
+
+.assistant-actions button {
+  flex: 0 0 auto;
+  min-height: 29px;
+  padding: 5px 10px;
+  color: #cbd6ed;
+  background: rgba(113, 151, 222, 0.09);
+  border: 1px solid rgba(126, 164, 234, 0.2);
+  border-radius: 999px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+
+.assistant-actions button:hover:not(:disabled) {
+  color: #fff;
+  background: rgba(113, 151, 222, 0.18);
+  border-color: rgba(139, 177, 247, 0.4);
+}
+
+.assistant-actions button:focus-visible {
+  outline: 2px solid #8eb1ff;
+  outline-offset: 2px;
+}
+
+.assistant-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .processing-status {
@@ -7384,6 +7797,31 @@ watch(
   border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.task-import-picker {
+  margin-top: 16px;
+}
+
+.task-import-button {
+  display: grid;
+  width: 100%;
+  gap: 5px;
+  padding: 18px;
+  color: #e8edfa;
+  text-align: left;
+  background: rgba(124, 165, 255, 0.07);
+  border: 1px dashed rgba(125, 167, 255, 0.55);
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.task-import-button:hover {
+  background: rgba(124, 165, 255, 0.12);
+}
+
+.task-import-button small {
+  color: #999ba4;
+}
+
 .source-group-title,
 .other-resume-sources summary,
 .source-project-group > strong {
@@ -7571,6 +8009,29 @@ watch(
   border-color: rgba(255, 255, 255, 0.09);
 }
 
+.import-draft-review {
+  padding: 20px;
+  border: 1px solid rgba(117, 162, 255, 0.28);
+  border-radius: 12px;
+  background: rgba(117, 162, 255, 0.07);
+}
+
+.import-draft-review h3 { margin: 0 0 12px; font-size: 15px; }
+.import-draft-review p { margin: 7px 0; color: #d6d9e2; font-size: 13px; }
+.import-draft-review .import-source-fingerprint { color: #8f93a0; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; }
+.import-draft-review small { display: block; margin-top: 12px; color: #9699a4; line-height: 1.55; }
+
+.import-persistent-error {
+  margin: 0 20px 16px;
+  padding: 10px 12px;
+  color: #ffb0b0;
+  background: rgba(255, 93, 93, 0.08);
+  border: 1px solid rgba(255, 112, 112, 0.22);
+  border-radius: 9px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .modal-container .option-item:hover,
 .modal-container .identity-card:hover,
 .modal-container .upload-box:hover {
@@ -7667,6 +8128,20 @@ watch(
 .toast-leave-to {
   opacity: 0;
   transform: translate(-50%, -8px);
+}
+
+.inline-edit-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.7fr) minmax(180px, 1.3fr) auto;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+@media (max-width: 640px) {
+  .inline-edit-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 1199px) {

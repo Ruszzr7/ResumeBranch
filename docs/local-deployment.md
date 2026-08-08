@@ -44,12 +44,16 @@ APP_MODE=multi_user
 | 脚本 | 作用 |
 |------|------|
 | `start_db_local.cmd` | 双击启动本机 MySQL 服务 |
-| `start_backend_local.cmd` | 双击并前台启动后端 |
+| `start_backend_local.cmd` | 后端未运行时启动，已运行时自动重启 |
 | `start_frontend_local.cmd` | 双击并前台启动前端 |
 | `start_local.cmd` | 双击一键后台启动数据库 + 后端 + 前端 |
 | `stop_local.cmd` | 双击停止前端、后端和 MySQL，并清理端口残留进程 |
 
 Windows 下直接使用 `.cmd` 文件即可，启动与停止过程不依赖 PowerShell 脚本。
+
+后端代码更新后直接运行 `scripts\start_backend_local.cmd`。也可以运行
+`scripts\start_local.cmd`：它只重启必须重新加载 Python 代码的后端；数据库
+保持运行，前端继续由 Vite 热更新处理。
 
 ### 首次设置
 

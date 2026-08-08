@@ -115,11 +115,17 @@ def _date_range(item: dict) -> str:
 
 
 def _bullet(document, text: object, font_size: float) -> None:
+    value = str(text)
+    if re.match(r"^\s*(?:[（(]?\d{1,2}[）).、．]|[一二三四五六七八九十]+[、.．])\s*", value):
+        paragraph = document.add_paragraph()
+        _paragraph_spacing(paragraph, after=1.5, line=1.12)
+        _add_markdown_runs(paragraph, value, font_size)
+        return
     paragraph = document.add_paragraph(style="List Bullet")
     _paragraph_spacing(paragraph, after=1.5, line=1.12)
     paragraph.paragraph_format.left_indent = Mm(4.5)
     paragraph.paragraph_format.first_line_indent = Mm(-3)
-    _add_markdown_runs(paragraph, str(text).lstrip("• "), font_size)
+    _add_markdown_runs(paragraph, value.lstrip("• "), font_size)
 
 
 def _generate_docx_legacy(resume_data: dict, style: dict | None = None, photo: str | None = None, lang: str = "zh") -> bytes:
@@ -362,7 +368,16 @@ def generate_docx(
     name_p.alignment = alignment
     _paragraph_spacing(name_p, after=2, line=1)
     _set_font(name_p.add_run(basics.get("name") or labels["nameNotSet"]), font_size * 1.5, bold=True)
-    contact_values = [str(basics.get(key)) for key in ("gender", "phone", "email") if basics.get(key) and key not in hidden_basics]
+    contact_values = [str(basics.get(key)) for key in ("gender",) if basics.get(key) and key not in hidden_basics]
+    if basics.get("birth_date") and "birth_date" not in hidden_basics:
+        contact_values.append(f'{labels["birthDate"]}{colon}{basics["birth_date"]}')
+    contact_values.extend(str(basics.get(key)) for key in ("phone", "email") if basics.get(key) and key not in hidden_basics)
+    if "additional_fields" not in hidden_basics:
+        contact_values.extend(
+            f'{item.get("label")}{colon}{item.get("value")}'
+            for item in basics.get("additional_fields", [])
+            if item.get("label") and item.get("value")
+        )
     if contact_values:
         if basics_layout["contactLayout"] == "stacked":
             for value in contact_values:
@@ -462,7 +477,35 @@ def generate_docx(
             if cfg["showJobType"]:
                 pieces.append(item.get("job_type", ""))
             _two_column_line(document, " · ".join(v for v in pieces if v), _date_range(item), font_size)
-            add_details(item.get("details"), cfg["detailsStyle"])
+            add_content_blocks(item)
+
+    def add_content_blocks(item: dict) -> None:
+        blocks = item.get("content_blocks") or []
+        if not blocks:
+            add_details(item.get("details"), "bullets")
+            return
+        for block in blocks:
+            block_type = block.get("type", "paragraph")
+            label = str(block.get("label") or "").strip()
+            if block_type == "paragraph":
+                paragraph = document.add_paragraph()
+                _paragraph_spacing(paragraph, after=1, line=1.08)
+                if label:
+                    _set_font(paragraph.add_run(f"{label}{colon}"), font_size, bold=True)
+                _add_markdown_runs(paragraph, block.get("text", ""), font_size)
+                continue
+            if label:
+                paragraph = document.add_paragraph()
+                _paragraph_spacing(paragraph, after=0.5, line=1.05)
+                _set_font(paragraph.add_run(f"{label}{colon}"), font_size, bold=True)
+            for detail_index, detail in enumerate(block.get("items") or [], 1):
+                if block_type == "numbered_list":
+                    paragraph = document.add_paragraph()
+                    _paragraph_spacing(paragraph, after=0.5, line=1.08)
+                    _set_font(paragraph.add_run(f"({detail_index}) "), font_size)
+                    _add_markdown_runs(paragraph, detail, font_size)
+                else:
+                    _bullet(document, detail, font_size)
 
     def render_projects() -> None:
         items = data.get("project_experience") or []
@@ -478,16 +521,24 @@ def generate_docx(
             if cfg["showRole"] and item.get("role"):
                 values.append(item["role"])
             _two_column_line(document, " · ".join(values), _date_range(item) if cfg["showDate"] else "", font_size)
-            add_details(item.get("details"), cfg["detailsStyle"])
+            add_content_blocks(item)
+
+    def render_skills() -> None:
+        skills = (data.get("others") or {}).get("skills") or []
+        if not skills or "skills" in hidden_sections:
+            return
+        title("skills", labels["skills"])
+        for value in skills:
+            _bullet(document, value, font_size)
 
     def render_others() -> None:
         values = data.get("others") or {}
         cfg = layout["others"]
-        fields = [key for key in cfg["fieldOrder"] if key not in cfg["hiddenFields"] and values.get(key)]
+        fields = [key for key in cfg["fieldOrder"] if key != "skills" and key not in cfg["hiddenFields"] and values.get(key)]
         if not fields or "others" in hidden_sections:
             return
         maybe_break("others")
-        title("others", labels["others"])
+        title("others", "Certificates & Languages" if lang == "en" else "证书与语言")
         field_labels = {"skills": labels["skills"], "certificates": labels["certificates"], "languages": labels["language"]}
         separator = " · " if cfg["separator"] == "dot" else " | "
         for key in fields:
@@ -514,7 +565,41 @@ def generate_docx(
                 p = document.add_paragraph()
                 _add_markdown_runs(p, value, font_size)
 
-    renderers = {"education": render_education, "project_experience": render_projects, "others": render_others, "self_evaluation": render_self}
+    def render_plain_section(section_id: str, fallback: str, values: list) -> None:
+        if not values or section_id in hidden_sections:
+            return
+        maybe_break(section_id)
+        title(section_id, fallback)
+        for value in values:
+            _bullet(document, value, font_size)
+
+    def render_research() -> None:
+        render_plain_section("research_interests", labels["researchInterests"], data.get("research_interests") or [])
+
+    def render_honors() -> None:
+        render_plain_section("honors", labels["honors"], data.get("honors") or [])
+
+    def render_custom_sections() -> None:
+        if "custom_sections" in hidden_sections:
+            return
+        for index, custom in enumerate(data.get("custom_sections") or []):
+            if not custom.get("title") or not custom.get("items"):
+                continue
+            maybe_break(f"custom_sections:{index}")
+            title("custom_sections", custom["title"])
+            for value in custom["items"]:
+                _bullet(document, value, font_size)
+
+    renderers = {
+        "education": render_education,
+        "skills": render_skills,
+        "research_interests": render_research,
+        "honors": render_honors,
+        "project_experience": render_projects,
+        "custom_sections": render_custom_sections,
+        "others": render_others,
+        "self_evaluation": render_self,
+    }
     work_by_id = {section_id: (fallback, items) for section_id, fallback, items in work_groups()}
     for section_id in global_layout["sectionOrder"]:
         if section_id in work_by_id:

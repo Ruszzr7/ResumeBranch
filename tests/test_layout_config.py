@@ -24,7 +24,7 @@ class LayoutConfigTests(unittest.TestCase):
             "global": {"density": "wild", "fontSize": 99, "lineHeight": 0},
             "education": {"preset": "floating", "schoolTagStyle": "neon"},
         })
-        self.assertEqual(config["global"]["density"], "standard")
+        self.assertEqual(config["global"]["density"], "compact")
         self.assertEqual(config["global"]["fontSize"], 14)
         self.assertEqual(config["global"]["lineHeight"], 1.1)
         self.assertEqual(config["education"]["preset"], "classic")
@@ -47,8 +47,9 @@ class LayoutConfigTests(unittest.TestCase):
 
     def test_density_applies_safe_numeric_bundle(self):
         config = apply_density({}, "compact")
-        self.assertEqual(config["global"]["fontSize"], 10)
-        self.assertEqual(config["global"]["lineHeight"], 1.3)
+        self.assertEqual(config["global"]["fontSize"], 10.5)
+        self.assertEqual(config["global"]["lineHeight"], 1.32)
+        self.assertEqual(config["global"]["moduleMargin"], 0.45)
 
     def test_curated_template_reuses_presets_and_preserves_content_visibility(self):
         config = default_layout_config()

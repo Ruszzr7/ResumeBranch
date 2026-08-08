@@ -3,7 +3,7 @@
 使用 LangGraph 构建的智能对话系统，帮助用户完善简历。
 
 核心设计原则：
-1. 状态驱动：所有状态通过 AgentState 传递，使用 LangGraph checkpointer 持久化
+1. 状态驱动：单次执行状态通过 AgentState 传递，跨请求状态由应用数据库持久化
 2. 工具调用：只在必要时调用工具（save_resume_tool）
 3. 消息过滤：只传递 HumanMessage/AIMessage/SystemMessage 给 LLM，跳过 ToolMessage
 4. 无硬编码回复：所有 AI 回复由 LLM 生成，不使用硬编码内容
@@ -20,13 +20,12 @@ import time
 from copy import deepcopy
 from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.memory import MemorySaver
 from dataclasses import field
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 from dataclasses import dataclass
-from typing import List
+from typing import List, Literal
 from pydantic import BaseModel, Field
 
 from .resume_data import normalize_resume_data
@@ -40,7 +39,15 @@ from .layout_config import (
     normalize_layout_config,
     reset_layout_section,
 )
-from .llm_providers import active_profile, temperature_supported
+from .llm_providers import active_profile, role_temperature
+from .harness.context import build_conversation_context
+from .harness.interview import (
+    INTERVIEW_MODES,
+    apply_suggestion_candidate,
+    normalize_interview_memory,
+    run_interview_turn,
+)
+from .harness.observability import harness_metrics
 
 
 def record_assistant_revision(
@@ -102,13 +109,25 @@ os.environ.setdefault("LANGCHAIN_OPENAI_TCP_KEEPALIVE", "0")
 # Pydantic 数据模型定义
 # =============================================================================
 
+class AdditionalBasicField(BaseModel):
+    """未预设的个人基本信息。"""
+    label: str = Field(default="", description="字段名称，例如籍贯、政治面貌")
+    value: str = Field(default="", description="字段原文")
+
+
 class BasicInfo(BaseModel):
     """基本信息"""
-    name: str = Field(..., description="姓名")
-    gender: str = Field(..., description="性别")
-    phone: str = Field(..., description="手机号")
-    email: str = Field(..., description="邮箱")
-    target_position: str = Field(..., description="期望岗位")
+    name: str = Field(default="", description="姓名")
+    gender: str = Field(default="", description="性别")
+    birth_date: str = Field(default="", description="出生年月或出生日期，忠实保留原文")
+    phone: str = Field(default="", description="手机号")
+    email: str = Field(default="", description="邮箱")
+    target_position: str = Field(default="", description="期望岗位")
+    photo: str = Field(default="", description="证件照 data URL；文档解析时留空")
+    additional_fields: List[AdditionalBasicField] = Field(
+        default_factory=list,
+        description="其他基本信息，每项为 label、value 字符串，例如籍贯、政治面貌",
+    )
 
 
 class Thesis(BaseModel):
@@ -131,36 +150,60 @@ class Education(BaseModel):
     theses: List[Thesis] = Field(default_factory=list, description="论文列表")
 
 
+class ProjectContentBlock(BaseModel):
+    """经历正文的语义块，避免标题、正文和编号被统一渲染成圆点列表。"""
+    type: Literal["paragraph", "numbered_list", "bullet_list"] = Field(
+        default="paragraph", description="段落、编号列表或普通分点列表"
+    )
+    label: str = Field(default="", description="例如项目简介、项目职责")
+    label_bold: bool = Field(default=True, description="语义标签是否加粗")
+    text: str = Field(default="", description="paragraph 类型的正文")
+    items: List[str] = Field(default_factory=list, description="列表类型的逐条内容，不包含序号")
+
+
 class WorkExperience(BaseModel):
     """工作经历"""
     company_name: str = Field(..., description="公司名称")
     job_title: str = Field(..., description="职位名称")
     date_range: List[str] = Field(..., description="就职时间")
     job_type: str = Field(..., description="工作类型（实习/全职）")
+    content_blocks: List[ProjectContentBlock] = Field(default_factory=list, description="项目简介、职责等语义内容块")
     details: List[str] = Field(default_factory=list, description="工作详细内容")
 
 
 class ProjectExperience(BaseModel):
     """项目经历"""
     project_name: str = Field(..., description="项目名称")
-    role: str = Field(..., description="项目角色")
-    date_range: List[str] = Field(..., description="项目时间")
-    details: List[str] = Field(default_factory=list, description="项目详细内容")
+    role: str = Field(default="", description="项目角色；原文未提供时必须留空")
+    date_range: List[str] = Field(default_factory=list, description="项目时间")
+    content_blocks: List[ProjectContentBlock] = Field(
+        default_factory=list, description="优先使用的项目简介、项目职责等语义内容块"
+    )
+    details: List[str] = Field(default_factory=list, description="旧数据兼容字段；新解析优先写入 content_blocks")
 
 
 class Others(BaseModel):
     """其他信息"""
-    skills: List[str] = Field(default_factory=list, description="技能")
-    certificates: List[str] = Field(default_factory=list, description="证书")
-    languages: List[str] = Field(default_factory=list, description="语言")
+    skills: List[str] = Field(default_factory=list, description="原简历专业技能/技能特长/技术栈栏目中的全部条目，包括该栏目内出现的语言和证书")
+    certificates: List[str] = Field(default_factory=list, description="仅提取原简历独立证书/资格栏目中的条目")
+    languages: List[str] = Field(default_factory=list, description="仅提取原简历独立语言/外语能力栏目中的条目")
+
+
+class CustomSection(BaseModel):
+    """无法安全映射到固定栏目、但必须保留的原简历栏目。"""
+    title: str = Field(default="", description="原栏目标题")
+    items: List[str] = Field(default_factory=list, description="按原阅读顺序保留的内容")
 
 
 class Resume(BaseModel):
     """完整简历数据结构"""
     basics: BasicInfo = Field(..., description="基本信息")
     education: List[Education] = Field(default_factory=list, description="教育背景")
+    research_interests: List[str] = Field(default_factory=list, description="研究方向或研究兴趣")
+    honors: List[str] = Field(default_factory=list, description="荣誉、奖项、奖学金")
     work_experience: List[WorkExperience] = Field(default_factory=list, description="工作经历")
     project_experience: List[ProjectExperience] = Field(default_factory=list, description="项目经历")
+    custom_sections: List[CustomSection] = Field(default_factory=list, description="其他原始栏目，禁止丢弃")
     others: Others = Field(default_factory=Others, description="其他信息")
     self_evaluation: List[str] = Field(default_factory=list, description="自我评价")
 
@@ -227,18 +270,19 @@ def create_llm_for_config(
         "http_client": httpx_client,
         "max_retries": 3,
     }
-    if temperature is not None and temperature_supported(provider, model):
-        kwargs["temperature"] = temperature
+    effective_temperature = role_temperature(provider, model, temperature)
+    if effective_temperature is not None:
+        kwargs["temperature"] = effective_temperature
     return ChatOpenAI(**kwargs)
 
 
 def create_llm(*, temperature: float):
-    """Create a chat model while respecting provider-specific parameters."""
+    """Create a role-specific model; provider rules may omit temperature entirely."""
     return create_llm_for_config(
         api_key=LLM_API_KEY,
         base_url=LLM_BASE_URL,
         model=LLM_MODEL,
-        temperature=LLM_TEMPERATURE if LLM_TEMPERATURE is not None else temperature,
+        temperature=temperature,
         provider=LLM_PROVIDER,
     )
 
@@ -548,6 +592,40 @@ RESUME_FULL_EXTRACT_PROMPT = '''# Role
 '''
 
 
+RESUME_IMAGE_TRANSCRIPTION_PROMPT = '''你是只负责忠实转写的简历 OCR 引擎。
+
+请按图片的阅读顺序逐行转写全部可见文字，不要总结、改写、补全或猜测。
+无法确认的字符用“〔无法辨认〕”标记；图片中不存在的信息绝对不要生成。
+保留各段标题、项目符号、日期、数字、邮箱和电话号码。只输出转写文本。'''
+
+
+def build_resume_extract_prompt() -> str:
+    """Return the single canonical prompt used for PDF and image imports."""
+    return (
+        "你是忠实、无损的简历文档解析器。完整读取所有页面；双栏或多栏页面必须先判断栏目边界，"
+        "再按人类自然阅读顺序读取，不能把左右栏交叉拼接。\n"
+        "【忠实性】逐字保留姓名、联系方式、学校、公司、职位、项目名、日期、数字、技术名词和每条可见描述；"
+        "禁止总结、润色、改写、补全、合并不同经历或猜测不可见内容。\n"
+        "【字段映射】出生年月进入 basics.birth_date；其他未预设的个人字段进入 basics.additional_fields；"
+        "研究方向进入 research_interests；奖学金、竞赛奖项和主要荣誉进入 honors；"
+        "字段映射必须先遵循原简历的可见栏目边界，而不是仅凭内容语义重新分类：专业技能、技能特长、技术栈栏目下的全部内容"
+        "都进入 others.skills，即使其中包含 CET-4/CET-6、英语、证书或认证；只有原文存在独立的证书/资格栏目时才写入"
+        "others.certificates，只有原文存在独立的语言/外语能力栏目时才写入 others.languages。禁止把原简历一个栏目拆成多个新栏目，"
+        "也不要跨数组重复同一内容。不能把专业技能放入 custom_sections，也不能把荣誉混入 certificates。\n"
+        "【经历语义】工作和项目内容优先写入各自的 content_blocks：项目简介/项目背景使用 paragraph；"
+        "项目职责/主要职责使用 numbered_list，label 保留原文标题且 label_bold=true；"
+        "原文中的（1）（2）或 (1)(2) 等编号只作为 items 的边界，items 内不要重复序号。"
+        "原文没有项目角色时 role 必须为空，禁止输出‘角色’、‘项目成员’等占位词。\n"
+        "【经历粒度】没有语义标题的普通工作描述才逐条进入 details，禁止合成一个长字符串；"
+        "论文标题与说明写入 theses；GPA、满分、排名和平均分分别进入对应字段。\n"
+        "【兜底保留】任何不能可靠映射到固定字段的原栏目，都必须按原栏目标题和阅读顺序写入 custom_sections，"
+        "绝对不能因为 Schema 没有同名字段而省略。不要重复写入已经映射的内容。\n"
+        "【输出】文件中不存在的字段使用空字符串或空数组；basics.photo 留空。"
+        "只输出符合下面 JSON Schema 的 JSON 对象，不要输出 Markdown、注释或其他文字。JSON Schema：\n"
+        + json.dumps(Resume.model_json_schema(), ensure_ascii=False, separators=(",", ":"))
+    )
+
+
 
 # =============================================================================
 # LangChain Tools
@@ -619,11 +697,11 @@ def fix_unquoted_json_strings(content: str) -> str:
         return content
 
 
-def normalize_and_validate_resume(data: dict) -> dict:
+def normalize_and_validate_resume(data: dict, *, include_defaults: bool = False) -> dict:
     """Normalize legacy fields and reject malformed model-generated resumes."""
     normalized = normalize_resume_data(data)
-    Resume.model_validate(normalized)
-    return normalized
+    validated = Resume.model_validate(normalized)
+    return validated.model_dump() if include_defaults else normalized
 
 
 @tool
@@ -714,6 +792,14 @@ class AgentState:
     user_id: int = None  # 当前用户ID
     task_id: str = None  # 当前任务ID
     proposal_error: str = None  # 候选修改生成失败时返回给前端的可恢复错误
+    memory_summary: str = ""  # 分层记忆摘要，仅作为不可执行的上下文数据
+    memory_version: int = 0  # 乐观并发版本，由持久化层管理
+    interview_memory: dict = None  # 带来源的已核实事实与最近建议
+    workflow_state: dict = None  # Checkpointer 中的轻量控制状态
+    workflow_updates: dict = None  # 本节点产生的控制状态投影
+    interaction_mode: str = ""  # diagnosis/coaching/jd_review；空值沿用旧链路
+    interaction_action: str = ""  # start/answer/pause/resume/end/apply
+    request_id: str = ""
 
 
 # =============================================================================
@@ -771,14 +857,31 @@ def extract_user_intent(state: AgentState) -> str:
 _CHANGE_ACTION_RE = re.compile(
     r"(?:修改|更改|改为|改成|替换|更新|填写|写入|新增|添加|删除|移除|补充|优化|调整|设置|设为|变更)"
 )
+_COACHING_INTENT_RE = re.compile(
+    r"(?:诊断|点评|评估|审阅|审查|分析|拷打|追问|模拟面试官|修改建议|优化建议|"
+    r"不足之处|不足|短板|问题在哪里|匹配度|怎么改|如何改|怎样改|如何修改|"
+    r"怎么优化|如何优化|怎样优化|怎么完善|如何完善|怎样完善)"
+)
+_DIRECT_APPLY_RE = re.compile(
+    r"(?:直接|立即|马上)(?:帮我|替我|给我)?(?:修改|优化|改写|重写|应用)|"
+    r"(?:修改|优化|改写|重写)后(?:直接)?(?:应用|保存|写入)|(?:应用|保存|写入)(?:这些|上述|该)"
+)
 _RESUME_DATA_FIELD_RE = re.compile(
-    r"(?:姓名|性别|年龄|电话|手机|邮箱|所在地|目标岗位|求职岗位|GPA|绩点|满绩|"
+    r"(?:姓名|性别|年龄|出生年月|生日|电话|手机|邮箱|所在地|目标岗位|求职岗位|GPA|绩点|满绩|"
     r"排名|平均分|学校|专业|学历|学位|教育经历|工作经历|实习经历|项目经历|项目|"
-    r"公司|职位|技能|证书|语言|自我评价|简历内容)"
+    r"公司|职位|研究方向|研究兴趣|荣誉|奖项|技能|证书|语言|自定义栏目|自我评价|简历内容)"
 )
 _STYLE_ONLY_RE = re.compile(
     r"(?:字体|字号|颜色|填充|背景|边距|行距|间距|模板|排版|页眉|页脚|标签样式)"
 )
+
+
+def is_resume_coaching_request(message: str) -> bool:
+    """Return True for read-only review, coaching, and interview-style requests."""
+    text = str(message or "").strip()
+    if not text or "[CONFIRM_REPLY:" in text:
+        return False
+    return bool(_COACHING_INTENT_RE.search(text) and not _DIRECT_APPLY_RE.search(text))
 
 
 def latest_human_text(state: AgentState) -> str:
@@ -820,6 +923,10 @@ def is_explicit_resume_change_request(message: str) -> bool:
     text = str(message or "").strip()
     if not text or "[CONFIRM_REPLY:" in text:
         return False
+    # "How should I improve this resume?" is consultation, not authorization
+    # to generate or persist a mutation candidate.
+    if is_resume_coaching_request(text):
+        return False
     if not (_CHANGE_ACTION_RE.search(text) and _RESUME_DATA_FIELD_RE.search(text)):
         return False
     # A request that only concerns presentation must stay in the normal dialog
@@ -834,6 +941,8 @@ _LAYOUT_ACTION_RE = re.compile(
 )
 _LAYOUT_SECTION_NAMES = {
     "教育经历": "education", "教育背景": "education",
+    "专业技能": "skills", "技能": "skills",
+    "研究方向": "research_interests", "主要荣誉": "honors", "荣誉": "honors",
     "工作经历": "work_experience", "实习经历": "internship_experience",
     "项目经历": "project_experience", "其他信息": "others",
     "技能证书": "others", "自我评价": "self_evaluation", "个人总结": "self_evaluation",
@@ -843,6 +952,8 @@ _LAYOUT_SECTION_NAMES = {
 def is_explicit_layout_change_request(message: str) -> bool:
     text = str(message or "").strip()
     if not text or "[CONFIRM_REPLY:" in text:
+        return False
+    if is_resume_coaching_request(text):
         return False
     return bool(_LAYOUT_ACTION_RE.search(text))
 
@@ -965,7 +1076,8 @@ def build_local_layout_candidate(state: AgentState) -> dict | None:
         if re.search(rf"(?:显示|恢复显示).{{0,5}}{re.escape(label)}|{re.escape(label)}.{{0,5}}(?:显示|恢复显示)", text):
             candidate["global"]["hiddenSections"] = [value for value in candidate["global"]["hiddenSections"] if value != section_id]
 
-    order_match = re.search(r"(教育经历|工作经历|实习经历|项目经历|其他信息|自我评价).{0,8}(?:放到|移到)(教育经历|工作经历|实习经历|项目经历|其他信息|自我评价)(前面|后面)", text)
+    section_pattern = r"教育经历|专业技能|技能|研究方向|主要荣誉|荣誉|工作经历|实习经历|项目经历|其他信息|自我评价"
+    order_match = re.search(rf"({section_pattern}).{{0,8}}(?:放到|移到)({section_pattern})(前面|后面)", text)
     if order_match:
         source = _LAYOUT_SECTION_NAMES[order_match.group(1)]
         target = _LAYOUT_SECTION_NAMES[order_match.group(2)]
@@ -1037,7 +1149,7 @@ def parse_edit_candidate(content, current_resume: dict, current_layout: dict) ->
 
 
 _COMPLEX_EDIT_FIELD_RE = re.compile(
-    r"(?:工作经历|实习经历|项目经历|项目|技能|证书|语言|自我评价|论文|课程|奖项)"
+    r"(?:工作经历|实习经历|项目经历|项目|研究方向|研究兴趣|荣誉|技能|证书|语言|自定义栏目|自我评价|论文|课程|奖项)"
 )
 _LOCAL_BASIC_PATTERNS = {
     "name": re.compile(r"(?:将|把)?\s*姓名\s*(?:修改为|更改为|改为|改成|设置为|调整为)\s*([^，,。；;\n]+)"),
@@ -1256,6 +1368,9 @@ async def proposal_generator_node(state: AgentState) -> dict:
 当前布局配置：
 {json.dumps(current_layout, ensure_ascii=False, indent=2)}
 
+当前目标岗位 JD：
+{json.dumps(state.jd_data or {}, ensure_ascii=False, indent=2)}
+
 用户要求：
 {request_text}
 """
@@ -1304,6 +1419,106 @@ async def proposal_generator_node(state: AgentState) -> dict:
         }
 
 
+async def interview_coach_node(state: AgentState) -> dict:
+    """Run the source-traceable interview path without mutating resume data."""
+    current = normalize_resume_data(state.resume_data or {})
+    current_layout = normalize_layout_config(state.layout_data)
+    memory = normalize_interview_memory(state.interview_memory or {}, state.interaction_mode)
+    action = str(state.interaction_action or "answer")
+
+    if action == "apply":
+        suggestion = memory.get("latest_suggestion")
+        try:
+            if (state.workflow_state or {}).get("status") == "completed":
+                raise ValueError("本轮深度打磨已结束，请重新开始后再应用建议")
+            if (state.workflow_state or {}).get("phase") not in {"awaiting_apply", "questioning"}:
+                raise ValueError("当前阶段没有可应用的改写建议")
+            if not suggestion:
+                raise ValueError("当前没有可应用的改写建议")
+            candidate = apply_suggestion_candidate(current, suggestion)
+            pending = make_pending_confirmation(state, candidate, current_layout)
+            assistant_message = AIMessage(content=_preview_summary(pending.get("changes", [])))
+            return {
+                "messages": list(state.messages) + [assistant_message],
+                "resume_data": state.resume_data or {},
+                "jd_data": state.jd_data or {},
+                "layout_data": current_layout,
+                "pending_confirmation": pending,
+                "proposal_error": None,
+                "interview_memory": memory,
+                "workflow_updates": {
+                    "interaction_mode": state.interaction_mode,
+                    "status": "awaiting_confirmation",
+                    "phase": "awaiting_apply",
+                    "focus_section": str((state.workflow_state or {}).get("focus_section", "")),
+                    "current_question": str((state.workflow_state or {}).get("current_question", "")),
+                    "last_node": "interview_coach",
+                },
+                "just_saved": False,
+                "user_id": state.user_id,
+                "task_id": state.task_id,
+            }
+        except Exception as exc:
+            return {
+                "messages": list(state.messages) + [AIMessage(content=str(exc))],
+                "resume_data": state.resume_data or {},
+                "jd_data": state.jd_data or {},
+                "layout_data": current_layout,
+                "pending_confirmation": None,
+                "proposal_error": None,
+                "interview_memory": memory,
+                "workflow_updates": {
+                    "interaction_mode": state.interaction_mode,
+                    "status": "active",
+                    "phase": "questioning",
+                    "last_node": "interview_coach",
+                },
+                "just_saved": False,
+                "user_id": state.user_id,
+                "task_id": state.task_id,
+            }
+
+    try:
+        result = await run_interview_turn(
+            llm=conversation_llm,
+            action=action,
+            mode=state.interaction_mode,
+            user_text=latest_human_text(state),
+            resume_data=current,
+            jd_data=state.jd_data or {},
+            memory=memory,
+            workflow=state.workflow_state or {},
+            request_id=state.request_id,
+        )
+    except Exception as exc:
+        print(f"[interview_coach] 结构化输出失败，安全回退: {exc}")
+        harness_metrics.increment("interview_fallbacks_total")
+        fallback_question = "这段经历中，最能证明你个人贡献的一个具体结果是什么？"
+        result = {
+            "content": f"本轮结构化分析暂时不可用，简历未被修改。\n\n{fallback_question}",
+            "memory": memory,
+            "workflow_updates": {
+                "interaction_mode": state.interaction_mode,
+                "status": "active",
+                "phase": "questioning",
+                "focus_section": str((state.workflow_state or {}).get("focus_section", "")),
+                "current_question": fallback_question,
+                "last_node": "interview_fallback",
+            },
+        }
+    return {
+        "messages": list(state.messages) + [AIMessage(content=result["content"])],
+        "resume_data": state.resume_data or {},
+        "jd_data": state.jd_data or {},
+        "layout_data": current_layout,
+        "pending_confirmation": None,
+        "proposal_error": None,
+        "interview_memory": result["memory"],
+        "workflow_updates": result["workflow_updates"],
+        "just_saved": False,
+        "user_id": state.user_id,
+        "task_id": state.task_id,
+    }
 # =============================================================================
 # Nodes
 # =============================================================================
@@ -1334,62 +1549,17 @@ async def conversation_node(state: AgentState) -> dict:
         has_tool_calls = hasattr(msg, 'tool_calls') and msg.tool_calls
         print(f"  [{i}] {msg_type}: {content_str[:80]}... (tool_calls: {bool(has_tool_calls)})")
 
-    # 构建系统消息，使用模板替换 resume_data
-    if state.resume_data:
-        resume_for_llm = {k: v for k, v in state.resume_data.items() if k != 'photo'}
-        if 'basics' in resume_for_llm:
-            resume_for_llm['basics'] = {k: v for k, v in resume_for_llm.get('basics', {}).items() if k != 'photo'}
-        resume_json = json.dumps(resume_for_llm, ensure_ascii=False, indent=2)
-        system_content = CONVERSATION_PROMPT.replace("{{resume_data}}", f"\n{resume_json}\n")
-    else:
-        system_content = CONVERSATION_PROMPT.replace("{{resume_data}}", "\n（简历数据尚未加载）")
-
-    system_content += (
-        "\n\n【当前状态优先级】本轮系统消息中的简历 JSON 是当前数据库的唯一事实来源，"
-        "优先级高于全部历史对话。历史回复中的‘已修改’或‘已生效’可能已经被用户撤回，"
-        "不得据此判断当前简历状态。回答或生成修改前必须以本轮 JSON 为准。"
+    latest_request = latest_human_text(state)
+    coaching_mode = is_resume_coaching_request(latest_request)
+    messages = build_conversation_context(
+        base_prompt=CONVERSATION_PROMPT,
+        resume_data=state.resume_data,
+        jd_data=state.jd_data,
+        state_messages=state.messages,
+        coaching_mode=coaching_mode,
+        just_saved=getattr(state, "just_saved", False),
+        memory_summary=getattr(state, "memory_summary", "") or "",
     )
-
-    # 注入 jd_data
-    if state.jd_data:
-        jd_json = json.dumps(state.jd_data, ensure_ascii=False, indent=2)
-        system_content = system_content.replace("{{jd_data}}", f"\n目标岗位 JD 数据：\n{jd_json}\n")
-    else:
-        system_content = system_content.replace("{{jd_data}}", "\n（目标岗位JD数据尚未加载）")
-
-    # 过滤掉 ToolMessage，只保留 HumanMessage 和 AIMessage 传给 LLM
-    # ToolMessage 是工具执行的结果，不应该传给 LLM
-    # 注意：如果 AIMessage 带有 tool_calls（但工具还没执行），需要清空 tool_calls
-    llm_messages = []
-    for msg in state.messages:
-        if isinstance(msg, ToolMessage):
-            tool_result = str(getattr(msg, 'content', '') or '')
-            if tool_result.startswith("保存失败") or tool_result.startswith("错误"):
-                llm_messages.append(HumanMessage(
-                    content=f"[系统工具错误：{tool_result}。请修正完整简历JSON后重新调用保存工具。]"
-                ))
-            continue  # 跳过 ToolMessage
-        elif isinstance(msg, HumanMessage):
-            # 跳过确认消息（不作为 LLM 输入，但保留在数据库中）
-            msg_content = getattr(msg, 'content', '') or ''
-            if '[CONFIRM_REPLY:' in msg_content:
-                continue
-            llm_messages.append(msg)
-        elif isinstance(msg, AIMessage):
-            if msg.tool_calls:
-                # 如果 AIMessage 有 tool_calls，清空它们（工具会在 tool_node 中执行）
-                llm_messages.append(AIMessage(content=msg.content, tool_calls=[]))
-            elif getattr(state, 'just_saved', False) and msg.content and str(msg.content).strip().startswith("{"):
-                # just_saved=True 且内容是 JSON，跳过 formatter_llm 的输出
-                # conversation_llm 只需要知道 just_saved 状态，不需要完整 JSON
-                continue
-            else:
-                llm_messages.append(msg)
-        else:
-            llm_messages.append(msg)
-
-    # 消息已由 save_state_async 在超过 20 条时压缩，这里使用过滤后的消息
-    messages = [SystemMessage(content=system_content)] + llm_messages
     
     # 计算实际发送给 LLM 的 tokens 总数
     llm_input_tokens = 0
@@ -1397,24 +1567,25 @@ async def conversation_node(state: AgentState) -> dict:
         msg_content = getattr(msg, 'content', '')
         llm_input_tokens += estimate_tokens(msg_content)
     
-    # 如果刚保存了简历，添加一条 HumanMessage 提醒 LLM
     if getattr(state, 'just_saved', False):
-        messages.append(HumanMessage(content="[系统提示：简历已成功保存到数据库，请不要调用任何工具，直接回复用户]"))
-        llm_input_tokens += estimate_tokens("[系统提示：简历已成功保存...]")
         print("[Debug] 已添加 just_saved 提示给 LLM")
 
     # 调用 LLM
     print(f"[conversation_llm] [{time.strftime('%H:%M:%S')}] 开始调用 LLM, messages 数量: {len(messages)}")
     print(f"[conversation_llm] [{time.strftime('%H:%M:%S')}] total tokens (估算): {llm_input_tokens}")
     try:
-        conversation_llm_with_tools = conversation_llm.bind_tools(
-            conversation_tools,
-            tool_choice="auto"
-        )
+        # Coaching/review turns are read-only by contract. Do not expose a
+        # mutation tool at all, so model drift cannot create a save proposal.
+        model = conversation_llm
+        if not coaching_mode:
+            model = conversation_llm.bind_tools(
+                conversation_tools,
+                tool_choice="auto"
+            )
         # 不要添加 stop 序列，否则可能导致工具名称被截断
         # 增加超时时间到120秒，因为上下文可能较大
         async with asyncio.timeout(120.0):
-            response = await conversation_llm_with_tools.ainvoke(messages)
+            response = await model.ainvoke(messages)
     except asyncio.TimeoutError:
         print(f"[conversation_llm] LLM 调用超时! messages 数量: {len(messages)}")
         raise TimeoutError("LLM 调用超时，请稍后重试")
@@ -1495,6 +1666,8 @@ async def conversation_node(state: AgentState) -> dict:
         "just_saved": False,  # 清除 just_saved 标记
         "user_id": state.user_id,  # 保留用户ID
         "task_id": state.task_id,
+        "memory_summary": getattr(state, "memory_summary", "") or "",
+        "memory_version": getattr(state, "memory_version", 0) or 0,
     }
     
     # 创建临时状态对象用于调试
@@ -1860,6 +2033,8 @@ async def tool_node(state: AgentState) -> dict:
         "just_saved": saved_resume,
         "user_id": state.user_id,
         "task_id": state.task_id,
+        "memory_summary": getattr(state, "memory_summary", "") or "",
+        "memory_version": getattr(state, "memory_version", 0) or 0,
     }
 
 
@@ -1908,6 +2083,7 @@ graph_builder.add_node("conversation_llm", conversation_node)
 graph_builder.add_node("tool_node", tool_node)
 graph_builder.add_node("direct_edit", direct_edit_node)
 graph_builder.add_node("proposal_generator", proposal_generator_node)
+graph_builder.add_node("interview_coach", interview_coach_node)
 
 # conversation_llm → tool_node / END
 graph_builder.add_conditional_edges(
@@ -1921,6 +2097,7 @@ graph_builder.add_conditional_edges(
 
 graph_builder.add_edge("direct_edit", END)
 graph_builder.add_edge("proposal_generator", END)
+graph_builder.add_edge("interview_coach", END)
 
 
 # =============================================================================
@@ -1939,6 +2116,9 @@ def entry_router(state: AgentState) -> str:
     """
     if not state.messages:
         return "conversation_llm"
+
+    if state.interaction_mode in INTERVIEW_MODES:
+        return "interview_coach"
 
     # 检查最后一条消息是否是确认按钮点击
     last_message = state.messages[-1]

@@ -331,6 +331,12 @@ scripts\start_db_local.cmd
 scripts\start_backend_local.cmd
 scripts\start_frontend_local.cmd
 
+# 后端脚本会自动判断：未运行则启动，已运行则重启
+scripts\start_backend_local.cmd
+
+# 一键脚本同样会重启已运行的后端并检查全部服务
+scripts\start_local.cmd
+
 # 停止
 scripts\stop_local.cmd
 ```

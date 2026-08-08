@@ -29,6 +29,5 @@ class MultimodalFileTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "只支持图片或PDF文件"):
             build_file_message_part(b"text", "text/plain")
 
-
 if __name__ == "__main__":
     unittest.main()

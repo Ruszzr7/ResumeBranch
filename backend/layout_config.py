@@ -10,13 +10,17 @@ from copy import deepcopy
 from typing import Any
 
 
-LAYOUT_SCHEMA_VERSION = 1
+LAYOUT_SCHEMA_VERSION = 2
 
 SECTION_IDS = (
     "education",
+    "skills",
+    "research_interests",
+    "honors",
     "work_experience",
     "internship_experience",
     "project_experience",
+    "custom_sections",
     "others",
     "self_evaluation",
 )
@@ -24,17 +28,21 @@ SECTION_IDS = (
 DEFAULT_LAYOUT_CONFIG: dict[str, Any] = {
     "version": LAYOUT_SCHEMA_VERSION,
     "global": {
-        "density": "standard",
-        "fontSize": 11.0,
-        "lineHeight": 1.6,
-        "moduleMargin": 1.0,
-        "marginVertical": 9.0,
+        "density": "compact",
+        "fontSize": 10.5,
+        "lineHeight": 1.32,
+        "moduleMargin": 0.45,
+        "marginVertical": 8.0,
         "marginHorizontal": 9.0,
         "titleStyle": "underline",
         "sectionOrder": [
             "education",
+            "skills",
+            "research_interests",
+            "honors",
             "work_experience",
             "project_experience",
+            "custom_sections",
             "others",
             "self_evaluation",
         ],
@@ -70,7 +78,7 @@ DEFAULT_LAYOUT_CONFIG: dict[str, Any] = {
     },
     "others": {
         "preset": "inline",
-        "fieldOrder": ["skills", "certificates", "languages"],
+        "fieldOrder": ["certificates", "languages"],
         "hiddenFields": [],
         "separator": "pipe",
     },
@@ -80,9 +88,9 @@ DEFAULT_LAYOUT_CONFIG: dict[str, Any] = {
 }
 
 DENSITY_VALUES = {
-    "compact": {"fontSize": 10.0, "lineHeight": 1.3, "moduleMargin": 0.5},
-    "standard": {"fontSize": 11.0, "lineHeight": 1.6, "moduleMargin": 1.0},
-    "comfortable": {"fontSize": 11.5, "lineHeight": 1.75, "moduleMargin": 1.25},
+    "compact": {"fontSize": 10.5, "lineHeight": 1.32, "moduleMargin": 0.45},
+    "standard": {"fontSize": 10.5, "lineHeight": 1.42, "moduleMargin": 0.65},
+    "comfortable": {"fontSize": 11.0, "lineHeight": 1.55, "moduleMargin": 0.9},
 }
 
 LAYOUT_TEMPLATES = {
@@ -143,7 +151,7 @@ ENUMS = {
 }
 
 ALLOWED_HIDDEN_FIELDS = {
-    "basics": {"gender", "phone", "email", "target_position", "photo"},
+    "basics": {"gender", "birth_date", "phone", "email", "target_position", "photo", "additional_fields"},
     "education": {"gpa", "ranking", "average_score"},
     "others": {"skills", "certificates", "languages"},
 }
@@ -152,8 +160,12 @@ MODULE_LABELS = {
     "global": "全局排版",
     "basics": "基本信息",
     "education": "教育经历",
+    "skills": "专业技能",
+    "research_interests": "研究方向",
+    "honors": "主要荣誉",
     "work_experience": "工作/实习经历",
     "project_experience": "项目经历",
+    "custom_sections": "自定义栏目",
     "others": "其他信息",
     "self_evaluation": "自我评价",
 }
@@ -265,10 +277,25 @@ def _bounded_number(value: Any, minimum: float, maximum: float, fallback: float)
 
 def normalize_layout_config(value: dict | None) -> dict:
     """Normalize unknown/partial input into the complete v1 contract."""
+    try:
+        supplied_version = int(value.get("version", 1)) if isinstance(value, dict) else LAYOUT_SCHEMA_VERSION
+    except (TypeError, ValueError):
+        supplied_version = 1
     result = default_layout_config()
     if isinstance(value, dict):
         _merge_known(result, value, DEFAULT_LAYOUT_CONFIG)
     result["version"] = LAYOUT_SCHEMA_VERSION
+
+    # v1 的默认排版在中文一页简历中留白过多。仅迁移仍保持旧默认值的
+    # 任务，用户主动调整过的字号、行距和间距继续原样保留。
+    if supplied_version < 2 and isinstance(value, dict):
+        supplied_global = value.get("global") if isinstance(value.get("global"), dict) else {}
+        old_defaults = {"fontSize": 11.0, "lineHeight": 1.6, "moduleMargin": 1.0, "marginVertical": 9.0}
+        if all(float(supplied_global.get(key, expected)) == expected for key, expected in old_defaults.items()):
+            result["global"].update({
+                "density": "compact", "fontSize": 10.5, "lineHeight": 1.32,
+                "moduleMargin": 0.45, "marginVertical": 8.0,
+            })
 
     for section, key in ENUMS:
         _enum(result, section, key)
@@ -288,8 +315,19 @@ def normalize_layout_config(value: dict | None) -> dict:
         work_index = order.index("work_experience") + 1 if "work_experience" in order else 0
         order.insert(work_index, "internship_experience")
     required = [item for item in SECTION_IDS if item != "internship_experience" or global_config["splitWorkExperience"]]
+    insertion_points = {
+        "skills": "education",
+        "research_interests": "skills",
+        "honors": "research_interests",
+        "custom_sections": "project_experience",
+    }
     for item in required:
-        if item not in order:
+        if item in order:
+            continue
+        anchor = insertion_points.get(item)
+        if anchor in order:
+            order.insert(order.index(anchor) + 1, item)
+        else:
             order.append(item)
     global_config["sectionOrder"] = order
     global_config["hiddenSections"] = list(dict.fromkeys(

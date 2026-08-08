@@ -11,6 +11,7 @@
 data/*.db
 data/deepagents.db
 data/llm_profiles.json
+data/*.sqlite*
 
 # Local resume/JD data
 /resume*.json
@@ -47,3 +48,4 @@ Thumbs.db
 # Local runtime files
 *.pid
 .local-run/
+/tmp/

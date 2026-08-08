@@ -1,7 +1,7 @@
 import json
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from langchain_core.messages import AIMessage, HumanMessage
 
@@ -9,8 +9,10 @@ from backend.layout_config import default_layout_config
 from backend.resume_agent import (
     AgentState,
     build_local_layout_candidate,
+    conversation_node,
     direct_edit_node,
     entry_router,
+    is_resume_coaching_request,
     make_pending_confirmation,
     proposal_generator_node,
     tool_node,
@@ -32,6 +34,49 @@ def resume_payload(name="测试用户"):
 
 
 class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
+    def test_review_and_interview_requests_stay_in_conversation_mode(self):
+        review_requests = [
+            "请分析这份简历有哪些不足，并推荐如何修改和完善",
+            "请先全面诊断我的简历，先不要修改",
+            "请以面试官身份开始拷打我的项目经历",
+            "结合 JD 分析匹配度并给出优化建议",
+            "请分析当前简历排版并给出建议，本轮只分析，不修改简历",
+        ]
+        for request in review_requests:
+            with self.subTest(request=request):
+                state = AgentState(
+                    messages=[HumanMessage(content=request)],
+                    resume_data=resume_payload(), layout_data=default_layout_config(),
+                )
+                self.assertTrue(is_resume_coaching_request(request))
+                self.assertEqual(entry_router(state), "conversation_llm")
+
+    def test_explicit_apply_request_still_uses_edit_pipeline(self):
+        request = "请直接优化项目经历并应用到简历"
+        state = AgentState(
+            messages=[HumanMessage(content=request)],
+            resume_data=resume_payload(), layout_data=default_layout_config(),
+        )
+        self.assertFalse(is_resume_coaching_request(request))
+        self.assertEqual(entry_router(state), "proposal_generator")
+
+    async def test_coaching_turn_does_not_expose_save_tool(self):
+        fake_llm = SimpleNamespace(
+            ainvoke=AsyncMock(return_value=AIMessage(content="诊断结果")),
+            bind_tools=MagicMock(),
+        )
+        state = AgentState(
+            messages=[HumanMessage(content="请全面诊断简历并给出修改建议")],
+            resume_data=resume_payload(), layout_data=default_layout_config(),
+        )
+        with patch("backend.resume_agent.conversation_llm", fake_llm):
+            result = await conversation_node(state)
+        fake_llm.bind_tools.assert_not_called()
+        fake_llm.ainvoke.assert_awaited_once()
+        system_prompt = fake_llm.ainvoke.await_args.args[0][0].content
+        self.assertIn("本轮模式：只读诊断与简历教练", system_prompt)
+        self.assertEqual(result["messages"][-1].content, "诊断结果")
+
     async def test_common_layout_request_is_local_and_previews_without_llm(self):
         state = AgentState(
             messages=[HumanMessage(content="学校后面的211不要黑底，专业和GPA放到学校右边")],

@@ -8,6 +8,7 @@ import uuid
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, JSON, Text, inspect, text
 from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
@@ -129,6 +130,21 @@ class ProjectTask(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class AgentMemoryState(Base):
+    """Layered conversation memory stored separately from canonical resume data."""
+    __tablename__ = "agent_memory_states"
+    scope_id = Column(String(100), primary_key=True)
+    task_id = Column(String(36), nullable=True, index=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    session_id = Column(String(36), nullable=False)
+    summary = Column(large_text_type, default="")
+    recent_messages = Column(JSON, default=list)
+    interview_memory = Column(JSON, default=dict)
+    version = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class ResumeRevision(Base):
     """A reversible snapshot created by an assistant-confirmed resume update."""
     __tablename__ = "resume_revisions"
@@ -152,6 +168,10 @@ class WorkspaceState(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class MemoryVersionConflict(RuntimeError):
+    """Raised when a stale request attempts to overwrite newer agent memory."""
+
+
 def get_db():
     """数据库依赖"""
     db = SessionLocal()
@@ -166,6 +186,7 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     migrate_project_task_source_page_count()
     migrate_layout_config_fields()
+    migrate_agent_memory_interview_fields()
     migrate_resume_academic_fields()
 
 
@@ -198,6 +219,19 @@ def migrate_layout_config_fields():
                 connection.execute(text("ALTER TABLE resume_revisions ADD COLUMN before_layout JSON"))
             if "after_layout" not in columns:
                 connection.execute(text("ALTER TABLE resume_revisions ADD COLUMN after_layout JSON"))
+
+
+def migrate_agent_memory_interview_fields():
+    """Add structured, source-traceable interview memory to existing databases."""
+    inspector = inspect(engine)
+    if "agent_memory_states" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("agent_memory_states")}
+    if "interview_memory" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text(
+                "ALTER TABLE agent_memory_states ADD COLUMN interview_memory JSON"
+            ))
 
 
 def migrate_resume_academic_fields():
@@ -537,6 +571,14 @@ def undo_latest_resume_revision(db, user_id: int, task_id: str) -> tuple[str, di
         ),
     }
     task.compressed_context = list(task.compressed_context or []) + [undo_event]
+    memory = db.query(AgentMemoryState).filter(
+        AgentMemoryState.scope_id == f"task:{task_id}",
+        AgentMemoryState.user_id == user_id,
+    ).first()
+    if memory:
+        memory.recent_messages = list(memory.recent_messages or []) + [undo_event]
+        memory.version = int(memory.version or 0) + 1
+        memory.updated_at = datetime.utcnow()
     task.updated_at = datetime.utcnow()
     if task.is_base:
         project = db.query(ResumeProject).filter(ResumeProject.id == task.project_id).first()
@@ -579,6 +621,10 @@ def delete_resume_project(db, user_id: int, project_id: str) -> bool:
             ResumeRevision.user_id == user_id,
             ResumeRevision.task_id.in_(task_ids),
         ).delete(synchronize_session=False)
+        db.query(AgentMemoryState).filter(
+            AgentMemoryState.user_id == user_id,
+            AgentMemoryState.task_id.in_(task_ids),
+        ).delete(synchronize_session=False)
     db.query(ProjectTask).filter(
         ProjectTask.project_id == project_id,
         ProjectTask.user_id == user_id,
@@ -597,6 +643,10 @@ def delete_resume_task(db, user_id: int, task_id: str) -> str:
     db.query(ResumeRevision).filter(
         ResumeRevision.user_id == user_id,
         ResumeRevision.task_id == task_id,
+    ).delete(synchronize_session=False)
+    db.query(AgentMemoryState).filter(
+        AgentMemoryState.user_id == user_id,
+        AgentMemoryState.task_id == task_id,
     ).delete(synchronize_session=False)
     db.delete(task)
     db.commit()
@@ -822,6 +872,119 @@ def create_invite_code(db, code: str):
     return invite
 
 
+def _agent_memory_scope(db, user_id: int, session_id: str) -> tuple[str, str | None]:
+    task = _active_task(db, user_id)
+    if task:
+        return f"task:{task.id}", task.id
+    return f"conversation:{user_id}:{session_id}", None
+
+
+def _split_legacy_memory(context: list) -> tuple[str, list]:
+    items = list(context or [])
+    if not items:
+        return "", []
+    first = items[0] if isinstance(items[0], dict) else {}
+    first_type = str(first.get("type", "")).lower()
+    first_content = str(first.get("content", "") or "")
+    if first_type in {"system", "systemmessage"} and not first_content.startswith("系统事件："):
+        return first_content, items[1:]
+    return "", items
+
+
+def get_agent_memory_state(db, user_id: int, session_id: str) -> dict:
+    """Load layered memory, lazily falling back to the legacy context field."""
+    scope_id, task_id = _agent_memory_scope(db, user_id, session_id)
+    memory = db.query(AgentMemoryState).filter(
+        AgentMemoryState.scope_id == scope_id,
+        AgentMemoryState.user_id == user_id,
+    ).first()
+    if memory:
+        return {
+            "scope_id": scope_id,
+            "task_id": task_id,
+            "summary": memory.summary or "",
+            "recent_messages": memory.recent_messages or [],
+            "interview_memory": memory.interview_memory or {},
+            "version": memory.version or 0,
+        }
+
+    task = _active_task(db, user_id)
+    if task:
+        legacy_context = task.compressed_context or []
+    else:
+        conversation = db.query(Conversation).filter(
+            Conversation.user_id == user_id,
+            Conversation.session_id == session_id,
+        ).first()
+        legacy_context = conversation.compressed_context if conversation else []
+    summary, recent_messages = _split_legacy_memory(legacy_context)
+    return {
+        "scope_id": scope_id,
+        "task_id": task_id,
+        "summary": summary,
+        "recent_messages": recent_messages,
+        "interview_memory": {},
+        "version": 0,
+    }
+
+
+def save_agent_memory_state(
+    db,
+    user_id: int,
+    session_id: str,
+    summary: str,
+    recent_messages: list,
+    expected_version: int,
+    interview_memory: dict | None = None,
+) -> int:
+    """Persist layered memory with optimistic concurrency control."""
+    scope_id, task_id = _agent_memory_scope(db, user_id, session_id)
+    now = datetime.utcnow()
+    memory = db.query(AgentMemoryState).filter(
+        AgentMemoryState.scope_id == scope_id,
+        AgentMemoryState.user_id == user_id,
+    ).first()
+    if memory is None:
+        if expected_version not in {None, 0}:
+            raise MemoryVersionConflict("记忆状态版本已变化，请重新加载后重试")
+        memory = AgentMemoryState(
+            scope_id=scope_id,
+            task_id=task_id,
+            user_id=user_id,
+            session_id=session_id,
+            summary=summary or "",
+            recent_messages=recent_messages or [],
+            interview_memory=interview_memory or {},
+            version=1,
+            updated_at=now,
+        )
+        db.add(memory)
+        try:
+            db.commit()
+        except IntegrityError as exc:
+            db.rollback()
+            raise MemoryVersionConflict("记忆状态已由另一请求创建，请重新加载后重试") from exc
+        return 1
+
+    updated = db.query(AgentMemoryState).filter(
+        AgentMemoryState.scope_id == scope_id,
+        AgentMemoryState.user_id == user_id,
+        AgentMemoryState.version == int(expected_version or 0),
+    ).update({
+        AgentMemoryState.summary: summary or "",
+        AgentMemoryState.recent_messages: recent_messages or [],
+        AgentMemoryState.interview_memory: interview_memory or {},
+        AgentMemoryState.session_id: session_id,
+        AgentMemoryState.version: int(expected_version or 0) + 1,
+        AgentMemoryState.updated_at: now,
+    }, synchronize_session=False)
+    if updated != 1:
+        db.rollback()
+        raise MemoryVersionConflict("记忆状态版本已变化，请重新加载后重试")
+    db.commit()
+    return int(expected_version or 0) + 1
+
+
 def save_conversation_context(
     db,
     user_id: int,
@@ -919,6 +1082,10 @@ def cleanup_old_contexts(db, days: int = 7):
     db.query(Conversation).filter(
         Conversation.last_accessed < cutoff
     ).update({"compressed_context": []})
+    db.query(AgentMemoryState).filter(
+        AgentMemoryState.task_id.is_(None),
+        AgentMemoryState.updated_at < cutoff,
+    ).delete(synchronize_session=False)
     db.commit()
 
 
@@ -928,10 +1095,18 @@ def delete_conversation_context(db, user_id: int, session_id: str):
     if task:
         task.compressed_context = []
         task.updated_at = datetime.utcnow()
+        db.query(AgentMemoryState).filter(
+            AgentMemoryState.scope_id == f"task:{task.id}",
+            AgentMemoryState.user_id == user_id,
+        ).delete(synchronize_session=False)
         db.commit()
         return
     db.query(Conversation).filter(
         Conversation.user_id == user_id,
         Conversation.session_id == session_id
     ).update({"compressed_context": []})
+    db.query(AgentMemoryState).filter(
+        AgentMemoryState.scope_id == f"conversation:{user_id}:{session_id}",
+        AgentMemoryState.user_id == user_id,
+    ).delete(synchronize_session=False)
     db.commit()

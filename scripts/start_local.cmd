@@ -6,7 +6,8 @@ cd /d "%~dp0.."
 set "PROJECT_ROOT=%CD%"
 set "RUN_DIR=%PROJECT_ROOT%\.local-run"
 set "NO_PAUSE=0"
-if /I "%~1"=="--no-pause" set "NO_PAUSE=1"
+set "RESTART=0"
+call :parse_args %*
 
 echo ============================================================
 echo Resume Assistant - Start Database, Backend and Frontend
@@ -16,7 +17,11 @@ echo.
 call "%~dp0start_db_local.cmd" --no-pause
 if errorlevel 1 goto failed
 echo.
-call "%~dp0start_backend_local.cmd" --no-pause
+if "%RESTART%"=="1" (
+  call "%~dp0start_backend_local.cmd" --restart --no-pause
+) else (
+  call "%~dp0start_backend_local.cmd" --no-pause
+)
 if errorlevel 1 goto failed
 echo.
 call "%~dp0start_frontend_local.cmd" --no-pause
@@ -65,6 +70,13 @@ exit /b %errorlevel%
 :frontend_ready
 curl.exe --silent --fail --max-time 2 http://127.0.0.1:5173/ >nul 2>&1
 exit /b %errorlevel%
+
+:parse_args
+if "%~1"=="" exit /b 0
+if /I "%~1"=="--no-pause" set "NO_PAUSE=1"
+if /I "%~1"=="--restart" set "RESTART=1"
+shift
+goto parse_args
 
 :maybe_pause
 if "%NO_PAUSE%"=="0" (

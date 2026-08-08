@@ -13,7 +13,7 @@ from backend.layout import (
 )
 from backend.docx_generator import generate_docx
 from backend.pdf_generator import render_resume_to_html
-from backend.layout_config import default_layout_config
+from backend.layout_config import default_layout_config, normalize_layout_config
 
 
 def resume_with_two_jobs():
@@ -31,6 +31,20 @@ def resume_with_two_jobs():
 
 
 class LayoutRuleTests(unittest.TestCase):
+    def test_v1_default_layout_migrates_to_compact_high_density_defaults(self):
+        layout = normalize_layout_config({
+            "version": 1,
+            "global": {
+                "fontSize": 11, "lineHeight": 1.6, "moduleMargin": 1,
+                "marginVertical": 9,
+                "sectionOrder": ["education", "project_experience", "others"],
+            },
+        })
+        self.assertEqual(layout["version"], 2)
+        self.assertEqual(layout["global"]["fontSize"], 10.5)
+        self.assertEqual(layout["global"]["lineHeight"], 1.32)
+        self.assertIn("skills", layout["global"]["sectionOrder"])
+
     def test_legacy_page_modes_are_normalized_to_automatic(self):
         self.assertEqual(normalize_page_mode("three"), "auto")
         self.assertEqual(normalize_page_mode("one"), "auto")
@@ -121,6 +135,67 @@ class LayoutRuleTests(unittest.TestCase):
         with ZipFile(BytesIO(generate_docx(data, layout_config=layout))) as archive:
             xml = archive.read("word/document.xml").decode("utf-8")
         self.assertLess(xml.index("先展示项目"), xml.index("甲"))
+
+
+    def test_pdf_and_word_render_lossless_import_fields(self):
+        data = resume_with_two_jobs()
+        data["basics"]["birth_date"] = "2002.06"
+        data["research_interests"] = ["协作臂模型预测阻抗控制"]
+        data["honors"] = ["研究生二等奖学金"]
+        data["custom_sections"] = [{"title": "校园经历", "items": ["学生组织负责人"]}]
+
+        html = render_resume_to_html(data)
+
+        self.assertIn("出生年月：2002.06", html)
+        self.assertIn("协作臂模型预测阻抗控制", html)
+        self.assertIn("研究生二等奖学金", html)
+        self.assertIn("校园经历", html)
+        self.assertIn("display: block", html)
+        self.assertLess(html.index("协作臂模型预测阻抗控制"), html.index("研究生二等奖学金"))
+
+        document = Document(BytesIO(generate_docx(data)))
+        combined = "\n".join(
+            [paragraph.text for paragraph in document.paragraphs]
+            + [cell.text for table in document.tables for row in table.rows for cell in row.cells]
+        )
+        for expected in ("2002.06", "协作臂模型预测阻抗控制", "研究生二等奖学金", "校园经历", "学生组织负责人"):
+            self.assertIn(expected, combined)
+
+    def test_project_semantic_blocks_have_no_outer_bullets_or_role_placeholder(self):
+        data = resume_with_two_jobs()
+        data["project_experience"] = [{
+            "project_name": "机器人控制",
+            "role": "",
+            "date_range": ["2025.01", "2025.06"],
+            "details": ["项目简介：面向展厅导航", "项目职责：", "（1）训练策略", "（2）验证性能"],
+        }]
+        data["others"]["skills"] = ["ROS2", "Python"]
+
+        html = render_resume_to_html(data)
+
+        self.assertIn("<strong>项目简介：</strong>面向展厅导航", html)
+        self.assertIn('<ol class="project-numbered-list">', html)
+        self.assertNotIn("（1）训练策略", html)
+        self.assertNotIn(">角色<", html)
+        self.assertIn("专业技能", html)
+        self.assertLess(html.index("专业技能"), html.index("项目经历"))
+        self.assertIn("body, .degree-major", html)
+
+    def test_numbered_skill_keeps_its_number_without_an_outer_bullet(self):
+        data = resume_with_two_jobs()
+        data["others"]["skills"] = ["1. Python 与 FastAPI", "沟通协作"]
+
+        html = render_resume_to_html(data)
+
+        self.assertIn('<li class="list-item native-marker">1. Python 与 FastAPI</li>', html)
+        self.assertIn('<li class="list-item">沟通协作</li>', html)
+        self.assertIn('.list-item.native-marker::before { content: none; }', html)
+
+        document = Document(BytesIO(generate_docx(data)))
+        numbered = next(paragraph for paragraph in document.paragraphs if "1. Python" in paragraph.text)
+        plain = next(paragraph for paragraph in document.paragraphs if "沟通协作" in paragraph.text)
+        self.assertNotEqual(numbered.style.name, "List Bullet")
+        self.assertEqual(plain.style.name, "List Bullet")
 
 
 if __name__ == "__main__":

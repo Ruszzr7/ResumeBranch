@@ -21,6 +21,13 @@ def format_markdown(text: str) -> str:
     return text
 
 
+_NATIVE_LIST_MARKER_RE = re.compile(r"^\s*(?:[（(]?\d{1,2}[）).、．]|[一二三四五六七八九十]+[、.．])\s*")
+
+
+def _has_native_list_marker(value: object) -> bool:
+    return bool(_NATIVE_LIST_MARKER_RE.match(str(value or "")))
+
+
 def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = None, lang: str = 'zh', layout_config: dict = None) -> str:
     """将简历数据渲染为HTML
 
@@ -67,6 +74,13 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         return global_layout.get("titleOverrides", {}).get(section, {}).get(lang, fallback)
 
     html_parts = []
+    section_chunks = []
+
+    def commit_section(section_id: str, start: int) -> None:
+        chunk = "".join(html_parts[start:])
+        del html_parts[start:]
+        if chunk:
+            section_chunks.append((section_id, len(section_chunks), chunk))
 
     # 获取证件照（优先使用参数，其次使用resume_data）
     display_photo = photo
@@ -75,10 +89,12 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
 
     # 个人信息
     if resume_data.get("basics"):
+        chunk_start = len(html_parts)
         basics = resume_data["basics"]
         basics_layout = layout_config["basics"]
         hidden_basics = set(basics_layout["hiddenFields"])
-        html_parts.append(f'<div class="personal-info basics-{basics_layout["preset"]} contact-{basics_layout["contactLayout"]}" style="order:0">')
+        photo_class = " has-photo" if display_photo and "photo" not in hidden_basics else ""
+        html_parts.append(f'<div class="personal-info basics-{basics_layout["preset"]} contact-{basics_layout["contactLayout"]}{photo_class}" style="order:0">')
         
         # 证件照使用绝对定位（不参与居中计算）
         if display_photo and "photo" not in hidden_basics:
@@ -89,16 +105,25 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         
         # 联系信息
         html_parts.append('<div class="contact-info">')
+        contact_values = []
         if basics.get("gender") and "gender" not in hidden_basics:
-            html_parts.append(f'<span>{basics["gender"]}</span>')
+            contact_values.append(str(basics["gender"]))
+        if basics.get("birth_date") and "birth_date" not in hidden_basics:
+            contact_values.append(f'{labels["birthDate"]}：{basics["birth_date"]}')
         if basics.get("phone") and "phone" not in hidden_basics:
-            if basics.get("gender") and "gender" not in hidden_basics:
-                html_parts.append('<span class="separator">|</span>')
-            html_parts.append(f'<span>{basics["phone"]}</span>')
+            contact_values.append(str(basics["phone"]))
         if basics.get("email") and "email" not in hidden_basics:
-            if ((basics.get("gender") and "gender" not in hidden_basics) or (basics.get("phone") and "phone" not in hidden_basics)):
+            contact_values.append(str(basics["email"]))
+        if "additional_fields" not in hidden_basics:
+            contact_values.extend(
+                f'{item.get("label", "")}：{item.get("value", "")}'
+                for item in basics.get("additional_fields", [])
+                if item.get("label") and item.get("value")
+            )
+        for index, value in enumerate(contact_values):
+            if index:
                 html_parts.append('<span class="separator">|</span>')
-            html_parts.append(f'<span>{basics["email"]}</span>')
+            html_parts.append(f'<span>{value}</span>')
         html_parts.append('</div>')  # contact-info
         
         # 目标岗位
@@ -106,9 +131,11 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
             html_parts.append(f'<div class="target-position">{labels["targetPosition"]}：{basics["target_position"]}</div>')
         
         html_parts.append('</div>')  # personal-info
+        commit_section("basics", chunk_start)
 
     # 教育经历
     if resume_data.get("education") and len(resume_data["education"]) > 0 and not hidden("education"):
+        chunk_start = len(html_parts)
         education_layout = layout_config["education"]
         hidden_metrics = set(education_layout["hiddenMetrics"])
         html_parts.append(f'<section class="section education-section preset-{education_layout["preset"]}{break_class("education:0")}"{order_style("education")}>')
@@ -183,6 +210,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
             html_parts.append('</div>')
 
         html_parts.append('</section>')
+        commit_section("education", chunk_start)
 
     # 工作/实习经历（拆分时仍共用同一视觉预设）
     work_layout = layout_config["work_experience"]
@@ -198,6 +226,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     for section_id, fallback_title, section_items in work_sections:
         if not section_items or hidden(section_id):
             continue
+        chunk_start = len(html_parts)
         first_index = section_items[0][0]
         html_parts.append(f'<section class="section work-section preset-{work_layout["preset"]}{break_class(f"{section_id}:{first_index}")}"{order_style(section_id)}>')
         html_parts.append(f'<h2 class="section-title title-{global_layout["titleStyle"]}">{section_title(section_id, fallback_title)}</h2>')
@@ -232,20 +261,34 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
             html_parts.append(f'<div class="work-period">{date_str}</div>')
             html_parts.append('</div>')
 
-            # 工作详情
-            if work.get("details") and isinstance(work["details"], list):
-                html_parts.append(f'<ul class="list-items details-{work_layout["detailsStyle"]}">')
-                for detail in work["details"]:
-                    detail_clean = detail.lstrip("• ").strip()
-                    html_parts.append(f'<li class="list-item">{format_markdown(detail_clean)}</li>')
-                html_parts.append('</ul>')
+            # 工作详情沿用与项目经历一致的语义块，避免标题和已编号内容被重复加圆点。
+            for block in work.get("content_blocks") or []:
+                block_type = block.get("type", "paragraph")
+                label = str(block.get("label") or "").strip()
+                label_html = f'<strong>{label}：</strong>' if label else ''
+                html_parts.append(f'<div class="project-content-block block-{block_type}">')
+                if block_type == "paragraph":
+                    html_parts.append(f'<p class="project-paragraph">{label_html}{format_markdown(block.get("text", ""))}</p>')
+                else:
+                    if label:
+                        html_parts.append(f'<div class="project-block-label">{label}：</div>')
+                    list_class = "project-numbered-list" if block_type == "numbered_list" else "list-items"
+                    tag = "ol" if block_type == "numbered_list" else "ul"
+                    html_parts.append(f'<{tag} class="{list_class}">')
+                    for detail in block.get("items") or []:
+                        item_class = "" if block_type == "numbered_list" else ' class="list-item"'
+                        html_parts.append(f'<li{item_class}>{format_markdown(detail)}</li>')
+                    html_parts.append(f'</{tag}>')
+                html_parts.append('</div>')
 
             html_parts.append('</div>')
 
         html_parts.append('</section>')
+        commit_section(section_id, chunk_start)
 
     # 项目经历
     if resume_data.get("project_experience") and len(resume_data["project_experience"]) > 0 and not hidden("project_experience"):
+        chunk_start = len(html_parts)
         project_layout = layout_config["project_experience"]
         html_parts.append(f'<section class="section project-section preset-{project_layout["preset"]}{break_class("project_experience:0")}"{order_style("project_experience")}>')
         html_parts.append(f'<h2 class="section-title title-{global_layout["titleStyle"]}">{section_title("project_experience", labels["projectExperience"])}</h2>')
@@ -282,27 +325,57 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
 
             html_parts.append('</div>')
 
-            # 项目详情
-            if project.get("details") and isinstance(project["details"], list):
-                html_parts.append(f'<ul class="list-items details-{project_layout["detailsStyle"]}">')
-                for detail in project["details"]:
-                    html_parts.append(f'<li class="list-item">{format_markdown(detail)}</li>')
-                html_parts.append('</ul>')
+            # 项目详情使用语义块：标题不带圆点，职责内部保留编号。
+            for block in project.get("content_blocks") or []:
+                block_type = block.get("type", "paragraph")
+                label = str(block.get("label") or "").strip()
+                label_html = f'<strong>{label}：</strong>' if label else ''
+                html_parts.append(f'<div class="project-content-block block-{block_type}">')
+                if block_type == "paragraph":
+                    html_parts.append(f'<p class="project-paragraph">{label_html}{format_markdown(block.get("text", ""))}</p>')
+                else:
+                    if label:
+                        html_parts.append(f'<div class="project-block-label">{label}：</div>')
+                    list_class = "project-numbered-list" if block_type == "numbered_list" else "list-items"
+                    tag = "ol" if block_type == "numbered_list" else "ul"
+                    html_parts.append(f'<{tag} class="{list_class}">')
+                    for detail in block.get("items") or []:
+                        item_class = "" if block_type == "numbered_list" else ' class="list-item"'
+                        html_parts.append(f'<li{item_class}>{format_markdown(detail)}</li>')
+                    html_parts.append(f'</{tag}>')
+                html_parts.append('</div>')
 
             html_parts.append('</div>')
 
         html_parts.append('</section>')
+        commit_section("project_experience", chunk_start)
+
+    custom_sections = resume_data.get("custom_sections") or []
+    if custom_sections and not hidden("custom_sections"):
+        chunk_start = len(html_parts)
+        for custom_index, custom in enumerate(custom_sections):
+            if not custom.get("title") or not custom.get("items"):
+                continue
+            html_parts.append(f'<section class="section custom-section{break_class(f"custom_sections:{custom_index}")}"{order_style("custom_sections")}>')
+            html_parts.append(f'<h2 class="section-title title-{global_layout["titleStyle"]}">{custom["title"]}</h2>')
+            html_parts.append('<ul class="list-items">')
+            for value in custom["items"]:
+                html_parts.append(f'<li class="list-item">{format_markdown(value)}</li>')
+            html_parts.append('</ul></section>')
+        commit_section("custom_sections", chunk_start)
 
     # 其他信息
     others = resume_data.get("others") or {}
     others_layout = layout_config["others"]
     visible_other_fields = [
         field for field in others_layout["fieldOrder"]
-        if field not in others_layout["hiddenFields"] and others.get(field)
+        if field != "skills" and field not in others_layout["hiddenFields"] and others.get(field)
     ]
     if visible_other_fields and not hidden("others"):
+        chunk_start = len(html_parts)
         html_parts.append(f'<section class="section others others-{others_layout["preset"]}{break_class("others")}"{order_style("others")}>')
-        html_parts.append(f'<h2 class="section-title title-{global_layout["titleStyle"]}">{section_title("others", labels["others"])}</h2>')
+        other_title = "Certificates & Languages" if lang == "en" else "证书与语言"
+        html_parts.append(f'<h2 class="section-title title-{global_layout["titleStyle"]}">{section_title("others", other_title)}</h2>')
         field_labels = {"skills": labels["skills"], "certificates": labels["certificates"], "languages": labels["language"]}
         separator = " · " if others_layout["separator"] == "dot" else " | "
         for field in visible_other_fields:
@@ -314,9 +387,28 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
                     html_parts.append(f'<span class="cert-lang-separator">{separator}</span>')
             html_parts.append('</div>')
         html_parts.append('</section>')
+        commit_section("others", chunk_start)
+
+    def render_plain_list_section(section_id: str, title: str, values: list[str]) -> None:
+        if not values or hidden(section_id):
+            return
+        chunk_start = len(html_parts)
+        html_parts.append(f'<section class="section generic-section{break_class(section_id)}"{order_style(section_id)}>')
+        html_parts.append(f'<h2 class="section-title title-{global_layout["titleStyle"]}">{section_title(section_id, title)}</h2>')
+        html_parts.append('<ul class="list-items">')
+        for value in values:
+            marker_class = " native-marker" if _has_native_list_marker(value) else ""
+            html_parts.append(f'<li class="list-item{marker_class}">{format_markdown(value)}</li>')
+        html_parts.append('</ul></section>')
+        commit_section(section_id, chunk_start)
+
+    render_plain_list_section("skills", labels["skills"], others.get("skills") or [])
+    render_plain_list_section("research_interests", labels["researchInterests"], resume_data.get("research_interests") or [])
+    render_plain_list_section("honors", labels["honors"], resume_data.get("honors") or [])
 
     # 自我评价
     if resume_data.get("self_evaluation") and len(resume_data["self_evaluation"]) > 0 and not hidden("self_evaluation"):
+        chunk_start = len(html_parts)
         self_layout = layout_config["self_evaluation"]
         html_parts.append(f'<section class="section self-evaluation self-{self_layout["preset"]}{break_class("self_evaluation")}"{order_style("self_evaluation")}>')
         html_parts.append(f'<h2 class="section-title title-{global_layout["titleStyle"]}">{section_title("self_evaluation", labels["selfEvaluation"])}</h2>')
@@ -326,6 +418,18 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         for eval_item in evaluations:
             html_parts.append(f'<div class="self-eval-item">{format_markdown(eval_item)}</div>')
         html_parts.append('</section>')
+        commit_section("self_evaluation", chunk_start)
+
+    def chunk_order(item) -> tuple[int, int]:
+        section_id, sequence, _ = item
+        if section_id == "basics":
+            return (-1, sequence)
+        try:
+            return (global_layout["sectionOrder"].index(section_id), sequence)
+        except ValueError:
+            return (999, sequence)
+
+    rendered_content = "".join(item[2] for item in sorted(section_chunks, key=chunk_order))
 
     # 动态生成CSS
     dynamic_css = f"""
@@ -359,18 +463,19 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     .resume-container {{
         width: 100%;
         max-width: 100%;
-        overflow: hidden;
-        display: flex;
-        flex-direction: column;
+        overflow: visible;
+        display: block;
     }}
 
     .personal-info {{
         text-align: center;
         position: relative;
-        min-height: 2.8cm;
+        min-height: 0;
+        margin-bottom: 0.35em;
     }}
 
     .personal-info.basics-left-aligned {{ text-align: left; }}
+    .personal-info.has-photo {{ min-height: 2.65cm; }}
     .personal-info.basics-left-aligned .contact-info {{ justify-content: flex-start; }}
     .personal-info.contact-stacked .contact-info {{
         flex-direction: column;
@@ -383,7 +488,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     .personal-info .name {{
         font-size: 1.5em;
         font-weight: 700;
-        margin: 0 0 0.25em 0;
+        margin: 0 0 0.12em 0;
         color: #212529;
     }}
 
@@ -440,12 +545,17 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         letter-spacing: 0;
     }}
 
-    .education-item,
-    .work-item,
-    .project-item {{
+    .education-item {{
         margin-bottom: 0.5em;
         page-break-inside: avoid;
         break-inside: avoid;
+    }}
+
+    .work-item,
+    .project-item {{
+        margin-bottom: 0.5em;
+        page-break-inside: auto;
+        break-inside: auto;
     }}
 
     .thesis-item {{
@@ -462,6 +572,8 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         align-items: baseline;
         flex-wrap: wrap;
         gap: 0.5em;
+        break-after: avoid;
+        page-break-after: avoid;
     }}
 
     .school-info {{
@@ -565,6 +677,8 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         color: #95a5a6;
         white-space: nowrap;
         font-weight: 500;
+        flex: 0 0 auto;
+        max-width: none;
     }}
 
     .theses {{
@@ -632,6 +746,9 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         color: #333333;
         font-weight: bold;
     }}
+
+    .list-item.native-marker {{ padding-left: 0; }}
+    .list-item.native-marker::before {{ content: none; }}
 
     .details-paragraph .list-item {{ padding-left: 0; }}
     .details-paragraph .list-item::before {{ content: none; }}
@@ -744,9 +861,44 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         left: 0;
     }}
 
+    /* 中文简历使用高对比度、紧凑的信息密度。显式指定颜色，避免主题继承。 */
+    body, .degree-major, .academic-metrics, .graduation-date, .work-period,
+    .position-department, .project-role, .list-item, .generic-list-item,
+    .cert-lang-line, .inline-list-item, .self-eval-item {{ color: #111111; }}
+    .contact-info, .separator {{ color: #222222; }}
+    .section-title {{
+        margin-bottom: 0.22em;
+        padding-bottom: 0.1em;
+        color: #111111;
+        font-weight: 700;
+    }}
+    .education-item, .work-item, .project-item {{ margin-bottom: 0.18em; }}
+    .education-header, .work-header, .project-header {{ gap: 0.3em; }}
+    .list-item, .generic-list-item {{ margin-bottom: 0.08em; }}
+    .project-content-block {{ margin: 0 0 0.12em; font-size: 0.8em; color: #111111; }}
+    .project-paragraph {{ margin: 0; }}
+    .project-block-label {{ font-weight: 700; margin-bottom: 0.04em; }}
+    .project-numbered-list {{
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        counter-reset: project-duty;
+    }}
+    .project-numbered-list > li {{
+        position: relative;
+        margin-bottom: 0.06em;
+        padding-left: 2.15em;
+        counter-increment: project-duty;
+    }}
+    .project-numbered-list > li::before {{
+        content: "(" counter(project-duty) ")";
+        position: absolute;
+        left: 0;
+    }}
+
     .resume-container {{
-        overflow: hidden;
-        max-height: 100%;
+        overflow: visible;
+        max-height: none;
     }}
     """
 
@@ -763,7 +915,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
 </head>
 <body>
     <div class="resume-container">
-        {"".join(html_parts)}
+        {rendered_content}
     </div>
 </body>
 </html>

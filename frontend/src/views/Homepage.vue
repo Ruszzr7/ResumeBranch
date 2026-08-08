@@ -137,7 +137,7 @@
                 ref="projectTitleInput"
                 v-model="newProjectTitle"
                 maxlength="120"
-                placeholder="例如：郑梓锐的主简历"
+                placeholder="例如：吴彦祖的主简历"
                 @keydown.enter="createProject"
               />
               <small>稍后可以随时重命名</small>
@@ -187,99 +187,66 @@
 
     <Teleport to="body">
       <Transition name="modal-fade">
-        <div v-if="showSettingsDialog" class="internal-modal-mask" @click.self="closeSettings">
+        <div v-if="showSettingsDialog" class="internal-modal-mask">
           <section class="internal-modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
             <header>
               <div>
-                <span class="modal-kicker">Local settings</span>
-                <h2 id="settings-title">模型与 API</h2>
+                <h2 id="settings-title">API SETTINGS</h2>
               </div>
               <button class="modal-close" aria-label="关闭" @click="closeSettings">×</button>
             </header>
             <div class="modal-body">
-              <p>在本地模式下接入自己的模型服务。密钥仅交给当前主机上的后端使用。</p>
+              <div class="api-role-tabs" role="tablist" aria-label="API 配置类型">
+                <button type="button" role="tab" :aria-selected="settingsRole === 'chat'" :class="{ active: settingsRole === 'chat' }" @click="switchSettingsRole('chat')">对话 API</button>
+                <button type="button" role="tab" :aria-selected="settingsRole === 'parser'" :class="{ active: settingsRole === 'parser' }" @click="switchSettingsRole('parser')">解析 API</button>
+              </div>
+              <p v-if="settingsRole === 'chat'">用于简历深度打磨、修改、翻译和其他对话功能。接口需兼容项目识别出的对话协议。</p>
+              <p v-else>用于导入 PDF 和图片。接口必须支持图片、PDF 页面视觉理解和结构化输出，推荐使用 Gemini 文档模型。</p>
               <div class="settings-grid">
-                <div class="field">
-                  <label id="provider-label">服务商</label>
-                  <div ref="providerSelectRoot" class="provider-select">
-                    <button
-                      type="button"
-                      class="provider-select-trigger"
-                      aria-labelledby="provider-label"
-                      :aria-expanded="showProviderMenu"
-                      @click="showProviderMenu = !showProviderMenu"
-                    >
-                      <span>{{ selectedProvider?.label || '选择服务商' }}</span>
-                      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg>
-                    </button>
-                    <div v-if="showProviderMenu" class="provider-select-menu" role="listbox" aria-labelledby="provider-label">
-                      <button
-                        v-for="provider in providerCatalog"
-                        :key="provider.id"
-                        type="button"
-                        role="option"
-                        :aria-selected="provider.id === llmSettings.provider"
-                        :class="['provider-select-option', { active: provider.id === llmSettings.provider }]"
-                        @click="chooseProvider(provider.id)"
-                      >
-                        {{ provider.label }}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                <div class="field">
-                  <label for="model">模型</label>
-                  <input id="model" v-model="llmSettings.model" placeholder="填写厂商当前模型 ID" @change="syncTemperatureForModel" />
+                <div class="field full">
+                  <label for="base-url">URL</label>
+                  <input id="base-url" v-model="llmSettings.base_url" placeholder="填写官方或中转站 API URL" @input="invalidateCurrentTest" />
                 </div>
                 <div class="field full">
-                  <label for="base-url">Base URL</label>
-                  <input id="base-url" v-model="llmSettings.base_url" placeholder="填写 OpenAI 兼容 Base URL" />
+                  <label for="model">模型</label>
+                  <div class="model-picker-field">
+                    <input
+                      id="model"
+                      v-model="llmSettings.model"
+                      placeholder="查询选择或手动填写模型名称"
+                      autocomplete="off"
+                      spellcheck="false"
+                      @input="invalidateCurrentTest"
+                    />
+                    <button type="button" :disabled="isLoadingModels || !canQueryModels" @click="loadAvailableModels">
+                      {{ isLoadingModels ? '查询中…' : '查询可用模型' }}
+                    </button>
+                  </div>
+                  <div v-if="availableModels.length" class="model-query-results" aria-label="本次查询到的模型">
+                    <button
+                      v-for="model in availableModels"
+                      :key="model"
+                      type="button"
+                      :class="{ active: model === llmSettings.model }"
+                      @click="selectAvailableModel(model)"
+                    >{{ model }}</button>
+                  </div>
+                  <div v-if="modelQueryStatus.message" :class="['settings-status', 'model-query-status', modelQueryStatus.type]"><i></i>{{ modelQueryStatus.message }}</div>
                 </div>
                 <div class="field full">
                   <label for="api-key">API Key</label>
-                  <input
-                    id="api-key"
-                    v-model="llmSettings.api_key"
-                    type="password"
-                    :placeholder="llmSettings.configured ? '已配置，留空表示不更改' : '输入 API Key'"
-                    autocomplete="off"
-                  />
+                  <input id="api-key" v-model="llmSettings.api_key" type="password" :placeholder="llmSettings.configured ? `已配置 ${llmSettings.api_key_hint || ''}，留空表示不更改` : '输入 API Key'" autocomplete="new-password" @input="invalidateCurrentTest" />
                 </div>
-                <div v-if="selectedTemperature?.supported" class="field full">
-                  <label for="temperature">温度 Temperature</label>
-                  <div class="temperature-field">
-                    <input
-                      id="temperature"
-                      v-model.number="llmSettings.temperature"
-                      type="range"
-                      :min="selectedTemperature.min"
-                      :max="selectedTemperature.max"
-                      :step="selectedTemperature.step"
-                    />
-                    <input
-                      v-model.number="llmSettings.temperature"
-                      type="number"
-                      :min="selectedTemperature.min"
-                      :max="selectedTemperature.max"
-                      :step="selectedTemperature.step"
-                    />
-                  </div>
+                <div v-if="llmSettings.resolved_adapter" class="adapter-summary">调用协议：{{ adapterLabel(llmSettings.resolved_adapter) }}<span v-if="llmSettings.model_family && llmSettings.model_family !== 'unknown'"> · 模型家族：{{ llmSettings.model_family }}</span></div>
+                <div v-if="settingsChecks.length" class="capability-checks">
+                  <div v-for="item in settingsChecks" :key="item.key" :class="{ passed: item.passed, failed: !item.passed }"><span>{{ item.label }}</span><strong>{{ item.passed ? '✓' : '×' }}</strong></div>
                 </div>
-              </div>
-              <div v-if="selectedProvider?.note" class="provider-note">
-                {{ selectedProvider.note }}
-                <a v-if="selectedProvider.docs_url" :href="selectedProvider.docs_url" target="_blank" rel="noreferrer">官方文档</a>
-              </div>
-              <div class="security-note">
-                前端不会读取或回显完整密钥；保存后由本地后端更新配置。
-              </div>
-              <div v-if="settingsStatus.message" :class="['settings-status', settingsStatus.type]">
-                <i></i>{{ settingsStatus.message }}
+                <div v-if="settingsStatus.message" :class="['settings-status', settingsStatus.type]"><i></i>{{ settingsStatus.message }}</div>
               </div>
             </div>
             <footer>
               <button class="secondary-btn" :disabled="isTestingSettings || isSavingSettings" @click="testSettings">
-                {{ isTestingSettings ? '测试中…' : '测试连接' }}
+                {{ isTestingSettings ? '测试中…' : settingsRole === 'parser' ? '测试解析能力' : '测试连接' }}
               </button>
               <button class="primary-btn" :disabled="isTestingSettings || isSavingSettings" @click="saveSettings">
                 {{ isSavingSettings ? '保存中…' : '保存设置' }}
@@ -311,32 +278,31 @@ const projectToDelete = ref(null)
 const isDeletingProject = ref(false)
 const deleteError = ref('')
 const showSettingsDialog = ref(false)
-const showProviderMenu = ref(false)
-const providerSelectRoot = ref(null)
+const settingsRole = ref('chat')
 const isTestingSettings = ref(false)
 const isSavingSettings = ref(false)
+const isLoadingModels = ref(false)
+const availableModels = ref([])
+const modelQueryStatus = ref({ type: '', message: '' })
 const settingsStatus = ref({ type: '', message: '' })
-const providerCatalog = ref([])
-const providerProfiles = ref({})
+const visibleSettingsChecks = ref({})
+const settingsConfigs = ref({ chat: {}, parser: {} })
 const llmSettings = ref({
-  provider: 'kimi_api',
+  role: 'chat',
   model: '',
   base_url: '',
   api_key: '',
-  temperature: null,
+  adapter: 'auto',
   configured: false
 })
-
-const selectedProvider = computed(() => providerCatalog.value.find(item => item.id === llmSettings.value.provider))
-const selectedTemperature = computed(() => {
-  const config = selectedProvider.value?.temperature
-  if (!config) return null
-  const model = llmSettings.value.model.toLowerCase()
-  const modelDisablesTemperature =
-    ['kimi_api', 'kimi_coding'].includes(llmSettings.value.provider) ||
-    (llmSettings.value.provider === 'deepseek' && /(reasoner|thinking)/.test(model)) ||
-    (llmSettings.value.provider === 'openai' && /^(gpt-5|o1|o3|o4)/.test(model))
-  return { ...config, supported: config.supported && !modelDisablesTemperature }
+const adapterCatalog = ref([])
+const canQueryModels = computed(() => !!llmSettings.value.base_url.trim())
+const settingsChecks = computed(() => {
+  const checks = visibleSettingsChecks.value
+  const labels = settingsRole.value === 'parser'
+    ? { connected: '接口连接', image: '图片识别', pdf: 'PDF 输入', pdf_vision: 'PDF 页面视觉', native_pdf: 'PDF 原生通道', layout: '格式理解', avatar: '头像识别', structured_output: '结构化输出' }
+    : { connected: '接口连接', chat: '普通对话', stream: '流式输出', structured_output: '结构化输出' }
+  return Object.entries(labels).filter(([key]) => key in checks).map(([key, label]) => ({ key, label, passed: !!checks[key] }))
 })
 
 const isLocalMode = computed(() => appConfig.value?.app_mode === 'local')
@@ -459,64 +425,126 @@ async function confirmDeleteProject() {
 
 async function openSettings() {
   showSettingsDialog.value = true
+  availableModels.value = []
+  modelQueryStatus.value = { type: '', message: '' }
   settingsStatus.value = { type: '', message: '' }
+  visibleSettingsChecks.value = {}
   try {
     const response = await fetch('/settings/llm', { headers: authHeaders() })
     if (!response.ok) throw new Error((await response.json()).detail || '无法读取配置')
     const data = await response.json()
-    providerCatalog.value = data.providers || []
-    providerProfiles.value = data.profiles || {}
-    llmSettings.value.provider = data.active_provider || providerCatalog.value[0]?.id || 'kimi_api'
-    selectProvider()
+    settingsConfigs.value = data.configs || { chat: {}, parser: {} }
+    adapterCatalog.value = data.adapters || []
+    selectSettingsRole(settingsRole.value)
   } catch (error) {
     settingsStatus.value = { type: 'error', message: error.message || '无法读取配置' }
   }
 }
 
-function selectProvider() {
-  const provider = selectedProvider.value
-  const profile = providerProfiles.value[llmSettings.value.provider] || {}
+function selectSettingsRole(role) {
+  const profile = settingsConfigs.value[role] || {}
   llmSettings.value = {
-    provider: llmSettings.value.provider,
+    role,
     model: profile.model || '',
     base_url: profile.base_url || '',
-    api_key: '',
-    temperature: profile.temperature_supported === false
-      ? null
-      : (profile.temperature ?? provider?.temperature?.default ?? null),
-    configured: !!profile.configured
+    api_key: profile.api_key || '',
+    adapter: profile.adapter || 'auto',
+    resolved_adapter: profile.resolved_adapter || '',
+    model_family: profile.model_family || '',
+    configured: !!profile.configured,
+    api_key_hint: profile.api_key_hint || '',
+    verified: !!profile.verified,
+    capabilities: profile.capabilities || {}
   }
+  availableModels.value = []
+  modelQueryStatus.value = { type: '', message: '' }
+  settingsStatus.value = { type: '', message: '' }
+  visibleSettingsChecks.value = {}
+}
+
+function switchSettingsRole(role) {
+  settingsConfigs.value[settingsRole.value] = { ...settingsConfigs.value[settingsRole.value], ...llmSettings.value }
+  settingsRole.value = role
+  selectSettingsRole(role)
+}
+
+function adapterLabel(adapter) {
+  return adapterCatalog.value.find(item => item.id === adapter)?.label || adapter
+}
+
+function invalidateCurrentTest() {
+  availableModels.value = []
+  modelQueryStatus.value = { type: '', message: '' }
+  llmSettings.value.verified = false
+  llmSettings.value.capabilities = {}
+  visibleSettingsChecks.value = {}
   settingsStatus.value = { type: '', message: '' }
 }
 
-function chooseProvider(providerId) {
-  llmSettings.value.provider = providerId
-  showProviderMenu.value = false
-  selectProvider()
-}
-
-function syncTemperatureForModel() {
-  if (selectedTemperature.value?.supported && llmSettings.value.temperature === null) {
-    llmSettings.value.temperature = selectedProvider.value?.temperature?.default ?? 0.2
-  } else if (!selectedTemperature.value?.supported) {
-    llmSettings.value.temperature = null
-  }
+function selectAvailableModel(model) {
+  llmSettings.value.model = model
+  llmSettings.value.verified = false
+  llmSettings.value.capabilities = {}
+  visibleSettingsChecks.value = {}
+  settingsStatus.value = { type: '', message: '' }
 }
 
 function closeSettings() {
-  if (isTestingSettings.value || isSavingSettings.value) return
+  if (isTestingSettings.value || isSavingSettings.value || isLoadingModels.value) return
   showSettingsDialog.value = false
-  showProviderMenu.value = false
   llmSettings.value.api_key = ''
+  availableModels.value = []
+  modelQueryStatus.value = { type: '', message: '' }
+  settingsStatus.value = { type: '', message: '' }
+  visibleSettingsChecks.value = {}
 }
 
 function settingsPayload() {
   return {
-    provider: llmSettings.value.provider,
+    role: settingsRole.value,
     model: llmSettings.value.model.trim(),
     base_url: llmSettings.value.base_url.trim(),
     api_key: llmSettings.value.api_key.trim() || null,
-    temperature: llmSettings.value.temperature
+    adapter: llmSettings.value.adapter || 'auto',
+    verified: !!llmSettings.value.verified,
+    capabilities: llmSettings.value.capabilities || {}
+  }
+}
+
+async function loadAvailableModels() {
+  if (isLoadingModels.value) return
+  const baseUrl = llmSettings.value.base_url.trim()
+  if (!baseUrl) {
+    modelQueryStatus.value = { type: 'error', message: '请先填写 URL' }
+    return
+  }
+  isLoadingModels.value = true
+  availableModels.value = []
+  modelQueryStatus.value = { type: '', message: '' }
+  try {
+    const response = await fetch('/settings/llm/models', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        role: settingsRole.value,
+        base_url: baseUrl,
+        api_key: llmSettings.value.api_key.trim() || null
+      })
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(data.detail || '模型查询失败')
+    availableModels.value = data.models || []
+    if (data.success && !llmSettings.value.model.trim() && availableModels.value.length) {
+      llmSettings.value.model = availableModels.value[0]
+    }
+    modelQueryStatus.value = {
+      type: data.success ? 'success' : 'error',
+      message: data.message || (data.success ? '模型列表已更新' : '无法自动获取，请手动填写模型')
+    }
+  } catch (error) {
+    modelQueryStatus.value = { type: 'error', message: `${error.message || '模型查询失败'}；仍可手动填写模型` }
+  } finally {
+    isLoadingModels.value = false
   }
 }
 
@@ -532,7 +560,20 @@ async function testSettings() {
     })
     const data = await response.json()
     if (!response.ok) throw new Error(data.detail || '连接失败')
-    settingsStatus.value = { type: 'success', message: `连接成功 · ${data.model}` }
+    // Persist the protocol that actually passed capability negotiation. This
+    // matters for Gemini relays that expose both OpenAI compatibility and a
+    // higher-fidelity native document endpoint on the same URL/key.
+    if (data.adapter) llmSettings.value.adapter = data.adapter
+    llmSettings.value.resolved_adapter = data.adapter || llmSettings.value.resolved_adapter
+    llmSettings.value.model_family = data.model_family || llmSettings.value.model_family
+    llmSettings.value.capabilities = data.capabilities || data.checks || { connected: true, chat: true }
+    visibleSettingsChecks.value = { ...llmSettings.value.capabilities }
+    llmSettings.value.verified = data.success !== false
+    if (data.success === false) {
+      settingsStatus.value = { type: 'error', message: data.message || '接口已响应，但没有通过全部解析能力检查' }
+    } else {
+      settingsStatus.value = { type: 'success', message: settingsRole.value === 'parser' ? '解析能力验证通过' : `连接成功 · ${data.model}` }
+    }
   } catch (error) {
     settingsStatus.value = { type: 'error', message: error.message || '连接失败' }
   } finally {
@@ -552,9 +593,8 @@ async function saveSettings() {
     })
     const data = await response.json()
     if (!response.ok) throw new Error(data.detail || '保存失败')
-    providerCatalog.value = data.providers || providerCatalog.value
-    providerProfiles.value = data.profiles || providerProfiles.value
-    selectProvider()
+    settingsConfigs.value = data.configs || settingsConfigs.value
+    selectSettingsRole(settingsRole.value)
     settingsStatus.value = { type: 'success', message: '设置已保存，后续请求立即生效' }
   } catch (error) {
     settingsStatus.value = { type: 'error', message: error.message || '保存失败' }
@@ -565,31 +605,19 @@ async function saveSettings() {
 
 function handleKeydown(event) {
   if (event.key !== 'Escape') return
-  if (showProviderMenu.value) {
-    showProviderMenu.value = false
-    return
-  }
   if (showCreateDialog.value) closeCreateDialog()
   if (projectToDelete.value) closeDeleteDialog()
   if (showSettingsDialog.value) closeSettings()
-}
-
-function handleDocumentClick(event) {
-  if (providerSelectRoot.value && !providerSelectRoot.value.contains(event.target)) {
-    showProviderMenu.value = false
-  }
 }
 
 onMounted(async () => {
   appConfig.value = await loadAppConfig()
   await loadProjects()
   window.addEventListener('keydown', handleKeydown)
-  document.addEventListener('click', handleDocumentClick)
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown)
-  document.removeEventListener('click', handleDocumentClick)
 })
 </script>
 
@@ -1046,6 +1074,50 @@ onUnmounted(() => {
 .internal-modal.settings-modal {
   --settings-control-font-size: 0.8rem;
   width: min(520px, 100%);
+  height: min(760px, calc(100dvh - 40px));
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-modal > header,
+.settings-modal > footer {
+  flex: 0 0 auto;
+}
+
+.settings-modal > .modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-color: #555761 #24252a;
+  scrollbar-width: thin;
+}
+
+.api-role-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin-bottom: 1rem;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 11px;
+  background: rgba(0, 0, 0, 0.16);
+}
+
+.api-role-tabs button {
+  min-height: 36px;
+  border: 0;
+  border-radius: 8px;
+  color: #94969f;
+  background: transparent;
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.api-role-tabs button.active {
+  color: #f1f5ff;
+  background: rgba(117, 162, 255, 0.17);
+  box-shadow: inset 0 0 0 1px rgba(117, 162, 255, 0.28);
 }
 
 .internal-modal > header,
@@ -1112,6 +1184,16 @@ onUnmounted(() => {
   border-radius: 10px;
   color: #f2f2f4;
   background: rgba(255, 255, 255, 0.05);
+  color-scheme: dark;
+}
+
+.internal-modal .modal-body input:-webkit-autofill,
+.internal-modal .modal-body input:-webkit-autofill:hover,
+.internal-modal .modal-body input:-webkit-autofill:focus {
+  -webkit-text-fill-color: #f2f2f4;
+  caret-color: #f2f2f4;
+  box-shadow: 0 0 0 1000px #303138 inset;
+  transition: background-color 9999s ease-out;
 }
 
 .settings-modal .modal-body input,
@@ -1272,31 +1354,89 @@ onUnmounted(() => {
   grid-column: 1 / -1;
 }
 
+.model-picker-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.65rem;
+}
+
+.model-picker-field button {
+  min-width: 112px;
+  padding: 0 0.8rem;
+  border: 1px solid rgba(117, 162, 255, 0.35);
+  border-radius: 10px;
+  color: #cfe0ff;
+  background: rgba(117, 162, 255, 0.1);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--settings-control-font-size);
+}
+
+.model-picker-field button:hover:not(:disabled) {
+  background: rgba(117, 162, 255, 0.18);
+}
+
+.settings-modal input {
+  color-scheme: dark;
+}
+
+.settings-modal input:-webkit-autofill,
+.settings-modal input:-webkit-autofill:hover,
+.settings-modal input:-webkit-autofill:focus {
+  -webkit-text-fill-color: #f2f2f4;
+  box-shadow: 0 0 0 1000px #303138 inset;
+  transition: background-color 9999s ease-out;
+}
+
+.model-query-results {
+  display: flex;
+  max-height: 85px;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.55rem;
+  padding: 0.65rem;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+}
+
+.model-query-results button {
+  padding: 0.35rem 0.55rem;
+  color: #c8c9d0;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 7px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.7rem;
+}
+
+.model-query-results button:hover,
+.model-query-results button.active {
+  color: #eaf1ff;
+  background: rgba(117, 162, 255, 0.16);
+  border-color: rgba(117, 162, 255, 0.38);
+}
+
+.field-hint {
+  display: block;
+  margin-top: 0.45rem;
+  color: #858791;
+  font-size: 0.66rem;
+  line-height: 1.5;
+}
+
 .security-note {
   margin-top: 1rem;
 }
 
 .provider-note {
-  margin-top: 0.8rem;
-  color: #b8b8c0;
+  margin-top: -0.5rem;
+  margin-bottom: -0.2rem;
   font-size: 0.7rem;
   line-height: 1.55;
-}
-
-.provider-note a {
-  margin-left: 0.45rem;
   color: #91b6ff;
-}
-
-.temperature-field {
-  display: grid;
-  grid-template-columns: 1fr 84px;
-  gap: 0.75rem;
-  align-items: center;
-}
-
-.temperature-field input[type="number"] {
-  width: 100%;
 }
 
 .settings-status {
@@ -1306,6 +1446,46 @@ onUnmounted(() => {
   margin-top: 0.85rem;
   color: #aaaab2;
   font-size: 0.7rem;
+}
+
+.adapter-summary,
+.capability-checks,
+.settings-status {
+  grid-column: 1 / -1;
+}
+
+.adapter-summary {
+  color: #8f919b;
+  font-size: 0.68rem;
+}
+
+.capability-checks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.capability-checks > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  color: #a9abb4;
+  background: rgba(255, 255, 255, 0.025);
+  font-size: 0.68rem;
+}
+
+.capability-checks .passed strong { color: #65d99a; }
+.capability-checks .failed strong { color: #ff8585; }
+
+.field > .settings-status {
+  margin-top: 0.4rem;
+}
+
+.model-query-status {
+  margin-top: 0.45rem;
 }
 
 .settings-status.error {
@@ -1391,6 +1571,14 @@ button:focus-visible {
 
   .field.full {
     grid-column: auto;
+  }
+
+  .model-picker-field {
+    grid-template-columns: 1fr;
+  }
+
+  .model-picker-field button {
+    min-height: 40px;
   }
 }
 </style>
