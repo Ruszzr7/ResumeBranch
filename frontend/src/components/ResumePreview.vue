@@ -48,6 +48,11 @@ const props = defineProps({
     type: Number,
     required: false,
     default: 1
+  },
+  hasSourceDocument: {
+    type: Boolean,
+    required: false,
+    default: false
   }
 })
 
@@ -80,9 +85,69 @@ const visibleOtherFields = computed(() => (moduleLayout('others').fieldOrder || 
 const otherFieldLabel = field => ({ skills: t.value.skills, certificates: t.value.certificates, languages: t.value.language }[field] || field)
 const otherSeparator = computed(() => moduleLayout('others').separator === 'dot' ? ' · ' : ' | ')
 const selfEvaluationValues = computed(() => {
-  const values = props.data?.self_evaluation || []
-  return moduleLayout('self_evaluation').preset === 'compact' ? [values.join(' ')] : values
+  const values = (props.data?.self_evaluation || [])
+    .map(value => String(value || '').trim())
+    .filter(Boolean)
+  return values.length && moduleLayout('self_evaluation').preset === 'compact' ? [values.join(' ')] : values
 })
+
+const showSourceDocument = ref(false)
+const sourceDocumentLoading = ref(false)
+const sourceDocumentError = ref('')
+const sourceDocumentUrl = ref('')
+const sourceDocumentMime = ref('')
+const sourceDocumentName = ref('原版简历')
+const sourceDocumentIsPdf = computed(() => sourceDocumentMime.value === 'application/pdf')
+
+function releaseSourceDocumentUrl() {
+  if (sourceDocumentUrl.value) URL.revokeObjectURL(sourceDocumentUrl.value)
+  sourceDocumentUrl.value = ''
+}
+
+function closeSourceDocument() {
+  showSourceDocument.value = false
+  sourceDocumentLoading.value = false
+  sourceDocumentError.value = ''
+  releaseSourceDocumentUrl()
+}
+
+async function toggleSourceDocument() {
+  if (showSourceDocument.value) {
+    closeSourceDocument()
+    return
+  }
+  if (!props.taskId || !props.hasSourceDocument) return
+  closeToolbarMenu()
+  showSourceDocument.value = true
+  sourceDocumentLoading.value = true
+  sourceDocumentError.value = ''
+  try {
+    const response = await fetch(`/tasks/${props.taskId}/source-document`, {
+      headers: buildAuthorizationHeaders()
+    })
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}))
+      throw new Error(detail.detail || '原版简历加载失败')
+    }
+    const blob = await response.blob()
+    releaseSourceDocumentUrl()
+    sourceDocumentUrl.value = URL.createObjectURL(blob)
+    sourceDocumentMime.value = blob.type || response.headers.get('Content-Type')?.split(';')[0] || ''
+    const encodedName = response.headers.get('X-Source-Filename')
+    if (encodedName) {
+      try { sourceDocumentName.value = decodeURIComponent(encodedName) } catch { sourceDocumentName.value = encodedName }
+    }
+  } catch (error) {
+    sourceDocumentError.value = error.message || '原版简历加载失败'
+  } finally {
+    sourceDocumentLoading.value = false
+  }
+}
+
+function retrySourceDocument() {
+  closeSourceDocument()
+  toggleSourceDocument()
+}
 
 function academicMetrics(item) {
   const metrics = []
@@ -151,7 +216,7 @@ const sectionHasContent = section => ({
   project_experience: (props.data?.project_experience || props.data?.projects)?.length,
   custom_sections: props.data?.custom_sections?.some(section => section?.title && section?.items?.length),
   others: visibleOtherFields.value.length,
-  self_evaluation: props.data?.self_evaluation?.length,
+  self_evaluation: selfEvaluationValues.value.length,
 }[section] || false)
 const reorderableSections = computed(() => localSectionOrder.value
   .filter(section => SECTION_LABELS[section] && sectionHasContent(section)))
@@ -741,8 +806,12 @@ watch(() => props.layoutConfig, () => {
   nextTick(() => { syncingLayoutProps = false })
 }, { deep: true, immediate: true })
 watch(() => props.taskId, () => {
+  closeSourceDocument()
   loadLayoutSettings()
   calculatePagination()
+})
+watch(() => props.hasSourceDocument, value => {
+  if (!value) closeSourceDocument()
 })
 
 // ========== 高亮模块滚动 ==========
@@ -990,6 +1059,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  closeSourceDocument()
   observer.value?.disconnect()
   window.removeEventListener('resize', calculateScale)
   document.removeEventListener('click', handleToolbarOutsideClick)
@@ -1048,6 +1118,14 @@ const getItemIndex = (type, dataIndex) => {
             </div>
           </div>
           <div class="mobile-toolbar-row">
+            <button v-if="hasSourceDocument" class="mobile-jd-btn" :class="{ active: showSourceDocument }" @click="toggleSourceDocument">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+                <path d="M8 13h8M8 17h5"/>
+              </svg>
+              <span>{{ showSourceDocument ? '当前版' : '查看原版' }}</span>
+            </button>
             <button class="mobile-style-btn" @click="toggleStylePanel" :class="{ active: isStylePanelExpanded }">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <circle cx="12" cy="12" r="3"></circle>
@@ -1115,6 +1193,20 @@ const getItemIndex = (type, dataIndex) => {
         <!-- PC端：合并同类功能，保留完整操作 -->
         <template v-else>
           <div class="compact-toolbar-cluster">
+          <button
+            v-if="hasSourceDocument"
+            class="compact-toolbar-btn"
+            :class="{ active: showSourceDocument }"
+            :aria-label="showSourceDocument ? '返回当前简历' : '查看导入的原版简历'"
+            @click="toggleSourceDocument"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <path d="M8 13h8M8 17h5"/>
+            </svg>
+            <span>{{ showSourceDocument ? '当前版' : '原版' }}</span>
+          </button>
           <div class="compact-toolbar-group">
             <button
               class="compact-toolbar-btn"
@@ -1254,7 +1346,23 @@ const getItemIndex = (type, dataIndex) => {
     </div>
 
     <!-- 有简历数据时显示预览 -->
-    <template v-if="data">
+    <section v-if="showSourceDocument" class="source-document-viewer" aria-label="原版简历预览">
+      <header class="source-document-header">
+        <strong>{{ sourceDocumentName }}</strong>
+        <span>只读原版，不会随当前简历修改</span>
+      </header>
+      <div v-if="sourceDocumentLoading" class="source-document-status">正在加载原版简历…</div>
+      <div v-else-if="sourceDocumentError" class="source-document-status source-document-error">
+        <p>{{ sourceDocumentError }}</p>
+        <button type="button" @click="retrySourceDocument">重试</button>
+      </div>
+      <iframe v-else-if="sourceDocumentIsPdf && sourceDocumentUrl" class="source-document-frame" :src="sourceDocumentUrl" title="原版 PDF 简历"></iframe>
+      <div v-else-if="sourceDocumentUrl" class="source-document-image-scroll">
+        <img :src="sourceDocumentUrl" :alt="sourceDocumentName">
+      </div>
+    </section>
+
+    <template v-else-if="data">
       <!-- 预览内容区域 -->
       <div class="preview-content" ref="containerRef">
       <!-- 隐藏的完整内容（用于测量） -->
@@ -1740,7 +1848,7 @@ const getItemIndex = (type, dataIndex) => {
             </template>
           </div>
         </div>
-        <div class="page-footer">{{ page }} / {{ pageCount }}</div>
+        <div v-if="pageCount > 1" class="page-footer">{{ page }} / {{ pageCount }}</div>
       </div>
     </div>
     </div>
@@ -1752,7 +1860,7 @@ const getItemIndex = (type, dataIndex) => {
     </template>
 
     <!-- 无简历数据时显示提示 -->
-    <div v-if="!data" class="no-data">
+    <div v-if="!data && !showSourceDocument" class="no-data">
       <p>暂无简历数据，请先编辑简历</p>
       <button class="jd-upload-btn" @click="emit('open-resume-edit')" title="编辑简历">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1828,7 +1936,6 @@ const getItemIndex = (type, dataIndex) => {
           <h4>{{ template.title }}</h4>
           <p>{{ template.description }}</p>
           <div class="template-card-actions">
-            <button class="template-secondary-btn" @click="enlargedLayoutTemplate = template">放大查看</button>
             <button @click="applyTemplatePrompt(template.prompt)">应用模板</button>
           </div>
         </article>
@@ -1883,6 +1990,63 @@ const getItemIndex = (type, dataIndex) => {
   flex-direction: column;
   position: relative;
 }
+.source-document-viewer {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #18191e;
+}
+.source-document-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  min-height: 34px;
+  padding: 6px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  color: #f3f4f7;
+  background: #24262c;
+}
+.source-document-header strong {
+  min-width: 0;
+  max-width: 52%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+.source-document-header span {
+  flex: 0 0 auto;
+  color: #aeb3bf;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.source-document-status button {
+  border: 1px solid #505560;
+  border-radius: 7px;
+  min-width: 0;
+  padding: 5px 9px;
+  color: #e5e8ef;
+  background: #33363e;
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+.source-document-status {
+  flex: 1;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  color: #c9cdd5;
+}
+.source-document-status p { margin: 0; }
+.source-document-error { color: #f0a7a7; }
+.source-document-frame { flex: 1; width: 100%; min-height: 0; border: 0; background: #fff; }
+.source-document-image-scroll { flex: 1; overflow: auto; padding: 20px; text-align: center; }
+.source-document-image-scroll img { display: inline-block; max-width: 100%; height: auto; box-shadow: 0 8px 30px rgba(0,0,0,.35); }
 /* 工具栏包装器 - 为sticky提供正确的定位上下文 */
 .resume-toolbar-wrapper {
   position: sticky;
@@ -2622,7 +2786,7 @@ const getItemIndex = (type, dataIndex) => {
 .personal-info.contact-inline .contact-info > span + span::before {
   content: '|';
   margin-right: 0.5em;
-  color: #9ca3af;
+  color: #333333;
 }
 
 .personal-info .name {
@@ -2638,7 +2802,7 @@ const getItemIndex = (type, dataIndex) => {
   gap: 0.5em;
   flex-wrap: wrap;
   font-size: 0.8em;
-  color: #6c757d;
+  color: #333333;
 }
 
 .photo-container {
@@ -2746,22 +2910,44 @@ const getItemIndex = (type, dataIndex) => {
 .education-item .education-degree-column { grid-column: 1; grid-row: 2; }
 .education-item .education-metrics-column { grid-column: 1; grid-row: 3; }
 .education-item .graduation-date { grid-column: 2; grid-row: 1; }
+.education-item .school-info,
+.education-item .education-degree-column,
+.education-item .education-metrics-column {
+  min-width: 0;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
 .education-item.preset-compact .education-header {
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, 1.05fr) auto;
+  display: flex;
+  width: 100%;
+  flex-wrap: nowrap;
   column-gap: 0.65em;
   align-items: baseline;
 }
-.education-item.preset-compact .education-degree-column { grid-column: 2; grid-row: 1; }
-.education-item.preset-compact .education-metrics-column { grid-column: 3; grid-row: 1; }
+.education-item.preset-compact .school-info,
+.education-item.preset-compact .education-degree-column,
+.education-item.preset-compact .education-metrics-column { flex: 1 1 0; min-width: 0; }
 .education-item.preset-compact .graduation-date { grid-column: 4; grid-row: 1; }
 .education-item.preset-three-column .education-header {
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.05fr) minmax(0, 1.15fr) auto;
+  display: flex;
+  width: 100%;
+  flex-wrap: nowrap;
   column-gap: 1.1em;
   align-items: baseline;
 }
-.education-item.preset-three-column .education-degree-column { grid-column: 2; grid-row: 1; }
-.education-item.preset-three-column .education-metrics-column { grid-column: 3; grid-row: 1; }
+.education-item.preset-three-column .school-info,
+.education-item.preset-three-column .education-degree-column,
+.education-item.preset-three-column .education-metrics-column { flex: 1 1 0; min-width: 0; }
 .education-item.preset-three-column .graduation-date { grid-column: 4; grid-row: 1; }
+.education-item.preset-compact .graduation-date,
+.education-item.preset-three-column .graduation-date {
+  position: static;
+  flex: 0 0 36mm;
+  width: 36mm;
+  min-width: 0;
+  margin-right: 2mm;
+  text-align: right;
+}
 .education-item.preset-compact .academic-metrics,
 .education-item.preset-three-column .academic-metrics { margin-top: 0; }
 .academic-metrics {
@@ -3114,9 +3300,9 @@ const getItemIndex = (type, dataIndex) => {
 }
 .layout-guide-dialog {
   width: min(820px, 96vw);
-  max-height: min(760px, 90vh);
+  max-height: calc(100vh - 32px);
   overflow: auto;
-  padding: 24px;
+  padding: 18px;
   color: #f1f2f5;
   background: #24262d;
   border: 1px solid #40434d;
@@ -3150,12 +3336,12 @@ const getItemIndex = (type, dataIndex) => {
 .layout-guide-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin: 20px 0 16px;
+  gap: 10px;
+  margin: 14px 0 10px;
 }
-.layout-guide-card { padding: 14px; background: #2b2e36; border: 1px solid #3e424d; border-radius: 12px; }
+.layout-guide-card { padding: 10px; background: #2b2e36; border: 1px solid #3e424d; border-radius: 12px; }
 .layout-guide-card h4 { margin: 0 0 6px; font-size: 14px; }
-.layout-guide-card > p { min-height: 56px; margin: 0 0 12px; color: #b5bac5; font-size: 12px; line-height: 1.55; }
+.layout-guide-card > p { min-height: 38px; margin: 0 0 8px; color: #b5bac5; font-size: 12px; line-height: 1.4; }
 .layout-guide-card button {
   border: 0;
   padding: 7px 10px;
@@ -3169,7 +3355,7 @@ const getItemIndex = (type, dataIndex) => {
 .template-sheet-button {
   display: block;
   width: 100%;
-  margin: 0 0 12px;
+  margin: 0 0 8px;
   padding: 0 !important;
   overflow: hidden;
   border: 0 !important;
@@ -3177,9 +3363,9 @@ const getItemIndex = (type, dataIndex) => {
   background: transparent !important;
 }
 .template-sheet {
-  aspect-ratio: 210 / 297;
+  height: 220px;
   overflow: hidden;
-  padding: 16px 15px;
+  padding: 12px 13px;
   color: #20242a;
   background: #fff;
   box-shadow: inset 0 0 0 1px #d7dbe0;
@@ -3194,7 +3380,7 @@ const getItemIndex = (type, dataIndex) => {
   gap: 7px;
   align-items: center;
   min-height: 26px;
-  margin-bottom: 8px;
+  margin-bottom: 5px;
   text-align: center;
 }
 .template-header-copy { display: grid; gap: 2px; }
@@ -3211,8 +3397,8 @@ const getItemIndex = (type, dataIndex) => {
   font-size: 12px;
   line-height: 1;
 }
-.template-sheet section { margin-top: 7px; }
-.template-sheet h5 { margin: 0 0 4px; padding-bottom: 2px; border-bottom: 1px solid #333; font-size: 7px; }
+.template-sheet section { margin-top: 4px; }
+.template-sheet h5 { margin: 0 0 2px; padding-bottom: 1px; border-bottom: 1px solid #333; font-size: 7px; }
 .template-sheet p { margin: 0; color: #535a64; font-size: inherit; }
 .template-education-line {
   display: grid;
@@ -3231,8 +3417,8 @@ const getItemIndex = (type, dataIndex) => {
 .template-compact-tech .template-sheet-header { margin-bottom: 5px; }
 .template-compact-tech h5 { margin-bottom: 2px; }
 .template-compact-tech ul { margin-top: 2px; }
-.template-card-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
-.layout-guide-card .template-secondary-btn { color: #c8ccd4; background: rgba(255,255,255,.07); }
+.template-card-actions { display: flex; justify-content: center; }
+.template-card-actions button { min-width: 132px; padding: 9px 18px; font-size: 14px; font-weight: 700; }
 .template-zoom-overlay {
   position: fixed;
   inset: 0;
@@ -3240,17 +3426,18 @@ const getItemIndex = (type, dataIndex) => {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: 32px 24px;
   background: rgba(7,8,11,.78);
 }
 .template-zoom-dialog {
   width: min(420px, 92vw);
-  max-height: 88vh;
+  max-height: calc(100vh - 64px);
   overflow-y: auto;
   padding: 14px;
   border: 1px solid #424650;
   border-radius: 14px;
   background: #25272e;
+  transform: translateY(12px);
 }
 .template-zoom-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .template-zoom-heading button {
@@ -3273,6 +3460,8 @@ const getItemIndex = (type, dataIndex) => {
   margin: 0 auto;
   padding: 22px 20px;
   font-size: 8.5px;
+  height: auto;
+  aspect-ratio: 210 / 297;
 }
 .template-sheet-large .template-sheet-header strong { font-size: 16px; }
 .template-sheet-large .template-sheet-header { grid-template-columns: minmax(0, 1fr) 34px; min-height: 39px; }
@@ -3293,7 +3482,7 @@ const getItemIndex = (type, dataIndex) => {
 @media (max-width: 820px) {
   .layout-guide-grid { grid-template-columns: 1fr; }
   .layout-guide-dialog { padding: 18px; }
-  .template-sheet { aspect-ratio: 210 / 297; }
+  .template-sheet:not(.template-sheet-large) { height: 250px; }
 }
 
 .success-icon.error-icon {
@@ -3495,10 +3684,10 @@ const getItemIndex = (type, dataIndex) => {
     left: 0;
     right: 0;
     z-index: 999;
-    background-color: rgb(249, 245, 242);
-    border-top: 1px solid #e0e0e0;
+    background: rgba(30, 31, 36, 0.98);
+    border-top: 1px solid rgba(255, 255, 255, 0.09);
     border-bottom: none;
-    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.05);
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.28);
   }
 
   /* 当样式面板展开时，工具栏高度增加 */
@@ -3511,6 +3700,41 @@ const getItemIndex = (type, dataIndex) => {
     padding: 6px 8px;
     gap: 6px;
     border-bottom: none;
+  }
+
+  .resume-toolbar .zoom-controls {
+    color: #e4e6ed;
+    background: #292a30;
+    border-color: #4a4d57;
+  }
+
+  .resume-toolbar .zoom-controls button {
+    color: #e4e6ed;
+    border-right-color: #4a4d57;
+  }
+
+  .resume-toolbar .zoom-controls button:disabled {
+    color: #aeb3bf;
+    opacity: 0.78;
+  }
+
+  .resume-toolbar .zoom-controls button:hover:not(:disabled),
+  .resume-toolbar .zoom-controls button.active {
+    background: #34363d;
+    color: #78a6ff;
+  }
+
+  .resume-toolbar .zoom-value {
+    color: #eef0f5;
+    font-weight: 600;
+  }
+
+  .resume-toolbar .zoom-stepper {
+    border-left-color: #4a4d57;
+  }
+
+  .resume-toolbar .zoom-stepper button:first-child {
+    border-bottom-color: #4a4d57;
   }
 
   /* 移动端隐藏 toolbar-icon */
@@ -3570,9 +3794,10 @@ const getItemIndex = (type, dataIndex) => {
   /* 移动端样式面板 */
   .style-panel-mobile {
     width: 100%;
-    background: rgb(254, 253, 251);
+    color: #eceef4;
+    background: #24252b;
     padding: 12px;
-    border-top: 1px solid #e0e0e0;
+    border-top: 1px solid rgba(255, 255, 255, 0.09);
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -3597,7 +3822,7 @@ const getItemIndex = (type, dataIndex) => {
   .style-label {
     font-family: 'GTPressuraMono-Light', sans-serif;
     font-size: 0.625rem;
-    color: #666;
+    color: #b8bbc5;
     text-transform: uppercase;
     letter-spacing: 0.1em;
   }
@@ -3607,7 +3832,7 @@ const getItemIndex = (type, dataIndex) => {
     height: 4px;
     -webkit-appearance: none;
     appearance: none;
-    background: #e0e0e0;
+    background: #4a4d57;
     outline: none;
     border-radius: 2px;
   }
@@ -3617,7 +3842,7 @@ const getItemIndex = (type, dataIndex) => {
     appearance: none;
     width: 14px;
     height: 14px;
-    background: #303030;
+    background: #78a6ff;
     cursor: pointer;
     border-radius: 0;
   }
@@ -3625,7 +3850,7 @@ const getItemIndex = (type, dataIndex) => {
   .style-panel-mobile .slider::-moz-range-thumb {
     width: 14px;
     height: 14px;
-    background: #303030;
+    background: #78a6ff;
     cursor: pointer;
     border-radius: 0;
     border: none;
@@ -3647,17 +3872,17 @@ const getItemIndex = (type, dataIndex) => {
     justify-content: center;
     gap: 4px;
     padding: 8px 6px;
-    background: transparent;
-    border: 1px solid #303030;
-    border-radius: 0;
-    color: #303030;
+    background: #292a30;
+    border: 1px solid #4a4d57;
+    border-radius: 6px;
+    color: #eceef4;
     font-family: 'GTPressuraMono-Light', sans-serif;
     font-size: 0.625rem;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     cursor: pointer;
     transition: all 0.2s ease;
-    box-shadow: 2px 2px 0 #303030;
+    box-shadow: none;
     white-space: nowrap;
   }
 
@@ -3668,6 +3893,8 @@ const getItemIndex = (type, dataIndex) => {
 
   .mobile-style-btn.active {
     background: #5f8ff2;
+    border-color: #78a6ff;
+    color: #ffffff;
   }
 
   /* 移动端JD按钮 - 跟PC端样式一致 */
@@ -3678,10 +3905,10 @@ const getItemIndex = (type, dataIndex) => {
     justify-content: center;
     gap: 4px;
     padding: 8px 6px;
-    background: transparent;
-    color: #303030;
-    border: 1px solid #303030;
-    border-radius: 0;
+    background: #292a30;
+    color: #eceef4;
+    border: 1px solid #4a4d57;
+    border-radius: 6px;
     font-family: 'GTPressuraMono-Light', sans-serif;
     font-size: 0.625rem;
     font-weight: 400;
@@ -3689,13 +3916,13 @@ const getItemIndex = (type, dataIndex) => {
     letter-spacing: 0.05em;
     cursor: pointer;
     transition: all 0.2s ease;
-    box-shadow: 2px 2px 0 #303030;
+    box-shadow: none;
     white-space: nowrap;
   }
 
   .mobile-jd-btn:hover {
     background: rgba(95, 143, 242, 0.16);
-    border-color: #303030;
+    border-color: #78a6ff;
   }
 
   .mobile-jd-btn:active {
@@ -3712,9 +3939,9 @@ const getItemIndex = (type, dataIndex) => {
     gap: 4px;
     padding: 8px 6px;
     background: #5f8ff2;
-    color: #303030;
-    border: 1px solid #303030;
-    border-radius: 0;
+    color: #ffffff;
+    border: 1px solid #78a6ff;
+    border-radius: 6px;
     font-family: 'GTPressuraMono-Light', sans-serif;
     font-size: 0.625rem;
     font-weight: 400;
@@ -3722,13 +3949,13 @@ const getItemIndex = (type, dataIndex) => {
     letter-spacing: 0.05em;
     cursor: pointer;
     transition: all 0.2s ease;
-    box-shadow: 2px 2px 0 #303030;
+    box-shadow: none;
     white-space: nowrap;
   }
 
   .mobile-export-btn:hover:not(:disabled) {
-    background: #303030;
-    color: #78a6ff;
+    background: #78a6ff;
+    color: #ffffff;
   }
 
   .mobile-export-btn:active:not(:disabled) {
@@ -3745,8 +3972,8 @@ const getItemIndex = (type, dataIndex) => {
   .mobile-export-btn .spinner {
     width: 12px;
     height: 12px;
-    border: 2px solid rgba(48, 48, 48, 0.3);
-    border-top-color: #303030;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: #ffffff;
     border-radius: 0;
     animation: spin 0.8s linear infinite;
   }

@@ -53,6 +53,8 @@ class ResumeFileApiTests(unittest.IsolatedAsyncioTestCase):
             patch("backend.main.invoke_document", AsyncMock(return_value=json.dumps(RESUME, ensure_ascii=False))),
             patch("backend.main.set_parsing_status"),
             patch("backend.source_documents.detect_source_page_count", return_value=1),
+            patch("backend.main.delete_unreferenced_source_documents", return_value=[]),
+            patch("backend.main.persist_source_document", return_value=SimpleNamespace(id="source-1", status="pending")),
             patch("backend.main.save_user_resume") as save_resume,
         ):
             response = await main.parse_and_save_resume_endpoint(
@@ -61,6 +63,7 @@ class ResumeFileApiTests(unittest.IsolatedAsyncioTestCase):
         payload = json.loads(response.body)
         self.assertEqual(response.status_code, 200)
         self.assertTrue(payload["draft"])
+        self.assertEqual(payload["source_document_token"], "source-1")
         save_resume.assert_not_called()
 
     async def test_verified_parser_can_preserve_legacy_immediate_save(self):
@@ -72,6 +75,9 @@ class ResumeFileApiTests(unittest.IsolatedAsyncioTestCase):
             patch("backend.main.set_parsing_status"),
             patch("backend.main.set_source_page_count"),
             patch("backend.source_documents.detect_source_page_count", return_value=1),
+            patch("backend.main.persist_source_document", return_value=SimpleNamespace(id="source-1", status="pending")),
+            patch("backend.main.attach_source_document", return_value=SimpleNamespace(id="source-1", status="ready")),
+            patch("backend.main.delete_unreferenced_source_documents", return_value=[]),
             patch("backend.main.save_user_resume") as save_resume,
         ):
             response = await main.parse_and_save_resume_endpoint(
@@ -110,6 +116,8 @@ class ResumeFileApiTests(unittest.IsolatedAsyncioTestCase):
             patch("backend.main.invoke_document", invoke),
             patch("backend.main.set_parsing_status"),
             patch("backend.source_documents.detect_source_page_count", return_value=1),
+            patch("backend.main.delete_unreferenced_source_documents", return_value=[]),
+            patch("backend.main.persist_source_document", return_value=SimpleNamespace(id="source-1", status="pending")),
         ):
             response = await main.parse_and_save_resume_endpoint(
                 file=upload("image/png"), draft_only=True, db=SimpleNamespace(), current_user=SimpleNamespace(id=7)

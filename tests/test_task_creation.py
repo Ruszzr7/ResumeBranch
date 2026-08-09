@@ -17,7 +17,7 @@ class TaskCreationTests(unittest.TestCase):
             id="source-task", project_id="source", user_id=1, title="英文版本",
             is_base=False, session_id="source-task",
             resume_data={"basics": {"name": "候选人"}}, photo="photo-data",
-            source_page_count=2,
+            source_page_count=2, source_document_id="source-document",
             jd_data={"position": "旧岗位"}, messages=[{"content": "旧对话"}],
         )
         self.db.add_all([self.target_project, self.source_project, self.source_task])
@@ -34,6 +34,7 @@ class TaskCreationTests(unittest.TestCase):
         self.assertEqual(task.resume_data["basics"]["name"], "候选人")
         self.assertEqual(task.photo, "photo-data")
         self.assertEqual(task.source_page_count, 2)
+        self.assertEqual(task.source_document_id, "source-document")
         self.assertEqual(task.jd_data["position"], "新岗位")
         self.assertEqual(task.messages, [])
         self.assertNotEqual(task.session_id, self.source_task.session_id)
@@ -64,6 +65,7 @@ class TaskCreationTests(unittest.TestCase):
         self.assertEqual(task.resume_data, {})
         self.assertEqual(task.photo, "")
         self.assertEqual(task.source_page_count, 1)
+        self.assertIsNone(task.source_document_id)
 
 
 if __name__ == "__main__":

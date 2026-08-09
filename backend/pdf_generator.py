@@ -498,11 +498,11 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         gap: 0.5em;
         flex-wrap: wrap;
         font-size: 0.8em;
-        color: #6c757d;
+        color: #333333;
     }}
 
     .separator {{
-        color: #6c757d;
+        color: #333333;
     }}
 
     .profile-photo {{
@@ -630,23 +630,45 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     .education-item .education-degree-column {{ grid-column: 1; grid-row: 2; }}
     .education-item .education-metrics-column {{ grid-column: 1; grid-row: 3; }}
     .education-item .graduation-date {{ grid-column: 2; grid-row: 1; }}
+    .education-item .school-info,
+    .education-item .education-degree-column,
+    .education-item .education-metrics-column {{
+        min-width: 0;
+        overflow-wrap: break-word;
+        word-break: break-word;
+    }}
     .education-item.preset-compact .education-header {{
-        grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, 1.05fr) auto;
-        gap: 0.65em;
+        display: flex;
+        width: 100%;
+        flex-wrap: nowrap;
+        column-gap: 0.65em;
         align-items: baseline;
     }}
     .education-item.preset-compact .school-info {{ grid-column: 1; grid-row: 1; gap: 0.3em; }}
-    .education-item.preset-compact .education-degree-column {{ grid-column: 2; grid-row: 1; }}
-    .education-item.preset-compact .education-metrics-column {{ grid-column: 3; grid-row: 1; }}
+    .education-item.preset-compact .school-info,
+    .education-item.preset-compact .education-degree-column,
+    .education-item.preset-compact .education-metrics-column {{ flex: 1 1 0; min-width: 0; }}
     .education-item.preset-compact .graduation-date {{ grid-column: 4; grid-row: 1; }}
     .education-item.preset-three-column .education-header {{
-        grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.05fr) minmax(0, 1.15fr) auto;
+        display: flex;
+        width: 100%;
+        flex-wrap: nowrap;
         column-gap: 1.1em;
         align-items: baseline;
     }}
-    .education-item.preset-three-column .education-degree-column {{ grid-column: 2; grid-row: 1; }}
-    .education-item.preset-three-column .education-metrics-column {{ grid-column: 3; grid-row: 1; }}
+    .education-item.preset-three-column .school-info,
+    .education-item.preset-three-column .education-degree-column,
+    .education-item.preset-three-column .education-metrics-column {{ flex: 1 1 0; min-width: 0; }}
     .education-item.preset-three-column .graduation-date {{ grid-column: 4; grid-row: 1; }}
+    .education-item.preset-compact .graduation-date,
+    .education-item.preset-three-column .graduation-date {{
+        position: static;
+        flex: 0 0 36mm;
+        width: 36mm;
+        min-width: 0;
+        margin-right: 2mm;
+        text-align: right;
+    }}
     .education-item.preset-compact .academic-metrics,
     .education-item.preset-three-column .academic-metrics {{ margin-top: 0; }}
 
@@ -865,7 +887,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     body, .degree-major, .academic-metrics, .graduation-date, .work-period,
     .position-department, .project-role, .list-item, .generic-list-item,
     .cert-lang-line, .inline-list-item, .self-eval-item {{ color: #111111; }}
-    .contact-info, .separator {{ color: #222222; }}
+    .contact-info, .separator {{ color: #333333; }}
     .section-title {{
         margin-bottom: 0.22em;
         padding-bottom: 0.1em;

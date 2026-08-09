@@ -107,6 +107,20 @@ class ResumeProject(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class SourceDocument(Base):
+    """Immutable uploaded PDF/image retained for read-only reference."""
+    __tablename__ = "source_documents"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(Integer, nullable=False, index=True)
+    storage_key = Column(String(255), nullable=False, unique=True)
+    original_filename = Column(String(255), nullable=False)
+    mime_type = Column(String(100), nullable=False)
+    file_size = Column(Integer, nullable=False, default=0)
+    sha256 = Column(String(64), nullable=False, index=True)
+    status = Column(String(20), nullable=False, default="pending")
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
 class ProjectTask(Base):
     """A JD-specific resume version and its independent conversation."""
     __tablename__ = "project_tasks"
@@ -120,6 +134,7 @@ class ProjectTask(Base):
     photo = Column(large_text_type, default="")
     parsing_status = Column(String(20), default="none")
     source_page_count = Column(Integer, default=1, nullable=False)
+    source_document_id = Column(String(36), nullable=True, index=True)
     jd_data = Column(JSON, default=dict)
     messages = Column(JSON, default=list)
     compressed_context = Column(JSON, default=list)
@@ -185,6 +200,7 @@ def init_db():
     """初始化数据库（创建所有表）"""
     Base.metadata.create_all(bind=engine)
     migrate_project_task_source_page_count()
+    migrate_project_task_source_document()
     migrate_layout_config_fields()
     migrate_agent_memory_interview_fields()
     migrate_resume_academic_fields()
@@ -202,6 +218,19 @@ def migrate_project_task_source_page_count():
         connection.execute(text(
             "ALTER TABLE project_tasks ADD COLUMN source_page_count INTEGER NOT NULL DEFAULT 1"
         ))
+
+
+def migrate_project_task_source_document():
+    """Link existing tasks to optional immutable source documents."""
+    inspector = inspect(engine)
+    if "project_tasks" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("project_tasks")}
+    if "source_document_id" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text(
+                "ALTER TABLE project_tasks ADD COLUMN source_document_id VARCHAR(36)"
+            ))
 
 
 def migrate_layout_config_fields():
@@ -314,6 +343,10 @@ def _active_task(db, user_id: int):
     if not task:
         raise ValueError("当前简历任务不存在或不属于该用户")
     return task
+
+
+def get_active_task(db, user_id: int):
+    return _active_task(db, user_id)
 
 
 def get_or_create_legacy_project(db, user_id: int):
@@ -489,6 +522,7 @@ def create_resume_task(
         resume_data=normalize_resume_data(source_task.resume_data or {}) if source_task else {},
         photo=(source_task.photo or "") if source_task else "",
         source_page_count=max(1, int(source_task.source_page_count or 1)) if source_task else 1,
+        source_document_id=(source_task.source_document_id if source_task else None),
         jd_data=jd_data or {},
         layout_config=(
             normalize_layout_config(source_task.layout_config)
@@ -506,6 +540,64 @@ def get_resume_task(db, user_id: int, task_id: str):
         ProjectTask.id == task_id,
         ProjectTask.user_id == user_id,
     ).first()
+
+
+def get_source_document(db, user_id: int, document_id: str):
+    return db.query(SourceDocument).filter(
+        SourceDocument.id == document_id,
+        SourceDocument.user_id == user_id,
+    ).first()
+
+
+def get_task_source_document(db, user_id: int, task_id: str):
+    task = get_resume_task(db, user_id, task_id)
+    if not task or not task.source_document_id:
+        return None
+    return get_source_document(db, user_id, task.source_document_id)
+
+
+def attach_source_document(db, user_id: int, document_id: str, task_id: str | None = None):
+    task = get_resume_task(db, user_id, task_id) if task_id else _active_task(db, user_id)
+    document = get_source_document(db, user_id, document_id)
+    if not task or not document or document.status not in {"pending", "ready"}:
+        return None
+    task.source_document_id = document.id
+    task.updated_at = datetime.utcnow()
+    document.status = "ready"
+    db.commit()
+    db.refresh(task)
+    return document
+
+
+def discard_pending_source_document(db, user_id: int, document_id: str) -> str | None:
+    document = get_source_document(db, user_id, document_id)
+    if not document or document.status != "pending":
+        return None
+    storage_key = document.storage_key
+    db.delete(document)
+    db.commit()
+    return storage_key
+
+
+def delete_unreferenced_source_documents(db, user_id: int) -> list[str]:
+    """Delete ready or expired pending metadata no longer referenced by a task."""
+    referenced = {
+        value for (value,) in db.query(ProjectTask.source_document_id).filter(
+            ProjectTask.user_id == user_id,
+            ProjectTask.source_document_id.isnot(None),
+        ).all() if value
+    }
+    cutoff = datetime.utcnow() - timedelta(hours=24)
+    removed: list[str] = []
+    for document in db.query(SourceDocument).filter(SourceDocument.user_id == user_id).all():
+        orphan_ready = document.status == "ready" and document.id not in referenced
+        expired_pending = document.status == "pending" and document.created_at and document.created_at < cutoff
+        if orphan_ready or expired_pending:
+            removed.append(document.storage_key)
+            db.delete(document)
+    if removed:
+        db.commit()
+    return removed
 
 
 def record_resume_revision(

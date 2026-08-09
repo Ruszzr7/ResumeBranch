@@ -115,6 +115,15 @@ class LayoutRuleTests(unittest.TestCase):
             document_xml = archive.read("word/document.xml").decode("utf-8")
         self.assertIn('w:color="333333"', document_xml)
 
+    def test_empty_self_evaluation_is_hidden_for_every_template(self):
+        from backend.layout_config import LAYOUT_TEMPLATES, apply_layout_template
+
+        data = resume_with_two_jobs()
+        data["self_evaluation"] = ["", "   "]
+        for template_id in LAYOUT_TEMPLATES:
+            html = render_resume_to_html(data, layout_config=apply_layout_template({}, template_id))
+            self.assertNotIn('<section class="section self-evaluation', html, template_id)
+
     def test_word_applies_section_order_and_hidden_sections(self):
         data = resume_with_two_jobs()
         data["project_experience"] = [{
@@ -196,6 +205,100 @@ class LayoutRuleTests(unittest.TestCase):
         plain = next(paragraph for paragraph in document.paragraphs if "沟通协作" in paragraph.text)
         self.assertNotEqual(numbered.style.name, "List Bullet")
         self.assertEqual(plain.style.name, "List Bullet")
+        self.assertGreater(numbered.paragraph_format.left_indent.mm, 0)
+        self.assertLess(numbered.paragraph_format.first_line_indent.mm, 0)
+        self.assertGreater(plain.paragraph_format.left_indent.mm, 0)
+        self.assertLess(plain.paragraph_format.first_line_indent.mm, 0)
+
+    def test_word_numbered_semantic_blocks_use_real_hanging_indent(self):
+        data = resume_with_two_jobs()
+        data["project_experience"] = [{
+            "project_name": "Robot control",
+            "date_range": ["2025.01", "2025.06"],
+            "content_blocks": [{
+                "type": "numbered_list",
+                "label": "Responsibilities",
+                "items": ["A deliberately long responsibility that wraps onto another visual line in Word."],
+            }],
+        }]
+
+        document = Document(BytesIO(generate_docx(data)))
+        numbered = next(paragraph for paragraph in document.paragraphs if paragraph.text.startswith("(1) "))
+
+        self.assertGreater(numbered.paragraph_format.left_indent.mm, 0)
+        self.assertLess(numbered.paragraph_format.first_line_indent.mm, 0)
+
+    def test_word_contact_details_use_dark_gray(self):
+        data = resume_with_two_jobs()
+        data["basics"].update({"birth_date": "2002.06", "phone": "17622312238", "email": "user@example.com"})
+
+        document = Document(BytesIO(generate_docx(data)))
+        contact_run = next(
+            run
+            for table in document.tables
+            for row in table.rows
+            for cell in row.cells
+            for paragraph in cell.paragraphs
+            for run in paragraph.runs
+            if "user@example.com" in run.text
+        )
+
+        self.assertEqual(str(contact_run.font.color.rgb), "333333")
+
+    def test_word_uses_the_same_body_type_scale_as_pdf_preview(self):
+        data = resume_with_two_jobs()
+        data["others"]["skills"] = ["Python 与 FastAPI"]
+        layout = default_layout_config()
+        layout["global"]["fontSize"] = 10.5
+
+        document = Document(BytesIO(generate_docx(data, layout_config=layout)))
+        body_paragraph = next(paragraph for paragraph in document.paragraphs if "Python" in paragraph.text)
+
+        self.assertAlmostEqual(body_paragraph.runs[-1].font.size.pt, 8.5, places=2)
+
+    def test_word_left_aligned_header_uses_full_row_when_photo_is_absent(self):
+        data = resume_with_two_jobs()
+        data["basics"].update({
+            "birth_date": "2002.06",
+            "phone": "17622312238",
+            "email": "2776553477@qq.com",
+        })
+        layout = default_layout_config()
+        layout["basics"]["preset"] = "left-aligned"
+
+        with ZipFile(BytesIO(generate_docx(data, layout_config=layout))) as archive:
+            document_xml = archive.read("word/document.xml").decode("utf-8")
+
+        self.assertIn('<w:gridSpan w:val="3"', document_xml)
+        self.assertNotIn("<w:docGrid", document_xml)
+
+    def test_one_line_education_layout_allows_long_columns_to_wrap_in_bounds(self):
+        html = render_resume_to_html(resume_with_two_jobs())
+
+        self.assertIn("overflow-wrap: break-word", html)
+        self.assertIn("flex: 1 1 0", html)
+        self.assertIn("flex: 0 0 36mm", html)
+        self.assertIn("margin-right: 2mm", html)
+        self.assertIn("position: static", html)
+        self.assertNotIn("right: 6mm", html)
+
+    def test_word_one_line_education_has_fixed_width_and_right_safety_padding(self):
+        data = resume_with_two_jobs()
+        data["education"] = [{
+            "school_name": "暨南大学",
+            "degree": "硕士",
+            "major": "电子信息",
+            "date_range": ["2024.09", "2027.06"],
+        }]
+        layout = default_layout_config()
+        layout["education"]["preset"] = "compact"
+
+        with ZipFile(BytesIO(generate_docx(data, layout_config=layout))) as archive:
+            document_xml = archive.read("word/document.xml").decode("utf-8")
+
+        self.assertIn('<w:tblLayout w:type="fixed"', document_xml)
+        self.assertIn('<w:tblW w:type="dxa" w:w="10431"', document_xml)
+        self.assertIn('<w:end w:w="80" w:type="dxa"', document_xml)
 
 
 if __name__ == "__main__":

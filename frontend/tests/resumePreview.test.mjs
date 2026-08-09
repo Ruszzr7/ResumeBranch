@@ -48,3 +48,55 @@ test('numbered generic items suppress the redundant outer bullet', () => {
   assert.ok(previewSource.includes("'has-native-marker': hasNativeListMarker(item)"))
   assert.ok(previewSource.includes('.generic-list-item.has-native-marker::before'))
 })
+
+test('imported source can be viewed read-only without replacing the structured resume', () => {
+  assert.ok(previewSource.includes('hasSourceDocument'))
+  assert.ok(previewSource.includes("fetch(`/tasks/${props.taskId}/source-document`"))
+  assert.ok(previewSource.includes('class="source-document-viewer"'))
+  assert.ok(previewSource.includes('sourceDocumentIsPdf'))
+  assert.ok(previewSource.includes("showSourceDocument ? '当前版' : '原版'"))
+  assert.ok(previewSource.includes('只读原版，不会随当前简历修改'))
+  assert.equal(previewSource.includes('downloadSourceDocument'), false)
+})
+
+test('empty compact self evaluation never creates a heading-only section', () => {
+  assert.ok(previewSource.includes('.map(value => String(value || \'\').trim())'))
+  assert.ok(previewSource.includes('.filter(Boolean)'))
+  assert.ok(previewSource.includes('values.length && moduleLayout(\'self_evaluation\').preset === \'compact\''))
+})
+
+test('template chooser uses the preview itself for zoom and one centered apply action', () => {
+  assert.equal(previewSource.includes('class="template-secondary-btn"'), false)
+  assert.ok(previewSource.includes('.template-card-actions { display: flex; justify-content: center; }'))
+  assert.ok(previewSource.includes('.template-card-actions button { min-width: 132px;'))
+  assert.ok(previewSource.includes('max-height: calc(100vh - 32px)'))
+})
+
+test('source document header stays compact and relies on the toolbar for returning', () => {
+  assert.ok(previewSource.includes('min-height: 34px'))
+  assert.ok(previewSource.includes('padding: 6px 12px'))
+  assert.equal(previewSource.includes('class="source-document-actions"'), false)
+})
+
+test('single-page preview does not render a redundant 1 / 1 footer', () => {
+  assert.ok(previewSource.includes('v-if="pageCount > 1" class="page-footer"'))
+})
+
+test('one-line education dates stay in the normal four-column flow', () => {
+  assert.ok(previewSource.includes('flex: 1 1 0'))
+  assert.ok(previewSource.includes('flex: 0 0 36mm'))
+  assert.ok(previewSource.includes('margin-right: 2mm'))
+  assert.ok(previewSource.includes('position: static'))
+  assert.equal(previewSource.includes('right: 6mm'), false)
+})
+
+test('narrow resume toolbar uses the dark workspace palette', () => {
+  assert.ok(previewSource.includes('background: rgba(30, 31, 36, 0.98)'))
+  assert.ok(previewSource.includes('color: #eceef4'))
+  assert.ok(previewSource.includes('color: #ffffff'))
+})
+
+test('enlarged template is centered with viewport breathing room', () => {
+  assert.ok(previewSource.includes('max-height: calc(100vh - 64px)'))
+  assert.ok(previewSource.includes('transform: translateY(12px)'))
+})

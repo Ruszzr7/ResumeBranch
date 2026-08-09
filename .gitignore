@@ -12,6 +12,7 @@ data/*.db
 data/deepagents.db
 data/llm_profiles.json
 data/*.sqlite*
+/data/source_documents/
 
 # Local resume/JD data
 /resume*.json

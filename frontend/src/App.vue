@@ -404,6 +404,7 @@ const isParsingResume = ref(false) // 解析中状态
 const resumeImportDraft = ref(null)
 const resumeImportError = ref('')
 const resumeFileInput = ref(null) // 简历文件输入元素引用
+const startResumeFileInput = ref(null) // 开始创建弹窗中的直接文件选择
 const hasResumeFileSelected = ref(false) // 是否已选择简历文件（上传流程已开始，不可返回）
 const isLoadingInitialData = ref(false) // 防止 loadInitialData 重复调用
 let parsingStatusPollInterval = null // 解析状态轮询定时器
@@ -2776,8 +2777,33 @@ function triggerResumeFileSelect() {
   resumeFileInput.value?.click()
 }
 
+// 从创建方式弹窗直接打开系统文件选择器；取消选择时仍停留在当前弹窗。
+function selectResumeFileFromStart() {
+  resumeImagePreview.value = ''
+  resumeImageFile.value = null
+  isResumePdf.value = false
+  hasResumeFileSelected.value = false
+  resumeImportDraft.value = null
+  resumeImportError.value = ''
+  startResumeFileInput.value?.click()
+}
+
 // 关闭上传弹窗
-function closeUploadDialog() {
+async function discardPendingResumeSource() {
+  const token = resumeImportDraft.value?.source_document_token
+  if (!token) return
+  try {
+    await fetch(`/api/resume/import_drafts/${token}`, {
+      method: 'DELETE',
+      headers: getAuthorizationHeaders()
+    })
+  } catch (error) {
+    console.warn('清理待确认原稿失败:', error)
+  }
+}
+
+async function closeUploadDialog() {
+  await discardPendingResumeSource()
   showUploadDialog.value = false
   resumeImagePreview.value = ''
   resumeImageFile.value = null
@@ -2788,7 +2814,8 @@ function closeUploadDialog() {
 }
 
 // 返回上一步（回到开始选择弹窗）
-function backToStartDialog() {
+async function backToStartDialog() {
+  await discardPendingResumeSource()
   showUploadDialog.value = false
   resumeImagePreview.value = ''
   resumeImageFile.value = null
@@ -2798,7 +2825,8 @@ function backToStartDialog() {
 }
 
 // 重新选择文件
-function reselectResumeFile() {
+async function reselectResumeFile() {
+  await discardPendingResumeSource()
   resumeImagePreview.value = ''
   resumeImageFile.value = null
   isResumePdf.value = false
@@ -2811,16 +2839,19 @@ function reselectResumeFile() {
 function handleResumeImageSelect(event) {
   const file = event.target.files[0]
   if (!file) return
+  const selectedFromStart = showStartDialog.value
 
   // 验证文件类型
   if (!file.type.startsWith('image/') && file.type !== 'application/pdf') {
     showNotice('请上传图片文件（JPG、PNG）或 PDF')
+    event.target.value = ''
     return
   }
 
   // 验证文件大小（5MB）
   if (file.size > 5 * 1024 * 1024) {
     showNotice('文件大小不能超过 5MB')
+    event.target.value = ''
     return
   }
 
@@ -2833,13 +2864,22 @@ function handleResumeImageSelect(event) {
   // 生成预览（PDF不生成图片预览，只显示图标）
   if (isResumePdf.value) {
     resumeImagePreview.value = 'pdf'  // 设置为非空值以触发界面切换
+    if (selectedFromStart) {
+      closeStartDialog()
+      showUploadDialog.value = true
+    }
   } else {
     const reader = new FileReader()
     reader.onload = (e) => {
       resumeImagePreview.value = e.target.result
+      if (selectedFromStart) {
+        closeStartDialog()
+        showUploadDialog.value = true
+      }
     }
     reader.readAsDataURL(file)
   }
+  event.target.value = ''
 }
 
 // 解析并保存简历
@@ -2872,7 +2912,10 @@ async function parseAndSaveResume(confirmedData = null) {
       // 更新简历数据
       resumeData.value = data.resume_data
       const task = projectTasks.value.find(item => item.id === currentTaskId.value)
-      if (task && data.source_page_count) task.source_page_count = data.source_page_count
+      if (task) {
+        if (data.source_page_count) task.source_page_count = data.source_page_count
+        if (data.has_source_document) task.has_source_document = true
+      }
       closeUploadDialog()
       await completeNewProjectOnboarding()
 
@@ -2906,7 +2949,8 @@ async function confirmResumeImport() {
       headers: getAuthHeaders(),
       body: JSON.stringify({
         resume_data: resumeImportDraft.value.resume_data,
-        source_page_count: resumeImportDraft.value.source_page_count || 1
+        source_page_count: resumeImportDraft.value.source_page_count || 1,
+        source_document_token: resumeImportDraft.value.source_document_token || null
       })
     })
     const data = await response.json().catch(() => ({}))
@@ -3144,6 +3188,13 @@ watch(
             <button type="button" class="modal-close-btn light" aria-label="取消创建" @click="cancelNewProjectOnboarding">×</button>
           </div>
           <p class="modal-desc">选择一种方式开始创建你的简历</p>
+          <input
+            ref="startResumeFileInput"
+            type="file"
+            accept="image/jpeg,image/png,application/pdf"
+            class="hidden-input"
+            @change="handleResumeImageSelect"
+          />
           <div class="option-list">
             <button @click="startFromBlank" class="option-item">
               <div class="optionGraphic graphic-plus">
@@ -3160,7 +3211,7 @@ watch(
                 <polyline points="9 18 15 12 9 6"></polyline>
               </svg>
             </button>
-            <button @click="showUploadResumeDialog" class="option-item primary">
+            <button @click="selectResumeFileFromStart" class="option-item">
               <div class="optionGraphic graphic-upload">
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -3610,7 +3661,7 @@ watch(
       <!-- 右侧简历预览区 -->
       <div class="resume-section">
         <div class="resume-content">
-          <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :highlighted-module="highlightedModule" :jd-data="jdData" :lang="currentLang" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @open-resume-import="showUploadResumeDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @request-layout-template="requestLayoutTemplate" @layout-updated="handleLayoutUpdated" />
+          <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :has-source-document="!!currentTask?.has_source_document" :highlighted-module="highlightedModule" :jd-data="jdData" :lang="currentLang" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @open-resume-import="showUploadResumeDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @request-layout-template="requestLayoutTemplate" @layout-updated="handleLayoutUpdated" />
         </div>
       </div>
       </template>
@@ -3724,7 +3775,7 @@ watch(
 
           <!-- 简历 Tab 内容 -->
           <div v-else-if="currentTab === 'resume'" class="mobile-resume-view" key="resume">
-            <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :highlighted-module="highlightedModule" :jd-data="jdData" :is-mobile-view="isMobileView" :lang="currentLang" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @open-resume-import="showUploadResumeDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @request-layout-template="requestLayoutTemplate" @layout-updated="handleLayoutUpdated" />
+            <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :has-source-document="!!currentTask?.has_source_document" :highlighted-module="highlightedModule" :jd-data="jdData" :is-mobile-view="isMobileView" :lang="currentLang" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @open-resume-import="showUploadResumeDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @request-layout-template="requestLayoutTemplate" @layout-updated="handleLayoutUpdated" />
           </div>
         </Transition>
 
@@ -7669,7 +7720,14 @@ watch(
   flex: 0 0 auto;
   margin-left: auto;
   color: #555861;
-  border-color: #d8d9dd;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.start-modal .modal-close-btn.light:hover {
+  color: #f1f1f3;
+  background: transparent;
 }
 
 .workspace-field {
@@ -8037,6 +8095,24 @@ watch(
 .modal-container .upload-box:hover {
   background: rgba(255, 255, 255, 0.055);
   border-color: rgba(255, 255, 255, 0.16);
+}
+
+.start-modal .option-item,
+.start-modal .optionGraphic {
+  color: #c8cad1;
+  background: rgba(255, 255, 255, 0.028);
+  border-color: rgba(255, 255, 255, 0.09);
+}
+
+.start-modal .option-item:hover {
+  background: rgba(96, 139, 232, 0.11);
+  border-color: rgba(126, 167, 255, 0.55);
+}
+
+.start-modal .option-item:hover .optionGraphic {
+  color: #d9e5ff;
+  background: rgba(124, 165, 255, 0.12);
+  border-color: rgba(124, 165, 255, 0.55);
 }
 
 .modal-container .option-item.primary,

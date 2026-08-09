@@ -40,8 +40,8 @@ function switchTab(tabId) {
   left: 0;
   right: 0;
   height: 56px;
-  background: rgb(254, 253, 251);
-  border-top: 2px solid #303030;
+  background: rgba(27, 28, 32, 0.98);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
   display: flex;
   justify-content: center;
   align-items: center;
@@ -55,8 +55,8 @@ function switchTab(tabId) {
   flex: 1;
   max-width: 160px;
   height: 40px;
-  background: transparent;
-  border: 2px solid #303030;
+  background: #292a30;
+  border: 2px solid #4a4d57;
   border-radius: 0;
   cursor: pointer;
   display: flex;
@@ -64,7 +64,7 @@ function switchTab(tabId) {
   justify-content: center;
   transition: all 0.15s ease;
   position: relative;
-  box-shadow: 2px 2px 0 #303030;
+  box-shadow: 2px 2px 0 #4a4d57;
 }
 
 .pixel-switch:active {
@@ -74,12 +74,13 @@ function switchTab(tabId) {
 
 .pixel-switch.active {
   background: #5f8ff2;
-  box-shadow: inset 2px 2px 0 rgba(0, 0, 0, 0.1);
+  border-color: #78a6ff;
+  box-shadow: 2px 2px 0 #78a6ff, inset 2px 2px 0 rgba(0, 0, 0, 0.16);
 }
 
 .pixel-switch.active:active {
   background: #78a6ff;
-  box-shadow: none;
+  box-shadow: inset 2px 2px 0 rgba(0, 0, 0, 0.16);
   transform: translate(2px, 2px);
 }
 
@@ -89,11 +90,11 @@ function switchTab(tabId) {
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.15em;
-  color: #303030;
+  color: #e4e6ed;
 }
 
 .pixel-switch.active .pixel-switch-label {
-  color: #303030;
+  color: #ffffff;
 }
 
 /* 适配更小屏幕 */

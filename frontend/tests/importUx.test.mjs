@@ -34,3 +34,16 @@ test('assistant actions use clear, professional wording', () => {
   assert.equal(appSource.includes("label: '开始拷打'"), false)
   assert.equal(appSource.includes("label: '优化排版'"), false)
 })
+
+test('start import opens the native file chooser before showing the upload review', () => {
+  assert.ok(appSource.includes('function selectResumeFileFromStart()'))
+  assert.ok(appSource.includes('startResumeFileInput.value?.click()'))
+  assert.ok(appSource.includes('@click="selectResumeFileFromStart"'))
+  assert.ok(appSource.includes('const selectedFromStart = showStartDialog.value'))
+})
+
+test('start choices share a neutral default and blue hover state', () => {
+  assert.equal(appSource.includes('@click="selectResumeFileFromStart" class="option-item primary"'), false)
+  assert.ok(appSource.includes('.start-modal .option-item:hover'))
+  assert.ok(appSource.includes('.start-modal .modal-close-btn.light:hover'))
+})

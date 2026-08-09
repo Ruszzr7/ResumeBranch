@@ -22,6 +22,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
 
@@ -40,7 +41,7 @@ def _configure_console_encoding():
 _configure_console_encoding()
 
 from fastapi import FastAPI, Request, UploadFile, File, Form, Depends, HTTPException, status
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
@@ -59,7 +60,9 @@ from .database import (
     list_resume_projects, create_resume_project, get_resume_project,
     list_project_tasks, list_user_resume_sources, create_resume_task, get_resume_task,
     delete_resume_project, delete_resume_task, undo_latest_resume_revision,
-    get_task_layout_config, save_task_layout_config
+    get_task_layout_config, save_task_layout_config, attach_source_document,
+    delete_unreferenced_source_documents, discard_pending_source_document,
+    get_source_document, get_task_source_document,
 )
 from .auth import (
     verify_password, get_password_hash, create_access_token,
@@ -78,6 +81,11 @@ from .llm_gateway import test_chat_connection
 from .parser_capability import verify_parser_capabilities
 from .model_discovery import discover_models
 from .llm_gateway import invoke_document, parse_json_output
+from .source_documents import (
+    persist_source_document,
+    remove_source_document_file,
+    source_document_path,
+)
 from .harness.memory import (
     CompressionState,
     compress_context_with_llm as _compress_context_with_llm,
@@ -230,6 +238,7 @@ class LLMModelsRequest(BaseModel):
 class ConfirmResumeImportRequest(BaseModel):
     resume_data: dict
     source_page_count: int = 1
+    source_document_token: str | None = None
 
 
 def serialize_task(task):
@@ -250,6 +259,7 @@ def serialize_task(task):
         ),
         "message_count": len(task.messages or []),
         "source_page_count": max(1, int(task.source_page_count or 1)),
+        "has_source_document": bool(task.source_document_id),
         "layout_config": normalize_layout_config(task.layout_config),
         "created_at": task.created_at.isoformat() if task.created_at else None,
         "updated_at": task.updated_at.isoformat() if task.updated_at else None,
@@ -641,6 +651,8 @@ async def delete_project(
     task_ids = [task.id for task in list_project_tasks(db, current_user.id, project_id)]
     if not delete_resume_project(db, current_user.id, project_id):
         raise HTTPException(status_code=404, detail="主简历不存在")
+    for storage_key in delete_unreferenced_source_documents(db, current_user.id):
+        remove_source_document_file(storage_key)
     manager = get_workflow_checkpoint_manager()
     if manager:
         for task_id in task_ids:
@@ -684,6 +696,31 @@ async def get_task(
     return serialize_task(task)
 
 
+@app.get("/tasks/{task_id}/source-document")
+async def get_task_source_document_endpoint(
+    task_id: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    document = get_task_source_document(db, current_user.id, task_id)
+    if not document or document.status != "ready":
+        raise HTTPException(status_code=404, detail="当前简历没有可查看的原版")
+    try:
+        path = source_document_path(document.storage_key)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="原版文件不存在，请重新导入") from exc
+    return FileResponse(
+        path,
+        media_type=document.mime_type,
+        filename=document.original_filename,
+        content_disposition_type="inline",
+        headers={
+            "Cache-Control": "private, max-age=60",
+            "X-Source-Filename": quote(document.original_filename),
+        },
+    )
+
+
 @app.get("/tasks/{task_id}/workflow")
 async def get_task_workflow(
     task_id: str,
@@ -719,6 +756,8 @@ async def delete_task(
         raise HTTPException(status_code=404, detail="岗位版本不存在")
     if result == "base_task":
         raise HTTPException(status_code=400, detail="基础简历不能单独删除，请删除整份主简历")
+    for storage_key in delete_unreferenced_source_documents(db, current_user.id):
+        remove_source_document_file(storage_key)
     manager = get_workflow_checkpoint_manager()
     if manager:
         try:
@@ -1020,6 +1059,7 @@ async def parse_and_save_resume_endpoint(
     解析简历图片并保存（首次上传流程）
     支持 multipart/form-data 上传文件
     """
+    source_document = None
     try:
         if not file:
             return JSONResponse(content={"success": False, "error": "未收到文件"}, status_code=400)
@@ -1066,9 +1106,28 @@ async def parse_and_save_resume_endpoint(
         if text_volume < 60 or not any(str(basics.get(key, "")).strip() for key in ("name", "phone", "email")):
             raise ValueError("解析结果缺少足够的简历内容，请更换更清晰的文件或解析模型后重试。")
 
+        for storage_key in delete_unreferenced_source_documents(db, current_user.id):
+            remove_source_document_file(storage_key)
+        source_document = persist_source_document(
+            db,
+            current_user.id,
+            file_content,
+            content_type,
+            file.filename or ("resume.pdf" if content_type == "application/pdf" else "resume.png"),
+        )
+
         if not draft_only:
             save_user_resume(db, current_user.id, resume_data)
             set_source_page_count(db, current_user.id, source_page_count)
+            attached = attach_source_document(db, current_user.id, source_document.id)
+            if attached:
+                for storage_key in delete_unreferenced_source_documents(db, current_user.id):
+                    remove_source_document_file(storage_key)
+            else:
+                storage_key = discard_pending_source_document(db, current_user.id, source_document.id)
+                if storage_key:
+                    remove_source_document_file(storage_key)
+                source_document = None
         # 设置解析状态为完成
         set_parsing_status(db, current_user.id, "completed")
 
@@ -1083,6 +1142,8 @@ async def parse_and_save_resume_endpoint(
                 "openai_responses": "OpenAI Responses（文件输入）",
                 "openai_chat": "OpenAI Chat（图片视觉）",
             }.get(parser_gateway.resolved_adapter(), parser_gateway.resolved_adapter()),
+            "source_document_token": source_document.id if source_document and draft_only else None,
+            "has_source_document": bool(source_document and not draft_only),
             "draft": bool(draft_only),
             "message": "简历解析完成" if draft_only else "简历解析并保存成功"
         })
@@ -1096,6 +1157,10 @@ async def parse_and_save_resume_endpoint(
             error_message = "解析 API 响应超时，请稍后重试；若持续出现，请更换解析模型或接口。"
         if not error_message:
             error_message = "解析失败，请检查解析 API 状态后重试。"
+        if source_document and source_document.status == "pending":
+            storage_key = discard_pending_source_document(db, current_user.id, source_document.id)
+            if storage_key:
+                remove_source_document_file(storage_key)
         return JSONResponse(content={"success": False, "error": error_message}, status_code=500)
 
 
@@ -1108,13 +1173,42 @@ async def confirm_resume_import_endpoint(
     from .resume_agent import normalize_and_validate_resume
     try:
         resume_data = normalize_and_validate_resume(request.resume_data, include_defaults=True)
+        if request.source_document_token:
+            document = get_source_document(db, current_user.id, request.source_document_token)
+            if not document or document.status != "pending":
+                raise ValueError("原版确认凭证已失效，请重新选择文件")
         save_user_resume(db, current_user.id, resume_data)
         page_count = max(1, min(1000, int(request.source_page_count or 1)))
         set_source_page_count(db, current_user.id, page_count)
+        attached = None
+        if request.source_document_token:
+            attached = attach_source_document(db, current_user.id, request.source_document_token)
+            if not attached:
+                raise ValueError("原版无法绑定到当前简历，请重新导入")
+            for storage_key in delete_unreferenced_source_documents(db, current_user.id):
+                remove_source_document_file(storage_key)
         set_parsing_status(db, current_user.id, "completed")
-        return {"success": True, "resume_data": resume_data, "source_page_count": page_count}
+        return {
+            "success": True,
+            "resume_data": resume_data,
+            "source_page_count": page_count,
+            "has_source_document": bool(attached),
+        }
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"导入草稿校验失败：{exc}") from exc
+
+
+@app.delete("/api/resume/import_drafts/{document_id}")
+async def discard_resume_import_draft_endpoint(
+    document_id: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    storage_key = discard_pending_source_document(db, current_user.id, document_id)
+    if not storage_key:
+        raise HTTPException(status_code=404, detail="待确认原版不存在或已经使用")
+    remove_source_document_file(storage_key)
+    return {"success": True}
 
 
 @app.get("/api/resume/parsing_status")
