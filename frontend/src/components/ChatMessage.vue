@@ -1,6 +1,7 @@
 <script setup>
 import { marked } from 'marked'
 import { ref, computed, watch } from 'vue'
+import { localizeInternalFieldReferences, userFacingFieldLabel } from '../utils/fieldLabels.js'
 
 // 配置 marked 使用 GitHub Flavored Markdown (gfm)
 marked.use({
@@ -27,7 +28,10 @@ const props = defineProps({
 
 // 使用 computed 追踪内容变化，实现响应式渲染
 const renderedContent = computed(() => {
-  const content = props.message.content || ''
+  const rawContent = props.message.content || ''
+  const content = props.message.role === 'assistant'
+    ? localizeInternalFieldReferences(rawContent)
+    : rawContent
   // 预处理加粗语法
   const preprocessed = preprocessMarkdown(content)
   // 使用 marked 解析
@@ -113,7 +117,7 @@ const handleUndoClick = () => emit('undoClick', { message_id: props.message.id }
         <label v-for="change in changes" :key="change.id" class="change-preview-item">
           <input v-model="selectedChangeIds" type="checkbox" :value="change.id" />
           <span class="change-preview-copy">
-            <strong>{{ change.label }}</strong>
+            <strong>{{ userFacingFieldLabel(change.label) }}</strong>
             <span v-if="change.kind !== 'layout'" class="change-values">
               <del>{{ change.before_display }}</del>
               <span aria-hidden="true">→</span>
@@ -121,7 +125,7 @@ const handleUndoClick = () => emit('undoClick', { message_id: props.message.id }
             </span>
             <span v-else class="layout-change-details">
               <span v-for="detail in change.details || []" :key="detail.field" class="change-values">
-                <small>{{ detail.field_label || detail.field }}</small>
+                <small>{{ userFacingFieldLabel(detail.field_label || detail.field) }}</small>
                 <del>{{ detail.before_display }}</del>
                 <span aria-hidden="true">→</span>
                 <ins>{{ detail.after_display }}</ins>
@@ -223,7 +227,7 @@ const handleUndoClick = () => emit('undoClick', { message_id: props.message.id }
         </button>
 
         <!-- 图片预览 -->
-        <img v-if="previewType === 'image'" :src="previewUrl" class="preview-modal__image" alt="Preview" />
+        <img v-if="previewType === 'image'" :src="previewUrl" class="preview-modal__image" alt="图片预览" />
 
         <!-- PDF提示 -->
         <div v-else-if="previewType === 'pdf'" class="preview-modal__pdf">

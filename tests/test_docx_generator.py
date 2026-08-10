@@ -3,6 +3,7 @@ from io import BytesIO
 from unittest.mock import patch
 
 from docx import Document
+from docx.oxml.ns import qn
 
 from backend.docx_generator import generate_docx
 from backend.llm_providers import PROVIDERS, public_registry, role_temperature, temperature_supported, validate_profile
@@ -35,6 +36,54 @@ class DocxGeneratorTests(unittest.TestCase):
         self.assertIn("示例大学", combined)
         self.assertIn("GPA：3.72/4.0", combined)
         self.assertAlmostEqual(document.sections[0].page_width.mm, 210.0, places=1)
+        normal_fonts = document.styles["Normal"]._element.rPr.rFonts
+        self.assertEqual(normal_fonts.get(qn("w:ascii")), "Arial")
+        self.assertEqual(normal_fonts.get(qn("w:hAnsi")), "Arial")
+        self.assertEqual(normal_fonts.get(qn("w:eastAsia")), "Microsoft YaHei")
+
+        name_run = next(
+            run
+            for table in document.tables
+            for row in table.rows
+            for cell in row.cells
+            for paragraph in cell.paragraphs
+            for run in paragraph.runs
+            if "测试用户" in run.text
+        )
+        self.assertEqual(name_run._element.rPr.rFonts.get(qn("w:ascii")), "Arial")
+        self.assertEqual(name_run._element.rPr.rFonts.get(qn("w:eastAsia")), "Microsoft YaHei")
+        self.assertAlmostEqual(name_run.font.size.pt, 14, places=1)
+        self.assertAlmostEqual(document.styles["Normal"].font.size.pt, 9, places=1)
+
+        bold_table_sizes = [
+            run.font.size.pt
+            for table in document.tables
+            for row in table.rows
+            for cell in row.cells
+            for paragraph in cell.paragraphs
+            for run in paragraph.runs
+            if run.bold and run.font.size is not None
+        ]
+        self.assertTrue(any(abs(size - 10) < 0.1 for size in bold_table_sizes))
+        section_heading = next(
+            paragraph.runs[0]
+            for paragraph in document.paragraphs
+            if paragraph.runs
+            and paragraph._p.xpath("./w:pPr/w:pBdr")
+        )
+        self.assertAlmostEqual(section_heading.font.size.pt, 11, places=1)
+
+        # Without a photo, the centered header uses the full printable width so
+        # contact details do not wrap inside the old narrow middle column.
+        self.assertEqual(len(document.tables[0]._tbl.tr_lst[0].tc_lst), 1)
+
+        education_table = next(
+            table for table in document.tables
+            if any("示例大学" in cell.text for row in table.rows for cell in row.cells)
+        )
+        education_header = " ".join(cell.text for row in education_table.rows for cell in row.cells)
+        self.assertNotIn("本科", education_header)
+        self.assertTrue(any(paragraph.text == "本科 · 计算机科学" for paragraph in document.paragraphs))
 
 
 class ProviderRulesTests(unittest.TestCase):

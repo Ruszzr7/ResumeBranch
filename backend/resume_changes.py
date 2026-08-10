@@ -17,22 +17,30 @@ from typing import Any, Iterable
 SECTION_LABELS = {
     "basics": "基础信息",
     "education": "教育经历",
+    "research_interests": "研究方向",
+    "honors": "主要荣誉",
     "work_experience": "工作经历",
     "project_experience": "项目经历",
-    "others": "其他信息",
+    "custom_sections": "自定义模块",
+    "others": "专业技能与补充信息",
     "self_evaluation": "自我评价",
 }
 
 FIELD_LABELS = {
-    "name": "姓名", "gender": "性别", "age": "年龄", "phone": "手机",
+    "name": "姓名", "gender": "性别", "age": "年龄", "birth_date": "出生年月", "phone": "手机",
     "email": "邮箱", "location": "所在地", "target_position": "目标岗位",
-    "school": "学校", "degree": "学历", "major": "专业", "date_range": "时间",
+    "photo": "头像", "additional_fields": "补充信息", "value": "内容",
+    "school": "学校", "school_name": "学校名称", "degree": "学历", "major": "专业", "date_range": "时间",
+    "start_date": "开始时间", "end_date": "结束时间",
     "graduation_date": "毕业时间", "gpa": "GPA", "gpa_scale": "GPA 满分",
     "ranking": "排名", "average_score": "平均分", "company_name": "公司",
     "company": "公司", "job_title": "职位", "position": "职位",
     "job_type": "工作类型", "project_name": "项目名称", "role": "角色",
     "details": "详细内容", "skills": "技能", "certificates": "证书",
     "languages": "语言", "school_tags": "学校标签", "theses": "论文",
+    "title": "标题", "content": "内容", "content_blocks": "内容结构",
+    "label": "小标题", "label_bold": "小标题加粗", "text": "正文",
+    "items": "条目", "type": "内容类型",
 }
 
 ATOMIC_LIST_FIELDS = {
@@ -70,12 +78,12 @@ def _is_blank(value: Any) -> bool:
 
 def _change_label(path: list[Any]) -> tuple[str, str]:
     section_key = str(path[0]) if path else ""
-    section = SECTION_LABELS.get(section_key, section_key or "简历")
+    section = SECTION_LABELS.get(section_key, "简历内容" if section_key else "简历")
     record = ""
     if len(path) > 1 and isinstance(path[1], int):
         record = f" {path[1] + 1}"
     field_key = str(path[-1]) if path else ""
-    field = FIELD_LABELS.get(field_key, field_key)
+    field = FIELD_LABELS.get(field_key, "简历字段")
     label = f"{section}{record} · {field}" if field and field != section_key else f"{section}{record}"
     return section, label
 

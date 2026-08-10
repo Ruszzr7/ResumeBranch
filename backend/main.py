@@ -63,6 +63,7 @@ from .database import (
     get_task_layout_config, save_task_layout_config, attach_source_document,
     delete_unreferenced_source_documents, discard_pending_source_document,
     get_source_document, get_task_source_document,
+    get_resume_translation_state, save_resume_translation_state,
 )
 from .auth import (
     verify_password, get_password_hash, create_access_token,
@@ -103,10 +104,16 @@ from .harness.interview import (
     workflow_public_state,
 )
 from .harness.observability import harness_metrics
+from .layout_config import LAYOUT_SCHEMA_VERSION, resolve_layout_tokens
+from .pdf_generator import generate_pdf as _pdf_generator
+from .docx_generator import generate_docx as _docx_generator
+
+# Export modules are imported as one startup contract. This prevents a
+# long-running backend from mixing an old layout module with newly loaded
+# PDF/DOCX modules after source files change on disk.
+resolve_layout_tokens()
 
 # PDF 生成器 - 懒加载（在 API 调用时才导入）
-_pdf_generator = None
-
 # =============================================================================
 # 上下文压缩状态管理
 # =============================================================================
@@ -153,11 +160,7 @@ def _setup_weasyprint_env():
 
 def get_pdf_generator():
     """懒加载 PDF 生成器"""
-    global _pdf_generator
-    if _pdf_generator is None:
-        _setup_weasyprint_env()
-        from .pdf_generator import generate_pdf
-        _pdf_generator = generate_pdf
+    _setup_weasyprint_env()
     return _pdf_generator
 
 
@@ -194,6 +197,11 @@ class UserResponse(BaseModel):
 class SaveResumeRequest(BaseModel):
     """保存简历请求"""
     resume_data: dict
+
+
+class TranslateResumeRequest(BaseModel):
+    source_language: str = "zh"
+    target_language: str = "en"
 
 
 class CreateProjectRequest(BaseModel):
@@ -834,7 +842,13 @@ async def reset_task_layout(
 @app.post("/health")
 async def health_check():
     """健康检查"""
-    return {"status": "ok", "version": "2.0.0", "app_mode": APP_MODE}
+    return {
+        "status": "ok",
+        "version": "2.0.0",
+        "app_mode": APP_MODE,
+        "layout_schema_version": LAYOUT_SCHEMA_VERSION,
+        "export_contract": "ready",
+    }
 
 
 @app.post("/load_resume")
@@ -897,6 +911,103 @@ async def save_resume_endpoint(request: SaveResumeRequest, db: Session = Depends
         import traceback
         traceback.print_exc()
         return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+@app.post("/translate_resume")
+async def translate_resume_endpoint(
+    request: TranslateResumeRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Translate the active resume through a dedicated, cache-aware workflow."""
+    from .resume_changes import resume_digest
+    from .resume_translation import translate_resume
+
+    try:
+        source_data = get_user_resume(db, current_user.id)
+        if not source_data:
+            raise HTTPException(status_code=400, detail="当前没有可翻译的简历内容")
+        current_digest = resume_digest(source_data)
+        state = get_resume_translation_state(db, current_user.id)
+        if state and current_digest in {
+            state.source_digest,
+            resume_digest(state.translated_data or {}),
+        }:
+            result = {
+                "resume_data": state.translated_data,
+                "cache_hits": 0,
+                "new_translations": 0,
+                "total_translatable": 0,
+                "full_snapshot_reused": True,
+            }
+        else:
+            result = await translate_resume(
+                db,
+                current_user.id,
+                source_data,
+                source_language=request.source_language,
+                target_language=request.target_language,
+            )
+            save_resume_translation_state(
+                db,
+                current_user.id,
+                source_digest=current_digest,
+                source_data=source_data,
+                translated_data=result["resume_data"],
+            )
+            result["full_snapshot_reused"] = False
+        save_user_resume(db, current_user.id, result["resume_data"])
+        return {"success": True, **result}
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        db.rollback()
+        print(f"[translate_resume] 翻译失败: {exc}")
+        raise HTTPException(status_code=502, detail=f"简历翻译失败：{exc}") from exc
+
+
+@app.post("/restore_resume_translation")
+async def restore_resume_translation_endpoint(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Restore the durable Chinese source snapshot for the active resume."""
+    from .resume_changes import resume_digest
+    from .resume_translation import restore_from_translation_memory
+
+    try:
+        current_data = get_user_resume(db, current_user.id)
+        state = get_resume_translation_state(db, current_user.id)
+        if state and state.source_data:
+            source_data = state.source_data
+            restored_fields = 0
+        else:
+            recovered = restore_from_translation_memory(db, current_user.id, current_data)
+            source_data = recovered["resume_data"]
+            restored_fields = recovered["restored_fields"]
+            if restored_fields == 0:
+                raise HTTPException(status_code=409, detail="没有可恢复的中文翻译基线")
+            save_resume_translation_state(
+                db,
+                current_user.id,
+                source_digest=resume_digest(source_data),
+                source_data=source_data,
+                translated_data=current_data,
+            )
+        save_user_resume(db, current_user.id, source_data)
+        return {
+            "success": True,
+            "resume_data": source_data,
+            "restored_fields": restored_fields,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"恢复中文简历失败：{exc}") from exc
 
 
 @app.post("/load_jd")
@@ -1269,9 +1380,7 @@ async def export_docx_endpoint(request: Request, db: Session = Depends(get_db), 
         if not resume_data:
             raise HTTPException(status_code=400, detail="没有找到简历数据，请先创建或加载简历")
 
-        from .docx_generator import generate_docx
-
-        docx_bytes = generate_docx(
+        docx_bytes = _docx_generator(
             resume_data,
             request_data.get("style", {}),
             get_user_photo(db, current_user.id) or None,

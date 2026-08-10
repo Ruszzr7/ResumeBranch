@@ -14,7 +14,7 @@
     <main class="home-main">
       <section class="workspace-intro">
         <div>
-          <span class="eyebrow">Resume workspace</span>
+          <span class="eyebrow">简历工作台</span>
           <h1>你的简历工作区</h1>
           <p>维护一份长期更新的主简历，针对不同 JD 创建独立岗位版本。</p>
         </div>
@@ -96,24 +96,24 @@
 
       <section class="help-section" aria-label="产品帮助">
         <article>
-          <span class="eyebrow">How it works</span>
+          <span class="eyebrow">使用流程</span>
           <h3>一份主简历，适配多个岗位</h3>
           <p>先沉淀完整经历，再为每个 JD 复制一份独立版本，后续修改互不干扰。</p>
         </article>
         <article>
-          <span class="eyebrow">Resume assistant</span>
+          <span class="eyebrow">简历助手</span>
           <h3>通过对话梳理真实经历</h3>
           <p>补全信息、分析岗位匹配度，并将确认后的修改同步到右侧简历。</p>
         </article>
         <article>
-          <span class="eyebrow">Help</span>
+          <span class="eyebrow">帮助</span>
           <h3>解析、排版与 PDF</h3>
           <p>支持简历解析、页面排版、中英文版本和标准 PDF 导出。</p>
         </article>
       </section>
 
       <footer class="home-footer">
-        <span>ResumeBranch · Local Resume Workspace</span>
+        <span>ResumeBranch · 本地简历工作台</span>
         <span>数据仅保存在当前设备</span>
       </footer>
     </main>
@@ -124,7 +124,7 @@
           <section class="internal-modal" role="dialog" aria-modal="true" aria-labelledby="create-title">
             <header>
               <div>
-                <span class="modal-kicker">New resume</span>
+                <span class="modal-kicker">新建简历</span>
                 <h2 id="create-title">新建主简历</h2>
               </div>
               <button class="modal-close" aria-label="关闭" @click="closeCreateDialog">×</button>
@@ -160,7 +160,7 @@
           <section class="internal-modal danger-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-title">
             <header>
               <div>
-                <span class="modal-kicker danger">Delete resume</span>
+                <span class="modal-kicker danger">删除简历</span>
                 <h2 id="delete-title">删除主简历？</h2>
               </div>
               <button class="modal-close" aria-label="关闭" @click="closeDeleteDialog">×</button>
@@ -191,7 +191,7 @@
           <section class="internal-modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
             <header>
               <div>
-                <h2 id="settings-title">API SETTINGS</h2>
+                <h2 id="settings-title">API 设置</h2>
               </div>
               <button class="modal-close" aria-label="关闭" @click="closeSettings">×</button>
             </header>
@@ -204,7 +204,7 @@
               <p v-else>用于导入 PDF 和图片。接口必须支持图片、PDF 页面视觉理解和结构化输出，推荐使用 Gemini 文档模型。</p>
               <div class="settings-grid">
                 <div class="field full">
-                  <label for="base-url">URL</label>
+                  <label for="base-url">接口地址（URL）</label>
                   <input id="base-url" v-model="llmSettings.base_url" placeholder="填写官方或中转站 API URL" @input="invalidateCurrentTest" />
                 </div>
                 <div class="field full">
@@ -234,7 +234,7 @@
                   <div v-if="modelQueryStatus.message" :class="['settings-status', 'model-query-status', modelQueryStatus.type]"><i></i>{{ modelQueryStatus.message }}</div>
                 </div>
                 <div class="field full">
-                  <label for="api-key">API Key</label>
+                  <label for="api-key">接口密钥（API Key）</label>
                   <input id="api-key" v-model="llmSettings.api_key" type="password" :placeholder="llmSettings.configured ? `已配置 ${llmSettings.api_key_hint || ''}，留空表示不更改` : '输入 API Key'" autocomplete="new-password" @input="invalidateCurrentTest" />
                 </div>
                 <div v-if="llmSettings.resolved_adapter" class="adapter-summary">调用协议：{{ adapterLabel(llmSettings.resolved_adapter) }}<span v-if="llmSettings.model_family && llmSettings.model_family !== 'unknown'"> · 模型家族：{{ llmSettings.model_family }}</span></div>

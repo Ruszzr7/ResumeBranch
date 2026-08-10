@@ -43,6 +43,18 @@ class ResumeChangeTests(unittest.TestCase):
         changes = build_resume_changes({"basics": {}}, {"basics": {"age": "", "location": None}})
         self.assertEqual(changes, [])
 
+    def test_internal_field_names_never_leak_to_user_labels(self):
+        changes = build_resume_changes(
+            {"basics": {"birth_date": ""}, "custom_sections": []},
+            {
+                "basics": {"birth_date": "2000.01"},
+                "custom_sections": [{"title": "社团经历", "items": ["负责人"]}],
+            },
+        )
+        labels = [item["label"] for item in changes]
+        self.assertTrue(any("出生年月" in label for label in labels))
+        self.assertFalse(any("birth_date" in label or "custom_sections" in label for label in labels))
+
 
 if __name__ == "__main__":
     unittest.main()

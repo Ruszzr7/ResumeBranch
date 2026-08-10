@@ -1,5 +1,6 @@
 import unittest
 
+from backend.pdf_generator import render_resume_to_html
 from backend.layout_config import (
     LAYOUT_TEMPLATES,
     apply_density,
@@ -8,6 +9,7 @@ from backend.layout_config import (
     build_layout_changes,
     default_layout_config,
     normalize_layout_config,
+    resolve_layout_tokens,
     reset_layout_section,
 )
 
@@ -25,10 +27,70 @@ class LayoutConfigTests(unittest.TestCase):
             "education": {"preset": "floating", "schoolTagStyle": "neon"},
         })
         self.assertEqual(config["global"]["density"], "compact")
-        self.assertEqual(config["global"]["fontSize"], 14)
+        self.assertEqual(config["global"]["fontSize"], 11.5)
         self.assertEqual(config["global"]["lineHeight"], 1.1)
         self.assertEqual(config["education"]["preset"], "classic")
         self.assertEqual(config["education"]["schoolTagStyle"], "filled")
+
+    def test_typography_is_recorded_and_unknown_fonts_cannot_split_renderers(self):
+        config = normalize_layout_config({
+            "version": 2,
+            "typography": {
+                "preset": "unknown",
+                "latinFont": "Random Latin",
+                "eastAsiaFont": "Random CJK",
+            },
+        })
+        self.assertEqual(config["version"], 4)
+        self.assertEqual(config["typography"]["preset"], "microsoft-office")
+        self.assertEqual(config["typography"]["latinFont"], "Arial")
+        self.assertEqual(config["typography"]["eastAsiaFont"], "Microsoft YaHei")
+
+    def test_v3_default_visual_scale_migrates_to_v4_semantic_body_size(self):
+        config = normalize_layout_config({
+            "version": 3,
+            "global": {"fontSize": 10.5, "lineHeight": 1.32, "moduleMargin": 0.45},
+        })
+        self.assertEqual(config["version"], 4)
+        self.assertEqual(config["global"]["fontSize"], 9)
+        self.assertEqual(config["global"]["lineHeight"], 1.28)
+        self.assertEqual(config["global"]["moduleMargin"], 0.55)
+
+    def test_shared_tokens_convert_spacing_to_physical_units_once(self):
+        tokens = resolve_layout_tokens(default_layout_config(), {
+            "fontSize": 9,
+            "lineHeight": 1.28,
+            "moduleMargin": 0.55,
+            "marginTop": 7,
+        })
+        self.assertEqual(tokens["fontFamilyCss"], '"Arial", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif')
+        self.assertEqual(tokens["bodyFontSizePt"], 9)
+        self.assertEqual(tokens["metaFontSizePt"], 9)
+        self.assertEqual(tokens["entryTitleFontSizePt"], 10)
+        self.assertEqual(tokens["sectionTitleFontSizePt"], 11)
+        self.assertEqual(tokens["nameFontSizePt"], 14)
+        self.assertEqual(tokens["bodyFontWeight"], 400)
+        self.assertEqual(tokens["metaFontWeight"], 400)
+        self.assertEqual(tokens["entryTitleFontWeight"], 700)
+        self.assertEqual(tokens["sectionTitleFontWeight"], 700)
+        self.assertEqual(tokens["nameFontWeight"], 700)
+        self.assertEqual(tokens["labelFontWeight"], 700)
+        self.assertAlmostEqual(tokens["moduleSpacingPt"], 4.95)
+        self.assertAlmostEqual(tokens["paragraphSpacingPt"], 0.81)
+        self.assertEqual(tokens["marginTopMm"], 7)
+
+    def test_pdf_html_consumes_the_shared_font_and_spacing_tokens(self):
+        html = render_resume_to_html(
+            {"basics": {"name": "张三"}},
+            {"fontSize": 9, "moduleMargin": 0.55},
+            layout_config=default_layout_config(),
+        )
+        self.assertIn('font-family: "Arial", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;', html)
+        self.assertIn("--module-margin: 4.95pt;", html)
+        self.assertIn("--name-font-size: 14pt;", html)
+        self.assertIn("--meta-font-weight: 400;", html)
+        self.assertIn("--entry-title-font-weight: 700;", html)
+        self.assertIn("margin-bottom: var(--paragraph-spacing);", html)
 
     def test_three_column_forces_metrics_into_information_column(self):
         config = normalize_layout_config({
@@ -47,9 +109,9 @@ class LayoutConfigTests(unittest.TestCase):
 
     def test_density_applies_safe_numeric_bundle(self):
         config = apply_density({}, "compact")
-        self.assertEqual(config["global"]["fontSize"], 10.5)
-        self.assertEqual(config["global"]["lineHeight"], 1.32)
-        self.assertEqual(config["global"]["moduleMargin"], 0.45)
+        self.assertEqual(config["global"]["fontSize"], 9)
+        self.assertEqual(config["global"]["lineHeight"], 1.28)
+        self.assertEqual(config["global"]["moduleMargin"], 0.55)
 
     def test_curated_template_reuses_presets_and_preserves_content_visibility(self):
         config = default_layout_config()

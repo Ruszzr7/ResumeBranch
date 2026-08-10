@@ -1172,6 +1172,13 @@ _GPA_ASSIGN_RE = re.compile(
     r"(\d+(?:\.\d+)?)\s*(?:/|／)\s*(\d+(?:\.\d+)?)",
     re.IGNORECASE,
 )
+_EDUCATION_MENTION_RE = re.compile(r"(?:教育经历|教育背景)")
+_LOCAL_EDUCATION_SCHOOL_RE = re.compile(
+    r"(?:教育经历|教育背景)[^。；;\n]{0,24}?(?:将|把)\s*"
+    r"([^，,。；;：:\n]{2,40}?(?:大学|学院))\s*"
+    r"(?:修改为|更改为|改为|改成|设置为|调整为|替换为)\s*"
+    r"([^，,。；;\n]{2,40}?(?:大学|学院))"
+)
 
 
 def _clean_local_value(value: str) -> str:
@@ -1219,6 +1226,31 @@ def build_local_edit_candidate(state: AgentState) -> dict | None:
         field_name for field_name, pattern in _LOCAL_BASIC_MENTIONS.items()
         if pattern.search(text)
     }
+
+    if _EDUCATION_MENTION_RE.search(text):
+        mentioned_fields.add("education_school")
+        school_match = _LOCAL_EDUCATION_SCHOOL_RE.search(text)
+        if not school_match:
+            return None
+        source_school = _clean_local_value(school_match.group(1))
+        target_school = _clean_local_value(school_match.group(2))
+        education = candidate.get("education") or []
+        source_matches = [
+            index for index, item in enumerate(education)
+            if _clean_local_value(item.get("school_name", "")) == source_school
+        ]
+        target_matches = [
+            index for index, item in enumerate(education)
+            if _clean_local_value(item.get("school_name", "")) == target_school
+        ]
+        if len(source_matches) == 1:
+            education[source_matches[0]]["school_name"] = target_school
+        elif not source_matches and len(target_matches) == 1:
+            # 重复提交同一修改时走本地无变更结果，不再等待结构化模型。
+            pass
+        else:
+            return None
+        parsed_fields.add("education_school")
 
     for field_name, pattern in _LOCAL_BASIC_PATTERNS.items():
         match = pattern.search(text)
@@ -1769,7 +1801,11 @@ async def tool_node(state: AgentState) -> dict:
                             if base_hash and resume_digest(state.resume_data or {}) != base_hash:
                                 result = "保存失败：简历已发生其他修改，请重新生成修改建议"
                                 saved_resume = False
-                            elif state.pending_confirmation.get("base_layout") is not None and before_layout_data != base_layout:
+                            elif (
+                                any(item.get("kind") == "layout" for item in changes)
+                                and state.pending_confirmation.get("base_layout") is not None
+                                and before_layout_data != base_layout
+                            ):
                                 result = "保存失败：简历布局已发生其他修改，请重新生成修改建议"
                                 saved_resume = False
                             else:

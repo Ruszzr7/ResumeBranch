@@ -5,6 +5,7 @@ SQLAlchemy 模型定义和数据库连接
 
 import os
 import uuid
+from copy import deepcopy
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, JSON, Text, inspect, text
 from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.engine import make_url
@@ -181,6 +182,34 @@ class WorkspaceState(Base):
     user_id = Column(Integer, primary_key=True)
     legacy_migrated = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class TranslationMemory(Base):
+    """Reusable, user-scoped translations for unchanged resume text fields."""
+    __tablename__ = "translation_memories"
+    id = Column(String(64), primary_key=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    source_language = Column(String(12), nullable=False)
+    target_language = Column(String(12), nullable=False)
+    context_key = Column(String(120), nullable=False, default="")
+    source_hash = Column(String(64), nullable=False, index=True)
+    source_text = Column(large_text_type, nullable=False)
+    translated_text = Column(large_text_type, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ResumeTranslationState(Base):
+    """Durable Chinese/English snapshots for one active resume task."""
+    __tablename__ = "resume_translation_states"
+    scope_id = Column(String(100), primary_key=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    task_id = Column(String(36), nullable=True, index=True)
+    source_digest = Column(String(64), nullable=False, index=True)
+    source_data = Column(JSON, nullable=False)
+    translated_data = Column(JSON, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class MemoryVersionConflict(RuntimeError):
@@ -760,6 +789,83 @@ def get_user_resume(db, user_id: int) -> dict:
         return normalize_resume_data(task.resume_data or {})
     resume = db.query(Resume).filter(Resume.user_id == user_id).first()
     return normalize_resume_data(resume.resume_data or {}) if resume else {}
+
+
+def get_translation_memory(db, user_id: int, memory_ids: list[str]) -> dict[str, str]:
+    """Return cached translations owned by the current user."""
+    if not memory_ids:
+        return {}
+    rows = db.query(TranslationMemory).filter(
+        TranslationMemory.user_id == user_id,
+        TranslationMemory.id.in_(memory_ids),
+    ).all()
+    return {row.id: row.translated_text for row in rows}
+
+
+def save_translation_memory(
+    db,
+    user_id: int,
+    *,
+    memory_id: str,
+    source_language: str,
+    target_language: str,
+    context_key: str,
+    source_hash: str,
+    source_text: str,
+    translated_text: str,
+) -> None:
+    """Upsert one deterministic translation-memory entry."""
+    row = db.query(TranslationMemory).filter(
+        TranslationMemory.id == memory_id,
+        TranslationMemory.user_id == user_id,
+    ).first()
+    if row is None:
+        row = TranslationMemory(id=memory_id, user_id=user_id)
+        db.add(row)
+    row.source_language = source_language
+    row.target_language = target_language
+    row.context_key = context_key
+    row.source_hash = source_hash
+    row.source_text = source_text
+    row.translated_text = translated_text
+    row.updated_at = datetime.utcnow()
+
+
+def _translation_scope(db, user_id: int) -> tuple[str, str | None]:
+    task = _active_task(db, user_id)
+    return (f"task:{task.id}", task.id) if task else (f"legacy-user:{user_id}", None)
+
+
+def get_resume_translation_state(db, user_id: int):
+    scope_id, _ = _translation_scope(db, user_id)
+    return db.query(ResumeTranslationState).filter(
+        ResumeTranslationState.scope_id == scope_id,
+        ResumeTranslationState.user_id == user_id,
+    ).first()
+
+
+def save_resume_translation_state(
+    db,
+    user_id: int,
+    *,
+    source_digest: str,
+    source_data: dict,
+    translated_data: dict,
+):
+    scope_id, task_id = _translation_scope(db, user_id)
+    row = db.query(ResumeTranslationState).filter(
+        ResumeTranslationState.scope_id == scope_id,
+        ResumeTranslationState.user_id == user_id,
+    ).first()
+    if row is None:
+        row = ResumeTranslationState(scope_id=scope_id, user_id=user_id, task_id=task_id)
+        db.add(row)
+    row.source_digest = source_digest
+    row.source_data = deepcopy(source_data)
+    row.translated_data = deepcopy(translated_data)
+    row.updated_at = datetime.utcnow()
+    db.commit()
+    return row
 
 
 def get_parsing_status(db, user_id: int) -> str:

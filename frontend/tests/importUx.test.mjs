@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 const appSource = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8')
+const viteSource = readFileSync(new URL('../vite.config.js', import.meta.url), 'utf8')
 
 test('resume import does not trigger an unsolicited LLM reply', () => {
   const start = appSource.indexOf('async function parseAndSaveResume')
@@ -33,6 +34,43 @@ test('assistant actions use clear, professional wording', () => {
   assert.ok(appSource.includes('本轮只分析，不修改简历'))
   assert.equal(appSource.includes("label: '开始拷打'"), false)
   assert.equal(appSource.includes("label: '优化排版'"), false)
+  assert.ok(appSource.includes("label: '修改简历'"))
+  assert.ok(appSource.includes('prefillOnly: true'))
+  assert.ok(appSource.includes('也可以直接修改简历内容和排版'))
+})
+
+test('assistant actions follow the resume improvement workflow', () => {
+  const start = appSource.indexOf('const assistantActions = [')
+  const end = appSource.indexOf('\n]', start)
+  const actions = appSource.slice(start, end)
+  const labels = ['修改简历', '排版建议', '全面诊断', '深度打磨', '对照 JD']
+  const positions = labels.map(label => actions.indexOf(`label: '${label}'`))
+  assert.ok(positions.every(position => position >= 0))
+  assert.deepEqual([...positions].sort((a, b) => a - b), positions)
+})
+
+test('resume translation uses a dedicated endpoint and reusable cache', () => {
+  assert.ok(appSource.includes("fetch('/translate_resume'"))
+  assert.ok(appSource.includes("fetch('/restore_resume_translation'"))
+  assert.ok(appSource.includes('TRANSLATION_CACHE_PREFIX'))
+  assert.ok(appSource.includes('loadCachedTranslation(sourceData)'))
+  assert.equal(appSource.includes('const TRANSLATE_MESSAGE'), false)
+  assert.equal(appSource.includes('pendingTranslationConfirmId'), false)
+  assert.ok(viteSource.includes("'/translate_resume'"))
+  assert.ok(viteSource.includes("'/restore_resume_translation'"))
+})
+
+test('resume edit shortcut guides a concrete request without spending an LLM call', () => {
+  const start = appSource.indexOf('function runAssistantAction(action)')
+  const end = appSource.indexOf('function runWorkflowAction(action)', start)
+  const actionFlow = appSource.slice(start, end)
+  const prefillBranch = actionFlow.indexOf('if (action.prefillOnly)')
+  const earlyReturn = actionFlow.indexOf('return', prefillBranch)
+  const sendCall = actionFlow.indexOf('sendMessage()', prefillBranch)
+  assert.ok(start >= 0 && end > start)
+  assert.ok(prefillBranch >= 0 && earlyReturn > prefillBranch)
+  assert.ok(sendCall > earlyReturn)
+  assert.ok(actionFlow.includes('修改需求模板已填入输入框'))
 })
 
 test('start import opens the native file chooser before showing the upload review', () => {
@@ -46,4 +84,16 @@ test('start choices share a neutral default and blue hover state', () => {
   assert.equal(appSource.includes('@click="selectResumeFileFromStart" class="option-item primary"'), false)
   assert.ok(appSource.includes('.start-modal .option-item:hover'))
   assert.ok(appSource.includes('.start-modal .modal-close-btn.light:hover'))
+})
+
+test('task sidebar shows one aligned version name without a redundant JD subtitle', () => {
+  const start = appSource.indexOf('<aside class="task-sidebar">')
+  const end = appSource.indexOf('<div class="main-content">', start)
+  const sidebar = appSource.slice(start, end)
+  assert.ok(start >= 0 && end > start)
+  assert.equal(sidebar.includes('JD 定制版'), false)
+  assert.equal(sidebar.includes('task.target_position'), false)
+  assert.ok(sidebar.includes('class="task-delete-btn"'))
+  assert.ok(appSource.includes('.task-row {\n  display: flex;\n  align-items: center;'))
+  assert.ok(appSource.includes('gap: .25rem;\n  margin-bottom: .2rem;'))
 })

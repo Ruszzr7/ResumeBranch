@@ -60,6 +60,14 @@ export default defineConfig({
         target: apiTarget,
         changeOrigin: true
       },
+      '/translate_resume': {
+        target: apiTarget,
+        changeOrigin: true
+      },
+      '/restore_resume_translation': {
+        target: apiTarget,
+        changeOrigin: true
+      },
       '/load_jd': {
         target: apiTarget,
         changeOrigin: true

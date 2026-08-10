@@ -38,7 +38,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         lang: 语言，'zh' 或 'en'
     """
     resume_data = normalize_resume_data(resume_data)
-    from .layout_config import normalize_layout_config
+    from .layout_config import normalize_layout_config, resolve_layout_tokens
     layout_config = normalize_layout_config(layout_config)
     global_layout = layout_config["global"]
 
@@ -48,13 +48,13 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     # 默认样式
     from .layout import apply_page_mode_defaults
     style = apply_page_mode_defaults(style)
-    margin_top = style.get('marginTop', global_layout['marginVertical'])
-    margin_bottom = style.get('marginBottom', global_layout['marginVertical'])
-    margin_left = style.get('marginLeft', global_layout['marginHorizontal'])
-    margin_right = style.get('marginRight', global_layout['marginHorizontal'])
-    module_margin = style.get('moduleMargin', global_layout['moduleMargin'])
-    line_height = style.get('lineHeight', global_layout['lineHeight'])
-    font_size = style.get('fontSize', global_layout['fontSize'])
+    tokens = resolve_layout_tokens(layout_config, style)
+    margin_top = tokens['marginTopMm']
+    margin_bottom = tokens['marginBottomMm']
+    margin_left = tokens['marginLeftMm']
+    margin_right = tokens['marginRightMm']
+    line_height = tokens['lineHeight']
+    font_size = tokens['fontSizePt']
     page_break_before = style.get('pageBreakBefore', '')
 
     def break_class(key: str) -> str:
@@ -444,13 +444,32 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
 
     html {{
         font-size: {font_size}pt;
-        --module-margin: {module_margin}rem;
+        --body-font-size: {tokens['bodyFontSizePt']:g}pt;
+        --meta-font-size: {tokens['metaFontSizePt']:g}pt;
+        --entry-title-font-size: {tokens['entryTitleFontSizePt']:g}pt;
+        --section-title-font-size: {tokens['sectionTitleFontSizePt']:g}pt;
+        --name-font-size: {tokens['nameFontSizePt']:g}pt;
+        --body-font-weight: {tokens['bodyFontWeight']};
+        --meta-font-weight: {tokens['metaFontWeight']};
+        --entry-title-font-weight: {tokens['entryTitleFontWeight']};
+        --section-title-font-weight: {tokens['sectionTitleFontWeight']};
+        --name-font-weight: {tokens['nameFontWeight']};
+        --label-font-weight: {tokens['labelFontWeight']};
+        --module-margin: {tokens['moduleSpacingPt']:g}pt;
+        --header-name-after: {tokens['headerNameAfterPt']:g}pt;
+        --section-title-after: {tokens['sectionTitleAfterPt']:g}pt;
+        --item-spacing: {tokens['itemSpacingPt']:g}pt;
+        --paragraph-spacing: {tokens['paragraphSpacingPt']:g}pt;
+        --content-block-spacing: {tokens['contentBlockSpacingPt']:g}pt;
+        --content-label-spacing: {tokens['contentLabelSpacingPt']:g}pt;
+        --numbered-item-spacing: {tokens['numberedItemSpacingPt']:g}pt;
         --line-height: {line_height};
     }}
 
     body {{
-        font-family: 'Hiragino Sans GB', 'Noto Sans SC', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+        font-family: {tokens['fontFamilyCss']};
         font-size: 1em;
+        font-weight: var(--body-font-weight);
         line-height: var(--line-height);
         color: #212529;
         margin: 0;
@@ -486,9 +505,9 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     .personal-info.contact-stacked .separator {{ display: none; }}
 
     .personal-info .name {{
-        font-size: 1.5em;
-        font-weight: 700;
-        margin: 0 0 0.12em 0;
+        font-size: var(--name-font-size);
+        font-weight: var(--name-font-weight);
+        margin: 0 0 var(--header-name-after) 0;
         color: #212529;
     }}
 
@@ -497,7 +516,8 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         justify-content: center;
         gap: 0.5em;
         flex-wrap: wrap;
-        font-size: 0.8em;
+        font-size: var(--meta-font-size);
+        font-weight: var(--meta-font-weight);
         color: #333333;
     }}
 
@@ -517,9 +537,9 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     }}
 
     .target-position {{
-        font-size: 0.8em;
+        font-size: var(--meta-font-size);
         color: #212529;
-        font-weight: 600;
+        font-weight: var(--label-font-weight);
         margin-top: 0.25em;
     }}
 
@@ -528,8 +548,8 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     }}
 
     .section-title {{
-        font-size: 1.1em;
-        font-weight: 600;
+        font-size: var(--section-title-font-size);
+        font-weight: var(--section-title-font-weight);
         margin: 0 0 0.5em 0;
         color: #212529;
         padding-bottom: 0.25em;
@@ -554,8 +574,8 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     .work-item,
     .project-item {{
         margin-bottom: 0.5em;
-        page-break-inside: auto;
-        break-inside: auto;
+        page-break-inside: avoid;
+        break-inside: avoid;
     }}
 
     .thesis-item {{
@@ -576,6 +596,33 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         page-break-after: avoid;
     }}
 
+    .work-main {{
+        min-width: 0;
+        display: flex;
+        align-items: baseline;
+        gap: 0.32em;
+    }}
+
+    .work-main .company,
+    .project-header .project-name {{ min-width: 0; }}
+    .work-main .position-department {{ flex: 0 1 auto; }}
+    .work-main .position-department::before {{ content: "· "; }}
+
+    .work-item.date-right .work-header,
+    .project-item.date-right .project-header {{
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: baseline;
+        column-gap: 0.65em;
+    }}
+
+    .work-item.date-right .work-period,
+    .project-item.date-right .project-role {{
+        margin-left: 0;
+        text-align: right;
+        white-space: nowrap;
+    }}
+
     .school-info {{
         display: flex;
         align-items: baseline;
@@ -584,8 +631,8 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     }}
 
     .school {{
-        font-size: 1em;
-        font-weight: 600;
+        font-size: var(--entry-title-font-size);
+        font-weight: var(--entry-title-font-weight);
         color: #212529;
     }}
 
@@ -601,9 +648,9 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         padding: 0.125em 0.5em;
         background-color: #333333;
         color: white;
-        font-size: 0.75em;
+        font-size: var(--meta-font-size);
         border-radius: 4px;
-        font-weight: 500;
+        font-weight: var(--meta-font-weight);
     }}
 
     .school-tag.tag-outline {{
@@ -673,8 +720,8 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     .education-item.preset-three-column .academic-metrics {{ margin-top: 0; }}
 
     .degree-major {{
-        font-size: 0.8em;
-        font-weight: 500;
+        font-size: var(--meta-font-size);
+        font-weight: var(--meta-font-weight);
         color: #6c757d;
     }}
 
@@ -688,17 +735,17 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         flex-wrap: wrap;
         gap: 0.25em 1em;
         margin-top: 0.125em;
-        font-size: 0.8em;
-        font-weight: 500;
+        font-size: var(--meta-font-size);
+        font-weight: var(--meta-font-weight);
         color: #6c757d;
     }}
 
     .graduation-date,
     .work-period {{
-        font-size: 0.8em;
+        font-size: var(--meta-font-size);
         color: #95a5a6;
         white-space: nowrap;
-        font-weight: 500;
+        font-weight: var(--meta-font-weight);
         flex: 0 0 auto;
         max-width: none;
     }}
@@ -708,41 +755,41 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     }}
 
     .thesis-title {{
-        font-weight: 600;
-        font-size: 0.85em;
+        font-weight: var(--label-font-weight);
+        font-size: var(--body-font-size);
     }}
 
     .subfield-title {{
-        font-size: 0.825em;
-        font-weight: 600;
+        font-size: var(--meta-font-size);
+        font-weight: var(--label-font-weight);
         color: #6c757d;
         margin-bottom: 0.25em;
         display: block;
     }}
 
     .company {{
-        font-size: 1em;
-        font-weight: 600;
+        font-size: var(--entry-title-font-size);
+        font-weight: var(--entry-title-font-weight);
         margin: 0 0 0.125em 0;
         color: #212529;
     }}
 
     .position-department {{
-        font-size: 0.8em;
-        font-weight: 500;
+        font-size: var(--meta-font-size);
+        font-weight: var(--meta-font-weight);
         color: #6c757d;
     }}
 
     .project-name {{
-        font-size: 1em;
-        font-weight: 600;
+        font-size: var(--entry-title-font-size);
+        font-weight: var(--entry-title-font-weight);
         margin: 0 0 0.125em 0;
         color: #212529;
     }}
 
     .project-role {{
-        font-size: 0.8em;
-        font-weight: 500;
+        font-size: var(--meta-font-size);
+        font-weight: var(--meta-font-weight);
         color: #6c757d;
     }}
 
@@ -756,7 +803,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         position: relative;
         padding-left: 1.25em;
         margin-bottom: 0.25em;
-        font-size: 0.8em;
+        font-size: var(--body-font-size);
         line-height: var(--line-height);
         color: #212529;
     }}
@@ -806,8 +853,8 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     }}
 
     .others-title {{
-        font-size: 0.9em;
-        font-weight: 600;
+        font-size: var(--body-font-size);
+        font-weight: var(--label-font-weight);
         margin: 0 0 0.25em 0;
         color: #212529;
     }}
@@ -820,7 +867,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     }}
 
     .skill-item {{
-        font-size: 0.8em;
+        font-size: var(--body-font-size);
         line-height: var(--line-height);
         color: #212529;
         word-wrap: break-word;
@@ -829,7 +876,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     }}
 
     .cert-lang-line {{
-        font-size: 0.8em;
+        font-size: var(--body-font-size);
         line-height: var(--line-height);
         color: #212529;
         word-wrap: break-word;
@@ -838,7 +885,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     }}
 
     .cert-lang-label {{
-        font-weight: 600;
+        font-weight: var(--label-font-weight);
         margin-right: 0.25em;
     }}
 
@@ -855,12 +902,12 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
 
     .inline-list-item {{
         display: inline;
-        font-size: 0.8em;
+        font-size: var(--body-font-size);
         color: #212529;
     }}
 
     b {{
-        font-weight: 600;
+        font-weight: var(--label-font-weight);
     }}
 
     .self-evaluation {{
@@ -868,7 +915,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     }}
 
     .self-eval-item {{
-        font-size: 0.8em;
+        font-size: var(--body-font-size);
         line-height: var(--line-height);
         color: #212529;
     }}
@@ -889,17 +936,17 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     .cert-lang-line, .inline-list-item, .self-eval-item {{ color: #111111; }}
     .contact-info, .separator {{ color: #333333; }}
     .section-title {{
-        margin-bottom: 0.22em;
+        margin-bottom: var(--section-title-after);
         padding-bottom: 0.1em;
         color: #111111;
-        font-weight: 700;
+        font-weight: var(--section-title-font-weight);
     }}
-    .education-item, .work-item, .project-item {{ margin-bottom: 0.18em; }}
+    .education-item, .work-item, .project-item {{ margin-bottom: var(--item-spacing); }}
     .education-header, .work-header, .project-header {{ gap: 0.3em; }}
-    .list-item, .generic-list-item {{ margin-bottom: 0.08em; }}
-    .project-content-block {{ margin: 0 0 0.12em; font-size: 0.8em; color: #111111; }}
+    .list-item, .generic-list-item {{ margin-bottom: var(--paragraph-spacing); }}
+    .project-content-block {{ margin: 0 0 var(--content-block-spacing); font-size: var(--body-font-size); color: #111111; }}
     .project-paragraph {{ margin: 0; }}
-    .project-block-label {{ font-weight: 700; margin-bottom: 0.04em; }}
+    .project-block-label {{ font-weight: var(--label-font-weight); margin-bottom: var(--content-label-spacing); }}
     .project-numbered-list {{
         list-style: none;
         margin: 0;
@@ -908,7 +955,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     }}
     .project-numbered-list > li {{
         position: relative;
-        margin-bottom: 0.06em;
+        margin-bottom: var(--numbered-item-spacing);
         padding-left: 2.15em;
         counter-increment: project-duty;
     }}

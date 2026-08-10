@@ -20,13 +20,23 @@ let resizeObserver = null
 const currentLang = ref('zh')
 const showTranslateConfirm = ref(false)
 const translationSourceData = ref(null)
-const pendingTranslationConfirmId = ref('')
+const translationResultData = ref(null)
 const translationApplied = ref(false)
-const TRANSLATE_MESSAGE = '请将简历内容翻译为英文，需要符合英文表达习惯，保留原汁原味，不要添加或虚构内容。'
+const isTranslating = ref(false)
 const TRANSLATION_SESSION_PREFIX = 'resumeTranslationSession:'
+const TRANSLATION_CACHE_PREFIX = 'resumeTranslationCache:'
 const WELCOME_MESSAGE = '你好！我是你的简历助手。你可以让我检查简历中的不足、进行深度打磨、结合 JD 分析匹配度，也可以直接修改简历内容和排版。告诉我你的目标岗位或具体需求，或者从下方选择一项开始。如原简历含头像，建议在“编辑简历”中自行上传清晰原图，避免自动裁剪造成模糊。'
 const conversationMessagesForSave = () => messages.value.filter(message => !message.localOnly)
 const assistantActions = [
+  {
+    label: '修改简历',
+    prefillOnly: true,
+    prompt: '请修改【模块或字段】：将【原内容】调整为【目标内容或具体要求】。'
+  },
+  {
+    label: '排版建议',
+    prompt: '请分析当前简历排版是否清晰、紧凑、重点突出，并给出可执行的排版建议。请说明建议涉及字号、间距、模块样式还是模块顺序；本轮只分析，不修改简历。'
+  },
   {
     label: '全面诊断',
     mode: 'diagnosis',
@@ -44,14 +54,6 @@ const assistantActions = [
     mode: 'jd_review',
     action: 'start',
     prompt: '请结合当前目标岗位 JD 分析简历匹配度：区分已经证明的匹配项、简历尚未证明的能力和确实缺失的条件，按优先级给建议；先不要修改简历，最后只问我一个最关键的问题。'
-  },
-  {
-    label: '修改简历',
-    prompt: '我想修改简历内容。请先询问我希望修改的模块和目标，不要在需求明确前直接改写。'
-  },
-  {
-    label: '排版建议',
-    prompt: '请分析当前简历排版是否清晰、紧凑、重点突出，并给出可执行的排版建议。请说明建议涉及字号、间距、模块样式还是模块顺序；本轮只分析，不修改简历。'
   }
 ]
 
@@ -90,21 +92,59 @@ function translationSessionKey(taskId = currentTaskId.value) {
   return taskId ? `${TRANSLATION_SESSION_PREFIX}${taskId}` : ''
 }
 
+function translationCacheKey(taskId = currentTaskId.value) {
+  return taskId ? `${TRANSLATION_CACHE_PREFIX}${taskId}` : ''
+}
+
+function resumeDataWithoutPhoto(data) {
+  const snapshot = cloneResumeData(data)
+  if (snapshot?.basics) delete snapshot.basics.photo
+  return snapshot
+}
+
+function sameResumeSnapshot(left, right) {
+  return JSON.stringify(resumeDataWithoutPhoto(left)) === JSON.stringify(resumeDataWithoutPhoto(right))
+}
+
 function persistTranslationSession() {
   const key = translationSessionKey()
   if (!key || !translationSourceData.value) return
   localStorage.setItem(key, JSON.stringify({
-    source_data: translationSourceData.value,
+    source_data: resumeDataWithoutPhoto(translationSourceData.value),
+    translated_data: resumeDataWithoutPhoto(translationResultData.value),
     language: currentLang.value,
     applied: translationApplied.value
   }))
+}
+
+function persistTranslationCache() {
+  const key = translationCacheKey()
+  if (!key || !translationSourceData.value || !translationResultData.value) return
+  localStorage.setItem(key, JSON.stringify({
+    source_data: resumeDataWithoutPhoto(translationSourceData.value),
+    translated_data: resumeDataWithoutPhoto(translationResultData.value)
+  }))
+}
+
+function loadCachedTranslation(sourceData) {
+  const key = translationCacheKey()
+  if (!key) return null
+  try {
+    const saved = JSON.parse(localStorage.getItem(key) || 'null')
+    if (!saved?.source_data || !saved?.translated_data) return null
+    return sameResumeSnapshot(saved.source_data, sourceData) ? saved.translated_data : null
+  } catch (error) {
+    console.warn('读取简历翻译缓存失败:', error)
+    localStorage.removeItem(key)
+    return null
+  }
 }
 
 function clearTranslationSession() {
   const key = translationSessionKey()
   if (key) localStorage.removeItem(key)
   translationSourceData.value = null
-  pendingTranslationConfirmId.value = ''
+  translationResultData.value = null
   translationApplied.value = false
 }
 
@@ -115,6 +155,7 @@ function restoreTranslationSession() {
     const saved = JSON.parse(localStorage.getItem(key) || 'null')
     if (!saved?.source_data || saved.language !== 'en') return
     translationSourceData.value = saved.source_data
+    translationResultData.value = saved.translated_data || null
     translationApplied.value = Boolean(saved.applied)
     currentLang.value = 'en'
   } catch (error) {
@@ -125,31 +166,30 @@ function restoreTranslationSession() {
 
 async function restoreChineseResume() {
   const sourceData = cloneResumeData(translationSourceData.value)
-  currentLang.value = 'zh'
   showTranslateConfirm.value = false
-
-  if (pendingTranslationConfirmId.value) {
-    await handleOptionClick({
-      confirm_id: pendingTranslationConfirmId.value,
-      value: 'cancel',
-      selected_change_ids: []
-    })
-    if (pendingTranslationConfirmId.value) {
-      currentLang.value = 'en'
-      persistTranslationSession()
-      return
-    }
-  }
 
   if (translationApplied.value && sourceData) {
     try {
-      const response = await fetch('/save_resume', {
+      let response = await fetch('/restore_resume_translation', {
         method: 'POST',
-        headers: getAuthHeaders(),
-        body: JSON.stringify({ resume_data: sourceData })
+        headers: getAuthHeaders()
       })
-      if (!response.ok) throw new Error('中文简历恢复失败')
-      resumeData.value = sourceData
+      let payload = await response.json().catch(() => ({}))
+      let restoredData = payload.resume_data
+      // 兼容功能升级前仅保存在浏览器中的翻译会话。
+      if (!response.ok && sourceData) {
+        response = await fetch('/save_resume', {
+          method: 'POST',
+          headers: getAuthHeaders(),
+          body: JSON.stringify({ resume_data: sourceData })
+        })
+        restoredData = sourceData
+      }
+      if (!response.ok || !restoredData) throw new Error(payload.detail || '中文简历恢复失败')
+      const currentPhoto = resumeData.value?.basics?.photo
+      if (currentPhoto && restoredData.basics) restoredData.basics.photo = currentPhoto
+      resumeData.value = restoredData
+      currentLang.value = 'zh'
       previewResumeData.value = null
       previewLayoutConfig.value = null
       const undoIndex = [...messages.value].reverse().findIndex(
@@ -164,7 +204,6 @@ async function restoreChineseResume() {
         }
       }
     } catch (error) {
-      currentLang.value = 'en'
       persistTranslationSession()
       showNotice(error.message || '切换中文失败，请重试')
       return
@@ -176,6 +215,7 @@ async function restoreChineseResume() {
 
 // 语言切换函数：进入英文先确认；英文返回中文时直接恢复中文基线。
 async function switchLang(lang) {
+  if (isTranslating.value) return
   if (lang === 'en') {
     if (currentLang.value === 'en') return
     showTranslateConfirm.value = true
@@ -186,18 +226,66 @@ async function switchLang(lang) {
   }
 }
 
-// 确认翻译
-function confirmTranslate() {
+// 确认翻译：专用接口直接返回结构化简历，不再进入普通聊天意图识别。
+async function confirmTranslate() {
+  if (isTranslating.value) return
   showTranslateConfirm.value = false
-  translationSourceData.value = cloneResumeData(resumeData.value)
-  pendingTranslationConfirmId.value = ''
+  const sourceData = cloneResumeData(resumeData.value)
+  translationSourceData.value = sourceData
+  translationResultData.value = null
   translationApplied.value = false
-  currentLang.value = 'en'
-  persistTranslationSession()
+  isTranslating.value = true
+  showNotice('正在生成英文简历，请稍候…')
 
-  // 固定标签立即改为英文；实际内容仍通过现有确认框决定是否保存。
-  userInput.value = TRANSLATE_MESSAGE
-  sendMessage()
+  try {
+    let translatedData = loadCachedTranslation(sourceData)
+    let cacheHits = 0
+    let reusedFullResult = Boolean(translatedData)
+
+    if (translatedData) {
+      const response = await fetch('/save_resume', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ resume_data: translatedData })
+      })
+      if (!response.ok) throw new Error('保存英文简历失败')
+    } else {
+      const response = await fetch('/translate_resume', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ source_language: 'zh', target_language: 'en' })
+      })
+      const payload = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(payload.detail || payload.error || '简历翻译失败，请重试')
+      translatedData = payload.resume_data
+      cacheHits = Number(payload.cache_hits || 0)
+      reusedFullResult = Boolean(payload.full_snapshot_reused)
+    }
+
+    const currentPhoto = sourceData?.basics?.photo
+    if (currentPhoto && translatedData?.basics) translatedData.basics.photo = currentPhoto
+    translationResultData.value = cloneResumeData(translatedData)
+    resumeData.value = cloneResumeData(translatedData)
+    previewResumeData.value = null
+    previewLayoutConfig.value = null
+    translationApplied.value = true
+    currentLang.value = 'en'
+    persistTranslationSession()
+    persistTranslationCache()
+    const reuseHint = reusedFullResult
+      ? '，已复用上次的完整翻译'
+      : (cacheHits > 0 ? `，已复用 ${cacheHits} 项未变化内容` : '')
+    showNotice(`英文简历已生成${reuseHint}`)
+  } catch (error) {
+    console.error('简历翻译失败:', error)
+    currentLang.value = 'zh'
+    translationSourceData.value = null
+    translationResultData.value = null
+    translationApplied.value = false
+    showNotice(error?.message || String(error || '') || '简历翻译失败，请重试')
+  } finally {
+    isTranslating.value = false
+  }
 }
 
 // 取消翻译
@@ -228,12 +316,72 @@ const currentProject = ref(null)
 const projectTasks = ref([])
 const currentTask = computed(() => projectTasks.value.find(task => task.id === currentTaskId.value) || null)
 const workflowState = ref(null)
+const workflowCompletedVisible = ref(false)
+let workflowCompletedTimer = null
 const pendingAssistantAction = ref(null)
+const WORKFLOW_FOCUS_LABELS = Object.freeze({
+  basics: '基本信息',
+  'basics.name': '姓名',
+  'basics.gender': '性别',
+  'basics.birth_date': '出生年月',
+  'basics.phone': '联系电话',
+  'basics.email': '邮箱',
+  'basics.target_position': '目标岗位',
+  education: '教育经历',
+  research_interests: '研究方向',
+  honors: '主要荣誉',
+  work_experience: '工作经历',
+  project_experience: '项目经历',
+  custom_sections: '自定义模块',
+  others: '专业技能',
+  'others.skills': '专业技能',
+  'others.certificates': '证书与语言',
+  'others.languages': '证书与语言',
+  self_evaluation: '自我评价'
+})
+
+function formatWorkflowFocus(value) {
+  const focus = String(value || '').trim()
+  if (!focus) return ''
+  const normalized = focus.replace(/\[(\d+)\]/g, '.$1')
+  if (WORKFLOW_FOCUS_LABELS[normalized]) return WORKFLOW_FOCUS_LABELS[normalized]
+
+  const parts = normalized.split('.').filter(part => part && !/^\d+$/.test(part))
+  for (let length = parts.length; length > 0; length -= 1) {
+    const candidate = parts.slice(0, length).join('.')
+    if (WORKFLOW_FOCUS_LABELS[candidate]) return WORKFLOW_FOCUS_LABELS[candidate]
+  }
+
+  return /^[A-Za-z_][A-Za-z0-9_.]*$/.test(normalized) ? '简历内容' : focus
+}
+
+function updateWorkflowState(nextState, { showCompletedBriefly = false } = {}) {
+  if (workflowCompletedTimer) {
+    clearTimeout(workflowCompletedTimer)
+    workflowCompletedTimer = null
+  }
+  workflowState.value = nextState || null
+  const completed = workflowState.value?.phase === 'completed'
+    || workflowState.value?.status === 'completed'
+  workflowCompletedVisible.value = Boolean(completed && showCompletedBriefly)
+  if (workflowCompletedVisible.value) {
+    workflowCompletedTimer = setTimeout(() => {
+      workflowCompletedVisible.value = false
+      workflowCompletedTimer = null
+    }, 2000)
+  }
+}
+
 const workflowVisible = computed(() => (
   workflowState.value
   && ['diagnosis', 'coaching', 'jd_review'].includes(workflowState.value.interaction_mode)
   && workflowState.value.phase !== 'idle'
+  && (
+    (workflowState.value.phase !== 'completed' && workflowState.value.status !== 'completed')
+    || workflowCompletedVisible.value
+  )
 ))
+const workflowFocusLabel = computed(() => formatWorkflowFocus(workflowState.value?.focus_section))
 const workflowModeLabel = computed(() => ({
   diagnosis: '全面诊断',
   coaching: '深度打磨',
@@ -553,6 +701,7 @@ onUnmounted(() => {
   window.removeEventListener('storage', handleStorageChange)
   stopParsingStatusPoll()
   if (uiNoticeTimer) clearTimeout(uiNoticeTimer)
+  if (workflowCompletedTimer) clearTimeout(workflowCompletedTimer)
   if (resizeObserver) {
     resizeObserver.disconnect()
   } else {
@@ -579,7 +728,7 @@ async function loadWorkspace() {
   currentLang.value = 'zh'
   showTranslateConfirm.value = false
   translationSourceData.value = null
-  pendingTranslationConfirmId.value = ''
+  translationResultData.value = null
   translationApplied.value = false
   messages.value = []
   resumeData.value = null
@@ -823,6 +972,11 @@ function runAssistantAction(action) {
   if (isLoading.value || isResponding.value) return
   pendingAssistantAction.value = action.mode ? { mode: action.mode, action: action.action } : null
   userInput.value = action.prompt
+  if (action.prefillOnly) {
+    showNotice('修改需求模板已填入输入框，请补充具体内容后发送', 'success')
+    nextTick(() => document.querySelector('.textarea-container textarea:not(:disabled)')?.focus())
+    return
+  }
   nextTick(() => sendMessage())
 }
 
@@ -844,7 +998,7 @@ function runWorkflowAction(action) {
 
 async function loadWorkflowState() {
   if (!currentTaskId.value) {
-    workflowState.value = null
+    updateWorkflowState(null)
     return
   }
   try {
@@ -853,7 +1007,8 @@ async function loadWorkflowState() {
     })
     if (!response.ok) return
     const data = await response.json()
-    workflowState.value = data.state || null
+    // 已结束的历史工作流不在刷新后重新闪现；仅实时结束动作短暂展示。
+    updateWorkflowState(data.state || null)
   } catch (error) {
     console.warn('恢复深度打磨状态失败:', error)
   }
@@ -1120,7 +1275,6 @@ async function sendMessage() {
   const input = userInput.value.trim()
   const structuredAction = pendingAssistantAction.value
   pendingAssistantAction.value = null
-  const isTranslationRequest = input === TRANSLATE_MESSAGE
   userInput.value = ''
 
   // 先保存附件
@@ -1322,10 +1476,6 @@ async function sendMessage() {
                   handled: false,
                   streaming: false
                 }
-                if (isTranslationRequest) {
-                  pendingTranslationConfirmId.value = data.confirm_id
-                  persistTranslationSession()
-                }
                 previewResumeData.value = data.resume_candidate || null
                 previewLayoutConfig.value = data.layout_candidate
                   ? normalizeLayoutConfig(data.layout_candidate)
@@ -1363,7 +1513,7 @@ async function sendMessage() {
               } else if (data.type === 'workflow_error') {
                 showNotice(data.message || '工作流进度未能保存，本轮对话内容仍已处理。')
               } else if (data.type === 'workflow_state') {
-                workflowState.value = data.state || null
+                updateWorkflowState(data.state || null, { showCompletedBriefly: true })
               } else if (data.type === 'end') {
                 console.log('[前端] 收到 end 事件, isResponding before:', isResponding.value, 'isLoading:', isLoading.value)
                 // 结束信号，关闭连接
@@ -1424,7 +1574,6 @@ async function sendMessage() {
 
 // 处理确认按钮点击
 async function handleOptionClick({ confirm_id, value, selected_change_ids = [] }) {
-  const isTranslationConfirmation = confirm_id === pendingTranslationConfirmId.value
   const confirmMsgIndex = messages.value.findIndex(m => m.type === 'confirm' && m.confirm_id === confirm_id)
   if (confirmMsgIndex !== -1) {
     messages.value[confirmMsgIndex] = {
@@ -1544,15 +1693,6 @@ async function handleOptionClick({ confirm_id, value, selected_change_ids = [] }
         content: '本次修改已应用。',
         handled: false
       })
-    }
-    if (isTranslationConfirmation) {
-      if (value === 'cancel') {
-        translationApplied.value = false
-      } else if (confirmationProcessed && confirmationSucceeded && resumeRefreshed) {
-        translationApplied.value = true
-      }
-      pendingTranslationConfirmId.value = ''
-      persistTranslationSession()
     }
   } catch (error) {
     console.error('确认操作失败:', error)
@@ -3038,7 +3178,7 @@ watch(
         <form class="workspace-modal" @submit.prevent="confirmCreateProjectTask">
           <div class="workspace-modal-header">
             <div>
-              <span class="workspace-modal-kicker">JOB VERSION</span>
+              <span class="workspace-modal-kicker">岗位版本</span>
               <h2>新建岗位版本</h2>
             </div>
             <button type="button" class="modal-close-btn" aria-label="关闭" @click="closeTaskCreateDialog">×</button>
@@ -3152,7 +3292,7 @@ watch(
         <div class="workspace-modal compact">
           <div class="workspace-modal-header">
             <div>
-              <span class="workspace-modal-kicker danger">DELETE VERSION</span>
+              <span class="workspace-modal-kicker danger">删除岗位版本</span>
               <h2>删除岗位版本？</h2>
             </div>
             <button type="button" class="modal-close-btn" aria-label="关闭" @click="closeTaskDeleteDialog">×</button>
@@ -3477,7 +3617,6 @@ watch(
             :title="task.is_base ? '基础简历' : task.title"
           >
             <span>{{ task.is_base ? '基础简历' : task.title }}</span>
-            <small v-if="!task.is_base">{{ task.target_position || 'JD 定制版' }}</small>
           </router-link>
           <button
             v-if="!task.is_base"
@@ -3548,8 +3687,8 @@ watch(
             <div class="workflow-status-main">
               <strong>{{ workflowModeLabel }}</strong>
               <span>{{ workflowStatusLabel }}</span>
-              <span v-if="workflowState.focus_section">聚焦：{{ workflowState.focus_section }}</span>
-              <span>已核实 {{ workflowState.fact_count || 0 }} 条事实</span>
+              <span v-if="workflowFocusLabel">聚焦：{{ workflowFocusLabel }}</span>
+              <span>已确认 {{ workflowState.fact_count || 0 }} 条补充信息</span>
             </div>
             <div class="workflow-status-actions">
               <button v-if="workflowState.status === 'active'" type="button" :disabled="isLoading || isResponding" @click="runWorkflowAction('pause')">暂停</button>
@@ -3661,7 +3800,7 @@ watch(
       <!-- 右侧简历预览区 -->
       <div class="resume-section">
         <div class="resume-content">
-          <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :has-source-document="!!currentTask?.has_source_document" :highlighted-module="highlightedModule" :jd-data="jdData" :lang="currentLang" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @open-resume-import="showUploadResumeDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @request-layout-template="requestLayoutTemplate" @layout-updated="handleLayoutUpdated" />
+          <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :has-source-document="!!currentTask?.has_source_document" :highlighted-module="highlightedModule" :jd-data="jdData" :lang="currentLang" :translation-busy="isTranslating" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @open-resume-import="showUploadResumeDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @request-layout-template="requestLayoutTemplate" @layout-updated="handleLayoutUpdated" />
         </div>
       </div>
       </template>
@@ -3718,8 +3857,8 @@ watch(
                 <div class="workflow-status-main">
                   <strong>{{ workflowModeLabel }}</strong>
                   <span>{{ workflowStatusLabel }}</span>
-                  <span v-if="workflowState.focus_section">聚焦：{{ workflowState.focus_section }}</span>
-                  <span>已核实 {{ workflowState.fact_count || 0 }} 条事实</span>
+                  <span v-if="workflowFocusLabel">聚焦：{{ workflowFocusLabel }}</span>
+                  <span>已确认 {{ workflowState.fact_count || 0 }} 条补充信息</span>
                 </div>
                 <div class="workflow-status-actions">
                   <button v-if="workflowState.status === 'active'" type="button" :disabled="isLoading || isResponding" @click="runWorkflowAction('pause')">暂停</button>
@@ -3775,7 +3914,7 @@ watch(
 
           <!-- 简历 Tab 内容 -->
           <div v-else-if="currentTab === 'resume'" class="mobile-resume-view" key="resume">
-            <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :has-source-document="!!currentTask?.has_source_document" :highlighted-module="highlightedModule" :jd-data="jdData" :is-mobile-view="isMobileView" :lang="currentLang" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @open-resume-import="showUploadResumeDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @request-layout-template="requestLayoutTemplate" @layout-updated="handleLayoutUpdated" />
+            <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :has-source-document="!!currentTask?.has_source_document" :highlighted-module="highlightedModule" :jd-data="jdData" :is-mobile-view="isMobileView" :lang="currentLang" :translation-busy="isTranslating" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @open-resume-import="showUploadResumeDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @request-layout-template="requestLayoutTemplate" @layout-updated="handleLayoutUpdated" />
           </div>
         </Transition>
 
@@ -3796,7 +3935,7 @@ watch(
             <line x1="6" y1="6" x2="18" y2="18"></line>
           </svg>
         </button>
-        <img :src="previewImageUrl" class="image-preview-image" alt="Preview" />
+        <img :src="previewImageUrl" class="image-preview-image" alt="图片预览" />
       </div>
     </div>
   </Teleport>
@@ -4648,7 +4787,7 @@ watch(
   display: flex;
   flex-direction: column;
   gap: .2rem;
-  margin-bottom: .2rem;
+  margin-bottom: 0;
   padding: .58rem .65rem;
   border-radius: 0;
   color: #a7a7af;
@@ -4656,12 +4795,6 @@ watch(
   min-width: 0;
   flex: 1;
   font-size: .8rem;
-}
-
-.task-link small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .task-link > span {
@@ -4702,11 +4835,6 @@ watch(
   box-shadow: 0 0 8px rgba(120, 166, 255, .55);
 }
 
-.task-link small {
-  color: #777780;
-  font-size: .7rem;
-}
-
 .new-task-btn {
   width: 100%;
   margin-top: .6rem;
@@ -4729,6 +4857,7 @@ watch(
   display: flex;
   align-items: center;
   gap: .25rem;
+  margin-bottom: .2rem;
 }
 
 .task-delete-btn {

@@ -21,13 +21,11 @@ test('small-screen navigation keeps the dark workspace theme', () => {
 
 test('small-screen resume controls remain legible on the dark toolbar', () => {
   assert.ok(previewSource.includes('background: rgba(30, 31, 36, 0.98)'))
-  assert.ok(previewSource.includes('.zoom-controls'))
+  assert.ok(previewSource.includes('.compact-toolbar-btn'))
   assert.ok(previewSource.includes('color: #e4e6ed'))
-  assert.ok(previewSource.includes('background: #292a30'))
-  assert.ok(previewSource.includes('border: 1px solid #4a4d57'))
-  assert.ok(previewSource.includes('.resume-toolbar .zoom-controls button:disabled'))
-  assert.ok(previewSource.includes('opacity: 0.78'))
-  assert.ok(previewSource.includes('color: #eef0f5'))
+  assert.ok(previewSource.includes('position: sticky'))
+  assert.ok(previewSource.includes('bottom: auto'))
+  assert.equal(previewSource.includes('<template v-if="isMobile">'), false)
 })
 
 test('resume contact details use a readable dark gray', () => {

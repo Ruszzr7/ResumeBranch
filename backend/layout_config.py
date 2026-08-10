@@ -10,7 +10,15 @@ from copy import deepcopy
 from typing import Any
 
 
-LAYOUT_SCHEMA_VERSION = 2
+LAYOUT_SCHEMA_VERSION = 4
+
+TYPOGRAPHY_PRESETS: dict[str, dict[str, Any]] = {
+    "microsoft-office": {
+        "latinFont": "Arial",
+        "eastAsiaFont": "Microsoft YaHei",
+        "fallbackFonts": ["Noto Sans CJK SC", "sans-serif"],
+    },
+}
 
 SECTION_IDS = (
     "education",
@@ -27,11 +35,15 @@ SECTION_IDS = (
 
 DEFAULT_LAYOUT_CONFIG: dict[str, Any] = {
     "version": LAYOUT_SCHEMA_VERSION,
+    "typography": {
+        "preset": "microsoft-office",
+        **deepcopy(TYPOGRAPHY_PRESETS["microsoft-office"]),
+    },
     "global": {
         "density": "compact",
-        "fontSize": 10.5,
-        "lineHeight": 1.32,
-        "moduleMargin": 0.45,
+        "fontSize": 9.0,
+        "lineHeight": 1.28,
+        "moduleMargin": 0.55,
         "marginVertical": 8.0,
         "marginHorizontal": 9.0,
         "titleStyle": "underline",
@@ -88,9 +100,9 @@ DEFAULT_LAYOUT_CONFIG: dict[str, Any] = {
 }
 
 DENSITY_VALUES = {
-    "compact": {"fontSize": 10.5, "lineHeight": 1.32, "moduleMargin": 0.45},
-    "standard": {"fontSize": 10.5, "lineHeight": 1.42, "moduleMargin": 0.65},
-    "comfortable": {"fontSize": 11.0, "lineHeight": 1.55, "moduleMargin": 0.9},
+    "compact": {"fontSize": 9.0, "lineHeight": 1.28, "moduleMargin": 0.55},
+    "standard": {"fontSize": 9.5, "lineHeight": 1.35, "moduleMargin": 0.65},
+    "comfortable": {"fontSize": 10.0, "lineHeight": 1.45, "moduleMargin": 0.8},
 }
 
 LAYOUT_TEMPLATES = {
@@ -130,6 +142,7 @@ LAYOUT_TEMPLATES = {
 }
 
 ENUMS = {
+    ("typography", "preset"): set(TYPOGRAPHY_PRESETS),
     ("global", "density"): set(DENSITY_VALUES),
     ("global", "titleStyle"): {"underline", "plain"},
     ("basics", "preset"): {"centered", "left-aligned"},
@@ -183,6 +196,7 @@ VALUE_LABELS = {
 }
 
 FIELD_LABELS = {
+    ("typography", "preset"): "字体方案",
     ("global", "density"): "整体密度",
     ("global", "fontSize"): "字体大小",
     ("global", "lineHeight"): "行间距",
@@ -276,7 +290,7 @@ def _bounded_number(value: Any, minimum: float, maximum: float, fallback: float)
 
 
 def normalize_layout_config(value: dict | None) -> dict:
-    """Normalize unknown/partial input into the complete v1 contract."""
+    """Normalize unknown/partial input into the complete current contract."""
     try:
         supplied_version = int(value.get("version", 1)) if isinstance(value, dict) else LAYOUT_SCHEMA_VERSION
     except (TypeError, ValueError):
@@ -297,13 +311,37 @@ def normalize_layout_config(value: dict | None) -> dict:
                 "moduleMargin": 0.45, "marginVertical": 8.0,
             })
 
+    # v1-v3 exposed the root CSS size as "fontSize" while most body copy was
+    # rendered at 0.8em. v4 makes the control truthful: fontSize is the actual
+    # body size, and the remaining hierarchy is resolved as semantic tokens.
+    if supplied_version < 4:
+        legacy_global = result["global"]
+        supplied_global = value.get("global") if isinstance(value, dict) and isinstance(value.get("global"), dict) else {}
+        legacy_font_size = float(legacy_global["fontSize"] if "fontSize" in supplied_global else 10.5)
+        legacy_global["fontSize"] = (
+            9.0 if legacy_font_size == 10.5
+            else round(legacy_font_size * 0.8 * 2) / 2
+        )
+        legacy_line_height = float(legacy_global["lineHeight"] if "lineHeight" in supplied_global else 1.32)
+        legacy_module_margin = float(legacy_global["moduleMargin"] if "moduleMargin" in supplied_global else 0.45)
+        if legacy_line_height == 1.32:
+            legacy_global["lineHeight"] = 1.28
+        if legacy_module_margin == 0.45:
+            legacy_global["moduleMargin"] = 0.55
+
     for section, key in ENUMS:
         _enum(result, section, key)
 
+    # Font names are resolved from a curated preset rather than accepting
+    # arbitrary model/user strings. This keeps browser, PDF and DOCX exports on
+    # exactly the same known typefaces.
+    typography = result["typography"]
+    typography.update(deepcopy(TYPOGRAPHY_PRESETS[typography["preset"]]))
+
     global_config = result["global"]
-    global_config["fontSize"] = _bounded_number(global_config.get("fontSize"), 9, 14, 11)
-    global_config["lineHeight"] = _bounded_number(global_config.get("lineHeight"), 1.1, 2.2, 1.6)
-    global_config["moduleMargin"] = _bounded_number(global_config.get("moduleMargin"), 0.25, 2, 1)
+    global_config["fontSize"] = _bounded_number(global_config.get("fontSize"), 8, 11.5, 9)
+    global_config["lineHeight"] = _bounded_number(global_config.get("lineHeight"), 1.1, 2.2, 1.28)
+    global_config["moduleMargin"] = _bounded_number(global_config.get("moduleMargin"), 0.25, 2, 0.55)
     global_config["marginVertical"] = _bounded_number(global_config.get("marginVertical"), 3, 12, 9)
     global_config["marginHorizontal"] = _bounded_number(global_config.get("marginHorizontal"), 3, 12, 9)
     global_config["splitWorkExperience"] = bool(global_config.get("splitWorkExperience"))
@@ -378,6 +416,67 @@ def normalize_layout_config(value: dict | None) -> dict:
     for key in ("showRole", "showDate"):
         result["project_experience"][key] = bool(result["project_experience"].get(key))
     return result
+
+
+def resolve_layout_tokens(config: dict | None = None, style: dict | None = None) -> dict[str, Any]:
+    """Resolve renderer-independent typography and spacing values.
+
+    The persisted configuration keeps user-friendly multipliers (for example
+    ``moduleMargin``). Renderers consume the physical point/mm values returned
+    here so browser CSS, WeasyPrint and Word do not invent separate formulas.
+    """
+    normalized = normalize_layout_config(config)
+    global_config = normalized["global"]
+    typography = normalized["typography"]
+    overrides = style if isinstance(style, dict) else {}
+
+    font_size = _bounded_number(overrides.get("fontSize", global_config["fontSize"]), 8, 11.5, global_config["fontSize"])
+    line_height = _bounded_number(overrides.get("lineHeight", global_config["lineHeight"]), 1.1, 2.2, global_config["lineHeight"])
+    module_margin = _bounded_number(overrides.get("moduleMargin", global_config["moduleMargin"]), 0.25, 2, global_config["moduleMargin"])
+    body_font_size = font_size
+    meta_font_size = body_font_size
+    entry_title_font_size = body_font_size + 1.0
+    section_title_font_size = body_font_size + 2.0
+    name_font_size = 14.0
+
+    return {
+        "fontPreset": typography["preset"],
+        "latinFont": typography["latinFont"],
+        "eastAsiaFont": typography["eastAsiaFont"],
+        "fallbackFonts": deepcopy(typography["fallbackFonts"]),
+        "fontFamilyCss": ", ".join([
+            f'"{typography["latinFont"]}"',
+            f'"{typography["eastAsiaFont"]}"',
+            *(f'"{font}"' if font != "sans-serif" else font for font in typography["fallbackFonts"]),
+        ]),
+        "fontSizePt": font_size,
+        "bodyFontSizePt": body_font_size,
+        "metaFontSizePt": meta_font_size,
+        "entryTitleFontSizePt": entry_title_font_size,
+        "sectionTitleFontSizePt": section_title_font_size,
+        "nameFontSizePt": name_font_size,
+        "bodyFontWeight": 400,
+        "metaFontWeight": 400,
+        "entryTitleFontWeight": 700,
+        "sectionTitleFontWeight": 700,
+        "nameFontWeight": 700,
+        "labelFontWeight": 700,
+        "lineHeight": line_height,
+        "bodyLineHeightPt": body_font_size * line_height,
+        "moduleMargin": module_margin,
+        "moduleSpacingPt": font_size * module_margin,
+        "headerNameAfterPt": body_font_size * 0.27,
+        "sectionTitleAfterPt": body_font_size * 0.25,
+        "itemSpacingPt": body_font_size * 0.22,
+        "paragraphSpacingPt": body_font_size * 0.09,
+        "contentBlockSpacingPt": body_font_size * 0.14,
+        "contentLabelSpacingPt": body_font_size * 0.06,
+        "numberedItemSpacingPt": body_font_size * 0.08,
+        "marginTopMm": _bounded_number(overrides.get("marginTop", global_config["marginVertical"]), 3, 12, global_config["marginVertical"]),
+        "marginBottomMm": _bounded_number(overrides.get("marginBottom", global_config["marginVertical"]), 3, 12, global_config["marginVertical"]),
+        "marginLeftMm": _bounded_number(overrides.get("marginLeft", global_config["marginHorizontal"]), 3, 12, global_config["marginHorizontal"]),
+        "marginRightMm": _bounded_number(overrides.get("marginRight", global_config["marginHorizontal"]), 3, 12, global_config["marginHorizontal"]),
+    }
 
 
 def apply_density(config: dict, density: str) -> dict:

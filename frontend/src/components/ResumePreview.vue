@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, watch, nextTick, onUnmounted } from 'vue'
 import { labels } from '../utils/labels.js'
 import { buildAuthorizationHeaders } from '../config/appMode.js'
-import { normalizeLayoutConfig, sectionTitle, sectionOrder, isSectionHidden } from '../utils/layoutConfig.js'
+import { normalizeLayoutConfig, resolveLayoutTokens, sectionTitle, sectionOrder, isSectionHidden } from '../utils/layoutConfig.js'
 
 const props = defineProps({
   data: {
@@ -33,6 +33,11 @@ const props = defineProps({
     type: String,
     required: false,
     default: 'zh'
+  },
+  translationBusy: {
+    type: Boolean,
+    required: false,
+    default: false
   },
   layoutConfig: {
     type: Object,
@@ -195,6 +200,15 @@ function projectContentBlocks(item) {
   return blocks.filter(block => block.text || block.items?.length)
 }
 
+function workPosition(item) {
+  const jobTitle = String(item?.job_title || '').trim()
+  const jobType = String(item?.job_type || '').trim()
+  return [
+    jobTitle,
+    jobType && moduleLayout('work_experience').showJobType ? `(${jobType})` : ''
+  ].filter(Boolean).join(' ')
+}
+
 function hasNativeListMarker(value) {
   return /^\s*(?:[（(]?\d{1,2}[）).、．]|[一二三四五六七八九十]+[、.．])\s*/.test(String(value || ''))
 }
@@ -306,16 +320,13 @@ function finishSectionDrag() {
   persistSectionOrder()
 }
 
-// 检测是否为移动端视图
-const isMobile = computed(() => props.isMobileView || window.innerWidth < 1200)
-
 // ========== 样式控制变量 ==========
 const DEFAULT_STYLE = {
   marginVertical: 8,
   marginHorizontal: 9,
-  moduleMargin: 0.45,
-  lineHeight: 1.32,
-  fontSize: 10.5
+  moduleMargin: 0.55,
+  lineHeight: 1.28,
+  fontSize: 9
 }
 const marginVertical = ref(DEFAULT_STYLE.marginVertical)
 const marginHorizontal = ref(DEFAULT_STYLE.marginHorizontal)
@@ -398,17 +409,23 @@ function saveLayoutSettings() {
   }, 350)
 }
 
-function resetStyleSettings(event) {
+const showResetStyleConfirm = ref(false)
+
+function requestResetStyleSettings(event) {
+  event?.currentTarget?.blur()
+  closeToolbarMenu()
+  showResetStyleConfirm.value = true
+}
+
+function resetStyleSettings() {
   marginVertical.value = DEFAULT_STYLE.marginVertical
   marginHorizontal.value = DEFAULT_STYLE.marginHorizontal
   moduleMargin.value = DEFAULT_STYLE.moduleMargin
   lineHeight.value = DEFAULT_STYLE.lineHeight
   fontSize.value = DEFAULT_STYLE.fontSize
-  event?.currentTarget?.blur()
+  showResetStyleConfirm.value = false
 }
 
-// 移动端样式面板展开状态
-const isStylePanelExpanded = ref(false)
 const activeToolbarMenu = ref(null)
 const showLayoutGuide = ref(false)
 const enlargedLayoutTemplate = ref(null)
@@ -429,10 +446,6 @@ function applyTemplatePrompt(prompt) {
   emit('request-layout-template', prompt)
 }
 
-function toggleStylePanel() {
-  isStylePanelExpanded.value = !isStylePanelExpanded.value
-}
-
 function toggleToolbarMenu(menu, event) {
   event?.stopPropagation()
   activeToolbarMenu.value = activeToolbarMenu.value === menu ? null : menu
@@ -443,6 +456,7 @@ function closeToolbarMenu() {
 }
 
 function toggleLanguage() {
+  if (props.translationBusy) return
   emit('toggle-lang', props.lang === 'zh' ? 'en' : 'zh')
 }
 
@@ -470,11 +484,42 @@ const marginBottomPx = computed(() => marginVertical.value * MM_TO_PX)
 const marginLeftPx = computed(() => marginHorizontal.value * MM_TO_PX)
 const marginRightPx = computed(() => marginHorizontal.value * MM_TO_PX)
 
-// 动态样式 - 设置基础字体大小（使用em单位需要父元素有font-size）
-const pageStyles = computed(() => ({
-  fontSize: `${fontSize.value}pt`,
+// 预览、PDF 和 DOCX 都从同一排版协议解析物理尺寸；这里不再单独
+// 使用 rem 推导模块/段落间距。
+const layoutTokens = computed(() => resolveLayoutTokens(layout.value, {
+  fontSize: fontSize.value,
   lineHeight: lineHeight.value,
-  '--module-margin': `${moduleMargin.value}rem`
+  moduleMargin: moduleMargin.value,
+  marginTop: marginVertical.value,
+  marginBottom: marginVertical.value,
+  marginLeft: marginHorizontal.value,
+  marginRight: marginHorizontal.value
+}))
+const pageStyles = computed(() => ({
+  fontFamily: layoutTokens.value.fontFamilyCss,
+  fontSize: `${layoutTokens.value.fontSizePt}pt`,
+  fontWeight: layoutTokens.value.bodyFontWeight,
+  lineHeight: layoutTokens.value.lineHeight,
+  '--body-font-size': `${layoutTokens.value.bodyFontSizePt}pt`,
+  '--meta-font-size': `${layoutTokens.value.metaFontSizePt}pt`,
+  '--entry-title-font-size': `${layoutTokens.value.entryTitleFontSizePt}pt`,
+  '--section-title-font-size': `${layoutTokens.value.sectionTitleFontSizePt}pt`,
+  '--name-font-size': `${layoutTokens.value.nameFontSizePt}pt`,
+  '--body-font-weight': layoutTokens.value.bodyFontWeight,
+  '--meta-font-weight': layoutTokens.value.metaFontWeight,
+  '--entry-title-font-weight': layoutTokens.value.entryTitleFontWeight,
+  '--section-title-font-weight': layoutTokens.value.sectionTitleFontWeight,
+  '--name-font-weight': layoutTokens.value.nameFontWeight,
+  '--label-font-weight': layoutTokens.value.labelFontWeight,
+  '--line-height': layoutTokens.value.lineHeight,
+  '--module-margin': `${layoutTokens.value.moduleSpacingPt}pt`,
+  '--header-name-after': `${layoutTokens.value.headerNameAfterPt}pt`,
+  '--section-title-after': `${layoutTokens.value.sectionTitleAfterPt}pt`,
+  '--item-spacing': `${layoutTokens.value.itemSpacingPt}pt`,
+  '--paragraph-spacing': `${layoutTokens.value.paragraphSpacingPt}pt`,
+  '--content-block-spacing': `${layoutTokens.value.contentBlockSpacingPt}pt`,
+  '--content-label-spacing': `${layoutTokens.value.contentLabelSpacingPt}pt`,
+  '--numbered-item-spacing': `${layoutTokens.value.numberedItemSpacingPt}pt`
 }))
 
 const pagePaddingStyle = computed(() => ({
@@ -1103,95 +1148,8 @@ const getItemIndex = (type, dataIndex) => {
     <!-- 工具栏 - 始终显示 -->
     <div class="resume-toolbar-wrapper">
       <div class="resume-toolbar">
-        <!-- 移动端：可展开的样式调整面板 -->
-        <template v-if="isMobile">
-          <button class="toolbar-icon reset-style-btn" @click="resetStyleSettings" title="恢复默认排版设置">🔧</button>
-          <div class="zoom-controls" aria-label="简历缩放">
-            <button :class="{ active: zoomMode === 'width' }" @click="setZoomMode('width', $event)" title="适应预览宽度">适宽</button>
-            <button :class="{ active: zoomMode === 'page' }" @click="setZoomMode('page', $event)" title="完整显示一页">整页</button>
-            <div class="zoom-readout">
-              <span class="zoom-value">{{ zoomPercentage }}%</span>
-              <span class="zoom-stepper">
-                <button @click="adjustZoom(0.1, $event)" :disabled="zoomPercentage >= 100" title="放大">＋</button>
-                <button @click="adjustZoom(-0.1, $event)" :disabled="zoomPercentage <= 40" title="缩小">−</button>
-              </span>
-            </div>
-          </div>
-          <div class="mobile-toolbar-row">
-            <button v-if="hasSourceDocument" class="mobile-jd-btn" :class="{ active: showSourceDocument }" @click="toggleSourceDocument">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                <polyline points="14 2 14 8 20 8"/>
-                <path d="M8 13h8M8 17h5"/>
-              </svg>
-              <span>{{ showSourceDocument ? '当前版' : '查看原版' }}</span>
-            </button>
-            <button class="mobile-style-btn" @click="toggleStylePanel" :class="{ active: isStylePanelExpanded }">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="3"></circle>
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-              </svg>
-              <span>{{ isStylePanelExpanded ? '收起' : '调整样式' }}</span>
-            </button>
-            
-            <!-- 移动端操作按钮 - 始终显示 -->
-            <button class="mobile-jd-btn" @click="emit('open-resume-edit')">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-              </svg>
-              <span>编辑简历</span>
-            </button>
-            <button class="mobile-jd-btn" @click="emit('open-jd-dialog')">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                <polyline points="14 2 14 8 20 8"></polyline>
-                <line x1="16" y1="13" x2="8" y2="13"></line>
-                <line x1="16" y1="17" x2="8" y2="17"></line>
-              </svg>
-              <span>目标岗位</span>
-            </button>
-            <button class="mobile-export-btn" @click="exportPDF" :disabled="isExportingPDF || !data">
-              <span v-if="isExportingPDF" class="spinner"></span>
-              <span>{{ isExportingPDF ? '导出中...' : '导出PDF' }}</span>
-            </button>
-          </div>
-          
-          <!-- 可展开的样式控制面板 -->
-          <Transition name="slide-down">
-            <div v-if="isStylePanelExpanded" class="style-panel-mobile">
-              <div class="style-control-row">
-                <div class="style-control-item">
-                  <label class="style-label">上下边距: {{ marginVertical }}rem</label>
-                  <input type="range" v-model.number="marginVertical" min="3" max="12" step="0.25" class="slider">
-                </div>
-                <div class="style-control-item">
-                  <label class="style-label">左右边距: {{ marginHorizontal }}rem</label>
-                  <input type="range" v-model.number="marginHorizontal" min="3" max="12" step="0.25" class="slider">
-                </div>
-              </div>
-              <div class="style-control-row">
-                <div class="style-control-item">
-                  <label class="style-label">模块间距: {{ moduleMargin }}rem</label>
-                  <input type="range" v-model.number="moduleMargin" min="0.25" max="2" step="0.25" class="slider">
-                </div>
-                <div class="style-control-item">
-                  <label class="style-label">行间距: {{ lineHeight }}</label>
-                  <input type="range" v-model.number="lineHeight" min="1.1" max="2.2" step="0.1" class="slider">
-                </div>
-              </div>
-              <div class="style-control-row single">
-                <div class="style-control-item">
-                  <label class="style-label">字体大小: {{ fontSize }}pt</label>
-                  <input type="range" v-model.number="fontSize" min="9" max="14" step="0.5" class="slider">
-                </div>
-              </div>
-            </div>
-          </Transition>
-        </template>
-        
-        <!-- PC端：合并同类功能，保留完整操作 -->
-        <template v-else>
+        <!-- 所有窗口宽度共用同一套操作，窄屏只通过响应式布局调整位置。 -->
+        <div class="shared-toolbar-actions">
           <div class="compact-toolbar-cluster">
           <button
             v-if="hasSourceDocument"
@@ -1268,21 +1226,21 @@ const getItemIndex = (type, dataIndex) => {
                 <input type="range" v-model.number="lineHeight" min="1.1" max="2.2" step="0.1" class="slider">
               </label>
               <label class="compact-control">
-                <span>字体大小 <strong>{{ fontSize }}pt</strong></span>
-                <input type="range" v-model.number="fontSize" min="9" max="14" step="0.5" class="slider">
+                <span>正文字号 <strong>{{ fontSize }}pt</strong></span>
+                <input type="range" v-model.number="fontSize" min="8" max="11.5" step="0.5" class="slider">
               </label>
               <button class="layout-guide-btn section-order-open-btn" @click="openSectionOrderDialog">调整模块顺序</button>
               <button class="layout-guide-btn" @click="openLayoutGuide">查看可用排版预设</button>
-              <button class="compact-reset-btn" @click="resetStyleSettings">恢复默认排版</button>
+              <button class="compact-reset-btn" @click="requestResetStyleSettings">恢复默认排版</button>
             </div>
           </div>
 
-          <button class="compact-toolbar-btn language-btn" @click="toggleLanguage" :aria-label="`切换为${lang === 'zh' ? '英文' : '中文'}简历`">
+          <button class="compact-toolbar-btn language-btn" :disabled="translationBusy" @click="toggleLanguage" :aria-label="translationBusy ? '正在翻译简历' : `切换为${lang === 'zh' ? '英文' : '中文'}简历`">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
               <circle cx="12" cy="12" r="9"/>
               <path d="M3 12h18M12 3c2.2 2.5 3.3 5.5 3.3 9S14.2 18.5 12 21c-2.2-2.5-3.3-5.5-3.3-9S9.8 5.5 12 3"/>
             </svg>
-            <span>{{ lang === 'zh' ? '中 / EN' : 'EN / 中' }}</span>
+            <span>{{ translationBusy ? '翻译中…' : (lang === 'zh' ? '中 / EN' : 'EN / 中') }}</span>
           </button>
 
           <div class="compact-toolbar-group edit-toolbar-group">
@@ -1341,7 +1299,7 @@ const getItemIndex = (type, dataIndex) => {
             </svg>
             <span>{{ isExportingDOCX ? '导出中...' : '导出 Word' }}</span>
           </button>
-        </template>
+        </div>
       </div>
     </div>
 
@@ -1444,7 +1402,7 @@ const getItemIndex = (type, dataIndex) => {
             <div class="work-header">
               <div class="work-main">
                 <div class="company" v-html="formatText(entry.item.company_name || '公司未填写')"></div>
-                <div class="position" v-html="formatText(`${entry.item.job_title || ''} ${entry.item.job_type && moduleLayout('work_experience').showJobType ? `(${entry.item.job_type})` : ''}`)"></div>
+                <div v-if="workPosition(entry.item)" class="position" v-html="formatText(workPosition(entry.item))"></div>
               </div>
               <span class="work-period">{{ entry.item.date_range?.[0] || '' }} - {{ entry.item.date_range?.[1] || '至今' }}</span>
             </div>
@@ -1604,7 +1562,7 @@ const getItemIndex = (type, dataIndex) => {
           <div class="work-header">
             <div class="work-main">
               <div class="company" v-html="formatText(item.company_name || '公司未填写')"></div>
-              <div class="position" v-html="formatText(`${item.job_title || ''} ${item.job_type ? `(${item.job_type})` : ''}`)"></div>
+              <div v-if="workPosition(item)" class="position" v-html="formatText(workPosition(item))"></div>
             </div>
             <span class="work-period">{{ item.date_range?.[0] || '' }} - {{ item.date_range?.[1] || '至今' }}</span>
           </div>
@@ -1762,7 +1720,7 @@ const getItemIndex = (type, dataIndex) => {
                   <div class="work-header">
                     <div class="work-main">
                       <div class="company" v-html="formatText(entry.item.company_name || '公司未填写')"></div>
-                      <div class="position" v-html="formatText(`${entry.item.job_title || ''} ${entry.item.job_type && moduleLayout('work_experience').showJobType ? `(${entry.item.job_type})` : ''}`)"></div>
+                      <div v-if="workPosition(entry.item)" class="position" v-html="formatText(workPosition(entry.item))"></div>
                     </div>
                     <span class="work-period">{{ entry.item.date_range?.[0] || '' }} - {{ entry.item.date_range?.[1] || '至今' }}</span>
                   </div>
@@ -1905,6 +1863,17 @@ const getItemIndex = (type, dataIndex) => {
         <span v-if="isSavingSectionOrder">正在保存…</span>
         <span v-else>拖动和箭头均支持双向调整</span>
         <button type="button" @click="showSectionOrderDialog = false">完成</button>
+      </div>
+    </div>
+  </div>
+
+  <div v-if="showResetStyleConfirm" class="success-dialog-overlay reset-layout-overlay">
+    <div class="reset-layout-dialog" role="dialog" aria-modal="true" aria-labelledby="reset-layout-title">
+      <h3 id="reset-layout-title">恢复默认排版？</h3>
+      <p>这会重置页边距、字号、行距和模块间距，简历内容不会改变。</p>
+      <div class="reset-layout-actions">
+        <button type="button" class="reset-layout-cancel" @click="showResetStyleConfirm = false">取消</button>
+        <button type="button" class="reset-layout-confirm" @click="resetStyleSettings">确认恢复</button>
       </div>
     </div>
   </div>
@@ -2361,6 +2330,8 @@ const getItemIndex = (type, dataIndex) => {
   flex: 0 0 auto;
 }
 
+.shared-toolbar-actions { display: contents; }
+
 .compact-toolbar-cluster {
   display: flex;
   align-items: center;
@@ -2438,7 +2409,9 @@ const getItemIndex = (type, dataIndex) => {
 .compact-popover {
   position: absolute;
   top: calc(100% + 9px);
-  right: 0;
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
   z-index: 10020;
   min-width: 220px;
   padding: 0.75rem;
@@ -2653,6 +2626,13 @@ const getItemIndex = (type, dataIndex) => {
   flex: 0 0 auto;
 }
 
+.language-btn:disabled {
+  min-width: 78px;
+  color: #cbd5ea;
+  cursor: wait;
+  opacity: 0.78;
+}
+
 .compact-export-btn {
   min-height: 32px;
   padding: 0.35rem 0.7rem;
@@ -2790,9 +2770,9 @@ const getItemIndex = (type, dataIndex) => {
 }
 
 .personal-info .name {
-  font-size: 1.5em;
-  font-weight: 700;
-  margin: 0 0 0.25em 0;
+  font-size: var(--name-font-size);
+  font-weight: var(--name-font-weight);
+  margin: 0 0 var(--header-name-after) 0;
   color: #212529;
 }
 
@@ -2801,7 +2781,8 @@ const getItemIndex = (type, dataIndex) => {
   justify-content: center;
   gap: 0.5em;
   flex-wrap: wrap;
-  font-size: 0.8em;
+  font-size: var(--meta-font-size);
+  font-weight: var(--meta-font-weight);
   color: #333333;
 }
 
@@ -2820,15 +2801,15 @@ const getItemIndex = (type, dataIndex) => {
 }
 
 .target-position {
-  font-size: 0.8em;
+  font-size: var(--meta-font-size);
   color: #212529;
-  font-weight: 600;
+  font-weight: var(--label-font-weight);
   margin-top: 0.25em;
 }
 
 .section-title {
-  font-size: 1.1em;
-  font-weight: 600;
+  font-size: var(--section-title-font-size);
+  font-weight: var(--section-title-font-weight);
   margin: 0 0 var(--module-margin, 0.5em) 0;
   color: #212529;
   padding-bottom: 0.25em;
@@ -2850,11 +2831,34 @@ const getItemIndex = (type, dataIndex) => {
   flex-wrap: wrap;
   gap: 0.5em;
 }
+.work-main {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0.32em;
+}
+.work-main .company,
+.project-header .project-name { min-width: 0; }
+.work-main .position { flex: 0 1 auto; }
+.work-main .position::before { content: '· '; }
+.work-item.date-right .work-header,
+.project-item.date-right .project-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: 0.65em;
+}
+.work-item.date-right .work-period,
+.project-item.date-right .project-role {
+  margin-left: 0;
+  text-align: right;
+  white-space: nowrap;
+}
 .school,
 .company,
 .project-name {
-  font-size: 1em;
-  font-weight: 600;
+  font-size: var(--entry-title-font-size);
+  font-weight: var(--entry-title-font-weight);
   color: #212529;
 }
 .school-info {
@@ -2874,23 +2878,23 @@ const getItemIndex = (type, dataIndex) => {
   padding: 0.125em 0.5em;
   background: #333;
   color: white;
-  font-size: 0.75em;
+  font-size: var(--meta-font-size);
   border-radius: 4px;
   font-weight: 500;
 }
 .graduation-date,
 .work-period {
-  font-size: 0.8em;
+  font-size: var(--meta-font-size);
   color: #95a5a6;
   white-space: nowrap;
-  font-weight: 500;
+  font-weight: var(--meta-font-weight);
 }
 .degree-major,
 .position,
 .project-role {
-  font-size: 0.8em;
+  font-size: var(--meta-font-size);
   color: #6c757d;
-  font-weight: 500;
+  font-weight: var(--meta-font-weight);
 }
 .school-tag.tag-outline { background: transparent; color: #333; border: 1px solid #333; }
 .school-tag.tag-text { background: transparent; color: #333; padding: 0; border-radius: 0; }
@@ -2955,9 +2959,9 @@ const getItemIndex = (type, dataIndex) => {
   flex-wrap: wrap;
   gap: 0.25em 1em;
   margin-top: 0.125em;
-  font-size: 0.8em;
+  font-size: var(--meta-font-size);
   color: #222;
-  font-weight: 500;
+  font-weight: var(--meta-font-weight);
 }
 .list-items {
   list-style: none;
@@ -2968,7 +2972,7 @@ const getItemIndex = (type, dataIndex) => {
   position: relative;
   padding-left: 1.25em;
   margin-bottom: 0.25em;
-  font-size: 0.8em;
+  font-size: var(--body-font-size);
   line-height: var(--line-height, 1.6);
 }
 .list-item::before {
@@ -2982,7 +2986,7 @@ const getItemIndex = (type, dataIndex) => {
   position: relative;
   padding-left: 1.25em;
   margin-bottom: 0.25em;
-  font-size: 0.8em;
+  font-size: var(--body-font-size);
   line-height: var(--line-height, 1.6);
 }
 .generic-list-item::before {
@@ -3001,17 +3005,17 @@ const getItemIndex = (type, dataIndex) => {
 .page-content .section-title,
 .content-source .section-title,
 .print-container .section-title {
-  margin-bottom: 0.22em;
+  margin-bottom: var(--section-title-after);
   padding-bottom: 0.1em;
   color: #111;
-  font-weight: 700;
+  font-weight: var(--section-title-font-weight);
 }
 .page-content .education-item,
 .page-content .work-item,
 .page-content .project-item,
 .content-source .education-item,
 .content-source .work-item,
-.content-source .project-item { margin-bottom: 0.18em; }
+.content-source .project-item { margin-bottom: var(--item-spacing); }
 .page-content .degree-major,
 .page-content .position,
 .page-content .project-role,
@@ -3029,10 +3033,10 @@ const getItemIndex = (type, dataIndex) => {
 .page-content .list-item,
 .page-content .generic-list-item,
 .content-source .list-item,
-.content-source .generic-list-item { margin-bottom: 0.08em; }
-.project-content-block { margin: 0 0 0.12em; font-size: 0.8em; color: #111; }
+.content-source .generic-list-item { margin-bottom: var(--paragraph-spacing); }
+.project-content-block { margin: 0 0 var(--content-block-spacing); font-size: var(--body-font-size); color: #111; }
 .project-paragraph { margin: 0; }
-.project-block-label { margin-bottom: 0.04em; font-weight: 700; }
+.project-block-label { margin-bottom: var(--content-label-spacing); font-weight: var(--label-font-weight); }
 .project-numbered-list {
   list-style: none;
   margin: 0;
@@ -3041,7 +3045,7 @@ const getItemIndex = (type, dataIndex) => {
 }
 .project-numbered-list > li {
   position: relative;
-  margin-bottom: 0.06em;
+  margin-bottom: var(--numbered-item-spacing);
   padding-left: 2.15em;
   counter-increment: project-duty;
 }
@@ -3052,10 +3056,6 @@ const getItemIndex = (type, dataIndex) => {
 }
 .details-paragraph .list-item { padding-left: 0; list-style: none; }
 .details-paragraph .list-item::before { content: none; }
-.work-item.preset-compact .work-main { display: flex; align-items: baseline; gap: 0.5em; }
-.work-item.preset-compact .position::before { content: '· '; }
-.project-item.preset-compact .project-header { justify-content: flex-start; }
-.project-item.preset-compact .project-role { flex: 1; }
 .work-item.date-inline .work-header,
 .project-item.date-inline .project-header { justify-content: flex-start; }
 .work-item.date-inline .work-period,
@@ -3072,13 +3072,13 @@ const getItemIndex = (type, dataIndex) => {
 .self-bullets { position: relative; padding-left: 1.25em; }
 .self-bullets::before { content: '•'; position: absolute; left: 0; font-weight: 700; }
 .self-eval-item {
-  font-size: 0.8em;
+  font-size: var(--body-font-size);
   line-height: var(--line-height, 1.6);
   color: #212529;
 }
 .others-title {
-  font-size: 0.9em;
-  font-weight: 600;
+  font-size: var(--body-font-size);
+  font-weight: var(--label-font-weight);
   color: #212529;
   margin: 0 0 0.25em 0;
 }
@@ -3095,14 +3095,14 @@ const getItemIndex = (type, dataIndex) => {
 .skill-item,
 .cert-lang-line,
 .inline-item {
-  font-size: 0.8em;
+  font-size: var(--body-font-size);
   color: #212529;
   word-wrap: break-word;
   overflow-wrap: break-word;
   max-width: 100%;
 }
 .cert-lang-label {
-  font-weight: 600;
+  font-weight: var(--label-font-weight);
   margin-right: 0.25em;
 }
 .cert-lang-separator {
@@ -3118,12 +3118,12 @@ const getItemIndex = (type, dataIndex) => {
   margin-top: 0.25em;
 }
 .thesis-title {
-  font-weight: 600;
-  font-size: 0.85em;
+  font-weight: var(--label-font-weight);
+  font-size: var(--body-font-size);
 }
 .subfield-title {
-  font-size: 0.825em;
-  font-weight: 600;
+  font-size: var(--meta-font-size);
+  font-weight: var(--label-font-weight);
   color: #6c757d;
   margin-bottom: 0.25em;
   display: block;
@@ -3139,7 +3139,7 @@ const getItemIndex = (type, dataIndex) => {
   margin-right: 0.5em;
 }
 :deep(b) {
-  font-weight: 600;
+  font-weight: var(--label-font-weight);
 }
 .page-footer {
   position: absolute;
@@ -3227,6 +3227,38 @@ const getItemIndex = (type, dataIndex) => {
 }
 
 .layout-guide-overlay { padding: 24px; background: rgba(7, 8, 11, 0.72); }
+.reset-layout-overlay { background: rgba(7, 8, 11, 0.66); }
+.reset-layout-dialog {
+  width: min(420px, calc(100vw - 40px));
+  padding: 24px;
+  border: 1px solid #454852;
+  border-radius: 14px;
+  color: #f5f6f8;
+  background: #25262c;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+}
+.reset-layout-dialog h3 { margin: 0 0 12px; font-size: 1.15rem; }
+.reset-layout-dialog p { margin: 0; color: #b9bdc8; line-height: 1.65; }
+.reset-layout-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 24px;
+}
+.reset-layout-actions button {
+  min-width: 92px;
+  padding: 9px 14px;
+  border: 1px solid #50535e;
+  border-radius: 8px;
+  color: #f2f3f6;
+  background: #303139;
+  cursor: pointer;
+}
+.reset-layout-actions .reset-layout-confirm {
+  border-color: #6f96ea;
+  background: #547bc9;
+}
+.reset-layout-actions button:hover { filter: brightness(1.1); }
 .section-order-overlay {
   right: auto;
   left: 156px;
@@ -3676,30 +3708,45 @@ const getItemIndex = (type, dataIndex) => {
     flex-direction: column;
   }
 
-  /* 移动端工具栏固定在底部 Tab 栏上方 */
+  /* 窄屏仍使用桌面端同一工具栏，并固定在预览上方。 */
   .resume-toolbar-wrapper {
-    position: fixed;
-    bottom: 60px;
-    top: auto;
-    left: 0;
-    right: 0;
+    position: sticky;
+    top: 0;
+    bottom: auto;
     z-index: 999;
     background: rgba(30, 31, 36, 0.98);
-    border-top: 1px solid rgba(255, 255, 255, 0.09);
-    border-bottom: none;
-    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.28);
-  }
-
-  /* 当样式面板展开时，工具栏高度增加 */
-  .resume-toolbar-wrapper:has(.style-panel-mobile) {
-    bottom: 60px;
+    border-top: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
   }
 
   .resume-toolbar {
     flex-wrap: wrap;
+    height: auto;
+    min-height: 52px;
+    justify-content: flex-end;
     padding: 6px 8px;
     gap: 6px;
-    border-bottom: none;
+    overflow: visible;
+  }
+
+  .compact-toolbar-cluster {
+    min-width: 0;
+    max-width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .compact-toolbar-btn,
+  .compact-export-btn {
+    min-height: 34px;
+    color: #e4e6ed;
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+
+  .compact-popover {
+    top: calc(100% + 8px);
+    max-width: calc(100vw - 24px);
   }
 
   .resume-toolbar .zoom-controls {
@@ -3772,7 +3819,8 @@ const getItemIndex = (type, dataIndex) => {
     padding: 8px;
     flex: 1;
     overflow-y: auto;
-    height: calc(100% - 60px);
+    height: auto;
+    min-height: 0;
     box-sizing: border-box;
   }
 

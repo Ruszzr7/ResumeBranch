@@ -13,7 +13,7 @@ from backend.layout import (
 )
 from backend.docx_generator import generate_docx
 from backend.pdf_generator import render_resume_to_html
-from backend.layout_config import default_layout_config, normalize_layout_config
+from backend.layout_config import LAYOUT_TEMPLATES, apply_layout_template, default_layout_config, normalize_layout_config, resolve_layout_tokens
 
 
 def resume_with_two_jobs():
@@ -40,9 +40,9 @@ class LayoutRuleTests(unittest.TestCase):
                 "sectionOrder": ["education", "project_experience", "others"],
             },
         })
-        self.assertEqual(layout["version"], 2)
-        self.assertEqual(layout["global"]["fontSize"], 10.5)
-        self.assertEqual(layout["global"]["lineHeight"], 1.32)
+        self.assertEqual(layout["version"], 4)
+        self.assertEqual(layout["global"]["fontSize"], 9)
+        self.assertEqual(layout["global"]["lineHeight"], 1.28)
         self.assertIn("skills", layout["global"]["sectionOrder"])
 
     def test_legacy_page_modes_are_normalized_to_automatic(self):
@@ -114,6 +114,52 @@ class LayoutRuleTests(unittest.TestCase):
         with ZipFile(BytesIO(generate_docx(data, layout_config=layout))) as archive:
             document_xml = archive.read("word/document.xml").decode("utf-8")
         self.assertIn('w:color="333333"', document_xml)
+
+    def test_all_templates_keep_dates_right_aligned_and_work_heading_on_one_row(self):
+        data = resume_with_two_jobs()
+        data["work_experience"][0].update({"company_name": "示例科技", "job_title": "机器人算法工程师", "job_type": "实习"})
+        data["project_experience"] = [{
+            "project_name": "协作臂轨迹跟踪系统",
+            "role": "",
+            "date_range": ["2026.01", "至今"],
+            "details": [],
+        }]
+
+        for template_id in LAYOUT_TEMPLATES:
+            layout = apply_layout_template({}, template_id)
+            tokens = resolve_layout_tokens(layout)
+            html = render_resume_to_html(data, layout_config=layout)
+            self.assertIn('class="work-item preset-', html, template_id)
+            self.assertIn('date-right', html, template_id)
+            self.assertIn('.project-item.date-right .project-header', html, template_id)
+            self.assertIn('grid-template-columns: minmax(0, 1fr) auto', html, template_id)
+            self.assertIn('page-break-inside: avoid', html, template_id)
+            work_start = html.index('<div class="work-main">')
+            work_end = html.index('</div>', html.index('class="work-period"', work_start))
+            work_fragment = html[work_start:work_end]
+            self.assertIn('示例科技', work_fragment, template_id)
+            self.assertIn('机器人算法工程师', work_fragment, template_id)
+            self.assertIn('(实习)', work_fragment, template_id)
+            self.assertIn('--meta-font-weight: 400;', html, template_id)
+            self.assertIn('--entry-title-font-weight: 700;', html, template_id)
+            self.assertIn('font-weight: var(--entry-title-font-weight)', html, template_id)
+            self.assertIn('font-weight: var(--meta-font-weight)', html, template_id)
+
+            document = Document(BytesIO(generate_docx(data, layout_config=layout)))
+            heading_table = next(
+                table for table in document.tables
+                if any("示例科技" in cell.text for row in table.rows for cell in row.cells)
+            )
+            heading_cell, date_cell = heading_table.rows[0].cells
+            self.assertIn("示例科技 · 机器人算法工程师 (实习)", heading_cell.text, template_id)
+            self.assertEqual(heading_cell.paragraphs[0].runs[0].text, "示例科技", template_id)
+            self.assertTrue(heading_cell.paragraphs[0].runs[0].bold, template_id)
+            self.assertAlmostEqual(heading_cell.paragraphs[0].runs[0].font.size.pt, tokens["entryTitleFontSizePt"], places=1)
+            self.assertEqual(heading_cell.paragraphs[0].runs[1].text, " · 机器人算法工程师 (实习)", template_id)
+            self.assertFalse(bool(heading_cell.paragraphs[0].runs[1].bold), template_id)
+            self.assertAlmostEqual(heading_cell.paragraphs[0].runs[1].font.size.pt, tokens["metaFontSizePt"], places=1)
+            self.assertFalse(bool(date_cell.paragraphs[0].runs[0].bold), template_id)
+            self.assertAlmostEqual(date_cell.paragraphs[0].runs[0].font.size.pt, tokens["metaFontSizePt"], places=1)
 
     def test_empty_self_evaluation_is_hidden_for_every_template(self):
         from backend.layout_config import LAYOUT_TEMPLATES, apply_layout_template
@@ -254,7 +300,7 @@ class LayoutRuleTests(unittest.TestCase):
         document = Document(BytesIO(generate_docx(data, layout_config=layout)))
         body_paragraph = next(paragraph for paragraph in document.paragraphs if "Python" in paragraph.text)
 
-        self.assertAlmostEqual(body_paragraph.runs[-1].font.size.pt, 8.5, places=2)
+        self.assertAlmostEqual(body_paragraph.runs[-1].font.size.pt, 10.5, places=2)
 
     def test_word_left_aligned_header_uses_full_row_when_photo_is_absent(self):
         data = resume_with_two_jobs()

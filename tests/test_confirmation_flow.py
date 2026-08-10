@@ -18,6 +18,7 @@ from backend.resume_agent import (
     tool_node_router,
 )
 from backend.resume_changes import build_resume_changes, resume_digest
+from backend.layout_config import default_layout_config
 
 
 def resume_payload(name="测试用户", *, with_education=False):
@@ -168,6 +169,38 @@ class ConfirmationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result["pending_confirmation"])
         self.assertIn("已经符合", result["messages"][-1].content)
 
+    async def test_scoped_school_replacement_uses_local_preview_without_touching_honors(self):
+        before = resume_payload("测试用户", with_education=True)
+        before["honors"] = ["测试大学研究生奖学金"]
+        state = AgentState(
+            messages=[HumanMessage(content="请修改教育经历：将测试大学调整为中山大学。")],
+            resume_data=before, jd_data={}, user_id=7, task_id="task-1",
+        )
+
+        self.assertEqual(entry_router(state), "direct_edit")
+        candidate = build_local_edit_candidate(state)
+        self.assertEqual(candidate["education"][0]["school_name"], "中山大学")
+        self.assertEqual(candidate["honors"], ["测试大学研究生奖学金"])
+        with patch("backend.resume_agent.conversation_llm") as llm:
+            result = await direct_edit_node(state)
+        llm.ainvoke.assert_not_called()
+        self.assertIsNotNone(result["pending_confirmation"])
+
+    async def test_already_applied_school_replacement_finishes_without_model_or_confirmation(self):
+        before = resume_payload("测试用户", with_education=True)
+        before["education"][0]["school_name"] = "中山大学"
+        state = AgentState(
+            messages=[HumanMessage(content="请修改教育经历：将测试大学调整为中山大学。")],
+            resume_data=before, jd_data={}, user_id=7, task_id="task-1",
+        )
+
+        self.assertEqual(entry_router(state), "direct_edit")
+        with patch("backend.resume_agent.conversation_llm") as llm:
+            result = await direct_edit_node(state)
+        llm.ainvoke.assert_not_called()
+        self.assertIsNone(result["pending_confirmation"])
+        self.assertIn("已经符合", result["messages"][-1].content)
+
     def test_ambiguous_gpa_or_percentage_stays_on_structured_path(self):
         state = AgentState(
             messages=[HumanMessage(content="把本科的GPA修改为前10%")],
@@ -269,6 +302,23 @@ class ConfirmationFlowTests(unittest.IsolatedAsyncioTestCase):
         update.assert_not_called()
         self.assertFalse(result["just_saved"])
         self.assertIn("发生其他修改", result["messages"][-1].content)
+
+    async def test_content_only_confirmation_survives_unrelated_layout_autosave(self):
+        state = selective_confirmation_state("change-1")
+        base_layout = default_layout_config()
+        state.pending_confirmation["base_layout"] = base_layout
+        state.pending_confirmation["tool_args"]["layout_content"] = json.dumps(base_layout, ensure_ascii=False)
+        state.layout_data = default_layout_config()
+        state.layout_data["global"]["moduleMargin"] = 0.8
+
+        with (
+            patch("backend.tools.update_resume", return_value="简历已成功保存") as update,
+            patch("backend.resume_agent.record_assistant_revision"),
+        ):
+            result = await tool_node(state)
+
+        update.assert_called_once()
+        self.assertTrue(result["just_saved"])
 
 
 if __name__ == "__main__":
