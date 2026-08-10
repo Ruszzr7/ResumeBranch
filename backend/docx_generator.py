@@ -126,21 +126,6 @@ def _paragraph_spacing(paragraph, *, before=0, after=0, line=1.15) -> None:
     fmt.line_spacing = line
 
 
-def _section_title(document, text: str, font_size: float, module_spacing: float) -> None:
-    paragraph = document.add_paragraph()
-    _paragraph_spacing(paragraph, before=max(2, module_spacing * 2.5), after=3, line=1)
-    _set_font(paragraph.add_run(text), font_size * 1.1, bold=True)
-    p_pr = paragraph._p.get_or_add_pPr()
-    borders = OxmlElement("w:pBdr")
-    bottom = OxmlElement("w:bottom")
-    bottom.set(qn("w:val"), "single")
-    bottom.set(qn("w:sz"), "12")
-    bottom.set(qn("w:space"), "3")
-    bottom.set(qn("w:color"), "333333")
-    borders.append(bottom)
-    p_pr.append(borders)
-
-
 def _two_column_line(
     document,
     left: str,
@@ -210,167 +195,6 @@ def _bullet(
     _add_markdown_runs(paragraph, value.lstrip("• "), font_size, fonts=fonts)
 
 
-def _generate_docx_legacy(resume_data: dict, style: dict | None = None, photo: str | None = None, lang: str = "zh") -> bytes:
-    """Return a fully editable DOCX using the same content and layout controls as PDF export."""
-    data = normalize_resume_data(resume_data)
-    labels = LABELS.get(lang, LABELS["zh"])
-    colon = "：" if lang == "zh" else ": "
-    from .layout import apply_page_mode_defaults
-    style = apply_page_mode_defaults(style)
-    font_size = float(style.get("fontSize", 11))
-    module_spacing = float(style.get("moduleMargin", 1))
-    page_break_before = style.get("pageBreakBefore", "")
-
-    document = Document()
-
-    def maybe_page_break(key: str) -> None:
-        if page_break_before == key:
-            document.add_page_break()
-
-    section = document.sections[0]
-    section.start_type = WD_SECTION.NEW_PAGE
-    section.page_width = Mm(210)
-    section.page_height = Mm(297)
-    section.top_margin = Mm(float(style.get("marginTop", 9)))
-    section.bottom_margin = Mm(float(style.get("marginBottom", 9)))
-    section.left_margin = Mm(float(style.get("marginLeft", 9)))
-    section.right_margin = Mm(float(style.get("marginRight", 9)))
-    section.header_distance = Mm(5)
-    section.footer_distance = Mm(5)
-    _disable_document_grid(section)
-
-    normal = document.styles["Normal"]
-    normal.font.name = "Arial"
-    normal._element.rPr.rFonts.set(qn("w:eastAsia"), "Microsoft YaHei")
-    normal.font.size = Pt(font_size)
-    normal.paragraph_format.space_after = Pt(0)
-    normal.paragraph_format.line_spacing = float(style.get("lineHeight", 1.6))
-
-    basics = data.get("basics") or {}
-    header = document.add_table(rows=1, cols=3)
-    header.autofit = False
-    header.columns[0].width, header.columns[1].width, header.columns[2].width = Mm(25), Mm(135), Mm(25)
-    for cell in header.rows[0].cells:
-        _set_cell_borderless(cell)
-        _set_cell_margins(cell)
-        cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
-
-    center = header.cell(0, 1)
-    name_p = center.paragraphs[0]
-    name_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    _paragraph_spacing(name_p, after=2, line=1)
-    _set_font(name_p.add_run(basics.get("name") or labels["nameNotSet"]), font_size * 1.5, bold=True)
-    contact = " | ".join(str(basics.get(key)) for key in ("gender", "phone", "email") if basics.get(key))
-    if contact:
-        p = center.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        _paragraph_spacing(p, after=1, line=1)
-        _set_font(p.add_run(contact), font_size * 0.82, color="6B7280")
-    if basics.get("target_position"):
-        p = center.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        _paragraph_spacing(p, line=1)
-        _set_font(p.add_run(f'{labels["targetPosition"]}：{basics["target_position"]}'), font_size * 0.85, bold=True)
-
-    display_photo = photo or basics.get("photo")
-    if display_photo:
-        try:
-            encoded = display_photo.split(",", 1)[-1]
-            image_stream = BytesIO(base64.b64decode(encoded))
-            p = header.cell(0, 2).paragraphs[0]
-            p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-            p.add_run().add_picture(image_stream, width=Mm(21), height=Mm(26))
-        except (ValueError, TypeError):
-            pass
-
-    education = data.get("education") or []
-    if education:
-        maybe_page_break("education:0")
-        _section_title(document, labels["education"], font_size, module_spacing)
-        for item_index, item in enumerate(education):
-            if item_index > 0:
-                maybe_page_break(f"education:{item_index}")
-            title = " · ".join(value for value in (item.get("school_name", ""), item.get("degree", ""), item.get("major", "")) if value)
-            _two_column_line(document, title or labels["schoolNotSet"], _date_range(item), font_size)
-            metrics = []
-            if item.get("gpa"):
-                value = str(item["gpa"])
-                if item.get("gpa_scale"):
-                    value += f'/{item["gpa_scale"]}'
-                metrics.append(f'{labels["gpa"]}：{value}')
-            if item.get("ranking"):
-                metrics.append(f'{labels["ranking"]}：{item["ranking"]}')
-            if item.get("average_score"):
-                metrics.append(f'{labels["averageScore"]}：{item["average_score"]}')
-            tags = item.get("school_tags") or []
-            if tags:
-                metrics.append(" · ".join(str(tag) for tag in tags))
-            if metrics:
-                p = document.add_paragraph()
-                _paragraph_spacing(p, after=1, line=1.1)
-                _set_font(p.add_run(" | ".join(metrics)), font_size * 0.9, color="4B5563")
-            for thesis in item.get("theses") or []:
-                if not isinstance(thesis, dict):
-                    continue
-                if thesis.get("title"):
-                    p = document.add_paragraph()
-                    _paragraph_spacing(p, after=1, line=1.1)
-                    _set_font(p.add_run(f'{labels["thesis"]}：{thesis["title"]}'), font_size * 0.92, bold=True)
-                for detail in thesis.get("details") or []:
-                    _bullet(document, detail, font_size * 0.92)
-
-    work = data.get("work_experience") or []
-    if work:
-        maybe_page_break("work_experience:0")
-        _section_title(document, labels["workExperience"], font_size, module_spacing)
-        for item_index, item in enumerate(work):
-            if item_index > 0:
-                maybe_page_break(f"work_experience:{item_index}")
-            left = " · ".join(value for value in (item.get("company_name", ""), item.get("job_title", ""), item.get("job_type", "")) if value)
-            _two_column_line(document, left or labels["companyNotSet"], _date_range(item), font_size)
-            for detail in item.get("details") or []:
-                _bullet(document, detail, font_size)
-
-    projects = data.get("project_experience") or []
-    if projects:
-        maybe_page_break("project_experience:0")
-        _section_title(document, labels["projectExperience"], font_size, module_spacing)
-        for item_index, item in enumerate(projects):
-            if item_index > 0:
-                maybe_page_break(f"project_experience:{item_index}")
-            name = item.get("project_name") or item.get("name") or labels["projectNotSet"]
-            role = item.get("role", "")
-            left = f"{name} · {role}" if role else name
-            _two_column_line(document, left, _date_range(item), font_size)
-            for detail in item.get("details") or []:
-                _bullet(document, detail, font_size)
-
-    others = data.get("others") or {}
-    if any(others.get(key) for key in ("skills", "certificates", "languages")):
-        maybe_page_break("others")
-        _section_title(document, labels["others"], font_size, module_spacing)
-        for key, label in (("skills", labels["skills"]), ("certificates", labels["certificates"]), ("languages", labels["language"])):
-            values = others.get(key) or []
-            if values:
-                p = document.add_paragraph()
-                _paragraph_spacing(p, after=1.5, line=1.12)
-                _set_font(p.add_run(f"{label}："), font_size, bold=True)
-                _add_markdown_runs(p, " | ".join(str(value) for value in values), font_size)
-
-    evaluations = data.get("self_evaluation") or []
-    if evaluations:
-        maybe_page_break("self_evaluation")
-        _section_title(document, labels["selfEvaluation"], font_size, module_spacing)
-        for value in evaluations:
-            p = document.add_paragraph()
-            _paragraph_spacing(p, after=1.5, line=1.15)
-            _add_markdown_runs(p, value, font_size)
-
-    output = BytesIO()
-    document.save(output)
-    return output.getvalue()
-
-
 def generate_docx(
     resume_data: dict,
     style: dict | None = None,
@@ -407,6 +231,14 @@ def generate_docx(
     section_title_bold = tokens["sectionTitleFontWeight"] >= 600
     name_bold = tokens["nameFontWeight"] >= 600
     label_bold = tokens["labelFontWeight"] >= 600
+
+    def entry_heading_runs(primary: str, secondary: str = "") -> list[tuple[str, float, bool]]:
+        """Map one entry heading to the shared title/meta typography roles."""
+        return [
+            (primary, entry_title_font_size, entry_title_bold),
+            (f" · {secondary}" if primary and secondary else secondary, meta_font_size, meta_bold),
+        ]
+
     body_line_height = body_font_size * tokens["lineHeight"]
     module_spacing = tokens["moduleSpacingPt"]
     page_break_before = style.get("pageBreakBefore", "")
@@ -563,14 +395,10 @@ def generate_docx(
                         _set_font(p.add_run(value), cell_size, bold=meta_bold, fonts=font_spec)
                 table.cell(0, 3).paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
             else:
-                left = " · ".join(v for v in (school, tag_text) if v)
                 _two_column_line(
-                    document, left, date, entry_title_font_size,
+                    document, school, date, entry_title_font_size,
                     right_font_size=meta_font_size, right_color="111111", fonts=font_spec,
-                    left_runs=[
-                        (school, entry_title_font_size, entry_title_bold),
-                        (f" · {tag_text}" if tag_text else "", meta_font_size, meta_bold),
-                    ],
+                    left_runs=entry_heading_runs(school, tag_text),
                 )
                 if degree:
                     p = document.add_paragraph()
@@ -612,14 +440,10 @@ def generate_docx(
             if cfg["showJobType"] and item.get("job_type"):
                 position_parts.append(f'({item["job_type"]})')
             position = " ".join(v for v in position_parts if v)
-            left = " · ".join(v for v in (company, position) if v)
             _two_column_line(
-                document, left, _date_range(item), entry_title_font_size,
+                document, company, _date_range(item), entry_title_font_size,
                 right_font_size=meta_font_size, right_color="111111", fonts=font_spec,
-                left_runs=[
-                    (company, entry_title_font_size, entry_title_bold),
-                    (f" · {position}" if company and position else position, meta_font_size, meta_bold),
-                ],
+                left_runs=entry_heading_runs(company, position),
             )
             add_content_blocks(item)
 
@@ -665,14 +489,10 @@ def generate_docx(
             project_name = item.get("project_name") or item.get("name") or labels["projectNotSet"]
             role = item.get("role") if cfg["showRole"] else ""
             date = _date_range(item) if cfg["showDate"] else ""
-            left = " · ".join(v for v in (project_name, role) if v) if cfg["preset"] == "compact" else project_name
             _two_column_line(
-                document, left, date, entry_title_font_size,
+                document, project_name, date, entry_title_font_size,
                 right_font_size=meta_font_size, right_color="111111", fonts=font_spec,
-                left_runs=[
-                    (project_name, entry_title_font_size, entry_title_bold),
-                    (f" · {role}" if cfg["preset"] == "compact" and role else "", meta_font_size, meta_bold),
-                ],
+                left_runs=entry_heading_runs(project_name, role if cfg["preset"] == "compact" else ""),
             )
             if cfg["preset"] != "compact" and role:
                 p = document.add_paragraph()

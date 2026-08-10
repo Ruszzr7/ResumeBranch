@@ -108,8 +108,18 @@ test('one-line education dates stay in the normal four-column flow', () => {
 
 test('narrow resume toolbar uses the dark workspace palette', () => {
   assert.ok(previewSource.includes('background: rgba(30, 31, 36, 0.98)'))
-  assert.ok(previewSource.includes('color: #eceef4'))
-  assert.ok(previewSource.includes('color: #ffffff'))
+  assert.ok(previewSource.includes('color: #e4e6ed'))
+})
+
+test('retired toolbar implementations do not shadow the compact toolbar', () => {
+  for (const selector of [
+    '.toolbar-controls',
+    '.zoom-controls',
+    '.style-panel-mobile',
+    '.mobile-toolbar-row'
+  ]) {
+    assert.equal(previewSource.includes(selector), false)
+  }
 })
 
 test('all viewport widths render the same compact toolbar and narrow screens keep it above the preview', () => {
