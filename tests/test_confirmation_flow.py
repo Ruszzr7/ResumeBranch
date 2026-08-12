@@ -169,6 +169,87 @@ class ConfirmationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result["pending_confirmation"])
         self.assertIn("已经符合", result["messages"][-1].content)
 
+    async def test_inline_bold_uses_deterministic_preview_without_llm(self):
+        before = resume_payload("测试用户")
+        before["work_experience"] = [{
+            "company_name": "示例科技",
+            "job_title": "后端实习生",
+            "job_type": "实习",
+            "date_range": ["2025.01", "2025.06"],
+            "details": [],
+            "content_blocks": [{
+                "type": "bullet_list", "label": "", "label_bold": True,
+                "text": "", "items": ["将接口延迟降低35%"],
+            }],
+        }]
+        state = AgentState(
+            messages=[HumanMessage(content="把实习经历中的“接口延迟降低35%”加粗")],
+            resume_data=before, jd_data={}, user_id=7, task_id="task-1",
+        )
+
+        self.assertEqual(entry_router(state), "direct_edit")
+        with patch("backend.resume_agent.conversation_llm") as llm:
+            result = await direct_edit_node(state)
+        llm.ainvoke.assert_not_called()
+        self.assertIsNotNone(result["pending_confirmation"])
+        candidate = result["pending_confirmation"]["resume_candidate"]
+        self.assertEqual(
+            candidate["work_experience"][0]["content_blocks"][0]["items"][0],
+            "将**接口延迟降低35%**",
+        )
+        self.assertEqual(result["resume_data"]["work_experience"][0]["content_blocks"][0]["items"][0], "将接口延迟降低35%")
+        self.assertIn("接受前不会保存", result["messages"][-1].content)
+
+    async def test_inline_bold_ambiguity_fails_closed_without_llm_or_confirmation(self):
+        before = resume_payload("测试用户")
+        before["honors"] = ["持续学习奖"]
+        before["self_evaluation"] = ["保持持续学习"]
+        state = AgentState(
+            messages=[HumanMessage(content="把“持续学习”加粗")],
+            resume_data=before, jd_data={}, user_id=7, task_id="task-1",
+        )
+
+        with patch("backend.resume_agent.conversation_llm") as llm:
+            result = await direct_edit_node(state)
+        llm.ainvoke.assert_not_called()
+        self.assertIsNone(result["pending_confirmation"])
+        self.assertIn("找到 2 处", result["messages"][-1].content)
+        self.assertEqual(result["resume_data"]["honors"], ["持续学习奖"])
+        self.assertEqual(result["resume_data"]["self_evaluation"], ["保持持续学习"])
+
+    async def test_inline_bold_requires_an_exact_quoted_target(self):
+        state = AgentState(
+            messages=[HumanMessage(content="把实习经历中的性能提升加粗")],
+            resume_data=resume_payload("测试用户"), jd_data={}, user_id=7, task_id="task-1",
+        )
+        result = await direct_edit_node(state)
+        self.assertIsNone(result["pending_confirmation"])
+        self.assertIn("请用引号", result["messages"][-1].content)
+
+    async def test_inline_unbold_removes_only_the_selected_run(self):
+        before = resume_payload("测试用户")
+        before["self_evaluation"] = ["保持**持续学习**和复盘"]
+        state = AgentState(
+            messages=[HumanMessage(content="把自我评价中的“持续学习”改为普通字重")],
+            resume_data=before, jd_data={}, user_id=7, task_id="task-1",
+        )
+        result = await direct_edit_node(state)
+        candidate = result["pending_confirmation"]["resume_candidate"]
+        self.assertEqual(candidate["self_evaluation"], ["保持持续学习和复盘"])
+        self.assertEqual(result["resume_data"]["self_evaluation"], ["保持**持续学习**和复盘"])
+
+    async def test_font_size_chat_change_redirects_to_modal_without_candidate(self):
+        state = AgentState(
+            messages=[HumanMessage(content="把正文字号调整为10.5磅")],
+            resume_data=resume_payload("测试用户"), jd_data={}, user_id=7, task_id="task-1",
+        )
+        self.assertEqual(entry_router(state), "direct_edit")
+        with patch("backend.resume_agent.conversation_llm") as llm:
+            result = await direct_edit_node(state)
+        llm.ainvoke.assert_not_called()
+        self.assertIsNone(result["pending_confirmation"])
+        self.assertIn("设置各部分字号", result["messages"][-1].content)
+
     async def test_scoped_school_replacement_uses_local_preview_without_touching_honors(self):
         before = resume_payload("测试用户", with_education=True)
         before["honors"] = ["测试大学研究生奖学金"]

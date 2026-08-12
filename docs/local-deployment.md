@@ -5,8 +5,12 @@
 - 前端：Vue/Vite，`http://127.0.0.1:5173`
 - 后端：FastAPI/Uvicorn，`http://127.0.0.1:8000`
 - 数据库：本机 MySQL 8.4，数据库 `resume_assistant`
-- PDF：WeasyPrint 69 + 隔离的 MSYS2/Pango
+- PDF：优先调用本机 Chrome/Edge 的无界面打印；WeasyPrint 69 + 隔离的 MSYS2/Pango 作为兼容回退
 - LLM：默认禁用，配置密钥后启用
+
+PDF 导出会依次查找 Chrome、Edge 或 Chromium。通常无需配置；如需指定浏览器，可将
+`RESUME_PDF_BROWSER` 设为浏览器可执行文件的绝对路径。浏览器不可用或打印失败时，
+后端会自动使用 WeasyPrint，不改变 `/export_pdf` 接口。
 
 ## 应用模式
 
@@ -45,8 +49,8 @@ APP_MODE=multi_user
 |------|------|
 | `start_db_local.cmd` | 双击启动本机 MySQL 服务 |
 | `start_backend_local.cmd` | 后端未运行时启动，已运行时自动重启 |
-| `start_frontend_local.cmd` | 双击并前台启动前端 |
-| `start_local.cmd` | 双击一键后台启动数据库 + 后端 + 前端 |
+| `start_frontend_local.cmd` | 双击并在后台启动前端 |
+| `start_local.cmd` | 双击一键后台启动数据库 + 后端 + 前端，全程无需按键 |
 | `stop_local.cmd` | 双击停止前端、后端和 MySQL，并清理端口残留进程 |
 
 Windows 下直接使用 `.cmd` 文件即可，启动与停止过程不依赖 PowerShell 脚本。
@@ -66,6 +70,10 @@ Windows 下直接使用 `.cmd` 文件即可，启动与停止过程不依赖 Pow
 .\scripts\start_local.cmd
 ```
 
+一键脚本默认采用非交互模式：数据库、后端、前端和健康检查会连续执行，后台
+FastAPI/Vite 进程不会读取启动窗口的键盘输入。如需让最终结果停留在窗口中，可运行
+`.\scripts\start_local.cmd --pause`。
+
 启动成功后会输出：
 
 ```
@@ -81,11 +89,11 @@ Logs:     C:\...\resume_assistant\.local-run
 .\scripts\stop_local.cmd
 ```
 
-五个脚本在成功或失败后都会保留结果提示，按任意键后才关闭窗口。启动或停止
-MySQL Windows 服务时会自动请求管理员授权；前端和后端通过实际监听端口定位并停止，
-不依赖可能已经失效的历史 PID。
+`start_local.cmd` 默认在输出最终结果后自动退出，其他单项脚本仍会保留结果提示，
+按任意键后关闭窗口。启动或停止 MySQL Windows 服务时会自动请求管理员授权；
+前端和后端通过实际监听端口定位并停止，不依赖可能已经失效的历史 PID。
 
-### 分别启动（前台观察日志）
+### 分别启动
 
 在三个“命令提示符”窗口分别执行：
 
@@ -94,6 +102,8 @@ MySQL Windows 服务时会自动请求管理员授权；前端和后端通过实
 .\scripts\start_backend_local.cmd
 .\scripts\start_frontend_local.cmd
 ```
+
+前后端运行日志写入 `.local-run/`，无需停留在服务自身的交互提示中。
 
 应用模式通过 `.env` 中的 `APP_MODE=local` 或 `APP_MODE=multi_user` 设置，修改后重新启动。
 

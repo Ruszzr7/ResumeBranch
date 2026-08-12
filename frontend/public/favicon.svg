@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 64 64" fill="none">
+  <style>
+    .paper { stroke: #111827; }
+    .accent { stroke: #2563EB; }
+    @media (prefers-color-scheme: dark) {
+      .paper { stroke: #EEF1F5; }
+      .accent { stroke: #4D9CFF; }
+    }
+  </style>
+  <g class="paper" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M29.8 42C28.8 42.35 27.75 42.5 26.5 42.5H17C14.8 42.5 13 40.7 13 38.5V8C13 5.8 14.8 4 17 4H42L51 13V38.5C51 40.7 49.2 42.5 47 42.5H37.5C36.25 42.5 35.2 42.35 34.2 42"/>
+    <path d="M42 4V13H51"/>
+    <path d="M22 20H40"/>
+    <path d="M22 27H38"/>
+    <path d="M36.6 51.1C38.45 52.8 40 54 41.7 54.7"/>
+  </g>
+  <g class="accent" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M27.4 51.1C25.55 52.8 24 54 22.3 54.7"/>
+  </g>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="3.75">
+    <circle class="paper" cx="46" cy="57" r="3.75"/>
+    <circle class="accent" cx="32" cy="48" r="4.25"/>
+    <circle class="paper" cx="18" cy="57" r="3.75"/>
+  </g>
+</svg>

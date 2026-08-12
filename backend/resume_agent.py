@@ -29,6 +29,7 @@ from typing import List, Literal
 from pydantic import BaseModel, Field
 
 from .resume_data import normalize_resume_data
+from .inline_formatting import InlineFormatError, format_resume_text, plain_inline_text
 from .resume_changes import apply_resume_changes, build_resume_changes, resume_digest
 from .layout_config import (
     apply_density,
@@ -874,6 +875,20 @@ _RESUME_DATA_FIELD_RE = re.compile(
 _STYLE_ONLY_RE = re.compile(
     r"(?:字体|字号|颜色|填充|背景|边距|行距|间距|模板|排版|页眉|页脚|标签样式)"
 )
+_INLINE_FORMAT_ACTION_RE = re.compile(
+    r"(?:加粗|设为粗体|设置为粗体|取消加粗|取消粗体|去掉加粗|移除加粗|不再加粗|不加粗|"
+    r"(?:改为|设为|设置为)(?:非粗体|普通字重)|恢复普通(?:字重)?)"
+)
+_INLINE_FORMAT_UNBOLD_RE = re.compile(
+    r"(?:取消加粗|取消粗体|去掉加粗|移除加粗|不再加粗|不加粗|"
+    r"(?:改为|设为|设置为)(?:非粗体|普通字重)|恢复普通(?:字重)?)"
+)
+_INLINE_FORMAT_QUOTE_RE = re.compile(r"[“\"‘'](.+?)[”\"’']")
+_FONT_SIZE_CHANGE_RE = re.compile(
+    r"(?:(?:修改|更改|调整|设置|改成|改为|调到|设为).{0,10}(?:字号|字体大小|\d+(?:\.5)?\s*(?:磅|pt))|"
+    r"(?:字号|字体大小).{0,10}(?:修改|更改|调整|设置|改成|改为|调到|设为|\d+(?:\.5)?\s*(?:磅|pt)))",
+    re.I,
+)
 
 
 def is_resume_coaching_request(message: str) -> bool:
@@ -933,6 +948,35 @@ def is_explicit_resume_change_request(message: str) -> bool:
     # path. Mixed data + presentation requests may still produce a data preview.
     data_without_style = _STYLE_ONLY_RE.sub("", text)
     return bool(_RESUME_DATA_FIELD_RE.search(data_without_style))
+
+
+def is_inline_format_request(message: str) -> bool:
+    text = str(message or "").strip()
+    return bool(text and "[CONFIRM_REPLY:" not in text and _INLINE_FORMAT_ACTION_RE.search(text))
+
+
+def is_font_size_chat_change_request(message: str) -> bool:
+    """Identify chat attempts that must be redirected to the bounded modal."""
+    text = str(message or "").strip()
+    return bool(text and "[CONFIRM_REPLY:" not in text and _FONT_SIZE_CHANGE_RE.search(text))
+
+
+def build_inline_format_candidate(state: AgentState) -> tuple[dict, str, bool]:
+    """Build one deterministic bold/unbold candidate without rewriting text."""
+    request_text = latest_human_text(state)
+    quoted = _INLINE_FORMAT_QUOTE_RE.findall(request_text)
+    if not quoted:
+        raise InlineFormatError("请用引号标出需要加粗或取消加粗的原文，例如：把实习经历中的“性能提升 35%”加粗。")
+    quote = plain_inline_text(quoted[-1]).strip()
+    bold = not bool(_INLINE_FORMAT_UNBOLD_RE.search(request_text))
+    current = normalize_resume_data(state.resume_data or {})
+    candidate, _reference = format_resume_text(
+        current,
+        quote,
+        bold=bold,
+        request_text=request_text,
+    )
+    return normalize_and_validate_resume(candidate), quote, bold
 
 
 _LAYOUT_ACTION_RE = re.compile(
@@ -1351,7 +1395,41 @@ async def direct_edit_node(state: AgentState) -> dict:
     """Build a preview for unambiguous field assignments without calling an LLM."""
     current = normalize_resume_data(state.resume_data or {})
     current_layout = normalize_layout_config(state.layout_data)
-    resume_candidate = build_local_edit_candidate(state)
+    if is_font_size_chat_change_request(latest_human_text(state)):
+        return {
+            "messages": list(state.messages) + [AIMessage(content=(
+                "字号不会通过对话命令直接修改。请打开简历预览上方的“排版”，进入“设置各部分字号”，"
+                "按半磅选择姓名、模块标题、条目标题、元信息、正文和标签字号；弹窗会先实时预览，点击“应用”后才保存。"
+            ))],
+            "resume_data": current,
+            "jd_data": state.jd_data or {},
+            "layout_data": current_layout,
+            "pending_confirmation": None,
+            "proposal_error": None,
+            "just_saved": False,
+            "user_id": state.user_id,
+            "task_id": state.task_id,
+        }
+    inline_request = is_inline_format_request(latest_human_text(state))
+    inline_quote = ""
+    inline_bold = True
+    if inline_request:
+        try:
+            resume_candidate, inline_quote, inline_bold = build_inline_format_candidate(state)
+        except InlineFormatError as exc:
+            return {
+                "messages": list(state.messages) + [AIMessage(content=str(exc))],
+                "resume_data": current,
+                "jd_data": state.jd_data or {},
+                "layout_data": current_layout,
+                "pending_confirmation": None,
+                "proposal_error": None,
+                "just_saved": False,
+                "user_id": state.user_id,
+                "task_id": state.task_id,
+            }
+    else:
+        resume_candidate = build_local_edit_candidate(state)
     local_layout_candidate = build_local_layout_candidate(state)
     candidate = resume_candidate if resume_candidate is not None else current
     layout_candidate = local_layout_candidate if local_layout_candidate is not None else current_layout
@@ -1363,7 +1441,14 @@ async def direct_edit_node(state: AgentState) -> dict:
         pending = None
     else:
         pending = make_pending_confirmation(state, candidate, layout_candidate)
-        assistant_message = AIMessage(content=_preview_summary(changes))
+        if inline_request:
+            action_label = "加粗" if inline_bold else "取消加粗"
+            assistant_message = AIMessage(content=(
+                f"已生成格式预览：将“{inline_quote}”{action_label}。\n\n"
+                "右侧已显示临时预览；接受前不会保存。"
+            ))
+        else:
+            assistant_message = AIMessage(content=_preview_summary(changes))
     print(f"[direct_edit] 本地生成完成, changes={len(changes)}")
     return {
         "messages": list(state.messages) + [assistant_message],
@@ -1393,6 +1478,7 @@ async def proposal_generator_node(state: AgentState) -> dict:
 4. 如果用户同时提出多项修改，必须一次性体现在同一份完整简历中。
 5. 排版只能修改给定 layout_config 已存在的键和值；禁止输出 CSS、HTML、坐标或新增字段。
 6. 可选值：density=compact/standard/comfortable；titleStyle=underline/plain；basics.preset=centered/left-aligned；contactLayout=inline/stacked；education.preset=classic/compact/three-column；schoolTagStyle=filled/outline/text/hidden；metricsPlacement=below/with-degree/info-column；work/project preset=classic/compact；detailsStyle=bullets/paragraph；datePosition=right/inline；others.preset=inline/tags/stacked；self_evaluation.preset=paragraphs/bullets/compact。
+7. 字号只能由用户在字号设置弹窗中选择；必须原样保留 global.fontSize 和 typography.fontSizes，不得根据对话修改字号。
 
 当前简历：
 {json.dumps(current, ensure_ascii=False, indent=2)}
@@ -1414,6 +1500,11 @@ async def proposal_generator_node(state: AgentState) -> dict:
                 HumanMessage(content=prompt),
             ])
         candidate, layout_candidate = parse_edit_candidate(response.content, current, current_layout)
+        # Font sizes are modal-only. Even a drifting proposal model cannot
+        # smuggle size changes into an unrelated content/layout confirmation.
+        layout_candidate["global"]["fontSize"] = current_layout["global"]["fontSize"]
+        layout_candidate["typography"]["fontSizes"] = deepcopy(current_layout["typography"]["fontSizes"])
+        layout_candidate = normalize_layout_config(layout_candidate)
         changes = build_resume_changes(current, candidate) + build_layout_changes(current_layout, layout_candidate)
         if not changes:
             pending = None
@@ -2164,6 +2255,10 @@ def entry_router(state: AgentState) -> str:
         return "tool_node"
 
     user_request = latest_human_text(state)
+    if is_font_size_chat_change_request(user_request):
+        return "direct_edit"
+    if is_inline_format_request(user_request):
+        return "direct_edit"
     resume_change = is_explicit_resume_change_request(user_request)
     layout_change = is_explicit_layout_change_request(user_request)
     if resume_change or layout_change:

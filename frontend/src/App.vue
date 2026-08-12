@@ -8,8 +8,9 @@ import MobileTabBar from './components/MobileTabBar.vue'
 import BrandLogo from './components/BrandLogo.vue'
 import { labels } from './utils/labels.js'
 import { buildAuthorizationHeaders, loadAppConfig } from './config/appMode.js'
-import { normalizeLayoutConfig } from './utils/layoutConfig.js'
+import { normalizeLayoutConfig, resolveContentBlockFlow, resolveLayoutTokens } from './utils/layoutConfig.js'
 import { hasMeaningfulResumeContent } from './utils/resumePresence.js'
+import { formatInlineHtml, plainInlineText } from './utils/inlineFormatting.js'
 
 // 响应式布局状态
 const isMobileView = ref(false)
@@ -398,6 +399,22 @@ const previewLayoutConfig = ref(null)
 const activeLayoutConfig = computed(() => normalizeLayoutConfig(
   previewLayoutConfig.value || currentTask.value?.layout_config || {}
 ))
+const resumeEditorMetrics = computed(() => {
+  const tokens = resolveLayoutTokens(activeLayoutConfig.value)
+  return {
+    fontSizePt: tokens.bodyFontSizePt,
+    labelFontSizePt: tokens.labelFontSizePt,
+    labelFontWeight: tokens.labelFontWeight,
+    lineHeight: tokens.lineHeight,
+    fontFamilyCss: tokens.fontFamilyCss,
+    contentWidthPx: Math.max(1, (210 - tokens.marginLeftMm - tokens.marginRightMm) * (96 / 25.4))
+  }
+})
+const projectIntroFlow = project => resolveContentBlockFlow({
+  type: 'paragraph',
+  label: project?._introLabel || '项目简介',
+  label_bold: project?._introLabelBold !== false
+})
 const showTaskCreateDialog = ref(false)
 const newTaskTitle = ref('')
 const taskCreateMode = ref('copy')
@@ -1982,6 +1999,8 @@ function initializeProjectContentEditor(proj) {
   const extraBlocks = blocks.filter(block => block !== intro && block !== duties)
   proj._introLabel = intro?.label || '项目简介'
   proj._dutiesLabel = duties?.label || '项目职责'
+  proj._introLabelBold = intro?.label_bold !== false
+  proj._dutiesLabelBold = duties?.label_bold !== false
   proj._introText = intro?.text || ''
   proj._dutiesText = arrayToMultiline(duties?.items || [])
   proj._extraDetailsText = arrayToMultiline(extraBlocks.flatMap(block => block?.items?.length ? block.items : (block?.text ? [block.text] : [])))
@@ -2013,18 +2032,21 @@ function initializeProjectContentEditor(proj) {
   }
 }
 
-function contentBlocksToEditableLines(item) {
+function contentBlocksToEditableLines(item, { labelsAsContent = false } = {}) {
   const blocks = Array.isArray(item?.content_blocks) ? item.content_blocks : []
   if (!blocks.length) return item?.details || []
   const lines = []
   blocks.forEach(block => {
     const label = String(block?.label || '').trim()
+    const editableLabel = labelsAsContent && label
+      ? (block?.label_bold === false ? plainInlineText(label) : `**${plainInlineText(label)}**`)
+      : label
     if (block?.type === 'paragraph') {
       const text = String(block?.text || '').trim()
-      if (label || text) lines.push(label ? `${label}：${text}` : text)
+      if (label || text) lines.push(label ? `${editableLabel}：${text}` : text)
       return
     }
-    if (label) lines.push(`${label}：`)
+    if (label) lines.push(`${editableLabel}：`)
     ;(block?.items || []).forEach((detail, index) => {
       const text = String(detail || '').trim()
       if (!text) return
@@ -2032,6 +2054,27 @@ function contentBlocksToEditableLines(item) {
     })
   })
   return lines
+}
+
+function initializeWorkContentEditor(work) {
+  work._detailsText = arrayToMultiline(contentBlocksToEditableLines(work, { labelsAsContent: true }))
+}
+
+function editableWorkLinesToContentBlocks(work) {
+  const lines = multilineToArray(work?._detailsText)
+  const blocks = []
+  let activeBlock = null
+  for (const raw of lines) {
+    const line = String(raw || '').trim()
+    const numbered = /^\s*[（(]?\d+[）).、]/.test(plainInlineText(line))
+    const type = numbered ? 'numbered_list' : 'bullet_list'
+    if (!activeBlock || activeBlock.type !== type) {
+      activeBlock = { type, label: '', label_bold: true, text: '', items: [] }
+      blocks.push(activeBlock)
+    }
+    activeBlock.items.push(numbered ? line.replace(/^(\*\*)?\s*[（(]?\d+[）).、]\s*/, '$1') : line)
+  }
+  return blocks.filter(block => block.items.length)
 }
 
 // 打开简历编辑弹窗
@@ -2084,7 +2127,7 @@ function openResumeEditDialog() {
   // 为每项工作经历初始化日期
   resumeFormData.value.work_experience.forEach(work => {
     initDateRange(work)
-    work._detailsText = arrayToMultiline(contentBlocksToEditableLines(work))
+    initializeWorkContentEditor(work)
   })
 
   // 为每项项目经历初始化日期
@@ -2317,6 +2360,8 @@ function addProject() {
     details: [],
     _introLabel: '项目简介',
     _dutiesLabel: '项目职责',
+    _introLabelBold: true,
+    _dutiesLabelBold: true,
     _introText: '',
     _dutiesText: '',
     _extraDetailsText: ''
@@ -2420,10 +2465,9 @@ async function saveResume() {
     })
     dataToSave.work_experience?.forEach(work => {
       convertDateRangeToSave(work)
-      // 将多行文本转换回数组
       if (work._detailsText !== undefined) {
-        work.details = multilineToArray(work._detailsText)
-        work.content_blocks = []
+        work.content_blocks = editableWorkLinesToContentBlocks(work)
+        work.details = []
         delete work._detailsText
       }
     })
@@ -2433,12 +2477,14 @@ async function saveResume() {
       const duties = multilineToArray(proj._dutiesText)
       const extras = multilineToArray(proj._extraDetailsText)
       proj.content_blocks = []
-      if (introText) proj.content_blocks.push({ type: 'paragraph', label: proj._introLabel || '项目简介', label_bold: true, text: introText, items: [] })
-      if (duties.length) proj.content_blocks.push({ type: 'numbered_list', label: proj._dutiesLabel || '项目职责', label_bold: true, text: '', items: duties })
+      if (introText) proj.content_blocks.push({ type: 'paragraph', label: proj._introLabel || '项目简介', label_bold: proj._introLabelBold !== false, text: introText, items: [] })
+      if (duties.length) proj.content_blocks.push({ type: 'numbered_list', label: proj._dutiesLabel || '项目职责', label_bold: proj._dutiesLabelBold !== false, text: '', items: duties })
       if (extras.length) proj.content_blocks.push({ type: 'bullet_list', label: '', label_bold: true, text: '', items: extras })
       proj.details = []
       delete proj._introLabel
       delete proj._dutiesLabel
+      delete proj._introLabelBold
+      delete proj._dutiesLabelBold
       delete proj._introText
       delete proj._dutiesText
       delete proj._extraDetailsText
@@ -4175,6 +4221,12 @@ watch(
           </div>
 
           <div class="resume-form-section">
+            <div class="resume-format-hint" role="note">
+              <span>选中文字后按</span>
+              <kbd>Ctrl+B</kbd>
+              <span>加粗或取消加粗；内容框右下方显示按当前正文设置预计在简历中所占行数</span>
+            </div>
+
             <!-- 基本信息 -->
             <h4 class="section-title">基本信息</h4>
             
@@ -4206,7 +4258,7 @@ watch(
             <div class="form-grid">
               <div class="field-group">
                 <label>姓名</label>
-                <input v-model="resumeFormData.basics.name" placeholder="请输入" class="element-input" />
+                <RichTextEditor v-model="resumeFormData.basics.name" placeholder="请输入" compact />
               </div>
               <div class="field-group">
                 <label>性别</label>
@@ -4222,21 +4274,21 @@ watch(
               </div>
               <div class="field-group">
                 <label>手机</label>
-                <input v-model="resumeFormData.basics.phone" placeholder="请输入" class="element-input" />
+                <RichTextEditor v-model="resumeFormData.basics.phone" placeholder="请输入" compact />
               </div>
               <div class="field-group">
                 <label>邮箱</label>
-                <input v-model="resumeFormData.basics.email" placeholder="请输入" class="element-input" />
+                <RichTextEditor v-model="resumeFormData.basics.email" placeholder="请输入" compact />
               </div>
               <div class="field-group full-width">
                 <label>期望岗位</label>
-                <input v-model="resumeFormData.basics.target_position" placeholder="请输入" class="element-input" />
+                <RichTextEditor v-model="resumeFormData.basics.target_position" placeholder="请输入" compact />
               </div>
               <div class="field-group full-width">
                 <label>其他基本信息</label>
                 <div v-for="(field, fieldIndex) in resumeFormData.basics.additional_fields" :key="`basic-extra-${fieldIndex}`" class="inline-edit-row">
-                  <input v-model="field.label" placeholder="字段名，如籍贯" class="element-input" />
-                  <input v-model="field.value" placeholder="字段内容" class="element-input" />
+                  <RichTextEditor v-model="field.label" placeholder="字段名，如籍贯" compact />
+                  <RichTextEditor v-model="field.value" placeholder="字段内容" compact />
                   <button type="button" class="remove-btn" @click="removeBasicAdditionalField(fieldIndex)">删除</button>
                 </div>
                 <button type="button" class="add-btn" @click="addBasicAdditionalField">+ 添加基本信息</button>
@@ -4253,11 +4305,11 @@ watch(
               <div class="form-grid">
                 <div class="field-group">
                   <label>学校</label>
-                  <input v-model="edu.school_name" placeholder="请输入" />
+                  <RichTextEditor v-model="edu.school_name" placeholder="请输入" compact />
                 </div>
                 <div class="field-group">
                   <label>专业</label>
-                  <input v-model="edu.major" placeholder="请输入" class="element-input" />
+                  <RichTextEditor v-model="edu.major" placeholder="请输入" compact />
                 </div>
                 <div class="field-group">
                   <label>学历</label>
@@ -4273,19 +4325,19 @@ watch(
                 </div>
                 <div class="field-group">
                   <label>GPA / 绩点</label>
-                  <input v-model="edu.gpa" placeholder="例如 3.72" class="element-input" />
+                  <RichTextEditor v-model="edu.gpa" placeholder="例如 3.72" compact />
                 </div>
                 <div class="field-group">
                   <label>绩点满分</label>
-                  <input v-model="edu.gpa_scale" placeholder="例如 4.0" class="element-input" />
+                  <RichTextEditor v-model="edu.gpa_scale" placeholder="例如 4.0" compact />
                 </div>
                 <div class="field-group">
                   <label>专业 / 年级排名</label>
-                  <input v-model="edu.ranking" placeholder="例如 前 10%" class="element-input" />
+                  <RichTextEditor v-model="edu.ranking" placeholder="例如 前 10%" compact />
                 </div>
                 <div class="field-group">
                   <label>平均分 / 加权平均分</label>
-                  <input v-model="edu.average_score" placeholder="例如 88/100" class="element-input" />
+                  <RichTextEditor v-model="edu.average_score" placeholder="例如 88/100" compact />
                 </div>
                 <div class="field-group full-width">
                   <label>时间范围</label>
@@ -4320,7 +4372,7 @@ watch(
                   <label>学校标签</label>
                   <div class="tags-input">
                     <span v-for="(tag, j) in edu.school_tags" :key="j" class="tag">
-                      {{ tag }}
+                      <span v-html="formatInlineHtml(tag)"></span>
                       <button @click="edu.school_tags.splice(j, 1)" class="tag-remove">×</button>
                     </span>
                     <input v-model="edu.newSchoolTag" @keydown.enter="addSchoolTag(edu)" placeholder="回车添加标签" class="tag-input" />
@@ -4335,6 +4387,7 @@ watch(
               v-model="researchInterestsText"
               placeholder="每行一条研究方向，导入内容会按原文保留"
               class="rich-editor-field"
+              :resume-metrics="resumeEditorMetrics"
             />
 
             <h4 class="section-title">主要荣誉</h4>
@@ -4342,6 +4395,7 @@ watch(
               v-model="honorsText"
               placeholder="每行一项奖学金、竞赛奖项或荣誉"
               class="rich-editor-field"
+              :resume-metrics="resumeEditorMetrics"
             />
 
             <!-- 工作经历 -->
@@ -4354,11 +4408,11 @@ watch(
               <div class="form-grid">
                 <div class="field-group">
                   <label>公司</label>
-                  <input v-model="work.company_name" placeholder="请输入" class="element-input" />
+                  <RichTextEditor v-model="work.company_name" placeholder="请输入" compact />
                 </div>
                 <div class="field-group">
                   <label>职位</label>
-                  <input v-model="work.job_title" placeholder="请输入" class="element-input" />
+                  <RichTextEditor v-model="work.job_title" placeholder="请输入" compact />
                 </div>
                 <div class="field-group">
                   <label>工作类型</label>
@@ -4402,8 +4456,9 @@ watch(
                 <label>工作内容</label>
                 <RichTextEditor
                   v-model="work._detailsText"
-                  placeholder="请输入工作内容，支持换行和 Ctrl+B 加粗"
+                  placeholder="请输入工作内容，支持换行"
                   class="rich-editor-field"
+                  :resume-metrics="resumeEditorMetrics"
                 />
               </div>
             </div>
@@ -4419,11 +4474,11 @@ watch(
               <div class="form-grid">
                 <div class="field-group">
                   <label>项目名称</label>
-                  <input v-model="proj.project_name" placeholder="请输入" class="element-input" />
+                  <RichTextEditor v-model="proj.project_name" placeholder="请输入" compact />
                 </div>
                 <div class="field-group">
                   <label>角色</label>
-                  <input v-model="proj.role" placeholder="请输入" class="element-input" />
+                  <RichTextEditor v-model="proj.role" placeholder="请输入" compact />
                 </div>
                 <div class="field-group full-width">
                   <label>时间范围</label>
@@ -4457,19 +4512,32 @@ watch(
               </div>
               <!-- 项目内容 -->
               <div class="array-item-nested">
-                <label>项目简介</label>
+                <div class="semantic-label-heading">
+                  <span :class="{ 'is-bold': proj._introLabelBold }">{{ proj._introLabel || '项目简介' }}</span>
+                  <button type="button" @click="proj._introLabelBold = !proj._introLabelBold">
+                    {{ proj._introLabelBold ? '取消加粗' : '设为加粗' }}
+                  </button>
+                </div>
                 <RichTextEditor
                   v-model="proj._introText"
                   placeholder="简要说明项目背景和目标"
                   class="rich-editor-field"
+                  :resume-metrics="resumeEditorMetrics"
+                  :resume-flow="projectIntroFlow(proj)"
                 />
               </div>
               <div class="array-item-nested">
-                <label>项目职责（每行一条，模板自动编号）</label>
+                <div class="semantic-label-heading">
+                  <span :class="{ 'is-bold': proj._dutiesLabelBold }">{{ proj._dutiesLabel || '项目职责' }}（每行一条，模板自动编号）</span>
+                  <button type="button" @click="proj._dutiesLabelBold = !proj._dutiesLabelBold">
+                    {{ proj._dutiesLabelBold ? '取消加粗' : '设为加粗' }}
+                  </button>
+                </div>
                 <RichTextEditor
                   v-model="proj._dutiesText"
                   placeholder="每行填写一项职责，不需要手动输入序号"
                   class="rich-editor-field"
+                  :resume-metrics="resumeEditorMetrics"
                 />
               </div>
               <div class="array-item-nested">
@@ -4478,6 +4546,7 @@ watch(
                   v-model="proj._extraDetailsText"
                   placeholder="不属于项目简介或项目职责的补充内容，每行一条"
                   class="rich-editor-field"
+                  :resume-metrics="resumeEditorMetrics"
                 />
               </div>
             </div>
@@ -4491,7 +4560,7 @@ watch(
               </div>
               <div class="field-group full-width">
                 <label>栏目标题</label>
-                <input v-model="section.title" placeholder="保留原简历栏目标题" class="element-input" />
+                <RichTextEditor v-model="section.title" placeholder="保留原简历栏目标题" compact />
               </div>
               <div class="array-item-nested">
                 <label>栏目内容</label>
@@ -4499,6 +4568,7 @@ watch(
                   v-model="section._itemsText"
                   placeholder="每行一条，按原简历阅读顺序保留"
                   class="rich-editor-field"
+                  :resume-metrics="resumeEditorMetrics"
                 />
               </div>
             </div>
@@ -4511,7 +4581,7 @@ watch(
                 <label>技能条目</label>
                 <div class="tags-input">
                   <span v-for="(skill, i) in resumeFormData.others.skills" :key="i" class="tag">
-                    {{ skill }}
+                    <span v-html="formatInlineHtml(skill)"></span>
                     <button @click="resumeFormData.others.skills.splice(i, 1)" class="tag-remove">×</button>
                   </span>
                   <input v-model="newResumeSkill" @keydown.enter="addResumeSkill" placeholder="回车添加技能" class="tag-input" />
@@ -4526,7 +4596,7 @@ watch(
                 <label>证书</label>
                 <div class="tags-input">
                   <span v-for="(cert, i) in resumeFormData.others.certificates" :key="i" class="tag">
-                    {{ cert }}
+                    <span v-html="formatInlineHtml(cert)"></span>
                     <button @click="resumeFormData.others.certificates.splice(i, 1)" class="tag-remove">×</button>
                   </span>
                   <input v-model="newResumeCert" @keydown.enter="addResumeCert" placeholder="回车添加证书" class="tag-input" />
@@ -4536,7 +4606,7 @@ watch(
                 <label>语言</label>
                 <div class="tags-input">
                   <span v-for="(lang, i) in resumeFormData.others.languages" :key="i" class="tag">
-                    {{ lang }}
+                    <span v-html="formatInlineHtml(lang)"></span>
                     <button @click="resumeFormData.others.languages.splice(i, 1)" class="tag-remove">×</button>
                   </span>
                   <input v-model="newResumeLang" @keydown.enter="addResumeLang" placeholder="回车添加语言" class="tag-input" />
@@ -4548,8 +4618,9 @@ watch(
             <h4 class="section-title">自我评价</h4>
             <RichTextEditor
               v-model="selfEvalText"
-              placeholder="请输入自我评价，支持换行和 Ctrl+B 加粗"
+              placeholder="请输入自我评价，支持换行"
               class="rich-editor-field"
+              :resume-metrics="resumeEditorMetrics"
             />
           </div>
 
@@ -4582,13 +4653,13 @@ watch(
 }
 
 .app-header + .app-container {
-  height: calc(100vh - 64px);
+  height: calc(100vh - 52px);
 }
 
 .app-header {
   width: 100%;
-  height: 64px;
-  min-height: 64px;
+  height: 52px;
+  min-height: 52px;
   background: rgba(8, 8, 10, 0.94);
   color: #f5f5f7;
   backdrop-filter: blur(24px);
@@ -4607,7 +4678,7 @@ watch(
   align-items: center;
   height: 100%;
   min-height: 0;
-  padding: 0.65rem 2.1rem;
+  padding: 0.45rem 1.6rem;
   width: 100%;
   box-sizing: border-box;
   margin: 0;
@@ -4617,14 +4688,14 @@ watch(
   margin: 0;
   display: flex;
   align-items: center;
-  height: 24px;
+  height: 22px;
   line-height: 1;
 }
 
 .app-header h1 .header-brand-link {
   display: inline-flex;
   align-items: center;
-  height: 24px;
+  height: 22px;
   line-height: 1;
 }
 
@@ -4941,14 +5012,14 @@ watch(
 }
 
 .chat-panel-header {
-  height: 60px;
-  min-height: 60px;
+  height: 54px;
+  min-height: 54px;
   box-sizing: border-box;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 0.65rem;
-  padding: 0.65rem 0.9rem;
+  padding: 0.45rem 0.9rem;
   border-bottom: 1px solid rgba(255, 255, 255, 0.055);
   background: rgba(12, 12, 14, 0.76);
   backdrop-filter: blur(20px);
@@ -6480,6 +6551,36 @@ watch(
   padding: 1.5rem;
 }
 
+.resume-format-hint {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0 1.25rem;
+  padding: 0;
+  color: #aeb0b9;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
+.resume-format-hint::before {
+  content: '提示：';
+  color: #d9dae0;
+}
+
+.resume-format-hint kbd {
+  display: inline-block;
+  padding: 0.12rem 0.38rem;
+  color: #e8e9ed;
+  font: inherit;
+  font-size: 0.72rem;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 4px;
+}
+
 .array-item {
   border: 1px solid #303030;
   border-radius: 0;
@@ -6514,6 +6615,38 @@ watch(
   text-transform: uppercase;
   letter-spacing: 0.1em;
 }
+
+.semantic-label-heading,
+.semantic-label-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 7px;
+  color: #ededf1;
+  font-size: 0.75rem;
+}
+
+.semantic-label-heading .is-bold,
+.semantic-label-toggle .is-bold { font-weight: 700; }
+
+.semantic-label-heading button,
+.semantic-label-toggle {
+  padding: 3px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  color: #c9cbd2;
+  background: rgba(255, 255, 255, 0.045);
+  cursor: pointer;
+}
+
+.semantic-label-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.semantic-label-toggle small { color: #8f929d; }
 
 .nested-item {
   display: flex;

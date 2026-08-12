@@ -2,12 +2,34 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
-const previewSource = readFileSync(new URL('../src/components/ResumePreview.vue', import.meta.url), 'utf8')
+const previewSource = readFileSync(new URL('../src/components/ResumePreview.vue', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
+const appSource = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
+
+test('desktop workspace heading and resume toolbar share the compact row height', () => {
+  assert.ok(appSource.includes('.chat-panel-header {\n  height: 54px;\n  min-height: 54px;'))
+  assert.ok(previewSource.includes('.resume-toolbar {\n  height: 54px;\n  min-height: 54px;'))
+  assert.ok(appSource.includes('padding: 0.45rem 0.9rem'))
+  assert.ok(previewSource.includes('padding: 0.35rem 0.65rem'))
+})
+
+test('preview and editor line flow share the content-block placement contract', () => {
+  assert.ok(previewSource.includes('resolveContentBlockFlow'))
+  assert.ok(previewSource.includes("contentBlockLabel(block, 'inline')"))
+  assert.ok(previewSource.includes("contentBlockLabel(block, 'separate')"))
+})
+
+test('body copy is justified while semantic label weight follows saved data', () => {
+  assert.ok(previewSource.includes('contentBlockLabelBold'))
+  assert.ok(previewSource.includes("'is-bold': contentBlockLabelBold(block, 'inline')"))
+  assert.ok(previewSource.includes('text-align: justify'))
+  assert.ok(previewSource.includes('text-justify: inter-ideograph'))
+})
 
 test('preview resolves the same font and physical spacing tokens as exports', () => {
-  assert.ok(previewSource.includes('resolveLayoutTokens(layout.value'))
+  assert.ok(previewSource.includes('resolveLayoutTokens(renderLayout.value'))
   assert.ok(previewSource.includes('fontFamily: layoutTokens.value.fontFamilyCss'))
   assert.ok(previewSource.includes("'--name-font-size': `${layoutTokens.value.nameFontSizePt}pt`"))
+  assert.ok(previewSource.includes("'--label-font-size': `${layoutTokens.value.labelFontSizePt}pt`"))
   assert.ok(previewSource.includes("'--meta-font-weight': layoutTokens.value.metaFontWeight"))
   assert.ok(previewSource.includes("'--entry-title-font-weight': layoutTokens.value.entryTitleFontWeight"))
   assert.ok(previewSource.includes('font-size: var(--name-font-size)'))
@@ -18,6 +40,34 @@ test('preview resolves the same font and physical spacing tokens as exports', ()
   assert.ok(previewSource.includes('font-size: var(--body-font-size)'))
   assert.ok(previewSource.includes("'--module-margin': `${layoutTokens.value.moduleSpacingPt}pt`"))
   assert.ok(previewSource.includes('margin-bottom: var(--paragraph-spacing)'))
+  assert.ok(previewSource.includes('const MM_TO_PX = CSS_PX_PER_INCH / MM_PER_INCH'))
+  assert.ok(previewSource.includes('const PAGE_WIDTH = 210 * MM_TO_PX'))
+  assert.ok(previewSource.includes('const PAGE_HEIGHT = 297 * MM_TO_PX'))
+  assert.ok(previewSource.includes('letterSpacing: `${layoutTokens.value.letterSpacingPt}pt`'))
+  assert.ok(previewSource.includes("fontKerning: 'none'"))
+  assert.ok(previewSource.includes("fontVariantLigatures: 'none'"))
+  assert.ok(previewSource.includes("fontSynthesis: 'none'"))
+  assert.ok(previewSource.includes('width: 210mm;'))
+})
+
+test('semantic font sizes use a half-point modal with live preview and page-limit guard', () => {
+  assert.ok(previewSource.includes('设置各部分字号'))
+  assert.ok(previewSource.includes('class="layout-guide-btn font-size-open-btn"'))
+  assert.ok(previewSource.includes('调整文字大小'))
+  assert.equal(previewSource.includes('font-size-slider-track'), false)
+  assert.ok(previewSource.includes('FONT_SIZE_LIMITS'))
+  assert.equal(previewSource.includes('bodyFontSizeProgress'), false)
+  assert.ok(previewSource.includes('value += 0.5'))
+  assert.ok(previewSource.includes('fontSizeDraft[role]'))
+  assert.ok(previewSource.includes('activeFontSizes'))
+  assert.ok(previewSource.includes('isSavingFontSizes || overflowBeyondPageLimit'))
+  assert.ok(previewSource.includes('点击应用后才保存'))
+})
+
+test('resume fields render the escaped bold-only protocol', () => {
+  assert.ok(previewSource.includes("import { formatInlineHtml } from '../utils/inlineFormatting.js'"))
+  assert.ok(previewSource.includes('return formatInlineHtml(text)'))
+  assert.equal(previewSource.includes(".replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>')"), false)
 })
 
 test('work and project details share semantic block rendering', () => {
@@ -63,6 +113,7 @@ test('numbered generic items suppress the redundant outer bullet', () => {
   assert.ok(previewSource.includes('hasNativeListMarker'))
   assert.ok(previewSource.includes("'has-native-marker': hasNativeListMarker(item)"))
   assert.ok(previewSource.includes('.generic-list-item.has-native-marker::before'))
+  assert.ok(previewSource.includes('.generic-list-item.has-native-marker {\n  padding-left: 0;'))
 })
 
 test('imported source can be viewed read-only without replacing the structured resume', () => {
@@ -101,9 +152,17 @@ test('single-page preview does not render a redundant 1 / 1 footer', () => {
 test('one-line education dates stay in the normal four-column flow', () => {
   assert.ok(previewSource.includes('flex: 1 1 0'))
   assert.ok(previewSource.includes('flex: 0 0 36mm'))
-  assert.ok(previewSource.includes('margin-right: 2mm'))
+  assert.ok(previewSource.includes('margin-right: 0'))
   assert.ok(previewSource.includes('position: static'))
   assert.equal(previewSource.includes('right: 6mm'), false)
+})
+
+test('bullets and numbered responsibilities share one text start token', () => {
+  assert.ok(previewSource.includes("'--list-text-indent': `${layoutTokens.value.listTextIndentPt}pt`"))
+  assert.ok(previewSource.includes("'--list-marker-gap': `${layoutTokens.value.listMarkerGapPt}pt`"))
+  assert.ok(previewSource.includes('padding-left: var(--list-text-indent)'))
+  assert.ok(previewSource.includes('width: calc(var(--list-text-indent) - var(--list-marker-gap))'))
+  assert.ok(previewSource.includes(".list-item::before {\n  content: '•';\n  position: absolute;\n  left: 0;\n  width: calc(var(--list-text-indent) - var(--list-marker-gap));\n  text-align: center;"))
 })
 
 test('narrow resume toolbar uses the dark workspace palette', () => {
@@ -129,6 +188,24 @@ test('all viewport widths render the same compact toolbar and narrow screens kee
   assert.ok(previewSource.includes('<span>排版</span>'))
   assert.ok(previewSource.includes('<span>编辑</span>'))
   assert.ok(previewSource.includes("position: sticky;\n    top: 0;\n    bottom: auto;"))
+})
+
+test('resume toolbar actions follow the requested visual and keyboard order', () => {
+  const toolbarStart = previewSource.indexOf('<div class="shared-toolbar-actions">')
+  const toolbarEnd = previewSource.indexOf('</div>\n      </div>\n    </div>', toolbarStart)
+  const toolbarMarkup = previewSource.slice(toolbarStart, toolbarEnd)
+  const orderedMarkers = [
+    'aria-label="打开页面缩放"',
+    'aria-label="打开内容编辑菜单"',
+    'aria-label="打开排版设置"',
+    'class="compact-toolbar-btn language-btn"',
+    'v-if="hasSourceDocument"',
+    '@click="exportPDF"',
+    '@click="exportWord"'
+  ]
+  const positions = orderedMarkers.map(marker => toolbarMarkup.indexOf(marker))
+  assert.ok(positions.every(position => position >= 0))
+  assert.deepEqual(positions, [...positions].sort((left, right) => left - right))
 })
 
 test('every toolbar popover is centered under its trigger button', () => {

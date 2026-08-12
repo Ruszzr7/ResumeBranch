@@ -26,7 +26,7 @@ DeepAgents 是一个全栈 AI 简历优化工具，具有以下特点：
 - **双运行模式**：本地单用户免登录，或 JWT 多用户隔离
 - **数据持久化**：SQLAlchemy 支持 MySQL，本地部署使用独立 MySQL 数据库
 - **AI 驱动**：基于 LangGraph 构建的智能 Agent
-- **PDF 导出**：服务端 WeasyPrint 生成高质量 PDF
+- **PDF 导出**：服务端优先使用 Chromium 浏览器打印，缺少浏览器时兼容回退到 WeasyPrint
 
 ---
 
@@ -50,7 +50,8 @@ DeepAgents 是一个全栈 AI 简历优化工具，具有以下特点：
 | SQLAlchemy | 2.0+ | ORM |
 | LangGraph | 1.0+ | AI Agent 工作流 |
 | LangChain | 1.1+ | LLM 集成 |
-| WeasyPrint | 60+ | 服务端 PDF 生成 |
+| Chromium（Chrome/Edge） | 112+ | 与浏览器预览一致的 PDF 生成 |
+| WeasyPrint | 60+ | 无 Chromium 环境下的 PDF 兼容回退 |
 | python-jose | 3.3+ | JWT 认证 |
 | bcrypt | 4.0+ | 密码加密 |
 
@@ -77,13 +78,15 @@ DeepAgents 是一个全栈 AI 简历优化工具，具有以下特点：
 - ✅ 简历预览支持适宽、整页及 40%～100% 手动缩放
 - ✅ 对话式 AI 优化简历
 - ✅ 表单式编辑（基本信息、教育、工作、项目）
-- ✅ 富文本编辑（Ctrl+B 加粗）
+- ✅ 富文本编辑（多行与单行字段均支持 Ctrl+B 加粗）
+- ✅ 对话式局部加粗/取消加粗：引用唯一原文生成确定性预览，确认后才保存；歧义时拒绝修改
 - ✅ 日期选择器（支持"至今"）
 - ✅ 照片上传（Base64）
 - ✅ 实时预览（A4 分页）
 - ✅ 中英文简历切换：结构化翻译并按字段复用未变化内容，避免重复调用模型
 - ✅ 统一排版协议：预览、PDF、DOCX 共用微软雅黑/Arial、字号、行距、模块间距与页边距
-  - 默认层级：姓名 12pt、模块标题 11pt、条目标题 10pt、正文 9pt、辅助信息 8.5pt
+  - 默认层级：姓名 14pt、模块标题 11pt、条目标题 10pt、元信息/正文/标签 9pt
+  - 姓名、模块标题、条目标题、元信息、正文和标签字号可在排版弹窗中按 0.5pt 分别调整
   - 默认节奏：行距 1.28、模块间距 4.95pt、页边距上下 8mm / 左右 9mm
 
 ### JD 匹配
@@ -93,7 +96,8 @@ DeepAgents 是一个全栈 AI 简历优化工具，具有以下特点：
 - ✅ 智能解析和结构化
 
 ### 导出功能
-- ✅ 服务端 WeasyPrint PDF 导出（推荐）
+- ✅ 服务端 Chromium PDF 导出，复用浏览器的中文换行与双端对齐规则
+- ✅ 未安装 Chromium 时自动回退到 WeasyPrint
 
 ### AI 特性
 - ✅ SSE 流式响应
@@ -246,7 +250,7 @@ DeepAgents 是一个全栈 AI 简历优化工具，具有以下特点：
 ## 🚀 快速开始
 
 > Windows 本机运行请优先参考 [本地部署说明](docs/local-deployment.md)。该方案使用
-> 项目专用 Python 虚拟环境、本机 MySQL 8.4 和隔离的 WeasyPrint/Pango，不依赖 Docker。
+> 项目专用 Python 虚拟环境、本机 MySQL 8.4、Chrome/Edge，以及作为回退的隔离 WeasyPrint/Pango，不依赖 Docker。
 
 ### 环境要求
 
@@ -329,7 +333,10 @@ cd ..
 # 启动数据库 + 后端 + 前端
 scripts\start_local.cmd
 
-# 分别启动（前台观察日志）
+# 默认无交互连续启动；仅需让最终结果停留时使用
+scripts\start_local.cmd --pause
+
+# 分别启动（运行日志写入 .local-run）
 scripts\start_db_local.cmd
 scripts\start_backend_local.cmd
 scripts\start_frontend_local.cmd
@@ -380,7 +387,8 @@ resume_assistant/
 │   ├── database.py                    # SQLAlchemy 模型与数据访问
 │   ├── auth.py                        # JWT 认证
 │   ├── tools.py                       # Agent 工具
-│   ├── pdf_generator.py               # WeasyPrint PDF 导出
+│   ├── pdf_generator.py               # PDF 内容与排版生成入口
+│   ├── pdf_renderer.py                # Chromium 打印与 WeasyPrint 回退选择
 │   ├── create_admin.py                # 管理员初始化模块
 │   ├── requirements.txt
 │   ├── requirements.lock.txt

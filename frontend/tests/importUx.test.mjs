@@ -2,8 +2,27 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
-const appSource = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8')
-const viteSource = readFileSync(new URL('../vite.config.js', import.meta.url), 'utf8')
+const normalizeNewlines = (source) => source.replace(/\r\n?/g, '\n')
+const appSource = normalizeNewlines(readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8'))
+const viteSource = normalizeNewlines(readFileSync(new URL('../vite.config.js', import.meta.url), 'utf8'))
+const logoSource = normalizeNewlines(readFileSync(new URL('../src/components/BrandLogo.vue', import.meta.url), 'utf8'))
+const indexSource = normalizeNewlines(readFileSync(new URL('../index.html', import.meta.url), 'utf8'))
+const iconSource = normalizeNewlines(readFileSync(new URL('../public/icon.svg', import.meta.url), 'utf8'))
+const faviconSource = normalizeNewlines(readFileSync(new URL('../public/favicon.svg', import.meta.url), 'utf8'))
+
+test('ResumeBranch uses the restored branch logo and adaptive favicon', () => {
+  assert.ok(logoSource.includes('/icon.svg?v=5'))
+  assert.equal(logoSource.includes('filter: grayscale'), false)
+  assert.ok(logoSource.includes('font-size: 1.25rem'))
+  assert.ok(logoSource.includes('width: 22px'))
+  assert.ok(indexSource.includes('/favicon.svg?v=5'))
+  assert.ok(iconSource.includes('#4D9CFF'))
+  assert.ok(iconSource.includes('<circle cx="18" cy="57" r="3.75" stroke="#EEF1F5"/>'))
+  assert.ok(faviconSource.includes('<circle class="paper" cx="18" cy="57" r="3.75"/>'))
+  assert.ok(faviconSource.includes('prefers-color-scheme: dark'))
+  assert.ok(appSource.includes('height: calc(100vh - 52px)'))
+  assert.ok(appSource.includes('height: 52px;\n  min-height: 52px;'))
+})
 
 test('resume import does not trigger an unsolicited LLM reply', () => {
   const start = appSource.indexOf('async function parseAndSaveResume')

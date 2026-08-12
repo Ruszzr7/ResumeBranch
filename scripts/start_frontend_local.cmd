@@ -118,5 +118,5 @@ exit /b %errorlevel%
 
 :worker
 cd /d "%FRONTEND_ROOT%"
-npm.cmd run dev -- --host 127.0.0.1 1>"%OUT_LOG%" 2>"%ERR_LOG%"
+npm.cmd run dev -- --host 127.0.0.1 0<nul 1>"%OUT_LOG%" 2>"%ERR_LOG%"
 exit /b %errorlevel%

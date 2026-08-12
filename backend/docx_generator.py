@@ -9,11 +9,12 @@ from io import BytesIO
 from docx import Document
 from docx.enum.section import WD_SECTION
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Mm, Pt, RGBColor
 
+from .inline_formatting import parse_inline_bold
 from .resume_labels import LABELS
 from .resume_data import normalize_resume_data
 
@@ -106,20 +107,47 @@ def _set_font(run, size: float, bold: bool = False, color: str = "212529", fonts
     run.font.size = Pt(size)
     run.font.bold = bold
     run.font.color.rgb = RGBColor.from_string(color)
+    run_properties = run._element.get_or_add_rPr()
+    spacing = run_properties.find(qn("w:spacing"))
+    if spacing is None:
+        spacing = OxmlElement("w:spacing")
+        run_properties.append(spacing)
+    spacing.set(qn("w:val"), "0")
+    kerning = run_properties.find(qn("w:kern"))
+    if kerning is None:
+        kerning = OxmlElement("w:kern")
+        run_properties.append(kerning)
+    kerning.set(qn("w:val"), "0")
 
 
-def _add_markdown_runs(paragraph, text: object, size: float, color: str = "212529", fonts: dict | None = None) -> None:
-    value = str(text or "").strip()
-    parts = re.split(r"(\*\*.*?\*\*)", value)
-    for part in parts:
-        if not part:
-            continue
-        bold = part.startswith("**") and part.endswith("**")
-        content = part[2:-2] if bold else part
-        _set_font(paragraph.add_run(content), size, bold=bold, color=color, fonts=fonts)
+def _add_markdown_runs(
+    paragraph,
+    text: object,
+    size: float,
+    color: str = "212529",
+    fonts: dict | None = None,
+    *,
+    base_bold: bool = False,
+) -> None:
+    for segment in parse_inline_bold(str(text or "")):
+        _set_font(
+            paragraph.add_run(segment.text),
+            size,
+            bold=base_bold or segment.bold,
+            color=color,
+            fonts=fonts,
+        )
 
 
 def _paragraph_spacing(paragraph, *, before=0, after=0, line=1.15) -> None:
+    p_pr = paragraph._p.get_or_add_pPr()
+    overflow_punct = p_pr.find(qn("w:overflowPunct"))
+    if overflow_punct is None:
+        overflow_punct = OxmlElement("w:overflowPunct")
+        p_pr.append(overflow_punct)
+    # Word enables punctuation overflow when this property is omitted. Keep
+    # every line inside the same measured boundary used by HTML/PDF.
+    overflow_punct.set(qn("w:val"), "0")
     fmt = paragraph.paragraph_format
     fmt.space_before = Pt(before)
     fmt.space_after = Pt(after)
@@ -137,11 +165,11 @@ def _two_column_line(
     right_color: str = "4B5563",
     fonts: dict | None = None,
     left_runs: list[tuple[str, float, bool]] | None = None,
+    total_width_mm: float = 185.0,
+    right_width_mm: float = 40.0,
 ) -> None:
     table = document.add_table(rows=1, cols=2)
-    table.autofit = False
-    table.columns[0].width = Mm(145)
-    table.columns[1].width = Mm(40)
+    _set_fixed_table_widths(table, (max(0.0, total_width_mm - right_width_mm), right_width_mm))
     for cell in table.rows[0].cells:
         _set_cell_borderless(cell)
         _set_cell_margins(cell)
@@ -152,11 +180,11 @@ def _two_column_line(
     if left_runs:
         for text, run_size, run_bold in left_runs:
             if text:
-                _set_font(left_p.add_run(text), run_size, bold=run_bold, fonts=fonts)
+                _add_markdown_runs(left_p, text, run_size, fonts=fonts, base_bold=run_bold)
     else:
-        _set_font(left_p.add_run(left), font_size, bold=bold_left, fonts=fonts)
+        _add_markdown_runs(left_p, left, font_size, fonts=fonts, base_bold=bold_left)
     right_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    _set_font(right_p.add_run(right), right_font_size or font_size, color=right_color, fonts=fonts)
+    _add_markdown_runs(right_p, right, right_font_size or font_size, color=right_color, fonts=fonts)
 
 
 def _date_range(item: dict) -> str:
@@ -172,6 +200,22 @@ def _set_hanging_indent(paragraph, *, left: float = 5.5, hanging: float = 5.5) -
     paragraph.paragraph_format.first_line_indent = Mm(-hanging)
 
 
+def _set_numbered_indent(paragraph, *, text_indent_mm: float, marker_gap_mm: float) -> None:
+    """Right-align the marker and start every wrapped line at one shared stop."""
+    fmt = paragraph.paragraph_format
+    fmt.left_indent = Mm(text_indent_mm)
+    fmt.first_line_indent = Mm(-text_indent_mm)
+    marker_stop = max(0.0, text_indent_mm - marker_gap_mm)
+    fmt.tab_stops.add_tab_stop(Mm(marker_stop), WD_TAB_ALIGNMENT.RIGHT)
+    fmt.tab_stops.add_tab_stop(Mm(text_indent_mm), WD_TAB_ALIGNMENT.LEFT)
+
+
+def _set_flush_indent(paragraph) -> None:
+    """Match HTML native-marker items: every wrapped line starts at the section edge."""
+    paragraph.paragraph_format.left_indent = Mm(0)
+    paragraph.paragraph_format.first_line_indent = Mm(0)
+
+
 def _bullet(
     document,
     text: object,
@@ -180,18 +224,21 @@ def _bullet(
     exact_line_height: float | None = None,
     after: float = 1.5,
     fonts: dict | None = None,
+    text_indent_mm: float = 4.5,
 ) -> None:
     value = str(text)
     line_spacing = Pt(exact_line_height) if exact_line_height is not None else 1.12
     if re.match(r"^\s*(?:[（(]?\d{1,2}[）).、．]|[一二三四五六七八九十]+[、.．])\s*", value):
         paragraph = document.add_paragraph()
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
         _paragraph_spacing(paragraph, after=after, line=line_spacing)
-        _set_hanging_indent(paragraph)
+        _set_flush_indent(paragraph)
         _add_markdown_runs(paragraph, value, font_size, fonts=fonts)
         return
     paragraph = document.add_paragraph(style="List Bullet")
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
     _paragraph_spacing(paragraph, after=after, line=line_spacing)
-    _set_hanging_indent(paragraph, left=4.5, hanging=3)
+    _set_hanging_indent(paragraph, left=text_indent_mm, hanging=min(3.0, text_indent_mm))
     _add_markdown_runs(paragraph, value.lstrip("• "), font_size, fonts=fonts)
 
 
@@ -204,7 +251,7 @@ def generate_docx(
 ) -> bytes:
     """Return an editable DOCX that follows the controlled layout configuration."""
     from .layout import apply_page_mode_defaults
-    from .layout_config import normalize_layout_config, resolve_layout_tokens
+    from .layout_config import normalize_layout_config, resolve_content_block_flow, resolve_layout_tokens
 
     data = normalize_resume_data(resume_data)
     labels = LABELS.get(lang, LABELS["zh"])
@@ -225,6 +272,7 @@ def generate_docx(
     entry_title_font_size = round(tokens["entryTitleFontSizePt"] * 2) / 2
     section_title_font_size = round(tokens["sectionTitleFontSizePt"] * 2) / 2
     name_font_size = round(tokens["nameFontSizePt"] * 2) / 2
+    label_font_size = round(tokens["labelFontSizePt"] * 2) / 2
     body_bold = tokens["bodyFontWeight"] >= 600
     meta_bold = tokens["metaFontWeight"] >= 600
     entry_title_bold = tokens["entryTitleFontWeight"] >= 600
@@ -240,6 +288,9 @@ def generate_docx(
         ]
 
     body_line_height = body_font_size * tokens["lineHeight"]
+    printable_width_mm = 210.0 - tokens["marginLeftMm"] - tokens["marginRightMm"]
+    list_text_indent_mm = tokens["listTextIndentPt"] * 25.4 / 72.0
+    list_marker_gap_mm = tokens["listMarkerGapPt"] * 25.4 / 72.0
     module_spacing = tokens["moduleSpacingPt"]
     page_break_before = style.get("pageBreakBefore", "")
     hidden_sections = set(global_layout["hiddenSections"])
@@ -270,7 +321,7 @@ def generate_docx(
         text = global_layout.get("titleOverrides", {}).get(section_id, {}).get(lang, fallback)
         paragraph = document.add_paragraph()
         _paragraph_spacing(paragraph, before=module_spacing, after=tokens["sectionTitleAfterPt"], line=1)
-        _set_font(paragraph.add_run(text), section_title_font_size, bold=section_title_bold, fonts=font_spec)
+        _add_markdown_runs(paragraph, text, section_title_font_size, fonts=font_spec, base_bold=section_title_bold)
         p_pr = paragraph._p.get_or_add_pPr()
         borders = OxmlElement("w:pBdr")
         bottom = OxmlElement("w:bottom")
@@ -287,10 +338,19 @@ def generate_docx(
         for detail in details or []:
             if details_style == "paragraph":
                 paragraph = document.add_paragraph()
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
                 _paragraph_spacing(paragraph, after=tokens["paragraphSpacingPt"], line=Pt(body_line_height))
                 _add_markdown_runs(paragraph, detail, body_font_size, fonts=font_spec)
             else:
-                _bullet(document, detail, body_font_size, exact_line_height=body_line_height, after=tokens["paragraphSpacingPt"], fonts=font_spec)
+                _bullet(
+                    document,
+                    detail,
+                    body_font_size,
+                    exact_line_height=body_line_height,
+                    after=tokens["paragraphSpacingPt"],
+                    fonts=font_spec,
+                    text_indent_mm=list_text_indent_mm,
+                )
 
     basics = data.get("basics") or {}
     basics_layout = layout["basics"]
@@ -315,7 +375,7 @@ def generate_docx(
     name_p = content_cell.paragraphs[0]
     name_p.alignment = alignment
     _paragraph_spacing(name_p, after=tokens["headerNameAfterPt"], line=1)
-    _set_font(name_p.add_run(basics.get("name") or labels["nameNotSet"]), name_font_size, bold=name_bold, fonts=font_spec)
+    _add_markdown_runs(name_p, basics.get("name") or labels["nameNotSet"], name_font_size, fonts=font_spec, base_bold=name_bold)
     contact_values = [str(basics.get(key)) for key in ("gender",) if basics.get(key) and key not in hidden_basics]
     if basics.get("birth_date") and "birth_date" not in hidden_basics:
         contact_values.append(f'{labels["birthDate"]}{colon}{basics["birth_date"]}')
@@ -331,15 +391,25 @@ def generate_docx(
             for value in contact_values:
                 p = content_cell.add_paragraph()
                 p.alignment = alignment
-                _set_font(p.add_run(value), meta_font_size, color="333333", fonts=font_spec)
+                _add_markdown_runs(p, value, meta_font_size, color="333333", fonts=font_spec)
         else:
             p = content_cell.add_paragraph()
             p.alignment = alignment
-            _set_font(p.add_run(" | ".join(contact_values)), meta_font_size, color="333333", fonts=font_spec)
+            _add_markdown_runs(p, " | ".join(contact_values), meta_font_size, color="333333", fonts=font_spec)
     if basics.get("target_position") and "target_position" not in hidden_basics:
         p = content_cell.add_paragraph()
         p.alignment = alignment
-        _set_font(p.add_run(f'{labels["targetPosition"]}{colon}{basics["target_position"]}'), meta_font_size, bold=label_bold, fonts=font_spec)
+        if label_font_size == meta_font_size:
+            _add_markdown_runs(
+                p,
+                f'{labels["targetPosition"]}{colon}{basics["target_position"]}',
+                meta_font_size,
+                fonts=font_spec,
+                base_bold=label_bold,
+            )
+        else:
+            _set_font(p.add_run(f'{labels["targetPosition"]}{colon}'), label_font_size, bold=label_bold, fonts=font_spec)
+            _add_markdown_runs(p, basics["target_position"], meta_font_size, fonts=font_spec, base_bold=label_bold)
     if show_photo:
         try:
             encoded = (photo or basics.get("photo")).split(",", 1)[-1]
@@ -377,44 +447,64 @@ def generate_docx(
                 metrics.append(f'{labels["averageScore"]}{colon}{item["average_score"]}')
             if cfg["preset"] in {"three-column", "compact"}:
                 table = document.add_table(rows=1, cols=4)
-                education_widths = (44.0, 45.0, 53.0, 42.0)
+                education_date_width_mm = 42.0
+                education_widths = (
+                    44.0,
+                    45.0,
+                    max(0.0, printable_width_mm - 44.0 - 45.0 - education_date_width_mm),
+                    education_date_width_mm,
+                )
                 _set_fixed_table_widths(table, education_widths)
-                for cell_index, cell in enumerate(table.rows[0].cells):
+                for cell in table.rows[0].cells:
                     _set_cell_borderless(cell)
-                    _set_cell_margins(cell, end=80 if cell_index == 3 else 0)
+                    _set_cell_margins(cell)
                 values = [school, degree, " · ".join(metrics), date]
                 cell_sizes = (entry_title_font_size, meta_font_size, meta_font_size, meta_font_size)
                 for cell_index, (cell, value, cell_size) in enumerate(zip(table.rows[0].cells, values, cell_sizes)):
                     p = cell.paragraphs[0]
                     _paragraph_spacing(p, after=0, line=Pt(body_line_height))
                     if cell_index == 0:
-                        _set_font(p.add_run(school), entry_title_font_size, bold=entry_title_bold, fonts=font_spec)
+                        _add_markdown_runs(p, school, entry_title_font_size, fonts=font_spec, base_bold=entry_title_bold)
                         if tag_text:
-                            _set_font(p.add_run(f" · {tag_text}"), meta_font_size, bold=meta_bold, fonts=font_spec)
+                            _add_markdown_runs(p, f" · {tag_text}", label_font_size, fonts=font_spec, base_bold=meta_bold)
                     else:
-                        _set_font(p.add_run(value), cell_size, bold=meta_bold, fonts=font_spec)
+                        _add_markdown_runs(p, value, cell_size, fonts=font_spec, base_bold=meta_bold)
                 table.cell(0, 3).paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
             else:
                 _two_column_line(
                     document, school, date, entry_title_font_size,
                     right_font_size=meta_font_size, right_color="111111", fonts=font_spec,
-                    left_runs=entry_heading_runs(school, tag_text),
+                    left_runs=[
+                        (school, entry_title_font_size, entry_title_bold),
+                        (f" · {tag_text}" if tag_text else "", label_font_size, meta_bold),
+                    ],
+                    total_width_mm=printable_width_mm,
                 )
                 if degree:
                     p = document.add_paragraph()
                     _paragraph_spacing(p, after=0, line=Pt(body_line_height))
-                    _set_font(p.add_run(degree), meta_font_size, fonts=font_spec)
+                    _add_markdown_runs(p, degree, meta_font_size, fonts=font_spec)
                 if metrics:
                     p = document.add_paragraph()
                     _paragraph_spacing(p, after=0, line=Pt(body_line_height))
-                    _set_font(p.add_run(" | ".join(metrics)), meta_font_size, color="111111", fonts=font_spec)
+                    _add_markdown_runs(p, " | ".join(metrics), meta_font_size, color="111111", fonts=font_spec)
             if cfg["thesisDisplay"] != "hidden":
                 for thesis in item.get("theses") or []:
                     if not isinstance(thesis, dict):
                         continue
                     if thesis.get("title"):
                         p = document.add_paragraph()
-                        _set_font(p.add_run(f'{labels["thesis"]}{colon}{thesis["title"]}'), body_font_size, bold=label_bold, fonts=font_spec)
+                        if label_font_size == body_font_size:
+                            _add_markdown_runs(
+                                p,
+                                f'{labels["thesis"]}{colon}{thesis["title"]}',
+                                body_font_size,
+                                fonts=font_spec,
+                                base_bold=label_bold,
+                            )
+                        else:
+                            _set_font(p.add_run(f'{labels["thesis"]}{colon}'), label_font_size, bold=label_bold, fonts=font_spec)
+                            _add_markdown_runs(p, thesis["title"], body_font_size, fonts=font_spec, base_bold=label_bold)
                     if cfg["thesisDisplay"] == "expanded":
                         add_details(thesis.get("details"), "bullets")
 
@@ -444,6 +534,7 @@ def generate_docx(
                 document, company, _date_range(item), entry_title_font_size,
                 right_font_size=meta_font_size, right_color="111111", fonts=font_spec,
                 left_runs=entry_heading_runs(company, position),
+                total_width_mm=printable_width_mm,
             )
             add_content_blocks(item)
 
@@ -453,28 +544,45 @@ def generate_docx(
             add_details(item.get("details"), "bullets")
             return
         for block in blocks:
-            block_type = block.get("type", "paragraph")
-            label = str(block.get("label") or "").strip()
+            flow = resolve_content_block_flow(block)
+            block_type = flow["type"]
+            label = flow["label"]
             if block_type == "paragraph":
                 paragraph = document.add_paragraph()
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
                 _paragraph_spacing(paragraph, after=tokens["contentBlockSpacingPt"], line=Pt(body_line_height))
                 if label:
-                    _set_font(paragraph.add_run(f"{label}{colon}"), body_font_size, bold=label_bold, fonts=font_spec)
+                    _add_markdown_runs(paragraph, f"{label}{colon}", label_font_size, fonts=font_spec, base_bold=label_bold and flow["labelBold"])
                 _add_markdown_runs(paragraph, block.get("text", ""), body_font_size, fonts=font_spec)
                 continue
-            if label:
+            if flow["labelPlacement"] == "separate":
                 paragraph = document.add_paragraph()
                 _paragraph_spacing(paragraph, after=tokens["contentLabelSpacingPt"], line=Pt(body_line_height))
-                _set_font(paragraph.add_run(f"{label}{colon}"), body_font_size, bold=label_bold, fonts=font_spec)
+                _add_markdown_runs(paragraph, f"{label}{colon}", label_font_size, fonts=font_spec, base_bold=label_bold and flow["labelBold"])
             for detail_index, detail in enumerate(block.get("items") or [], 1):
                 if block_type == "numbered_list":
                     paragraph = document.add_paragraph()
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
                     _paragraph_spacing(paragraph, after=tokens["numberedItemSpacingPt"], line=Pt(body_line_height))
-                    _set_hanging_indent(paragraph)
-                    _set_font(paragraph.add_run(f"({detail_index}) "), body_font_size, fonts=font_spec)
+                    _set_numbered_indent(
+                        paragraph,
+                        text_indent_mm=list_text_indent_mm,
+                        marker_gap_mm=list_marker_gap_mm,
+                    )
+                    _set_font(paragraph.add_run("\t"), body_font_size, fonts=font_spec)
+                    _set_font(paragraph.add_run(f"({detail_index})"), body_font_size, fonts=font_spec)
+                    _set_font(paragraph.add_run("\t"), body_font_size, fonts=font_spec)
                     _add_markdown_runs(paragraph, detail, body_font_size, fonts=font_spec)
                 else:
-                    _bullet(document, detail, body_font_size, exact_line_height=body_line_height, after=tokens["paragraphSpacingPt"], fonts=font_spec)
+                    _bullet(
+                        document,
+                        detail,
+                        body_font_size,
+                        exact_line_height=body_line_height,
+                        after=tokens["paragraphSpacingPt"],
+                        fonts=font_spec,
+                        text_indent_mm=list_text_indent_mm,
+                    )
 
     def render_projects() -> None:
         items = data.get("project_experience") or []
@@ -493,11 +601,12 @@ def generate_docx(
                 document, project_name, date, entry_title_font_size,
                 right_font_size=meta_font_size, right_color="111111", fonts=font_spec,
                 left_runs=entry_heading_runs(project_name, role if cfg["preset"] == "compact" else ""),
+                total_width_mm=printable_width_mm,
             )
             if cfg["preset"] != "compact" and role:
                 p = document.add_paragraph()
                 _paragraph_spacing(p, after=0, line=Pt(body_line_height))
-                _set_font(p.add_run(role), meta_font_size, fonts=font_spec)
+                _add_markdown_runs(p, role, meta_font_size, fonts=font_spec)
             add_content_blocks(item)
 
     def render_skills() -> None:
@@ -506,7 +615,7 @@ def generate_docx(
             return
         title("skills", labels["skills"])
         for value in skills:
-            _bullet(document, value, body_font_size, exact_line_height=body_line_height, after=tokens["paragraphSpacingPt"], fonts=font_spec)
+            _bullet(document, value, body_font_size, exact_line_height=body_line_height, after=tokens["paragraphSpacingPt"], fonts=font_spec, text_indent_mm=list_text_indent_mm)
 
     def render_others() -> None:
         values = data.get("others") or {}
@@ -520,7 +629,7 @@ def generate_docx(
         separator = " · " if cfg["separator"] == "dot" else " | "
         for key in fields:
             p = document.add_paragraph()
-            _set_font(p.add_run(f'{field_labels[key]}{colon}'), body_font_size, bold=label_bold, fonts=font_spec)
+            _set_font(p.add_run(f'{field_labels[key]}{colon}'), label_font_size, bold=label_bold, fonts=font_spec)
             content = separator.join(str(value) for value in values[key])
             if cfg["preset"] == "tags":
                 content = "  ".join(f"[{value}]" for value in values[key])
@@ -537,9 +646,10 @@ def generate_docx(
             values = [" ".join(str(value) for value in values)]
         for value in values:
             if cfg["preset"] == "bullets":
-                _bullet(document, value, body_font_size, exact_line_height=body_line_height, after=tokens["paragraphSpacingPt"], fonts=font_spec)
+                _bullet(document, value, body_font_size, exact_line_height=body_line_height, after=tokens["paragraphSpacingPt"], fonts=font_spec, text_indent_mm=list_text_indent_mm)
             else:
                 p = document.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
                 _add_markdown_runs(p, value, body_font_size, fonts=font_spec)
 
     def render_plain_section(section_id: str, fallback: str, values: list) -> None:
@@ -548,7 +658,7 @@ def generate_docx(
         maybe_break(section_id)
         title(section_id, fallback)
         for value in values:
-            _bullet(document, value, body_font_size, exact_line_height=body_line_height, after=tokens["paragraphSpacingPt"], fonts=font_spec)
+            _bullet(document, value, body_font_size, exact_line_height=body_line_height, after=tokens["paragraphSpacingPt"], fonts=font_spec, text_indent_mm=list_text_indent_mm)
 
     def render_research() -> None:
         render_plain_section("research_interests", labels["researchInterests"], data.get("research_interests") or [])
@@ -565,7 +675,7 @@ def generate_docx(
             maybe_break(f"custom_sections:{index}")
             title("custom_sections", custom["title"])
             for value in custom["items"]:
-                _bullet(document, value, body_font_size, exact_line_height=body_line_height, after=tokens["paragraphSpacingPt"], fonts=font_spec)
+                _bullet(document, value, body_font_size, exact_line_height=body_line_height, after=tokens["paragraphSpacingPt"], fonts=font_spec, text_indent_mm=list_text_indent_mm)
 
     renderers = {
         "education": render_education,

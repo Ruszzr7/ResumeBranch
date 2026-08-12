@@ -11,6 +11,20 @@ from backend import resume_agent
 
 
 class DocxGeneratorTests(unittest.TestCase):
+    def test_mixed_punctuation_keeps_codepoints_and_script_font_mapping(self):
+        punctuation_sample = "中文，句号。分号；冒号：括号（）/ ASCII,.;:!?() RL部署经验"
+        document = Document(BytesIO(generate_docx({
+            "basics": {"name": "标点测试"},
+            "self_evaluation": [punctuation_sample],
+        })))
+        paragraph = next(item for item in document.paragraphs if punctuation_sample in item.text)
+        self.assertEqual(paragraph.text, punctuation_sample)
+        for run in paragraph.runs:
+            fonts = run._element.rPr.rFonts
+            self.assertEqual(fonts.get(qn("w:ascii")), "Arial")
+            self.assertEqual(fonts.get(qn("w:hAnsi")), "Arial")
+            self.assertEqual(fonts.get(qn("w:eastAsia")), "Microsoft YaHei")
+
     def test_generates_editable_resume_with_academic_metrics(self):
         content = generate_docx({
             "basics": {"name": "测试用户", "target_position": "产品经理"},
@@ -52,6 +66,8 @@ class DocxGeneratorTests(unittest.TestCase):
         )
         self.assertEqual(name_run._element.rPr.rFonts.get(qn("w:ascii")), "Arial")
         self.assertEqual(name_run._element.rPr.rFonts.get(qn("w:eastAsia")), "Microsoft YaHei")
+        self.assertEqual(name_run._element.rPr.xpath("./w:spacing")[0].get(qn("w:val")), "0")
+        self.assertEqual(name_run._element.rPr.xpath("./w:kern")[0].get(qn("w:val")), "0")
         self.assertAlmostEqual(name_run.font.size.pt, 14, places=1)
         self.assertAlmostEqual(document.styles["Normal"].font.size.pt, 9, places=1)
 

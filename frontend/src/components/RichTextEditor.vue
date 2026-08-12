@@ -1,5 +1,5 @@
 <template>
-  <div class="rich-editor">
+  <div class="rich-editor" :class="{ compact }">
     <!-- 编辑区域 -->
     <div
       ref="editorRef"
@@ -9,13 +9,13 @@
       @input="onInput"
       @keydown.ctrl.b="handleCtrlB"
       @keydown.meta.b="handleCtrlB"
+      @keydown.enter="handleEnter"
       @paste="handlePaste"
       @blur="onBlur"
     ></div>
-    <!-- 提示 -->
-    <div class="editor-hint">
-      <span class="hint-text">提示：选中文字后按 <kbd>Ctrl+B</kbd> 加粗</span>
-      <span class="line-count">{{ displayLineCount }} 行</span>
+    <!-- 行数 -->
+    <div v-if="!compact" class="editor-hint">
+      <span class="line-count">简历约 {{ displayLineCount }} 行</span>
     </div>
   </div>
 </template>
@@ -31,6 +31,18 @@ const props = defineProps({
   placeholder: {
     type: String,
     default: '请输入内容'
+  },
+  compact: {
+    type: Boolean,
+    default: false
+  },
+  resumeMetrics: {
+    type: Object,
+    default: () => ({ fontSizePt: 9, lineHeight: 1.28, contentWidthPx: 725 })
+  },
+  resumeFlow: {
+    type: Object,
+    default: () => ({ labelPlacement: 'none', prefixText: '', labelBold: true })
   }
 })
 
@@ -38,29 +50,80 @@ const emit = defineEmits(['update:modelValue'])
 
 const editorRef = ref(null)
 const isUpdating = ref(false) // 避免循环更新
-const displayLineCount = ref(0) // 实时显示的行数
+const displayLineCount = ref(0) // 按当前简历正文排版估算的视觉行数
 
-// 计算行数（从 HTML 内容实时计算）
+function measureResumeLineCount(text) {
+  if (!text?.trim() || typeof document === 'undefined') return 0
+  const metrics = props.resumeMetrics || {}
+  const measurer = document.createElement('div')
+  Object.assign(measurer.style, {
+    position: 'fixed',
+    left: '-10000px',
+    top: '0',
+    width: `${Math.max(1, Number(metrics.contentWidthPx) || 725)}px`,
+    height: 'auto',
+    margin: '0',
+    padding: '0',
+    border: '0',
+    visibility: 'hidden',
+    pointerEvents: 'none',
+    whiteSpace: 'pre-wrap',
+    overflowWrap: 'anywhere',
+    wordBreak: 'break-word',
+    textAlign: 'justify',
+    textJustify: 'inter-ideograph',
+    fontFamily: metrics.fontFamilyCss || "'Microsoft YaHei', Arial, sans-serif",
+    fontSize: `${Number(metrics.fontSizePt) || 9}pt`,
+    fontWeight: '400',
+    lineHeight: String(Number(metrics.lineHeight) || 1.28)
+  })
+  const flow = props.resumeFlow || {}
+  if (flow.labelPlacement === 'inline' && flow.prefixText) {
+    const prefix = document.createElement(flow.labelBold === false ? 'span' : 'strong')
+    prefix.textContent = flow.prefixText
+    prefix.style.fontSize = `${Number(metrics.labelFontSizePt) || Number(metrics.fontSizePt) || 9}pt`
+    prefix.style.fontWeight = String(Number(metrics.labelFontWeight) || 700)
+    measurer.appendChild(prefix)
+  }
+  const content = document.createElement('span')
+  content.innerHTML = formatToHtml(text)
+  measurer.appendChild(content)
+  document.body.appendChild(measurer)
+  const computedLineHeight = Number.parseFloat(window.getComputedStyle(measurer).lineHeight)
+  const contentRange = document.createRange()
+  contentRange.selectNodeContents(measurer)
+  const lineTops = []
+  for (const rect of contentRange.getClientRects()) {
+    if (rect.height <= 0) continue
+    if (!lineTops.some(top => Math.abs(top - rect.top) < 1)) lineTops.push(rect.top)
+  }
+  const fallbackLineCount = computedLineHeight > 0
+    ? Math.max(1, Math.round(measurer.scrollHeight / computedLineHeight))
+    : 1
+  const lineCount = lineTops.length || fallbackLineCount
+  contentRange.detach()
+  measurer.remove()
+  return lineCount
+}
+
+// 使用共享正文排版参数计算自动换行后的预计视觉行数。
 function updateLineCount() {
   if (!editorRef.value) return
-  const html = editorRef.value.innerHTML
-  // 将 <br> 转为换行，计算换行次数
-  const text = html.replace(/<br\s*\/?>/gi, '\n').replace(/<\/div>/gi, '\n').replace(/<div[^>]*>/gi, '\n')
-  // 移除 HTML 标签
-  const plainText = text.replace(/<[^>]+>/g, '')
-  // 解码 HTML 实体
-  const decodedText = plainText.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-  // 计算行数
-  const lines = decodedText.split('\n').filter(line => line.trim()).length
-  displayLineCount.value = lines || 0
+  displayLineCount.value = measureResumeLineCount(parseToText(editorRef.value.innerHTML))
 }
 
-// 实时输入处理（只用于更新行数，不同步数据）
+function syncValue() {
+  if (!editorRef.value || isUpdating.value) return
+  const text = parseToText(editorRef.value.innerHTML)
+  if (text !== props.modelValue) emit('update:modelValue', text)
+}
+
+// 单行编辑器实时同步；多行编辑器保持原有的失焦同步行为。
 function onInput() {
   updateLineCount()
+  if (props.compact) syncValue()
 }
 
-// 格式化文本：将 **text** 转为 <b>text</b>
 function formatToHtml(text) {
   if (!text) return ''
   // 转义 HTML 特殊字符
@@ -79,7 +142,9 @@ function formatToHtml(text) {
 function parseToText(html) {
   if (!html) return ''
   // 将 <b> 转回 **
-  let text = html.replace(/<b>/g, '**').replace(/<\/b>/g, '**')
+  let text = html
+    .replace(/<(?:b|strong)\b[^>]*>/gi, '**')
+    .replace(/<\/(?:b|strong)>/gi, '**')
   // 将 <br> 和 <div> 转为换行
   text = text.replace(/<br\s*\/?>/gi, '\n').replace(/<\/div>/gi, '\n').replace(/<div[^>]*>/gi, '\n')
   // 移除其他 HTML 标签
@@ -94,13 +159,11 @@ function parseToText(html) {
 }
 
 function onBlur() {
-  // 只在失去焦点时同步数据到父组件
-  if (editorRef.value && !isUpdating.value) {
-    const text = parseToText(editorRef.value.innerHTML)
-    if (text !== props.modelValue) {
-      emit('update:modelValue', text)
-    }
-  }
+  syncValue()
+}
+
+function handleEnter(event) {
+  if (props.compact) event.preventDefault()
 }
 
 function handleCtrlB(e) {
@@ -116,8 +179,12 @@ function handleCtrlB(e) {
   // 这会自动处理各种边界情况
   document.execCommand('bold', false, null)
 
+  // 命令执行后收起蓝色选区，把光标放到改动末尾，便于立即辨认结果。
+  if (selection.rangeCount > 0) selection.collapseToEnd()
+
   // 更新行数
   updateLineCount()
+  syncValue()
 }
 
 // 获取文本节点在父元素中的相对偏移
@@ -365,7 +432,8 @@ function mergeAdjacentBoldTags(editor) {
 
 function handlePaste(e) {
   e.preventDefault()
-  const text = e.clipboardData.getData('text/plain')
+  const raw = e.clipboardData.getData('text/plain')
+  const text = props.compact ? raw.replace(/[\r\n]+/g, ' ') : raw
   // 插入纯文本
   document.execCommand('insertText', false, text)
   // 更新行数
@@ -400,6 +468,18 @@ watch(() => props.modelValue, (newVal) => {
   }
 }, { immediate: true })
 
+watch(() => [
+  props.resumeMetrics?.fontSizePt,
+  props.resumeMetrics?.labelFontSizePt,
+  props.resumeMetrics?.labelFontWeight,
+  props.resumeMetrics?.lineHeight,
+  props.resumeMetrics?.contentWidthPx,
+  props.resumeMetrics?.fontFamilyCss,
+  props.resumeFlow?.labelPlacement,
+  props.resumeFlow?.prefixText,
+  props.resumeFlow?.labelBold
+], () => nextTick(updateLineCount))
+
 onMounted(() => {
   nextTick(() => {
     updateDisplay()
@@ -423,6 +503,22 @@ onMounted(() => {
   border-color: rgba(120, 166, 255, 0.55);
   background: #25262c;
   box-shadow: 0 0 0 3px rgba(120, 166, 255, 0.09);
+}
+
+.rich-editor.compact {
+  min-height: 46px;
+  padding: 0;
+  border-radius: 10px;
+  box-sizing: border-box;
+}
+
+.rich-editor.compact .editor-content {
+  min-height: 44px;
+  max-height: 44px;
+  padding: 0.8rem 0.75rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 .editor-content {
@@ -459,7 +555,7 @@ onMounted(() => {
 
 .editor-hint {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
   padding: 0.4rem 0.75rem;
   background: rgba(255, 255, 255, 0.025);
@@ -467,24 +563,6 @@ onMounted(() => {
   font-size: 0.75rem;
   color: #777780;
   border-radius: 0 0 var(--radius-sm) var(--radius-sm);
-}
-
-.hint-text {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-}
-
-.hint-text kbd {
-  display: inline-block;
-  padding: 0.15rem 0.4rem;
-  font-size: 0.7rem;
-  font-family: inherit;
-  color: #c8cad2;
-  background: rgba(255, 255, 255, 0.055);
-  border: 1px solid rgba(255, 255, 255, 0.11);
-  border-radius: 3px;
-  box-shadow: none;
 }
 
 .line-count {

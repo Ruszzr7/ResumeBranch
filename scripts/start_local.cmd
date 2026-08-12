@@ -5,7 +5,10 @@ cd /d "%~dp0.."
 
 set "PROJECT_ROOT=%CD%"
 set "RUN_DIR=%PROJECT_ROOT%\.local-run"
-set "NO_PAUSE=0"
+rem The all-in-one launcher is an orchestrator, not an interactive service shell.
+rem It must run database -> backend -> frontend -> health checks without waiting
+rem for keyboard input. Use --pause only when the final summary should stay open.
+set "NO_PAUSE=1"
 set "RESTART=0"
 call :parse_args %*
 
@@ -74,6 +77,7 @@ exit /b %errorlevel%
 :parse_args
 if "%~1"=="" exit /b 0
 if /I "%~1"=="--no-pause" set "NO_PAUSE=1"
+if /I "%~1"=="--pause" set "NO_PAUSE=0"
 if /I "%~1"=="--restart" set "RESTART=1"
 shift
 goto parse_args

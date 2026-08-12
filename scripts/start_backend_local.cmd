@@ -160,5 +160,5 @@ exit /b %errorlevel%
 
 :worker
 cd /d "%PROJECT_ROOT%"
-"%PYTHON%" -m backend.main 1>"%OUT_LOG%" 2>"%ERR_LOG%"
+"%PYTHON%" -m backend.main 0<nul 1>"%OUT_LOG%" 2>"%ERR_LOG%"
 exit /b %errorlevel%

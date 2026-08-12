@@ -147,6 +147,36 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("layout-global", ids)
         self.assertTrue(any(not value.startswith("layout-") for value in ids))
 
+    async def test_structured_model_cannot_bypass_modal_only_font_sizes(self):
+        before_layout = default_layout_config()
+        state = AgentState(
+            messages=[HumanMessage(content="重新组织项目经历描述并应用")],
+            resume_data=resume_payload(), layout_data=before_layout,
+            user_id=7, task_id="task-1",
+        )
+        resume_after = resume_payload()
+        resume_after["project_experience"] = [{
+            "project_name": "项目A", "role": "开发", "date_range": [],
+            "details": ["完成接口优化"],
+        }]
+        model_layout = default_layout_config()
+        model_layout["global"]["fontSize"] = 11.5
+        model_layout["typography"]["fontSizes"] = {
+            "name": 20, "sectionTitle": 16, "entryTitle": 14,
+            "meta": 11.5, "body": 11.5, "label": 12,
+        }
+        response = {"resume_data": resume_after, "layout_config": model_layout}
+        fake_llm = SimpleNamespace(ainvoke=AsyncMock(
+            return_value=AIMessage(content=json.dumps(response, ensure_ascii=False))
+        ))
+
+        with patch("backend.resume_agent.conversation_llm", fake_llm):
+            result = await proposal_generator_node(state)
+        candidate = result["pending_confirmation"]["layout_candidate"]
+        self.assertEqual(candidate["global"]["fontSize"], before_layout["global"]["fontSize"])
+        self.assertEqual(candidate["typography"]["fontSizes"], before_layout["typography"]["fontSizes"])
+        self.assertNotIn("layout-global", {change["id"] for change in result["pending_confirmation"]["changes"]})
+
     async def test_selecting_layout_group_persists_only_that_group(self):
         before_layout = default_layout_config()
         after_layout = default_layout_config()

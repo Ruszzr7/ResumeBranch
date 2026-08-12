@@ -7,10 +7,48 @@ consume normalized values from this module.  Arbitrary CSS/HTML is never stored.
 from __future__ import annotations
 
 from copy import deepcopy
+import math
 from typing import Any
 
 
-LAYOUT_SCHEMA_VERSION = 4
+LAYOUT_SCHEMA_VERSION = 5
+
+FONT_SIZE_LIMITS: dict[str, tuple[float, float]] = {
+    "name": (12.0, 20.0),
+    "sectionTitle": (9.0, 16.0),
+    "entryTitle": (8.5, 14.0),
+    "meta": (8.0, 11.5),
+    "body": (8.0, 11.5),
+    "label": (8.0, 12.0),
+}
+
+
+def resolve_content_block_flow(block: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Describe whether a semantic content label shares the content line."""
+    block = block or {}
+    block_type = str(block.get("type") or "paragraph")
+    if block_type not in {"paragraph", "numbered_list", "bullet_list"}:
+        block_type = "paragraph"
+    label = str(block.get("label") or "").strip()
+    placement = "none" if not label else ("inline" if block_type == "paragraph" else "separate")
+    return {
+        "type": block_type,
+        "label": label,
+        "labelPlacement": placement,
+        "labelBold": block.get("label_bold") is not False,
+    }
+
+
+def _semantic_font_sizes(body_size: float) -> dict[str, float]:
+    """Return the v4 visual hierarchy expressed as explicit v5 roles."""
+    return {
+        "name": 14.0,
+        "sectionTitle": body_size + 2.0,
+        "entryTitle": body_size + 1.0,
+        "meta": body_size,
+        "body": body_size,
+        "label": body_size,
+    }
 
 TYPOGRAPHY_PRESETS: dict[str, dict[str, Any]] = {
     "microsoft-office": {
@@ -38,6 +76,7 @@ DEFAULT_LAYOUT_CONFIG: dict[str, Any] = {
     "typography": {
         "preset": "microsoft-office",
         **deepcopy(TYPOGRAPHY_PRESETS["microsoft-office"]),
+        "fontSizes": _semantic_font_sizes(9.0),
     },
     "global": {
         "density": "compact",
@@ -170,6 +209,7 @@ ALLOWED_HIDDEN_FIELDS = {
 }
 
 MODULE_LABELS = {
+    "typography": "字体",
     "global": "全局排版",
     "basics": "基本信息",
     "education": "教育经历",
@@ -197,6 +237,7 @@ VALUE_LABELS = {
 
 FIELD_LABELS = {
     ("typography", "preset"): "字体方案",
+    ("typography", "fontSizes"): "分角色字号",
     ("global", "density"): "整体密度",
     ("global", "fontSize"): "字体大小",
     ("global", "lineHeight"): "行间距",
@@ -289,6 +330,13 @@ def _bounded_number(value: Any, minimum: float, maximum: float, fallback: float)
     return min(max(number, minimum), maximum)
 
 
+def _half_point(value: Any, minimum: float, maximum: float, fallback: float) -> float:
+    bounded = _bounded_number(value, minimum, maximum, fallback)
+    # Values are positive. Explicit half-up rounding matches JavaScript's
+    # Math.round so browser and backend normalization cannot disagree at .25.
+    return math.floor(bounded * 2 + 0.5) / 2
+
+
 def normalize_layout_config(value: dict | None) -> dict:
     """Normalize unknown/partial input into the complete current contract."""
     try:
@@ -332,14 +380,34 @@ def normalize_layout_config(value: dict | None) -> dict:
     for section, key in ENUMS:
         _enum(result, section, key)
 
+    global_config = result["global"]
+    global_config["fontSize"] = _half_point(global_config.get("fontSize"), 8, 11.5, 9)
+
+    # v5 records every semantic font size explicitly. Existing configurations
+    # resolve to exactly the same v4 hierarchy, while global.fontSize remains
+    # the backwards-compatible body-size field.
+    supplied_typography = (
+        value.get("typography")
+        if isinstance(value, dict) and isinstance(value.get("typography"), dict)
+        else {}
+    )
+    supplied_font_sizes = supplied_typography.get("fontSizes")
+    if supplied_version < 5 or not isinstance(supplied_font_sizes, dict):
+        result["typography"]["fontSizes"] = _semantic_font_sizes(global_config["fontSize"])
+    font_sizes = result["typography"]["fontSizes"]
+    defaults = _semantic_font_sizes(global_config["fontSize"])
+    for role, (minimum, maximum) in FONT_SIZE_LIMITS.items():
+        font_sizes[role] = _half_point(font_sizes.get(role), minimum, maximum, defaults[role])
+    # global.fontSize remains canonical for the body role so older callers that
+    # update this field continue to behave as before.
+    font_sizes["body"] = global_config["fontSize"]
+
     # Font names are resolved from a curated preset rather than accepting
     # arbitrary model/user strings. This keeps browser, PDF and DOCX exports on
     # exactly the same known typefaces.
     typography = result["typography"]
     typography.update(deepcopy(TYPOGRAPHY_PRESETS[typography["preset"]]))
 
-    global_config = result["global"]
-    global_config["fontSize"] = _bounded_number(global_config.get("fontSize"), 8, 11.5, 9)
     global_config["lineHeight"] = _bounded_number(global_config.get("lineHeight"), 1.1, 2.2, 1.28)
     global_config["moduleMargin"] = _bounded_number(global_config.get("moduleMargin"), 0.25, 2, 0.55)
     global_config["marginVertical"] = _bounded_number(global_config.get("marginVertical"), 3, 12, 9)
@@ -433,11 +501,13 @@ def resolve_layout_tokens(config: dict | None = None, style: dict | None = None)
     font_size = _bounded_number(overrides.get("fontSize", global_config["fontSize"]), 8, 11.5, global_config["fontSize"])
     line_height = _bounded_number(overrides.get("lineHeight", global_config["lineHeight"]), 1.1, 2.2, global_config["lineHeight"])
     module_margin = _bounded_number(overrides.get("moduleMargin", global_config["moduleMargin"]), 0.25, 2, global_config["moduleMargin"])
+    font_sizes = typography["fontSizes"]
     body_font_size = font_size
-    meta_font_size = body_font_size
-    entry_title_font_size = body_font_size + 1.0
-    section_title_font_size = body_font_size + 2.0
-    name_font_size = 14.0
+    meta_font_size = font_sizes["meta"]
+    entry_title_font_size = font_sizes["entryTitle"]
+    section_title_font_size = font_sizes["sectionTitle"]
+    name_font_size = font_sizes["name"]
+    label_font_size = font_sizes["label"]
 
     return {
         "fontPreset": typography["preset"],
@@ -455,12 +525,14 @@ def resolve_layout_tokens(config: dict | None = None, style: dict | None = None)
         "entryTitleFontSizePt": entry_title_font_size,
         "sectionTitleFontSizePt": section_title_font_size,
         "nameFontSizePt": name_font_size,
+        "labelFontSizePt": label_font_size,
         "bodyFontWeight": 400,
         "metaFontWeight": 400,
         "entryTitleFontWeight": 700,
         "sectionTitleFontWeight": 700,
         "nameFontWeight": 700,
         "labelFontWeight": 700,
+        "letterSpacingPt": 0.0,
         "lineHeight": line_height,
         "bodyLineHeightPt": body_font_size * line_height,
         "moduleMargin": module_margin,
@@ -472,6 +544,10 @@ def resolve_layout_tokens(config: dict | None = None, style: dict | None = None)
         "contentBlockSpacingPt": body_font_size * 0.14,
         "contentLabelSpacingPt": body_font_size * 0.06,
         "numberedItemSpacingPt": body_font_size * 0.08,
+        # All body lists share one text column. Markers may differ, but the
+        # first character and every wrapped line begin at this physical point.
+        "listTextIndentPt": body_font_size * 1.55,
+        "listMarkerGapPt": body_font_size * 0.25,
         "marginTopMm": _bounded_number(overrides.get("marginTop", global_config["marginVertical"]), 3, 12, global_config["marginVertical"]),
         "marginBottomMm": _bounded_number(overrides.get("marginBottom", global_config["marginVertical"]), 3, 12, global_config["marginVertical"]),
         "marginLeftMm": _bounded_number(overrides.get("marginLeft", global_config["marginHorizontal"]), 3, 12, global_config["marginHorizontal"]),
@@ -485,6 +561,7 @@ def apply_density(config: dict, density: str) -> dict:
         return result
     result["global"]["density"] = density
     result["global"].update(DENSITY_VALUES[density])
+    result["typography"]["fontSizes"] = _semantic_font_sizes(DENSITY_VALUES[density]["fontSize"])
     return normalize_layout_config(result)
 
 
@@ -494,7 +571,7 @@ def apply_layout_template(config: dict | None, template_id: str) -> dict:
     if template is None:
         return normalize_layout_config(config)
     result = apply_density(config or {}, template["density"])
-    for section in ("global", "basics", "education", "work_experience", "project_experience", "others", "self_evaluation"):
+    for section in ("typography", "global", "basics", "education", "work_experience", "project_experience", "others", "self_evaluation"):
         result[section].update(deepcopy(template.get(section, {})))
     return normalize_layout_config(result)
 
@@ -509,7 +586,8 @@ def build_layout_changes(before: dict | None, after: dict | None) -> list[dict]:
     new = normalize_layout_config(after)
     changes = []
     for section in ("global", "basics", "education", "work_experience", "project_experience", "others", "self_evaluation"):
-        if old[section] == new[section]:
+        typography_changed = section == "global" and old["typography"] != new["typography"]
+        if old[section] == new[section] and not typography_changed:
             continue
         details = []
         for key in sorted(set(old[section]) | set(new[section])):
@@ -520,6 +598,17 @@ def build_layout_changes(before: dict | None, after: dict | None) -> list[dict]:
             details.append({
                 "field": key,
                 "field_label": FIELD_LABELS.get((section, key), key),
+                "before": before_value,
+                "after": after_value,
+                "before_display": _display_layout_value(before_value),
+                "after_display": _display_layout_value(after_value),
+            })
+        if typography_changed:
+            before_value = old["typography"]["fontSizes"]
+            after_value = new["typography"]["fontSizes"]
+            details.append({
+                "field": "typography.fontSizes",
+                "field_label": FIELD_LABELS[("typography", "fontSizes")],
                 "before": before_value,
                 "after": after_value,
                 "before_display": _display_layout_value(before_value),
@@ -542,6 +631,10 @@ def apply_layout_change_groups(base: dict | None, candidate: dict | None, select
     for section in ("global", "basics", "education", "work_experience", "project_experience", "others", "self_evaluation"):
         if f"layout-{section}" in selected:
             old[section] = deepcopy(new[section])
+            if section == "global":
+                # Density/template changes and their semantic type scale are
+                # one atomic visual decision during confirmation.
+                old["typography"] = deepcopy(new["typography"])
     return normalize_layout_config(old)
 
 

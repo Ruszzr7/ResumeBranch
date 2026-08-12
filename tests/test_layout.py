@@ -2,6 +2,7 @@ import unittest
 from io import BytesIO
 from zipfile import ZipFile
 from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 from backend.layout import (
     apply_page_mode_defaults,
@@ -40,7 +41,7 @@ class LayoutRuleTests(unittest.TestCase):
                 "sectionOrder": ["education", "project_experience", "others"],
             },
         })
-        self.assertEqual(layout["version"], 4)
+        self.assertEqual(layout["version"], 5)
         self.assertEqual(layout["global"]["fontSize"], 9)
         self.assertEqual(layout["global"]["lineHeight"], 1.28)
         self.assertIn("skills", layout["global"]["sectionOrder"])
@@ -228,7 +229,7 @@ class LayoutRuleTests(unittest.TestCase):
 
         html = render_resume_to_html(data)
 
-        self.assertIn("<strong>项目简介：</strong>面向展厅导航", html)
+        self.assertIn('<span class="project-inline-label is-bold">项目简介：</span>面向展厅导航', html)
         self.assertIn('<ol class="project-numbered-list">', html)
         self.assertNotIn("（1）训练策略", html)
         self.assertNotIn(">角色<", html)
@@ -236,7 +237,29 @@ class LayoutRuleTests(unittest.TestCase):
         self.assertLess(html.index("专业技能"), html.index("项目经历"))
         self.assertIn("body, .degree-major", html)
 
-    def test_numbered_skill_keeps_its_number_without_an_outer_bullet(self):
+    def test_semantic_label_weight_and_body_justification_match_pdf_and_word(self):
+        data = resume_with_two_jobs()
+        data["project_experience"] = [{
+            "project_name": "机器人控制",
+            "date_range": ["2025.01", "2025.06"],
+            "content_blocks": [{
+                "type": "paragraph", "label": "项目简介", "label_bold": False,
+                "text": "面向复杂工业场景完成控制系统设计与部署", "items": [],
+            }],
+        }]
+
+        html = render_resume_to_html(data)
+        self.assertIn('<span class="project-inline-label">项目简介：</span>', html)
+        self.assertNotIn('project-inline-label is-bold">项目简介', html)
+        self.assertIn("text-align: justify", html)
+
+        document = Document(BytesIO(generate_docx(data)))
+        paragraph = next(p for p in document.paragraphs if "项目简介" in p.text)
+        label_run = next(run for run in paragraph.runs if "项目简介" in run.text)
+        self.assertFalse(label_run.bold)
+        self.assertEqual(paragraph.alignment, WD_ALIGN_PARAGRAPH.JUSTIFY)
+
+    def test_numbered_skill_keeps_its_number_and_uses_flush_wrapping(self):
         data = resume_with_two_jobs()
         data["others"]["skills"] = ["1. Python 与 FastAPI", "沟通协作"]
 
@@ -251,8 +274,8 @@ class LayoutRuleTests(unittest.TestCase):
         plain = next(paragraph for paragraph in document.paragraphs if "沟通协作" in paragraph.text)
         self.assertNotEqual(numbered.style.name, "List Bullet")
         self.assertEqual(plain.style.name, "List Bullet")
-        self.assertGreater(numbered.paragraph_format.left_indent.mm, 0)
-        self.assertLess(numbered.paragraph_format.first_line_indent.mm, 0)
+        self.assertEqual(numbered.paragraph_format.left_indent.mm, 0)
+        self.assertEqual(numbered.paragraph_format.first_line_indent.mm, 0)
         self.assertGreater(plain.paragraph_format.left_indent.mm, 0)
         self.assertLess(plain.paragraph_format.first_line_indent.mm, 0)
 
@@ -269,10 +292,28 @@ class LayoutRuleTests(unittest.TestCase):
         }]
 
         document = Document(BytesIO(generate_docx(data)))
-        numbered = next(paragraph for paragraph in document.paragraphs if paragraph.text.startswith("(1) "))
+        numbered = next(paragraph for paragraph in document.paragraphs if "(1)" in paragraph.text)
 
         self.assertGreater(numbered.paragraph_format.left_indent.mm, 0)
         self.assertLess(numbered.paragraph_format.first_line_indent.mm, 0)
+        self.assertEqual(numbered.text.count("\t"), 2)
+        self.assertNotIn("(1) ", numbered.text)
+
+    def test_word_disables_punctuation_overflow_on_measured_paragraphs(self):
+        data = resume_with_two_jobs()
+        data["project_experience"] = [{
+            "project_name": "Punctuation boundary",
+            "content_blocks": [{
+                "type": "paragraph",
+                "label": "项目简介",
+                "text": "介绍，介绍。",
+            }],
+        }]
+
+        with ZipFile(BytesIO(generate_docx(data))) as archive:
+            document_xml = archive.read("word/document.xml").decode("utf-8")
+
+        self.assertIn('<w:overflowPunct w:val="0"', document_xml)
 
     def test_word_contact_details_use_dark_gray(self):
         data = resume_with_two_jobs()
@@ -302,6 +343,80 @@ class LayoutRuleTests(unittest.TestCase):
 
         self.assertAlmostEqual(body_paragraph.runs[-1].font.size.pt, 10.5, places=2)
 
+    def test_semantic_font_sizes_and_inline_bold_match_pdf_and_word(self):
+        data = resume_with_two_jobs()
+        data["basics"]["name"] = "测试用户"
+        data["work_experience"] = [{
+            "company_name": "示例科技",
+            "job_title": "后端工程师",
+            "job_type": "实习",
+            "date_range": ["2025.01", "2025.06"],
+            "details": [],
+            "content_blocks": [{
+                "type": "paragraph",
+                "label": "成果",
+                "label_bold": True,
+                "text": "将接口**延迟降低35%**并稳定运行",
+                "items": [],
+            }],
+        }]
+        layout = default_layout_config()
+        layout["global"]["fontSize"] = 10
+        layout["typography"]["fontSizes"] = {
+            "name": 18.5,
+            "sectionTitle": 13.5,
+            "entryTitle": 12.5,
+            "meta": 10.5,
+            "body": 10,
+            "label": 11.5,
+        }
+
+        html = render_resume_to_html(data, layout_config=layout)
+        for declaration in (
+            "--name-font-size: 18.5pt;",
+            "--section-title-font-size: 13.5pt;",
+            "--entry-title-font-size: 12.5pt;",
+            "--meta-font-size: 10.5pt;",
+            "--body-font-size: 10pt;",
+            "--label-font-size: 11.5pt;",
+        ):
+            self.assertIn(declaration, html)
+        self.assertIn("将接口<strong>延迟降低35%</strong>并稳定运行", html)
+
+        document = Document(BytesIO(generate_docx(data, layout_config=layout)))
+        all_paragraphs = [paragraph for paragraph in document.paragraphs]
+        all_paragraphs.extend(
+            paragraph
+            for table in document.tables
+            for row in table.rows
+            for cell in row.cells
+            for paragraph in cell.paragraphs
+        )
+        name_run = next(run for paragraph in all_paragraphs for run in paragraph.runs if run.text == "测试用户")
+        company_run = next(run for paragraph in all_paragraphs for run in paragraph.runs if run.text == "示例科技")
+        date_run = next(run for paragraph in all_paragraphs for run in paragraph.runs if "2025.01" in run.text)
+        label_run = next(run for paragraph in all_paragraphs for run in paragraph.runs if run.text == "成果：")
+        bold_body_run = next(run for paragraph in all_paragraphs for run in paragraph.runs if run.text == "延迟降低35%")
+        section_run = next(
+            paragraph.runs[0]
+            for paragraph in document.paragraphs
+            if paragraph.runs and paragraph._p.xpath("./w:pPr/w:pBdr")
+        )
+        self.assertAlmostEqual(name_run.font.size.pt, 18.5, places=1)
+        self.assertAlmostEqual(section_run.font.size.pt, 13.5, places=1)
+        self.assertAlmostEqual(company_run.font.size.pt, 12.5, places=1)
+        self.assertAlmostEqual(date_run.font.size.pt, 10.5, places=1)
+        self.assertAlmostEqual(label_run.font.size.pt, 11.5, places=1)
+        self.assertAlmostEqual(bold_body_run.font.size.pt, 10, places=1)
+        self.assertTrue(bold_body_run.bold)
+
+    def test_pdf_inline_formatting_escapes_html_before_rendering_bold(self):
+        data = resume_with_two_jobs()
+        data["basics"]["name"] = '<img src=x onerror="boom"> **张三**'
+        html = render_resume_to_html(data)
+        self.assertIn('&lt;img src=x onerror=&quot;boom&quot;&gt; <strong>张三</strong>', html)
+        self.assertNotIn('<img src=x onerror="boom">', html)
+
     def test_word_left_aligned_header_uses_full_row_when_photo_is_absent(self):
         data = resume_with_two_jobs()
         data["basics"].update({
@@ -322,13 +437,25 @@ class LayoutRuleTests(unittest.TestCase):
         html = render_resume_to_html(resume_with_two_jobs())
 
         self.assertIn("overflow-wrap: break-word", html)
+        self.assertIn("--letter-spacing: 0pt", html)
+        self.assertIn("letter-spacing: var(--letter-spacing)", html)
+        self.assertIn("font-kerning: none", html)
+        self.assertIn("font-variant-ligatures: none", html)
+        self.assertIn("font-synthesis: none", html)
         self.assertIn("flex: 1 1 0", html)
         self.assertIn("flex: 0 0 36mm", html)
-        self.assertIn("margin-right: 2mm", html)
+        self.assertIn("margin-right: 0", html)
         self.assertIn("position: static", html)
         self.assertNotIn("right: 6mm", html)
 
-    def test_word_one_line_education_has_fixed_width_and_right_safety_padding(self):
+    def test_pdf_bullet_marker_is_centered_without_moving_the_text_column(self):
+        html = render_resume_to_html(resume_with_two_jobs())
+
+        self.assertIn("padding-left: var(--list-text-indent)", html)
+        self.assertIn("width: calc(var(--list-text-indent) - var(--list-marker-gap))", html)
+        self.assertIn("text-align: center", html)
+
+    def test_word_one_line_education_uses_full_printable_width_without_right_padding(self):
         data = resume_with_two_jobs()
         data["education"] = [{
             "school_name": "暨南大学",
@@ -343,8 +470,8 @@ class LayoutRuleTests(unittest.TestCase):
             document_xml = archive.read("word/document.xml").decode("utf-8")
 
         self.assertIn('<w:tblLayout w:type="fixed"', document_xml)
-        self.assertIn('<w:tblW w:type="dxa" w:w="10431"', document_xml)
-        self.assertIn('<w:end w:w="80" w:type="dxa"', document_xml)
+        self.assertIn('<w:tblW w:type="dxa" w:w="10885"', document_xml)
+        self.assertNotIn('<w:end w:w="80" w:type="dxa"', document_xml)
 
 
 if __name__ == "__main__":

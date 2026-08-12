@@ -1,8 +1,19 @@
 <script setup>
 import { ref, computed, onMounted, watch, nextTick, onUnmounted } from 'vue'
 import { labels } from '../utils/labels.js'
+import { formatInlineHtml } from '../utils/inlineFormatting.js'
 import { buildAuthorizationHeaders } from '../config/appMode.js'
-import { normalizeLayoutConfig, resolveLayoutTokens, sectionTitle, sectionOrder, isSectionHidden } from '../utils/layoutConfig.js'
+import {
+  DEFAULT_LAYOUT_CONFIG,
+  FONT_SIZE_LABELS,
+  FONT_SIZE_LIMITS,
+  normalizeLayoutConfig,
+  resolveContentBlockFlow,
+  resolveLayoutTokens,
+  sectionTitle,
+  sectionOrder,
+  isSectionHidden
+} from '../utils/layoutConfig.js'
 
 const props = defineProps({
   data: {
@@ -333,6 +344,11 @@ const marginHorizontal = ref(DEFAULT_STYLE.marginHorizontal)
 const moduleMargin = ref(DEFAULT_STYLE.moduleMargin)
 const lineHeight = ref(DEFAULT_STYLE.lineHeight)
 const fontSize = ref(DEFAULT_STYLE.fontSize)
+const fontSizes = ref({ ...DEFAULT_LAYOUT_CONFIG.typography.fontSizes })
+const fontSizeDraft = ref({ ...DEFAULT_LAYOUT_CONFIG.typography.fontSizes })
+const showFontSizeDialog = ref(false)
+const isSavingFontSizes = ref(false)
+const fontSizeSaveError = ref('')
 const overflowBeyondPageLimit = ref(false)
 const pageBreakBefore = ref('')
 
@@ -347,6 +363,7 @@ function loadLayoutSettings() {
   moduleMargin.value = Number(global.moduleMargin ?? DEFAULT_STYLE.moduleMargin)
   lineHeight.value = Number(global.lineHeight ?? DEFAULT_STYLE.lineHeight)
   fontSize.value = Number(global.fontSize ?? DEFAULT_STYLE.fontSize)
+  fontSizes.value = { ...layout.value.typography.fontSizes }
 }
 
 async function migrateLegacyLayoutSettings() {
@@ -397,6 +414,7 @@ function saveLayoutSettings() {
       lineHeight: lineHeight.value,
       fontSize: fontSize.value
     })
+    candidate.typography.fontSizes = { ...fontSizes.value, body: fontSize.value }
     try {
       await fetch(`/tasks/${props.taskId}/layout`, {
         method: 'PUT',
@@ -411,6 +429,69 @@ function saveLayoutSettings() {
 
 const showResetStyleConfirm = ref(false)
 
+const fontSizeRoles = Object.keys(FONT_SIZE_LABELS)
+const activeFontSizes = computed(() => showFontSizeDialog.value ? fontSizeDraft.value : fontSizes.value)
+const fontSizeOptions = role => {
+  const [minimum, maximum] = FONT_SIZE_LIMITS[role]
+  const values = []
+  for (let value = minimum; value <= maximum + 0.001; value += 0.5) values.push(value)
+  return values
+}
+
+function contentBlockLabel(block, placement) {
+  const flow = resolveContentBlockFlow(block)
+  return flow.labelPlacement === placement ? flow.label : ''
+}
+
+function contentBlockLabelBold(block, placement) {
+  const flow = resolveContentBlockFlow(block)
+  return flow.labelPlacement === placement && flow.labelBold
+}
+
+function openFontSizeDialog() {
+  fontSizeDraft.value = { ...fontSizes.value }
+  fontSizeSaveError.value = ''
+  closeToolbarMenu()
+  showFontSizeDialog.value = true
+}
+
+function closeFontSizeDialog() {
+  if (isSavingFontSizes.value) return
+  showFontSizeDialog.value = false
+  fontSizeSaveError.value = ''
+}
+
+function resetFontSizeDraft() {
+  fontSizeDraft.value = { ...DEFAULT_LAYOUT_CONFIG.typography.fontSizes }
+}
+
+async function applyFontSizeSettings() {
+  if (!props.taskId || isSavingFontSizes.value) return
+  isSavingFontSizes.value = true
+  fontSizeSaveError.value = ''
+  const candidate = normalizeLayoutConfig(layout.value)
+  candidate.typography.fontSizes = { ...fontSizeDraft.value }
+  candidate.global.fontSize = Number(fontSizeDraft.value.body)
+  try {
+    const response = await fetch(`/tasks/${props.taskId}/layout`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...buildAuthorizationHeaders() },
+      body: JSON.stringify({ layout_config: candidate })
+    })
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(payload.detail || '保存字号设置失败')
+    const saved = normalizeLayoutConfig(payload.layout_config || candidate)
+    fontSizes.value = { ...saved.typography.fontSizes }
+    fontSize.value = saved.global.fontSize
+    emit('layout-updated', saved)
+    showFontSizeDialog.value = false
+  } catch (error) {
+    fontSizeSaveError.value = error.message || '保存字号设置失败'
+  } finally {
+    isSavingFontSizes.value = false
+  }
+}
+
 function requestResetStyleSettings(event) {
   event?.currentTarget?.blur()
   closeToolbarMenu()
@@ -423,7 +504,9 @@ function resetStyleSettings() {
   moduleMargin.value = DEFAULT_STYLE.moduleMargin
   lineHeight.value = DEFAULT_STYLE.lineHeight
   fontSize.value = DEFAULT_STYLE.fontSize
+  fontSizes.value = { ...DEFAULT_LAYOUT_CONFIG.typography.fontSizes }
   showResetStyleConfirm.value = false
+  saveLayoutSettings()
 }
 
 const activeToolbarMenu = ref(null)
@@ -474,9 +557,11 @@ function handleToolbarOutsideClick(event) {
 }
 
 // A4尺寸（像素，96dpi）
-const PAGE_WIDTH = 794
-const PAGE_HEIGHT = 1123
-const MM_TO_PX = 3.78
+const CSS_PX_PER_INCH = 96
+const MM_PER_INCH = 25.4
+const MM_TO_PX = CSS_PX_PER_INCH / MM_PER_INCH
+const PAGE_WIDTH = 210 * MM_TO_PX
+const PAGE_HEIGHT = 297 * MM_TO_PX
 
 // 计算边距的像素值
 const marginTopPx = computed(() => marginVertical.value * MM_TO_PX)
@@ -486,8 +571,14 @@ const marginRightPx = computed(() => marginHorizontal.value * MM_TO_PX)
 
 // 预览、PDF 和 DOCX 都从同一排版协议解析物理尺寸；这里不再单独
 // 使用 rem 推导模块/段落间距。
-const layoutTokens = computed(() => resolveLayoutTokens(layout.value, {
-  fontSize: fontSize.value,
+const renderLayout = computed(() => {
+  const value = normalizeLayoutConfig(layout.value)
+  value.typography.fontSizes = { ...activeFontSizes.value }
+  value.global.fontSize = Number(activeFontSizes.value.body)
+  return value
+})
+const layoutTokens = computed(() => resolveLayoutTokens(renderLayout.value, {
+  fontSize: Number(activeFontSizes.value.body),
   lineHeight: lineHeight.value,
   moduleMargin: moduleMargin.value,
   marginTop: marginVertical.value,
@@ -499,12 +590,17 @@ const pageStyles = computed(() => ({
   fontFamily: layoutTokens.value.fontFamilyCss,
   fontSize: `${layoutTokens.value.fontSizePt}pt`,
   fontWeight: layoutTokens.value.bodyFontWeight,
+  letterSpacing: `${layoutTokens.value.letterSpacingPt}pt`,
+  fontKerning: 'none',
+  fontVariantLigatures: 'none',
+  fontSynthesis: 'none',
   lineHeight: layoutTokens.value.lineHeight,
   '--body-font-size': `${layoutTokens.value.bodyFontSizePt}pt`,
   '--meta-font-size': `${layoutTokens.value.metaFontSizePt}pt`,
   '--entry-title-font-size': `${layoutTokens.value.entryTitleFontSizePt}pt`,
   '--section-title-font-size': `${layoutTokens.value.sectionTitleFontSizePt}pt`,
   '--name-font-size': `${layoutTokens.value.nameFontSizePt}pt`,
+  '--label-font-size': `${layoutTokens.value.labelFontSizePt}pt`,
   '--body-font-weight': layoutTokens.value.bodyFontWeight,
   '--meta-font-weight': layoutTokens.value.metaFontWeight,
   '--entry-title-font-weight': layoutTokens.value.entryTitleFontWeight,
@@ -519,7 +615,9 @@ const pageStyles = computed(() => ({
   '--paragraph-spacing': `${layoutTokens.value.paragraphSpacingPt}pt`,
   '--content-block-spacing': `${layoutTokens.value.contentBlockSpacingPt}pt`,
   '--content-label-spacing': `${layoutTokens.value.contentLabelSpacingPt}pt`,
-  '--numbered-item-spacing': `${layoutTokens.value.numberedItemSpacingPt}pt`
+  '--numbered-item-spacing': `${layoutTokens.value.numberedItemSpacingPt}pt`,
+  '--list-text-indent': `${layoutTokens.value.listTextIndentPt}pt`,
+  '--list-marker-gap': `${layoutTokens.value.listMarkerGapPt}pt`
 }))
 
 const pagePaddingStyle = computed(() => ({
@@ -831,7 +929,7 @@ const calculatePagination = async () => {
 }
 
 // ========== 监听变化 ==========
-watch([() => props.data, () => props.sourcePageCount, () => props.layoutConfig, marginVertical, marginHorizontal, moduleMargin, lineHeight, fontSize],
+watch([() => props.data, () => props.sourcePageCount, () => props.layoutConfig, marginVertical, marginHorizontal, moduleMargin, lineHeight, fontSize, fontSizes, fontSizeDraft, showFontSizeDialog],
   () => {
     // 增加延迟时间，确保字体变化后浏览器有足够时间重新渲染
     if (window.requestAnimationFrame) {
@@ -955,7 +1053,7 @@ const adjustZoom = (delta, event) => {
 // ========== 格式化文本 ==========
 const formatText = (text) => {
   if (typeof text !== 'string') return text
-  return text.trim().replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')
+  return formatInlineHtml(text)
 }
 
 // ========== 导出PDF（调用后端API，使用WeasyPrint生成矢量PDF）============
@@ -1002,7 +1100,7 @@ const exportDocument = async (format) => {
       body: JSON.stringify({
         resume_data: props.data,
         style: style,
-        layout_config: layout.value,
+        layout_config: renderLayout.value,
         lang: props.lang
       })
     })
@@ -1116,20 +1214,6 @@ const getItemIndex = (type, dataIndex) => {
         <!-- 所有窗口宽度共用同一套操作，窄屏只通过响应式布局调整位置。 -->
         <div class="shared-toolbar-actions">
           <div class="compact-toolbar-cluster">
-          <button
-            v-if="hasSourceDocument"
-            class="compact-toolbar-btn"
-            :class="{ active: showSourceDocument }"
-            :aria-label="showSourceDocument ? '返回当前简历' : '查看导入的原版简历'"
-            @click="toggleSourceDocument"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-              <polyline points="14 2 14 8 20 8"/>
-              <path d="M8 13h8M8 17h5"/>
-            </svg>
-            <span>{{ showSourceDocument ? '当前版' : '原版' }}</span>
-          </button>
           <div class="compact-toolbar-group">
             <button
               class="compact-toolbar-btn"
@@ -1156,57 +1240,6 @@ const getItemIndex = (type, dataIndex) => {
               </div>
             </div>
           </div>
-
-          <div class="compact-toolbar-group">
-            <button
-              class="compact-toolbar-btn"
-              :class="{ active: activeToolbarMenu === 'layout' }"
-              :aria-expanded="activeToolbarMenu === 'layout'"
-              aria-label="打开排版设置"
-              @click="toggleToolbarMenu('layout', $event)"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                <rect x="4" y="3" width="16" height="18" rx="2"/>
-                <path d="M8 7h8M8 11h8M8 15h5"/>
-              </svg>
-              <span>排版</span>
-            </button>
-            <div v-if="activeToolbarMenu === 'layout'" class="compact-popover layout-popover" @click.stop>
-              <div class="compact-popover-title">排版设置</div>
-              <div class="auto-page-hint">页数自动识别，最多两页</div>
-              <label class="compact-control">
-                <span>上下页边距 <strong>{{ marginVertical }}mm</strong></span>
-                <input type="range" v-model.number="marginVertical" min="3" max="12" step="0.25" class="slider">
-              </label>
-              <label class="compact-control">
-                <span>左右页边距 <strong>{{ marginHorizontal }}mm</strong></span>
-                <input type="range" v-model.number="marginHorizontal" min="3" max="12" step="0.25" class="slider">
-              </label>
-              <label class="compact-control">
-                <span>模块间距 <strong>{{ moduleMargin }}rem</strong></span>
-                <input type="range" v-model.number="moduleMargin" min="0.25" max="2" step="0.25" class="slider">
-              </label>
-              <label class="compact-control">
-                <span>行间距 <strong>{{ lineHeight }}</strong></span>
-                <input type="range" v-model.number="lineHeight" min="1.1" max="2.2" step="0.1" class="slider">
-              </label>
-              <label class="compact-control">
-                <span>正文字号 <strong>{{ fontSize }}pt</strong></span>
-                <input type="range" v-model.number="fontSize" min="8" max="11.5" step="0.5" class="slider">
-              </label>
-              <button class="layout-guide-btn section-order-open-btn" @click="openSectionOrderDialog">调整模块顺序</button>
-              <button class="layout-guide-btn" @click="openLayoutGuide">查看可用排版预设</button>
-              <button class="compact-reset-btn" @click="requestResetStyleSettings">恢复默认排版</button>
-            </div>
-          </div>
-
-          <button class="compact-toolbar-btn language-btn" :disabled="translationBusy" @click="toggleLanguage" :aria-label="translationBusy ? '正在翻译简历' : `切换为${lang === 'zh' ? '英文' : '中文'}简历`">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-              <circle cx="12" cy="12" r="9"/>
-              <path d="M3 12h18M12 3c2.2 2.5 3.3 5.5 3.3 9S14.2 18.5 12 21c-2.2-2.5-3.3-5.5-3.3-9S9.8 5.5 12 3"/>
-            </svg>
-            <span>{{ translationBusy ? '翻译中…' : (lang === 'zh' ? '中 / EN' : 'EN / 中') }}</span>
-          </button>
 
           <div class="compact-toolbar-group edit-toolbar-group">
             <button
@@ -1247,6 +1280,77 @@ const getItemIndex = (type, dataIndex) => {
               </button>
             </div>
           </div>
+
+          <div class="compact-toolbar-group">
+            <button
+              class="compact-toolbar-btn"
+              :class="{ active: activeToolbarMenu === 'layout' }"
+              :aria-expanded="activeToolbarMenu === 'layout'"
+              aria-label="打开排版设置"
+              @click="toggleToolbarMenu('layout', $event)"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <rect x="4" y="3" width="16" height="18" rx="2"/>
+                <path d="M8 7h8M8 11h8M8 15h5"/>
+              </svg>
+              <span>排版</span>
+            </button>
+            <div v-if="activeToolbarMenu === 'layout'" class="compact-popover layout-popover" @click.stop>
+              <div class="compact-popover-title">排版设置</div>
+              <div class="auto-page-hint">页数自动识别，最多两页</div>
+              <label class="compact-control">
+                <span>上下页边距 <strong>{{ marginVertical }}mm</strong></span>
+                <input type="range" v-model.number="marginVertical" min="3" max="12" step="0.25" class="slider">
+              </label>
+              <label class="compact-control">
+                <span>左右页边距 <strong>{{ marginHorizontal }}mm</strong></span>
+                <input type="range" v-model.number="marginHorizontal" min="3" max="12" step="0.25" class="slider">
+              </label>
+              <label class="compact-control">
+                <span>模块间距 <strong>{{ moduleMargin }}rem</strong></span>
+                <input type="range" v-model.number="moduleMargin" min="0.25" max="2" step="0.25" class="slider">
+              </label>
+              <label class="compact-control">
+                <span>行间距 <strong>{{ lineHeight }}</strong></span>
+                <input type="range" v-model.number="lineHeight" min="1.1" max="2.2" step="0.1" class="slider">
+              </label>
+              <button
+                type="button"
+                class="layout-guide-btn font-size-open-btn"
+                aria-haspopup="dialog"
+                :aria-label="`调整文字大小，当前正文字号 ${fontSizes.body}pt`"
+                @click="openFontSizeDialog"
+              >
+                调整文字大小
+              </button>
+              <button class="layout-guide-btn section-order-open-btn" @click="openSectionOrderDialog">调整模块顺序</button>
+              <button class="layout-guide-btn" @click="openLayoutGuide">查看可用排版预设</button>
+              <button class="compact-reset-btn" @click="requestResetStyleSettings">恢复默认排版</button>
+            </div>
+          </div>
+
+          <button class="compact-toolbar-btn language-btn" :disabled="translationBusy" @click="toggleLanguage" :aria-label="translationBusy ? '正在翻译简历' : `切换为${lang === 'zh' ? '英文' : '中文'}简历`">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <circle cx="12" cy="12" r="9"/>
+              <path d="M3 12h18M12 3c2.2 2.5 3.3 5.5 3.3 9S14.2 18.5 12 21c-2.2-2.5-3.3-5.5-3.3-9S9.8 5.5 12 3"/>
+            </svg>
+            <span>{{ translationBusy ? '翻译中…' : (lang === 'zh' ? '中 / EN' : 'EN / 中') }}</span>
+          </button>
+
+          <button
+            v-if="hasSourceDocument"
+            class="compact-toolbar-btn"
+            :class="{ active: showSourceDocument }"
+            :aria-label="showSourceDocument ? '返回当前简历' : '查看导入的原版简历'"
+            @click="toggleSourceDocument"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <path d="M8 13h8M8 17h5"/>
+            </svg>
+            <span>{{ showSourceDocument ? '当前版' : '原版' }}</span>
+          </button>
           </div>
 
           <button class="export-btn compact-export-btn" @click="exportPDF" :disabled="isExportingPDF || !data">
@@ -1296,7 +1400,7 @@ const getItemIndex = (type, dataIndex) => {
         <div v-if="data.basics.photo && !hiddenBasicField('photo')" class="photo-container">
           <img :src="data.basics.photo" class="profile-photo" alt="证件照" />
         </div>
-        <h1 class="name">{{ data.basics.name || '姓名未填写' }}</h1>
+        <h1 class="name" v-html="formatText(data.basics.name || '姓名未填写')"></h1>
         <div class="contact-info">
           <span v-if="data.basics?.gender && !hiddenBasicField('gender')" v-html="formatText(data.basics.gender)"></span>
           <span v-if="data.basics?.birth_date && !hiddenBasicField('birth_date')" v-html="formatText(`${t.birthDate}：${data.basics.birth_date}`)"></span>
@@ -1305,13 +1409,13 @@ const getItemIndex = (type, dataIndex) => {
           <span v-for="(field, fieldIndex) in (!hiddenBasicField('additional_fields') ? (data.basics?.additional_fields || []) : [])" :key="`source-basic-extra-${fieldIndex}`" v-html="formatText(`${field.label}：${field.value}`)"></span>
         </div>
         <div v-if="data.basics?.target_position && !hiddenBasicField('target_position')" class="target-position">
-          {{ t.targetPosition }}：<span v-html="formatText(data.basics.target_position)"></span>
+          <span class="inline-label">{{ t.targetPosition }}：</span><span v-html="formatText(data.basics.target_position)"></span>
         </div>
       </div>
 
       <!-- {{ t.education }} -->
       <template v-if="data.education && data.education.length && !hiddenSection('education')">
-        <h2 class="pageable-item section-title" :class="[`title-${layout.global.titleStyle}`, { 'title-highlight': highlightedModule === 'education' }]" :style="moduleOrder('education')" data-module="education">{{ displayTitle('education', t.education) }}</h2>
+        <h2 class="pageable-item section-title" :class="[`title-${layout.global.titleStyle}`, { 'title-highlight': highlightedModule === 'education' }]" :style="moduleOrder('education')" data-module="education" v-html="formatText(displayTitle('education', t.education))"></h2>
         <div v-for="(item, idx) in data.education" :key="idx" class="pageable-item education-item" :class="`preset-${moduleLayout('education').preset}`" :style="moduleOrder('education')">
           <div class="education-header">
             <div class="school-info">
@@ -1326,7 +1430,7 @@ const getItemIndex = (type, dataIndex) => {
             <div v-if="academicMetrics(item).length" class="education-metrics-column academic-metrics">
               <span v-for="metric in academicMetrics(item)" :key="metric" v-html="formatText(metric)"></span>
             </div>
-            <span class="graduation-date">{{ item.date_range?.[0] || '' }} - {{ item.date_range?.[1] || '至今' }}</span>
+            <span class="graduation-date" v-html="formatText(`${item.date_range?.[0] || ''} - ${item.date_range?.[1] || '至今'}`)"></span>
           </div>
         </div>
         <template v-if="data.education">
@@ -1345,23 +1449,23 @@ const getItemIndex = (type, dataIndex) => {
       </template>
 
       <template v-if="data.others?.skills?.length && !hiddenSection('skills')">
-        <h2 class="pageable-item section-title" :class="`title-${layout.global.titleStyle}`" :style="moduleOrder('skills')" data-module="skills">{{ displayTitle('skills', t.skillsSection) }}</h2>
+        <h2 class="pageable-item section-title" :class="`title-${layout.global.titleStyle}`" :style="moduleOrder('skills')" data-module="skills" v-html="formatText(displayTitle('skills', t.skillsSection))"></h2>
         <div v-for="(item, idx) in data.others.skills" :key="`source-skill-${idx}`" :class="['pageable-item', 'generic-list-item', { 'has-native-marker': hasNativeListMarker(item) }]" :style="moduleOrder('skills')" v-html="formatText(item)"></div>
       </template>
 
       <template v-if="data.research_interests?.length && !hiddenSection('research_interests')">
-        <h2 class="pageable-item section-title" :class="`title-${layout.global.titleStyle}`" :style="moduleOrder('research_interests')" data-module="research_interests">{{ displayTitle('research_interests', t.researchInterests) }}</h2>
+        <h2 class="pageable-item section-title" :class="`title-${layout.global.titleStyle}`" :style="moduleOrder('research_interests')" data-module="research_interests" v-html="formatText(displayTitle('research_interests', t.researchInterests))"></h2>
         <div v-for="(item, idx) in data.research_interests" :key="`source-research-${idx}`" :class="['pageable-item', 'generic-list-item', { 'has-native-marker': hasNativeListMarker(item) }]" :style="moduleOrder('research_interests')" v-html="formatText(item)"></div>
       </template>
 
       <template v-if="data.honors?.length && !hiddenSection('honors')">
-        <h2 class="pageable-item section-title" :class="`title-${layout.global.titleStyle}`" :style="moduleOrder('honors')" data-module="honors">{{ displayTitle('honors', t.honors) }}</h2>
+        <h2 class="pageable-item section-title" :class="`title-${layout.global.titleStyle}`" :style="moduleOrder('honors')" data-module="honors" v-html="formatText(displayTitle('honors', t.honors))"></h2>
         <div v-for="(item, idx) in data.honors" :key="`source-honor-${idx}`" :class="['pageable-item', 'generic-list-item', { 'has-native-marker': hasNativeListMarker(item) }]" :style="moduleOrder('honors')" v-html="formatText(item)"></div>
       </template>
 
       <!-- {{ t.workExperience }} -->
       <template v-for="section in workSections" :key="`source-${section.id}`">
-        <h2 class="pageable-item section-title" :class="[`title-${layout.global.titleStyle}`, { 'title-highlight': highlightedModule === 'work_experience' }]" :style="moduleOrder(section.id)" :data-module="section.id">{{ section.title }}</h2>
+        <h2 class="pageable-item section-title" :class="[`title-${layout.global.titleStyle}`, { 'title-highlight': highlightedModule === 'work_experience' }]" :style="moduleOrder(section.id)" :data-module="section.id" v-html="formatText(section.title)"></h2>
         <template v-for="entry in section.entries" :key="`source-${section.id}-${entry.dataIndex}`">
           <div class="pageable-item work-item" :class="[`preset-${moduleLayout('work_experience').preset}`, `date-${moduleLayout('work_experience').datePosition}`]" :style="moduleOrder(section.id)">
             <div class="work-header">
@@ -1369,14 +1473,14 @@ const getItemIndex = (type, dataIndex) => {
                 <div class="company" v-html="formatText(entry.item.company_name || '公司未填写')"></div>
                 <div v-if="workPosition(entry.item)" class="position" v-html="formatText(workPosition(entry.item))"></div>
               </div>
-              <span class="work-period">{{ entry.item.date_range?.[0] || '' }} - {{ entry.item.date_range?.[1] || '至今' }}</span>
+              <span class="work-period" v-html="formatText(`${entry.item.date_range?.[0] || ''} - ${entry.item.date_range?.[1] || '至今'}`)"></span>
             </div>
           </div>
           <div v-if="projectContentBlocks(entry.item).length" class="pageable-item work-details" :class="`details-${moduleLayout('work_experience').detailsStyle}`" :style="moduleOrder(section.id)">
             <div v-for="(block, bIdx) in projectContentBlocks(entry.item)" :key="bIdx" class="project-content-block" :class="`block-${block.type}`">
-              <p v-if="block.type === 'paragraph'" class="project-paragraph"><strong v-if="block.label">{{ block.label }}：</strong><span v-html="formatText(block.text)"></span></p>
+              <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(block.text)"></span></p>
               <template v-else>
-                <div v-if="block.label" class="project-block-label">{{ block.label }}：</div>
+                <div v-if="contentBlockLabel(block, 'separate')" class="project-block-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'separate') }" v-html="`${formatText(contentBlockLabel(block, 'separate'))}：`"></div>
                 <ol v-if="block.type === 'numbered_list'" class="project-numbered-list">
                   <li v-for="(detail, dIdx) in block.items" :key="dIdx" v-html="formatText(detail)"></li>
                 </ol>
@@ -1391,7 +1495,7 @@ const getItemIndex = (type, dataIndex) => {
 
       <!-- {{ t.projectExperience }} -->
       <template v-if="(data.project_experience || data.projects) && (data.project_experience || data.projects).length && !hiddenSection('project_experience')">
-        <h2 class="pageable-item section-title" :class="[`title-${layout.global.titleStyle}`, { 'title-highlight': highlightedModule === 'project_experience' }]" :style="moduleOrder('project_experience')" data-module="project_experience">{{ displayTitle('project_experience', t.projectExperience) }}</h2>
+        <h2 class="pageable-item section-title" :class="[`title-${layout.global.titleStyle}`, { 'title-highlight': highlightedModule === 'project_experience' }]" :style="moduleOrder('project_experience')" data-module="project_experience" v-html="formatText(displayTitle('project_experience', t.projectExperience))"></h2>
         <template v-for="(item, idx) in (data.project_experience || data.projects)" :key="'source-project-'+idx">
           <div class="pageable-item project-item" :class="[`preset-${moduleLayout('project_experience').preset}`, `date-${moduleLayout('project_experience').datePosition}`]" :style="moduleOrder('project_experience')">
             <div class="project-header">
@@ -1405,9 +1509,9 @@ const getItemIndex = (type, dataIndex) => {
           </div>
           <div v-if="projectContentBlocks(item).length" class="pageable-item project-details" :style="moduleOrder('project_experience')">
             <div v-for="(block, blockIndex) in projectContentBlocks(item)" :key="blockIndex" class="project-content-block" :class="`block-${block.type}`">
-              <p v-if="block.type === 'paragraph'" class="project-paragraph"><strong v-if="block.label">{{ block.label }}：</strong><span v-html="formatText(block.text)"></span></p>
+              <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(block.text)"></span></p>
               <template v-else>
-                <div v-if="block.label" class="project-block-label">{{ block.label }}：</div>
+                <div v-if="contentBlockLabel(block, 'separate')" class="project-block-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'separate') }" v-html="`${formatText(contentBlockLabel(block, 'separate'))}：`"></div>
                 <ol v-if="block.type === 'numbered_list'" class="project-numbered-list">
                   <li v-for="(detail, dIdx) in block.items" :key="dIdx" v-html="formatText(detail)"></li>
                 </ol>
@@ -1422,14 +1526,14 @@ const getItemIndex = (type, dataIndex) => {
 
       <template v-if="data.custom_sections?.length && !hiddenSection('custom_sections')">
         <template v-for="(custom, sectionIndex) in data.custom_sections" :key="`source-custom-${sectionIndex}`">
-          <h2 v-if="custom.title && custom.items?.length" class="pageable-item section-title" :class="`title-${layout.global.titleStyle}`" :style="moduleOrder('custom_sections')" data-module="custom_sections">{{ custom.title }}</h2>
+          <h2 v-if="custom.title && custom.items?.length" class="pageable-item section-title" :class="`title-${layout.global.titleStyle}`" :style="moduleOrder('custom_sections')" data-module="custom_sections" v-html="formatText(custom.title)"></h2>
           <div v-for="(item, itemIndex) in (custom.items || [])" :key="`source-custom-${sectionIndex}-${itemIndex}`" :class="['pageable-item', 'generic-list-item', { 'has-native-marker': hasNativeListMarker(item) }]" :style="moduleOrder('custom_sections')" v-html="formatText(item)"></div>
         </template>
       </template>
 
       <!-- 其他 -->
       <template v-if="data.others && visibleOtherFields.length && !hiddenSection('others')">
-        <h2 class="pageable-item section-title" :class="[`title-${layout.global.titleStyle}`, { 'title-highlight': highlightedModule === 'others' }]" :style="moduleOrder('others')" data-module="others">{{ displayTitle('others', props.lang === 'en' ? 'Certificates & Languages' : '证书与语言') }}</h2>
+        <h2 class="pageable-item section-title" :class="[`title-${layout.global.titleStyle}`, { 'title-highlight': highlightedModule === 'others' }]" :style="moduleOrder('others')" data-module="others" v-html="formatText(displayTitle('others', props.lang === 'en' ? 'Certificates & Languages' : '证书与语言'))"></h2>
         <div v-for="field in visibleOtherFields" :key="`source-other-${field}`" class="pageable-item cert-lang-line" :class="`others-${moduleLayout('others').preset}`" :style="moduleOrder('others')">
           <span class="cert-lang-label">{{ otherFieldLabel(field) }}：</span>
           <template v-for="(value, valueIndex) in data.others[field]" :key="`${field}-${valueIndex}`">
@@ -1440,7 +1544,7 @@ const getItemIndex = (type, dataIndex) => {
 
       <!-- {{ t.selfEvaluation }} -->
       <template v-if="selfEvaluationValues.length && !hiddenSection('self_evaluation')">
-        <h2 class="pageable-item section-title" :class="[`title-${layout.global.titleStyle}`, { 'title-highlight': highlightedModule === 'self_evaluation' }]" :style="moduleOrder('self_evaluation')" data-module="self_evaluation">{{ displayTitle('self_evaluation', t.selfEvaluation) }}</h2>
+        <h2 class="pageable-item section-title" :class="[`title-${layout.global.titleStyle}`, { 'title-highlight': highlightedModule === 'self_evaluation' }]" :style="moduleOrder('self_evaluation')" data-module="self_evaluation" v-html="formatText(displayTitle('self_evaluation', t.selfEvaluation))"></h2>
         <!-- 每条{{ t.selfEvaluation }}独立分页 -->
         <template v-for="(item, idx) in selfEvaluationValues">
           <div v-if="item" :key="'self-eval-'+idx" class="pageable-item self-eval-item" :class="`self-${moduleLayout('self_evaluation').preset}`" :style="moduleOrder('self_evaluation')">
@@ -1457,7 +1561,7 @@ const getItemIndex = (type, dataIndex) => {
         <div v-if="data.basics?.photo" class="photo-container">
           <img :src="data.basics.photo" class="profile-photo" alt="证件照" />
         </div>
-        <h1 class="name">{{ data.basics?.name || '姓名未填写' }}</h1>
+        <h1 class="name" v-html="formatText(data.basics?.name || '姓名未填写')"></h1>
         <div class="contact-info">
           <span v-if="data.basics?.gender" v-html="formatText(data.basics.gender)"></span>
           <span v-if="data.basics?.birth_date" class="separator">|</span>
@@ -1471,7 +1575,7 @@ const getItemIndex = (type, dataIndex) => {
           </template>
         </div>
         <div v-if="data.basics?.target_position" class="target-position">
-          {{ t.targetPosition }}：<span v-html="formatText(data.basics.target_position)"></span>
+          <span class="inline-label">{{ t.targetPosition }}：</span><span v-html="formatText(data.basics.target_position)"></span>
         </div>
       </div>
 
@@ -1486,7 +1590,7 @@ const getItemIndex = (type, dataIndex) => {
                 <span v-for="(tag, tIdx) in item.school_tags" :key="tIdx" class="school-tag" v-html="formatText(tag)"></span>
               </div>
             </div>
-            <span class="graduation-date">{{ item.date_range?.[0] || '' }} - {{ item.date_range?.[1] || '至今' }}</span>
+            <span class="graduation-date" v-html="formatText(`${item.date_range?.[0] || ''} - ${item.date_range?.[1] || '至今'}`)"></span>
           </div>
           <div class="degree-major" v-html="formatText(`${item.degree || ''} ${item.major || ''}`)"></div>
           <div v-if="academicMetrics(item).length" class="academic-metrics">
@@ -1529,12 +1633,12 @@ const getItemIndex = (type, dataIndex) => {
               <div class="company" v-html="formatText(item.company_name || '公司未填写')"></div>
               <div v-if="workPosition(item)" class="position" v-html="formatText(workPosition(item))"></div>
             </div>
-            <span class="work-period">{{ item.date_range?.[0] || '' }} - {{ item.date_range?.[1] || '至今' }}</span>
+            <span class="work-period" v-html="formatText(`${item.date_range?.[0] || ''} - ${item.date_range?.[1] || '至今'}`)"></span>
           </div>
           <div v-for="(block, bIdx) in projectContentBlocks(item)" :key="bIdx" class="project-content-block" :class="`block-${block.type}`">
-            <p v-if="block.type === 'paragraph'" class="project-paragraph"><strong v-if="block.label">{{ block.label }}：</strong><span v-html="formatText(block.text)"></span></p>
+            <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(block.text)"></span></p>
             <template v-else>
-              <div v-if="block.label" class="project-block-label">{{ block.label }}：</div>
+              <div v-if="contentBlockLabel(block, 'separate')" class="project-block-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'separate') }" v-html="`${formatText(contentBlockLabel(block, 'separate'))}：`"></div>
               <ol v-if="block.type === 'numbered_list'" class="project-numbered-list">
                 <li v-for="(detail, dIdx) in block.items" :key="dIdx" v-html="formatText(detail)"></li>
               </ol>
@@ -1559,9 +1663,9 @@ const getItemIndex = (type, dataIndex) => {
             </div>
           </div>
           <div v-for="(block, blockIndex) in projectContentBlocks(item)" :key="blockIndex" class="project-content-block" :class="`block-${block.type}`">
-            <p v-if="block.type === 'paragraph'" class="project-paragraph"><strong v-if="block.label">{{ block.label }}：</strong><span v-html="formatText(block.text)"></span></p>
+            <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(block.text)"></span></p>
             <template v-else>
-              <div v-if="block.label" class="project-block-label">{{ block.label }}：</div>
+              <div v-if="contentBlockLabel(block, 'separate')" class="project-block-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'separate') }" v-html="`${formatText(contentBlockLabel(block, 'separate'))}：`"></div>
               <ol v-if="block.type === 'numbered_list'" class="project-numbered-list"><li v-for="(detail, dIdx) in block.items" :key="dIdx" v-html="formatText(detail)"></li></ol>
               <ul v-else class="list-items"><li v-for="(detail, dIdx) in block.items" :key="dIdx" class="list-item" v-html="formatText(detail)"></li></ul>
             </template>
@@ -1571,7 +1675,7 @@ const getItemIndex = (type, dataIndex) => {
 
       <template v-for="(custom, sectionIndex) in (data.custom_sections || [])" :key="`print-custom-${sectionIndex}`">
         <template v-if="custom.title && custom.items?.length">
-          <h2 class="section-title">{{ custom.title }}</h2>
+          <h2 class="section-title" v-html="formatText(custom.title)"></h2>
           <div v-for="(item, itemIndex) in custom.items" :key="`print-custom-${sectionIndex}-${itemIndex}`" :class="['generic-list-item', { 'has-native-marker': hasNativeListMarker(item) }]" v-html="formatText(item)"></div>
         </template>
       </template>
@@ -1613,7 +1717,7 @@ const getItemIndex = (type, dataIndex) => {
               <div v-if="data.basics.photo && !hiddenBasicField('photo')" class="photo-container">
                 <img :src="data.basics.photo" class="profile-photo" alt="证件照" />
               </div>
-              <h1 class="name">{{ data.basics.name || '姓名未填写' }}</h1>
+              <h1 class="name" v-html="formatText(data.basics.name || '姓名未填写')"></h1>
               <div class="contact-info">
                 <span v-if="data.basics.gender && !hiddenBasicField('gender')" v-html="formatText(data.basics.gender)"></span>
                 <span v-if="data.basics.birth_date && !hiddenBasicField('birth_date')" v-html="formatText(`${t.birthDate}：${data.basics.birth_date}`)"></span>
@@ -1622,13 +1726,13 @@ const getItemIndex = (type, dataIndex) => {
                 <span v-for="(field, fieldIndex) in (!hiddenBasicField('additional_fields') ? (data.basics.additional_fields || []) : [])" :key="`page-${page}-basic-extra-${fieldIndex}`" v-html="formatText(`${field.label}：${field.value}`)"></span>
               </div>
               <div v-if="data.basics.target_position && !hiddenBasicField('target_position')" class="target-position">
-                {{ t.targetPosition }}：<span v-html="formatText(data.basics.target_position)"></span>
+                <span class="inline-label">{{ t.targetPosition }}：</span><span v-html="formatText(data.basics.target_position)"></span>
               </div>
             </div>
 
             <!-- {{ t.education }} -->
             <template v-if="data.education && data.education.length && !hiddenSection('education')">
-              <h2 v-if="isItemVisible({index: getItemIndex('education-title', 0)}, page - 1)" class="section-title" :class="[`title-${layout.global.titleStyle}`, { 'title-highlight': highlightedModule === 'education' }]" :style="moduleOrder('education')" data-module="education">{{ displayTitle('education', t.education) }}</h2>
+              <h2 v-if="isItemVisible({index: getItemIndex('education-title', 0)}, page - 1)" class="section-title" :class="[`title-${layout.global.titleStyle}`, { 'title-highlight': highlightedModule === 'education' }]" :style="moduleOrder('education')" data-module="education" v-html="formatText(displayTitle('education', t.education))"></h2>
               <template v-for="(item, idx) in data.education">
                 <div v-if="isItemVisible({index: getItemIndex('education-item', idx)}, page - 1)" :key="'edu-'+idx" class="education-item" :class="[`preset-${moduleLayout('education').preset}`, { 'content-highlight': highlightedModule === 'education' }]" :style="moduleOrder('education')">
                   <div class="education-header">
@@ -1644,7 +1748,7 @@ const getItemIndex = (type, dataIndex) => {
                     <div v-if="academicMetrics(item).length" class="education-metrics-column academic-metrics">
                       <span v-for="metric in academicMetrics(item)" :key="metric" v-html="formatText(metric)"></span>
                     </div>
-                    <span class="graduation-date">{{ item.date_range?.[0] || '' }} - {{ item.date_range?.[1] || '至今' }}</span>
+                    <span class="graduation-date" v-html="formatText(`${item.date_range?.[0] || ''} - ${item.date_range?.[1] || '至今'}`)"></span>
                   </div>
                 </div>
                 <!-- 论文（独立分页项） -->
@@ -1663,23 +1767,23 @@ const getItemIndex = (type, dataIndex) => {
             </template>
 
             <template v-if="data.others?.skills?.length && !hiddenSection('skills')">
-              <h2 v-if="isItemVisible({index: getItemIndex('skills-title', 0)}, page - 1)" class="section-title" :class="`title-${layout.global.titleStyle}`" :style="moduleOrder('skills')" data-module="skills">{{ displayTitle('skills', t.skillsSection) }}</h2>
+              <h2 v-if="isItemVisible({index: getItemIndex('skills-title', 0)}, page - 1)" class="section-title" :class="`title-${layout.global.titleStyle}`" :style="moduleOrder('skills')" data-module="skills" v-html="formatText(displayTitle('skills', t.skillsSection))"></h2>
               <div v-for="(item, idx) in data.others.skills" v-show="isItemVisible({index: getItemIndex('skills-item', idx)}, page - 1)" :key="`page-${page}-skill-${idx}`" :class="['generic-list-item', { 'has-native-marker': hasNativeListMarker(item) }]" :style="moduleOrder('skills')" v-html="formatText(item)"></div>
             </template>
 
             <template v-if="data.research_interests?.length && !hiddenSection('research_interests')">
-              <h2 v-if="isItemVisible({index: getItemIndex('research-title', 0)}, page - 1)" class="section-title" :class="`title-${layout.global.titleStyle}`" :style="moduleOrder('research_interests')" data-module="research_interests">{{ displayTitle('research_interests', t.researchInterests) }}</h2>
+              <h2 v-if="isItemVisible({index: getItemIndex('research-title', 0)}, page - 1)" class="section-title" :class="`title-${layout.global.titleStyle}`" :style="moduleOrder('research_interests')" data-module="research_interests" v-html="formatText(displayTitle('research_interests', t.researchInterests))"></h2>
               <div v-for="(item, idx) in data.research_interests" v-show="isItemVisible({index: getItemIndex('research-item', idx)}, page - 1)" :key="`page-${page}-research-${idx}`" :class="['generic-list-item', { 'has-native-marker': hasNativeListMarker(item) }]" :style="moduleOrder('research_interests')" v-html="formatText(item)"></div>
             </template>
 
             <template v-if="data.honors?.length && !hiddenSection('honors')">
-              <h2 v-if="isItemVisible({index: getItemIndex('honors-title', 0)}, page - 1)" class="section-title" :class="`title-${layout.global.titleStyle}`" :style="moduleOrder('honors')" data-module="honors">{{ displayTitle('honors', t.honors) }}</h2>
+              <h2 v-if="isItemVisible({index: getItemIndex('honors-title', 0)}, page - 1)" class="section-title" :class="`title-${layout.global.titleStyle}`" :style="moduleOrder('honors')" data-module="honors" v-html="formatText(displayTitle('honors', t.honors))"></h2>
               <div v-for="(item, idx) in data.honors" v-show="isItemVisible({index: getItemIndex('honors-item', idx)}, page - 1)" :key="`page-${page}-honor-${idx}`" :class="['generic-list-item', { 'has-native-marker': hasNativeListMarker(item) }]" :style="moduleOrder('honors')" v-html="formatText(item)"></div>
             </template>
 
             <!-- {{ t.workExperience }} -->
             <template v-for="section in workSections" :key="`page-${page}-${section.id}`">
-              <h2 v-if="isItemVisible({index: getItemIndex(`${workTypePrefix(section.id)}-title`, 0)}, page - 1)" class="section-title" :class="[`title-${layout.global.titleStyle}`, { 'title-highlight': highlightedModule === 'work_experience' }]" :style="moduleOrder(section.id)" :data-module="section.id">{{ section.title }}</h2>
+              <h2 v-if="isItemVisible({index: getItemIndex(`${workTypePrefix(section.id)}-title`, 0)}, page - 1)" class="section-title" :class="[`title-${layout.global.titleStyle}`, { 'title-highlight': highlightedModule === 'work_experience' }]" :style="moduleOrder(section.id)" :data-module="section.id" v-html="formatText(section.title)"></h2>
               <template v-for="entry in section.entries" :key="`${section.id}-${entry.dataIndex}`">
                 <div v-if="isItemVisible({index: getItemIndex(`${workTypePrefix(section.id)}-item`, entry.dataIndex)}, page - 1)" class="work-item" :class="[`preset-${moduleLayout('work_experience').preset}`, `date-${moduleLayout('work_experience').datePosition}`, { 'content-highlight': highlightedModule === 'work_experience' }]" :style="moduleOrder(section.id)">
                   <div class="work-header">
@@ -1687,15 +1791,15 @@ const getItemIndex = (type, dataIndex) => {
                       <div class="company" v-html="formatText(entry.item.company_name || '公司未填写')"></div>
                       <div v-if="workPosition(entry.item)" class="position" v-html="formatText(workPosition(entry.item))"></div>
                     </div>
-                    <span class="work-period">{{ entry.item.date_range?.[0] || '' }} - {{ entry.item.date_range?.[1] || '至今' }}</span>
+                    <span class="work-period" v-html="formatText(`${entry.item.date_range?.[0] || ''} - ${entry.item.date_range?.[1] || '至今'}`)"></span>
                   </div>
                 </div>
                 <!-- 工作详情（独立分页项） -->
                 <div v-if="projectContentBlocks(entry.item).length && isItemVisible({index: getItemIndex(`${workTypePrefix(section.id)}-details`, entry.dataIndex)}, page - 1)" class="work-details" :class="`details-${moduleLayout('work_experience').detailsStyle}`" :style="moduleOrder(section.id)">
                   <div v-for="(block, bIdx) in projectContentBlocks(entry.item)" :key="bIdx" class="project-content-block" :class="`block-${block.type}`">
-                    <p v-if="block.type === 'paragraph'" class="project-paragraph"><strong v-if="block.label">{{ block.label }}：</strong><span v-html="formatText(block.text)"></span></p>
+                    <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(block.text)"></span></p>
                     <template v-else>
-                      <div v-if="block.label" class="project-block-label">{{ block.label }}：</div>
+                      <div v-if="contentBlockLabel(block, 'separate')" class="project-block-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'separate') }" v-html="`${formatText(contentBlockLabel(block, 'separate'))}：`"></div>
                       <ol v-if="block.type === 'numbered_list'" class="project-numbered-list">
                         <li v-for="(detail, dIdx) in block.items" :key="dIdx" v-html="formatText(detail)"></li>
                       </ol>
@@ -1710,7 +1814,7 @@ const getItemIndex = (type, dataIndex) => {
 
             <!-- {{ t.projectExperience }} -->
             <template v-if="(data.project_experience || data.projects) && (data.project_experience || data.projects).length && !hiddenSection('project_experience')">
-              <h2 v-if="isItemVisible({index: getItemIndex('projects-title', 0)}, page - 1)" class="section-title" :class="[`title-${layout.global.titleStyle}`, { 'title-highlight': highlightedModule === 'project_experience' }]" :style="moduleOrder('project_experience')" data-module="project_experience">{{ displayTitle('project_experience', t.projectExperience) }}</h2>
+              <h2 v-if="isItemVisible({index: getItemIndex('projects-title', 0)}, page - 1)" class="section-title" :class="[`title-${layout.global.titleStyle}`, { 'title-highlight': highlightedModule === 'project_experience' }]" :style="moduleOrder('project_experience')" data-module="project_experience" v-html="formatText(displayTitle('project_experience', t.projectExperience))"></h2>
               <template v-for="(item, idx) in (data.project_experience || data.projects)">
                 <div v-if="isItemVisible({index: getItemIndex('project-item', idx)}, page - 1)" :key="'proj-'+idx" class="project-item" :class="[`preset-${moduleLayout('project_experience').preset}`, `date-${moduleLayout('project_experience').datePosition}`, { 'content-highlight': highlightedModule === 'project_experience' }]" :style="moduleOrder('project_experience')">
                   <div class="project-header">
@@ -1724,9 +1828,9 @@ const getItemIndex = (type, dataIndex) => {
                 <!-- 项目详情（独立分页项） -->
                 <div v-if="projectContentBlocks(item).length && isItemVisible({index: getItemIndex('project-details', idx)}, page - 1)" :key="'proj-details-'+idx" class="project-details" :style="moduleOrder('project_experience')">
                   <div v-for="(block, blockIndex) in projectContentBlocks(item)" :key="blockIndex" class="project-content-block" :class="`block-${block.type}`">
-                    <p v-if="block.type === 'paragraph'" class="project-paragraph"><strong v-if="block.label">{{ block.label }}：</strong><span v-html="formatText(block.text)"></span></p>
+                    <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(block.text)"></span></p>
                     <template v-else>
-                      <div v-if="block.label" class="project-block-label">{{ block.label }}：</div>
+                      <div v-if="contentBlockLabel(block, 'separate')" class="project-block-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'separate') }" v-html="`${formatText(contentBlockLabel(block, 'separate'))}：`"></div>
                       <ol v-if="block.type === 'numbered_list'" class="project-numbered-list">
                         <li v-for="(detail, dIdx) in block.items" :key="dIdx" v-html="formatText(detail)"></li>
                       </ol>
@@ -1741,14 +1845,14 @@ const getItemIndex = (type, dataIndex) => {
 
             <template v-if="data.custom_sections?.length && !hiddenSection('custom_sections')">
               <template v-for="(custom, sectionIndex) in data.custom_sections" :key="`page-${page}-custom-${sectionIndex}`">
-                <h2 v-if="custom.title && custom.items?.length && isItemVisible({index: getItemIndex('custom-title', sectionIndex)}, page - 1)" class="section-title" :class="`title-${layout.global.titleStyle}`" :style="moduleOrder('custom_sections')" data-module="custom_sections">{{ custom.title }}</h2>
+                <h2 v-if="custom.title && custom.items?.length && isItemVisible({index: getItemIndex('custom-title', sectionIndex)}, page - 1)" class="section-title" :class="`title-${layout.global.titleStyle}`" :style="moduleOrder('custom_sections')" data-module="custom_sections" v-html="formatText(custom.title)"></h2>
                 <div v-for="(item, itemIndex) in (custom.items || [])" v-show="isItemVisible({index: getItemIndex('custom-item', `${sectionIndex}-${itemIndex}`)}, page - 1)" :key="`page-${page}-custom-${sectionIndex}-${itemIndex}`" :class="['generic-list-item', { 'has-native-marker': hasNativeListMarker(item) }]" :style="moduleOrder('custom_sections')" v-html="formatText(item)"></div>
               </template>
             </template>
 
             <!-- 其他 -->
             <template v-if="data.others && visibleOtherFields.length && !hiddenSection('others')">
-              <h2 v-if="isItemVisible({index: getItemIndex('others-title', 0)}, page - 1)" class="section-title" :class="[`title-${layout.global.titleStyle}`, { 'title-highlight': highlightedModule === 'others' }]" :style="moduleOrder('others')" data-module="others">{{ displayTitle('others', props.lang === 'en' ? 'Certificates & Languages' : '证书与语言') }}</h2>
+              <h2 v-if="isItemVisible({index: getItemIndex('others-title', 0)}, page - 1)" class="section-title" :class="[`title-${layout.global.titleStyle}`, { 'title-highlight': highlightedModule === 'others' }]" :style="moduleOrder('others')" data-module="others" v-html="formatText(displayTitle('others', props.lang === 'en' ? 'Certificates & Languages' : '证书与语言'))"></h2>
               <template v-for="field in visibleOtherFields" :key="`page-${page}-other-${field}`">
                 <div v-if="isItemVisible({index: getItemIndex(`${field}-line`, field)}, page - 1)" class="cert-lang-line" :class="`others-${moduleLayout('others').preset}`" :style="moduleOrder('others')">
                   <span class="cert-lang-label">{{ otherFieldLabel(field) }}：</span>
@@ -1761,7 +1865,7 @@ const getItemIndex = (type, dataIndex) => {
 
             <!-- {{ t.selfEvaluation }} -->
             <template v-if="selfEvaluationValues.length && !hiddenSection('self_evaluation')">
-              <h2 v-if="isItemVisible({index: getItemIndex('self-eval-title', 0)}, page - 1)" class="section-title" :class="[`title-${layout.global.titleStyle}`, { 'title-highlight': highlightedModule === 'self_evaluation' }]" :style="moduleOrder('self_evaluation')" data-module="self_evaluation">{{ displayTitle('self_evaluation', t.selfEvaluation) }}</h2>
+              <h2 v-if="isItemVisible({index: getItemIndex('self-eval-title', 0)}, page - 1)" class="section-title" :class="[`title-${layout.global.titleStyle}`, { 'title-highlight': highlightedModule === 'self_evaluation' }]" :style="moduleOrder('self_evaluation')" data-module="self_evaluation" v-html="formatText(displayTitle('self_evaluation', t.selfEvaluation))"></h2>
               <!-- 每条{{ t.selfEvaluation }}独立分页 -->
               <template v-for="(item, idx) in selfEvaluationValues">
                 <div v-if="item && isItemVisible({index: getItemIndex('self-eval-item', idx)}, page - 1)" :key="'self-eval-'+idx" class="self-eval-item" :class="[`self-${moduleLayout('self_evaluation').preset}`, { 'content-highlight': highlightedModule === 'self_evaluation' }]" :style="moduleOrder('self_evaluation')">
@@ -1828,6 +1932,36 @@ const getItemIndex = (type, dataIndex) => {
         <span v-if="isSavingSectionOrder">正在保存…</span>
         <span v-else>拖动和箭头均支持双向调整</span>
         <button type="button" @click="showSectionOrderDialog = false">完成</button>
+      </div>
+    </div>
+  </div>
+
+  <div v-if="showFontSizeDialog" class="success-dialog-overlay font-size-overlay" @click.self="closeFontSizeDialog">
+    <div class="font-size-dialog" role="dialog" aria-modal="true" aria-labelledby="font-size-title">
+      <div class="layout-guide-header">
+        <div>
+          <h3 id="font-size-title">设置各部分字号</h3>
+          <p>字号按半磅调整。修改会先显示在右侧预览，点击应用后才保存。</p>
+        </div>
+        <button class="layout-guide-close" aria-label="关闭字号设置" :disabled="isSavingFontSizes" @click="closeFontSizeDialog">×</button>
+      </div>
+      <div class="font-size-grid">
+        <label v-for="role in fontSizeRoles" :key="role" class="font-size-field">
+          <span>{{ FONT_SIZE_LABELS[role] }}</span>
+          <select v-model.number="fontSizeDraft[role]" :aria-label="`${FONT_SIZE_LABELS[role]}字号`">
+            <option v-for="size in fontSizeOptions(role)" :key="size" :value="size">{{ size }} pt</option>
+          </select>
+        </label>
+      </div>
+      <div v-if="overflowBeyondPageLimit" class="font-size-warning" role="status">当前字号会使内容超出两页，请调小字号后再应用。</div>
+      <div v-if="fontSizeSaveError" class="font-size-error" role="alert">{{ fontSizeSaveError }}</div>
+      <div class="font-size-actions">
+        <button type="button" class="font-size-reset" :disabled="isSavingFontSizes" @click="resetFontSizeDraft">恢复默认</button>
+        <span class="font-size-action-spacer"></span>
+        <button type="button" :disabled="isSavingFontSizes" @click="closeFontSizeDialog">取消</button>
+        <button type="button" class="font-size-apply" :disabled="isSavingFontSizes || overflowBeyondPageLimit" @click="applyFontSizeSettings">
+          {{ isSavingFontSizes ? '保存中…' : '应用' }}
+        </button>
       </div>
     </div>
   </div>
@@ -1992,11 +2126,11 @@ const getItemIndex = (type, dataIndex) => {
   flex-shrink: 0;
 }
 .resume-toolbar {
-  height: 60px;
-  min-height: 60px;
+  height: 54px;
+  min-height: 54px;
   box-sizing: border-box;
   background: transparent;
-  padding: 0.55rem 0.65rem;
+  padding: 0.35rem 0.65rem;
   box-shadow: none;
   border-bottom: 1px solid rgba(255, 255, 255, 0.07);
   display: flex;
@@ -2484,7 +2618,7 @@ const getItemIndex = (type, dataIndex) => {
   left: 0;
   top: 0;
   opacity: 0;
-  width: 794px;
+  width: 210mm;
   box-sizing: border-box;
   background: white;
   pointer-events: none;
@@ -2665,7 +2799,7 @@ const getItemIndex = (type, dataIndex) => {
   padding: 0.125em 0.5em;
   background: #333;
   color: white;
-  font-size: var(--meta-font-size);
+  font-size: var(--label-font-size);
   border-radius: 4px;
   font-weight: 500;
 }
@@ -2736,7 +2870,7 @@ const getItemIndex = (type, dataIndex) => {
   flex: 0 0 36mm;
   width: 36mm;
   min-width: 0;
-  margin-right: 2mm;
+  margin-right: 0;
   text-align: right;
 }
 .education-item.preset-compact .academic-metrics,
@@ -2757,7 +2891,7 @@ const getItemIndex = (type, dataIndex) => {
 }
 .list-item {
   position: relative;
-  padding-left: 1.25em;
+  padding-left: var(--list-text-indent);
   margin-bottom: 0.25em;
   font-size: var(--body-font-size);
   line-height: var(--line-height, 1.6);
@@ -2766,12 +2900,14 @@ const getItemIndex = (type, dataIndex) => {
   content: '•';
   position: absolute;
   left: 0;
+  width: calc(var(--list-text-indent) - var(--list-marker-gap));
+  text-align: center;
   color: #333;
   font-weight: bold;
 }
 .generic-list-item {
   position: relative;
-  padding-left: 1.25em;
+  padding-left: var(--list-text-indent);
   margin-bottom: 0.25em;
   font-size: var(--body-font-size);
   line-height: var(--line-height, 1.6);
@@ -2780,6 +2916,8 @@ const getItemIndex = (type, dataIndex) => {
   content: '•';
   position: absolute;
   left: 0;
+  width: calc(var(--list-text-indent) - var(--list-marker-gap));
+  text-align: center;
   color: #333;
   font-weight: bold;
 }
@@ -2823,7 +2961,20 @@ const getItemIndex = (type, dataIndex) => {
 .content-source .generic-list-item { margin-bottom: var(--paragraph-spacing); }
 .project-content-block { margin: 0 0 var(--content-block-spacing); font-size: var(--body-font-size); color: #111; }
 .project-paragraph { margin: 0; }
-.project-block-label { margin-bottom: var(--content-label-spacing); font-weight: var(--label-font-weight); }
+.project-block-label { margin-bottom: var(--content-label-spacing); font-size: var(--label-font-size); font-weight: 400; }
+.project-inline-label,
+.cert-lang-label,
+.subfield-title { font-size: var(--label-font-size); }
+.project-inline-label.is-bold,
+.project-block-label.is-bold { font-weight: var(--label-font-weight); }
+.list-item,
+.generic-list-item,
+.project-paragraph,
+.project-numbered-list > li,
+.self-eval-item {
+  text-align: justify;
+  text-justify: inter-ideograph;
+}
 .project-numbered-list {
   list-style: none;
   margin: 0;
@@ -2833,13 +2984,16 @@ const getItemIndex = (type, dataIndex) => {
 .project-numbered-list > li {
   position: relative;
   margin-bottom: var(--numbered-item-spacing);
-  padding-left: 2.15em;
+  padding-left: var(--list-text-indent);
   counter-increment: project-duty;
 }
 .project-numbered-list > li::before {
   content: '(' counter(project-duty) ')';
   position: absolute;
   left: 0;
+  width: calc(var(--list-text-indent) - var(--list-marker-gap));
+  text-align: right;
+  white-space: nowrap;
 }
 .details-paragraph .list-item { padding-left: 0; list-style: none; }
 .details-paragraph .list-item::before { content: none; }
@@ -2856,8 +3010,15 @@ const getItemIndex = (type, dataIndex) => {
 }
 .others-tags .cert-lang-separator { display: none; }
 .others-stacked { display: flex; flex-direction: column; align-items: flex-start; }
-.self-bullets { position: relative; padding-left: 1.25em; }
-.self-bullets::before { content: '•'; position: absolute; left: 0; font-weight: 700; }
+.self-bullets { position: relative; padding-left: var(--list-text-indent); }
+.self-bullets::before {
+  content: '•';
+  position: absolute;
+  left: 0;
+  width: calc(var(--list-text-indent) - var(--list-marker-gap));
+  text-align: center;
+  font-weight: 700;
+}
 .self-eval-item {
   font-size: var(--body-font-size);
   line-height: var(--line-height, 1.6);
@@ -3015,6 +3176,80 @@ const getItemIndex = (type, dataIndex) => {
 
 .layout-guide-overlay { padding: 24px; background: rgba(7, 8, 11, 0.72); }
 .reset-layout-overlay { background: rgba(7, 8, 11, 0.66); }
+.font-size-overlay {
+  padding: 24px;
+  background: rgba(7, 8, 11, 0.5);
+}
+.inline-label { font-size: var(--label-font-size); }
+.font-size-dialog {
+  width: min(520px, calc(100vw - 40px));
+  max-height: calc(100vh - 48px);
+  padding: 22px;
+  overflow-y: auto;
+  border: 1px solid #454852;
+  border-radius: 14px;
+  color: #f5f6f8;
+  background: #25262c;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+}
+.font-size-dialog .layout-guide-header h3 { color: #fff; }
+.font-size-dialog .layout-guide-header p { color: #b9bdc8; }
+.font-size-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+.font-size-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 104px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 9px;
+  color: #e7e9ee;
+  background: rgba(255, 255, 255, 0.035);
+  font-size: 0.82rem;
+}
+.font-size-field select {
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid #51545f;
+  border-radius: 7px;
+  color: #f3f4f7;
+  color-scheme: dark;
+  background: #30323a;
+  font: inherit;
+}
+.font-size-warning,
+.font-size-error {
+  margin-top: 14px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+.font-size-warning { color: #ffd8a8; background: rgba(180, 83, 9, 0.2); }
+.font-size-error { color: #fecaca; background: rgba(185, 28, 28, 0.2); }
+.font-size-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 20px;
+}
+.font-size-action-spacer { flex: 1; }
+.font-size-actions button {
+  padding: 8px 16px;
+  border: 1px solid #50535e;
+  border-radius: 8px;
+  color: #f2f3f6;
+  background: #303139;
+  cursor: pointer;
+}
+.font-size-actions .font-size-reset { color: #c5c9d3; background: transparent; }
+.font-size-actions .font-size-apply { border-color: #6f96ea; background: #547bc9; }
+.font-size-actions button:disabled { opacity: 0.5; cursor: default; }
 .reset-layout-dialog {
   width: min(420px, calc(100vw - 40px));
   padding: 24px;
@@ -3104,6 +3339,9 @@ const getItemIndex = (type, dataIndex) => {
   cursor: pointer;
 }
 @media (max-width: 820px) {
+  .font-size-overlay { padding: 16px; }
+  .font-size-dialog { width: min(520px, calc(100vw - 32px)); padding: 18px; }
+  .font-size-grid { grid-template-columns: 1fr; }
   .section-order-overlay {
     right: 0;
     left: 0;
