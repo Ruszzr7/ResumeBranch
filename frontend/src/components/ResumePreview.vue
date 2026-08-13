@@ -1,5 +1,6 @@
 <script setup>
 import { ref, computed, onMounted, watch, nextTick, onUnmounted } from 'vue'
+import TemplateManager from './TemplateManager.vue'
 import { labels } from '../utils/labels.js'
 import { formatInlineHtml } from '../utils/inlineFormatting.js'
 import { buildAuthorizationHeaders } from '../config/appMode.js'
@@ -246,7 +247,7 @@ function hasNativeListMarker(value) {
   return Boolean(nativeListMarkerParts(value))
 }
 
-const emit = defineEmits(['open-jd-dialog', 'open-resume-edit', 'open-resume-import', 'toggle-lang', 'use-layout-prompt', 'request-layout-template', 'layout-updated'])
+const emit = defineEmits(['open-jd-dialog', 'open-resume-edit', 'open-resume-import', 'toggle-lang', 'use-layout-prompt', 'layout-updated'])
 
 const SECTION_LABELS = {
   education: '教育经历', skills: '专业技能', research_interests: '研究方向', honors: '主要荣誉',
@@ -537,23 +538,48 @@ function resetStyleSettings() {
 }
 
 const activeToolbarMenu = ref(null)
-const showLayoutGuide = ref(false)
-const enlargedLayoutTemplate = ref(null)
-const layoutTemplates = [
-  { id: 'classic-professional', title: '经典专业', description: '信息层级稳定，适合通用校招、职能和传统行业。', prompt: '请应用经典专业模板。' },
-  { id: 'modern-clean', title: '简洁现代', description: '左对齐与横向教育信息，适合互联网和现代技术岗位。', prompt: '请应用简洁现代模板。' },
-  { id: 'compact-tech', title: '紧凑技术', description: '提高信息密度，适合项目和技术经历较多的候选人。', prompt: '请应用紧凑技术模板。' }
-]
+const showTemplateManager = ref(false)
+const activeTemplateId = ref('default')
+const activeTemplateStorageKey = computed(() => `resume-assistant.active-layout-template.${props.taskId || 'local'}`)
 
-function openLayoutGuide() {
-  closeToolbarMenu()
-  showLayoutGuide.value = true
+function restoreActiveTemplateId() {
+  activeTemplateId.value = localStorage.getItem(activeTemplateStorageKey.value) || 'default'
 }
 
-function applyTemplatePrompt(prompt) {
-  showLayoutGuide.value = false
-  enlargedLayoutTemplate.value = null
-  emit('request-layout-template', prompt)
+watch(() => props.taskId, restoreActiveTemplateId, { immediate: true })
+
+function openTemplateManager() {
+  closeToolbarMenu()
+  showTemplateManager.value = true
+}
+
+async function applyFrontendTemplate({ id, layout: templateLayout }) {
+  const normalized = normalizeLayoutConfig(templateLayout)
+  try {
+    let savedLayout = normalized
+    if (props.taskId) {
+      const response = await fetch(`/tasks/${props.taskId}/layout`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...buildAuthorizationHeaders() },
+        body: JSON.stringify({ layout_config: normalized })
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.detail || '应用模板失败')
+      savedLayout = normalizeLayoutConfig(data.layout_config)
+    }
+    activeTemplateId.value = id
+    localStorage.setItem(activeTemplateStorageKey.value, id)
+    localSectionOrder.value = [...savedLayout.global.sectionOrder]
+    showTemplateManager.value = false
+    emit('layout-updated', savedLayout)
+  } catch (error) {
+    console.error(error)
+  }
+}
+
+function clearRemovedActiveTemplate() {
+  activeTemplateId.value = ''
+  localStorage.removeItem(activeTemplateStorageKey.value)
 }
 
 function toggleToolbarMenu(menu, event) {
@@ -1279,11 +1305,20 @@ const getItemIndex = (type, dataIndex) => {
               </div>
               <div class="compact-zoom-stepper">
                 <button @click="adjustZoom(-0.1, $event)" :disabled="zoomPercentage <= 40" aria-label="缩小">−</button>
-                <button @click="manualZoom = 1; setZoomMode('manual', $event)" aria-label="恢复百分之百">100%</button>
+                <button @click="manualZoom = 1; setZoomMode('manual', $event)" aria-label="恢复百分之百">{{ zoomPercentage }}%</button>
                 <button @click="adjustZoom(0.1, $event)" :disabled="zoomPercentage >= 100" aria-label="放大">＋</button>
               </div>
             </div>
           </div>
+
+          <button class="compact-toolbar-btn template-toolbar-btn" type="button" aria-label="打开模板管理" @click="openTemplateManager">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <rect x="4" y="3" width="16" height="18" rx="2"/>
+              <path d="M8 7h8M8 11h5M8 15h8"/>
+              <path d="M16 13v5M13.5 15.5h5"/>
+            </svg>
+            <span>模板</span>
+          </button>
 
           <div class="compact-toolbar-group edit-toolbar-group">
             <button
@@ -1368,7 +1403,6 @@ const getItemIndex = (type, dataIndex) => {
                 调整文字大小
               </button>
               <button class="layout-guide-btn section-order-open-btn" @click="openSectionOrderDialog">调整模块顺序</button>
-              <button class="layout-guide-btn" @click="openLayoutGuide">查看可用排版预设</button>
               <button class="compact-reset-btn" @click="requestResetStyleSettings">恢复默认排版</button>
             </div>
           </div>
@@ -2034,56 +2068,14 @@ const getItemIndex = (type, dataIndex) => {
     </div>
   </div>
 
-  <!-- 成功提示弹窗 -->
-  <div v-if="showLayoutGuide" class="success-dialog-overlay layout-guide-overlay" @click.self="showLayoutGuide = false">
-    <div class="layout-guide-dialog" role="dialog" aria-modal="true" aria-labelledby="layout-guide-title">
-      <div class="layout-guide-header">
-        <div>
-          <h3 id="layout-guide-title">选择整套简历模板</h3>
-          <p>每张示意图展示完整简历结构。应用后会先在右侧生成临时预览，确认接受才会保存。</p>
-        </div>
-        <button class="layout-guide-close" aria-label="关闭" @click="showLayoutGuide = false">×</button>
-      </div>
-      <div class="layout-guide-grid">
-        <article v-for="template in layoutTemplates" :key="template.id" class="layout-guide-card">
-          <button class="template-sheet-button" :aria-label="`放大查看${template.title}模板`" @click="enlargedLayoutTemplate = template">
-            <div class="template-sheet" :class="`template-${template.id}`">
-              <header class="template-sheet-header">
-                <div class="template-header-copy"><strong>张伟</strong><span>后端开发 · 138****8888 · name@example.com</span></div>
-                <span class="template-avatar" role="img" aria-label="头像位置">🖼️</span>
-              </header>
-              <section><h5>教育经历</h5><div class="template-education-line"><b>示例大学</b><span>硕士 · 计算机科学</span><span>GPA 3.8/4.0 · 前10%</span><i>2022—2025</i></div></section>
-              <section><h5>工作经历</h5><div class="template-entry-title"><b>示例科技有限公司 · 后端开发</b><i>2024—至今</i></div><ul><li>负责核心服务与接口性能优化，稳定支撑业务增长</li><li>设计自动化工具并提升团队交付效率</li></ul></section>
-              <section><h5>项目经历</h5><div class="template-entry-title"><b>智能简历助手 · 核心开发</b><i>2023—2024</i></div><ul><li>完成对话修改、排版预览与文档导出能力</li></ul></section>
-              <section><h5>技能与证书</h5><p>Python · FastAPI · Vue · MySQL · CET-6</p></section>
-            </div>
-          </button>
-          <h4>{{ template.title }}</h4>
-          <p>{{ template.description }}</p>
-          <div class="template-card-actions">
-            <button @click="applyTemplatePrompt(template.prompt)">应用模板</button>
-          </div>
-        </article>
-      </div>
-      <p class="layout-guide-footnote">应用模板不会删除、隐藏或改写简历内容；后续仍可通过对话单独调整某个模块。</p>
-      <div v-if="enlargedLayoutTemplate" class="template-zoom-overlay" @click.self="enlargedLayoutTemplate = null">
-        <div class="template-zoom-dialog">
-          <div class="template-zoom-heading"><strong>{{ enlargedLayoutTemplate.title }}</strong><button aria-label="关闭模板大图" @click="enlargedLayoutTemplate = null">×</button></div>
-          <div class="template-sheet template-sheet-large" :class="`template-${enlargedLayoutTemplate.id}`">
-            <header class="template-sheet-header">
-              <div class="template-header-copy"><strong>张伟</strong><span>后端开发 · 138****8888 · name@example.com</span></div>
-              <span class="template-avatar" role="img" aria-label="头像位置">🖼️</span>
-            </header>
-            <section><h5>教育经历</h5><div class="template-education-line"><b>示例大学</b><span>硕士 · 计算机科学</span><span>GPA 3.8/4.0 · 前10%</span><i>2022—2025</i></div></section>
-            <section><h5>工作经历</h5><div class="template-entry-title"><b>示例科技有限公司 · 后端开发</b><i>2024—至今</i></div><ul><li>负责核心服务与接口性能优化，稳定支撑业务增长</li><li>设计自动化工具并提升团队交付效率</li></ul></section>
-            <section><h5>项目经历</h5><div class="template-entry-title"><b>智能简历助手 · 核心开发</b><i>2023—2024</i></div><ul><li>完成对话修改、排版预览与文档导出能力</li></ul></section>
-            <section><h5>技能与证书</h5><p>Python · FastAPI · Vue · MySQL · CET-6</p></section>
-          </div>
-          <button class="template-zoom-apply" @click="applyTemplatePrompt(enlargedLayoutTemplate.prompt)">应用该模板</button>
-        </div>
-      </div>
-    </div>
-  </div>
+  <TemplateManager
+    :open="showTemplateManager"
+    :current-layout="layout"
+    :active-template-id="activeTemplateId"
+    @close="showTemplateManager = false"
+    @apply="applyFrontendTemplate"
+    @active-template-removed="clearRemovedActiveTemplate"
+  />
 
   <div v-if="showSuccessDialog" class="success-dialog-overlay" @click.self="showSuccessDialog = false">
     <div class="success-dialog">
@@ -3458,21 +3450,9 @@ const getItemIndex = (type, dataIndex) => {
     max-height: calc(100vh - 32px);
   }
 }
-.layout-guide-dialog {
-  width: min(820px, 96vw);
-  max-height: calc(100vh - 32px);
-  overflow: auto;
-  padding: 18px;
-  color: #f1f2f5;
-  background: #24262d;
-  border: 1px solid #40434d;
-  border-radius: 16px;
-  box-shadow: 0 26px 80px rgba(0, 0, 0, 0.5);
-}
 .layout-guide-header { display: flex; justify-content: space-between; gap: 24px; }
 .layout-guide-header h3 { margin: 0 0 8px; font-size: 18px; }
-.layout-guide-header p,
-.layout-guide-footnote { margin: 0; color: #aeb3c0; font-size: 13px; line-height: 1.6; }
+.layout-guide-header p { margin: 0; color: #aeb3c0; font-size: 13px; line-height: 1.6; }
 .layout-guide-close {
   flex: 0 0 auto;
   width: 34px;
@@ -3493,158 +3473,6 @@ const getItemIndex = (type, dataIndex) => {
   outline: none;
   box-shadow: none;
 }
-.layout-guide-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  margin: 14px 0 10px;
-}
-.layout-guide-card { padding: 10px; background: #2b2e36; border: 1px solid #3e424d; border-radius: 12px; }
-.layout-guide-card h4 { margin: 0 0 6px; font-size: 14px; }
-.layout-guide-card > p { min-height: 38px; margin: 0 0 8px; color: #b5bac5; font-size: 12px; line-height: 1.4; }
-.layout-guide-card button {
-  border: 0;
-  padding: 7px 10px;
-  border-radius: 7px;
-  color: #e8efff;
-  background: #3b5f9f;
-  font-size: 12px;
-  cursor: pointer;
-}
-.layout-guide-card button:hover { background: #4a70b2; }
-.template-sheet-button {
-  display: block;
-  width: 100%;
-  margin: 0 0 8px;
-  padding: 0 !important;
-  overflow: hidden;
-  border: 0 !important;
-  border-radius: 7px !important;
-  background: transparent !important;
-}
-.template-sheet {
-  height: 220px;
-  overflow: hidden;
-  padding: 12px 13px;
-  color: #20242a;
-  background: #fff;
-  box-shadow: inset 0 0 0 1px #d7dbe0;
-  text-align: left;
-  font-size: 6.5px;
-  line-height: 1.35;
-}
-.template-sheet-header {
-  position: relative;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 24px;
-  gap: 7px;
-  align-items: center;
-  min-height: 26px;
-  margin-bottom: 5px;
-  text-align: center;
-}
-.template-header-copy { display: grid; gap: 2px; }
-.template-sheet-header strong { font-size: 11px; }
-.template-sheet-header span { color: #666e78; }
-.template-sheet-header .template-avatar {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 28px;
-  border: 1px solid #c8cdd4;
-  border-radius: 2px;
-  background: #f2f4f6;
-  font-size: 12px;
-  line-height: 1;
-}
-.template-sheet section { margin-top: 4px; }
-.template-sheet h5 { margin: 0 0 2px; padding-bottom: 1px; border-bottom: 1px solid #333; font-size: 7px; }
-.template-sheet p { margin: 0; color: #535a64; font-size: inherit; }
-.template-education-line {
-  display: grid;
-  grid-template-columns: max-content minmax(max-content, 1fr) minmax(max-content, 1fr) max-content;
-  gap: 4px;
-  align-items: baseline;
-  white-space: nowrap;
-}
-.template-sheet i { color: #8a929e; font-style: normal; white-space: nowrap; }
-.template-entry-title { display: flex; justify-content: space-between; gap: 5px; }
-.template-sheet ul { margin: 3px 0 0; padding-left: 10px; color: #535a64; }
-.template-modern-clean .template-sheet-header,
-.template-compact-tech .template-sheet-header { text-align: left; }
-.template-compact-tech { padding: 10px; font-size: 5.7px; line-height: 1.25; }
-.template-compact-tech section { margin-top: 5px; }
-.template-compact-tech .template-sheet-header { margin-bottom: 5px; }
-.template-compact-tech h5 { margin-bottom: 2px; }
-.template-compact-tech ul { margin-top: 2px; }
-.template-card-actions { display: flex; justify-content: center; }
-.template-card-actions button { min-width: 132px; padding: 9px 18px; font-size: 14px; font-weight: 700; }
-.template-zoom-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 32px 24px;
-  background: rgba(7,8,11,.78);
-}
-.template-zoom-dialog {
-  width: min(420px, 92vw);
-  max-height: calc(100vh - 64px);
-  overflow-y: auto;
-  padding: 14px;
-  border: 1px solid #424650;
-  border-radius: 14px;
-  background: #25272e;
-  transform: translateY(12px);
-}
-.template-zoom-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-.template-zoom-heading button {
-  width: 32px;
-  height: 32px;
-  border: 0;
-  border-radius: 0;
-  color: #ddd;
-  background: transparent;
-  box-shadow: none;
-  appearance: none;
-  font-size: 22px;
-  cursor: pointer;
-}
-.template-zoom-heading button:hover,
-.template-zoom-heading button:focus-visible { color: #fff; background: transparent; outline: none; box-shadow: none; }
-.template-sheet-large {
-  box-sizing: border-box;
-  width: min(330px, 72vw);
-  margin: 0 auto;
-  padding: 22px 20px;
-  font-size: 8.5px;
-  height: auto;
-  aspect-ratio: 210 / 297;
-}
-.template-sheet-large .template-sheet-header strong { font-size: 16px; }
-.template-sheet-large .template-sheet-header { grid-template-columns: minmax(0, 1fr) 34px; min-height: 39px; }
-.template-sheet-large .template-sheet-header .template-avatar { width: 34px; height: 39px; font-size: 18px; }
-.template-sheet-large h5 { font-size: 10px; }
-.template-zoom-apply {
-  display: block;
-  margin: 10px auto 0;
-  border: 0;
-  padding: 7px 14px;
-  border-radius: 7px;
-  color: #fff;
-  background: #3b5f9f;
-  font-size: 14px;
-  line-height: 1.25;
-  cursor: pointer;
-}
-@media (max-width: 820px) {
-  .layout-guide-grid { grid-template-columns: 1fr; }
-  .layout-guide-dialog { padding: 18px; }
-  .template-sheet:not(.template-sheet-large) { height: 250px; }
-}
-
 .success-icon.error-icon {
   color: #b64d52;
   font-size: 28px;

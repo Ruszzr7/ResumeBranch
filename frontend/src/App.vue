@@ -1041,11 +1041,6 @@ async function loadWorkflowState() {
   }
 }
 
-function requestLayoutTemplate(prompt) {
-  userInput.value = prompt
-  nextTick(() => sendMessage())
-}
-
 function handleLayoutUpdated(layoutConfig) {
   if (currentTask.value) currentTask.value.layout_config = normalizeLayoutConfig(layoutConfig)
   previewLayoutConfig.value = null
@@ -3841,7 +3836,7 @@ watch(
       <!-- 右侧简历预览区 -->
       <div class="resume-section">
         <div class="resume-content">
-          <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :has-source-document="!!currentTask?.has_source_document" :highlighted-module="highlightedModule" :jd-data="jdData" :lang="currentLang" :translation-busy="isTranslating" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @open-resume-import="showUploadResumeDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @request-layout-template="requestLayoutTemplate" @layout-updated="handleLayoutUpdated" />
+          <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :has-source-document="!!currentTask?.has_source_document" :highlighted-module="highlightedModule" :jd-data="jdData" :lang="currentLang" :translation-busy="isTranslating" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @open-resume-import="showUploadResumeDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @layout-updated="handleLayoutUpdated" />
         </div>
       </div>
       </template>
@@ -3955,7 +3950,7 @@ watch(
 
           <!-- 简历 Tab 内容 -->
           <div v-else-if="currentTab === 'resume'" class="mobile-resume-view" key="resume">
-            <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :has-source-document="!!currentTask?.has_source_document" :highlighted-module="highlightedModule" :jd-data="jdData" :is-mobile-view="isMobileView" :lang="currentLang" :translation-busy="isTranslating" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @open-resume-import="showUploadResumeDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @request-layout-template="requestLayoutTemplate" @layout-updated="handleLayoutUpdated" />
+            <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :has-source-document="!!currentTask?.has_source_document" :highlighted-module="highlightedModule" :jd-data="jdData" :is-mobile-view="isMobileView" :lang="currentLang" :translation-busy="isTranslating" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @open-resume-import="showUploadResumeDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @layout-updated="handleLayoutUpdated" />
           </div>
         </Transition>
 

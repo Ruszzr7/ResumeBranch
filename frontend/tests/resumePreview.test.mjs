@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 const previewSource = readFileSync(new URL('../src/components/ResumePreview.vue', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
+const templateManagerSource = readFileSync(new URL('../src/components/TemplateManager.vue', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 const appSource = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 
 test('desktop workspace heading and resume toolbar share the compact row height', () => {
@@ -148,11 +149,16 @@ test('empty compact self evaluation never creates a heading-only section', () =>
   assert.ok(previewSource.includes('values.length && moduleLayout(\'self_evaluation\').preset === \'compact\''))
 })
 
-test('template chooser uses the preview itself for zoom and one centered apply action', () => {
-  assert.equal(previewSource.includes('class="template-secondary-btn"'), false)
-  assert.ok(previewSource.includes('.template-card-actions { display: flex; justify-content: center; }'))
-  assert.ok(previewSource.includes('.template-card-actions button { min-width: 132px;'))
-  assert.ok(previewSource.includes('max-height: calc(100vh - 32px)'))
+test('template manager keeps custom templates before default and the create card last', () => {
+  assert.ok(previewSource.includes('class="compact-toolbar-btn template-toolbar-btn"'))
+  assert.equal(previewSource.includes('查看可用排版预设'), false)
+  assert.ok(templateManagerSource.includes('const displayedTemplates = computed(() => [...templates.value, defaultTemplate])'))
+  assert.ok(templateManagerSource.indexOf('v-for="template in displayedTemplates"') < templateManagerSource.indexOf('class="template-card create-card"'))
+  assert.ok(templateManagerSource.includes("template.id === activeTemplateId ? '当前模板' : '应用模板'"))
+  assert.ok(templateManagerSource.includes(": '模板管理'"))
+  assert.ok(templateManagerSource.includes('class="template-action-row"'))
+  assert.ok(templateManagerSource.includes('overflow-x: auto'))
+  assert.equal(templateManagerSource.includes('李靖华'), false)
 })
 
 test('source document header stays compact and relies on the toolbar for returning', () => {
@@ -229,6 +235,7 @@ test('resume toolbar actions follow the requested visual and keyboard order', ()
   const toolbarMarkup = previewSource.slice(toolbarStart, toolbarEnd)
   const orderedMarkers = [
     'aria-label="打开页面缩放"',
+    'aria-label="打开模板管理"',
     'aria-label="打开内容编辑菜单"',
     'aria-label="打开排版设置"',
     'class="compact-toolbar-btn language-btn"',
@@ -259,9 +266,17 @@ test('work headings stay inline and right-positioned dates use a two-column grid
   assert.ok(previewSource.includes('text-align: right'))
 })
 
-test('enlarged template is centered with viewport breathing room', () => {
-  assert.ok(previewSource.includes('max-height: calc(100vh - 64px)'))
-  assert.ok(previewSource.includes('transform: translateY(12px)'))
+test('custom templates use compact sample content and explicit naming workflows', () => {
+  assert.ok(templateManagerSource.includes('示例大学'))
+  assert.ok(templateManagerSource.includes('智能简历助手'))
+  assert.ok(templateManagerSource.includes("openNameDialog('copy', template)"))
+  assert.ok(templateManagerSource.includes('新模板名称'))
+  assert.ok(templateManagerSource.includes('localStorage.setItem(STORAGE_KEY'))
+})
+
+test('zoom stepper reports the live percentage instead of a fixed label', () => {
+  assert.ok(previewSource.includes('aria-label="恢复百分之百">{{ zoomPercentage }}%</button>'))
+  assert.ok(previewSource.includes('manualZoom.value = Math.min(1, Math.max(0.4, currentRatio + delta))'))
 })
 
 test('restoring default layout requires explicit confirmation', () => {
