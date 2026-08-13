@@ -2556,6 +2556,7 @@ const getItemIndex = (type, dataIndex) => {
 .compact-reset-btn {
   width: 100%;
   margin-top: 0.8rem;
+  font-size: 0.72rem;
 }
 
 .compact-menu-item {

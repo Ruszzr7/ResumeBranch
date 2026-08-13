@@ -284,6 +284,7 @@ test('restoring default layout requires explicit confirmation', () => {
   assert.ok(previewSource.includes('恢复默认排版？'))
   assert.ok(previewSource.includes('确认恢复'))
   assert.ok(previewSource.includes('@click="resetStyleSettings"'))
+  assert.ok(previewSource.includes('.compact-reset-btn {\n  width: 100%;\n  margin-top: 0.8rem;\n  font-size: 0.72rem;'))
   const requestStart = previewSource.indexOf('function requestResetStyleSettings')
   const requestEnd = previewSource.indexOf('function resetStyleSettings', requestStart)
   assert.equal(previewSource.slice(requestStart, requestEnd).includes('marginVertical.value ='), false)
