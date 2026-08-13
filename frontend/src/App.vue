@@ -10,7 +10,7 @@ import { labels } from './utils/labels.js'
 import { buildAuthorizationHeaders, loadAppConfig } from './config/appMode.js'
 import { normalizeLayoutConfig, resolveContentBlockFlow, resolveLayoutTokens } from './utils/layoutConfig.js'
 import { hasMeaningfulResumeContent } from './utils/resumePresence.js'
-import { formatInlineHtml, plainInlineText } from './utils/inlineFormatting.js'
+import { formatInlineHtml } from './utils/inlineFormatting.js'
 
 // 响应式布局状态
 const isMobileView = ref(false)
@@ -405,6 +405,7 @@ const resumeEditorMetrics = computed(() => {
     fontSizePt: tokens.bodyFontSizePt,
     labelFontSizePt: tokens.labelFontSizePt,
     labelFontWeight: tokens.labelFontWeight,
+    listTextIndentPt: tokens.listTextIndentPt,
     lineHeight: tokens.lineHeight,
     fontFamilyCss: tokens.fontFamilyCss,
     contentWidthPx: Math.max(1, (210 - tokens.marginLeftMm - tokens.marginRightMm) * (96 / 25.4))
@@ -412,9 +413,18 @@ const resumeEditorMetrics = computed(() => {
 })
 const projectIntroFlow = project => resolveContentBlockFlow({
   type: 'paragraph',
-  label: project?._introLabel || '项目简介',
+  semantic_role: 'introduction',
+  label: project?._introLabel,
   label_bold: project?._introLabelBold !== false
 })
+const projectDutiesFlow = project => resolveContentBlockFlow({
+  type: 'numbered_list', semantic_role: 'responsibilities', label: project?._dutiesLabel,
+  label_bold: project?._dutiesLabelBold !== false
+})
+const genericDetailsFlow = () => resolveContentBlockFlow({
+  type: 'bullet_list', semantic_role: 'generic', label: ''
+})
+const hasEditorText = value => Boolean(String(value || '').trim())
 const showTaskCreateDialog = ref(false)
 const newTaskTitle = ref('')
 const taskCreateMode = ref('copy')
@@ -1992,13 +2002,13 @@ function closeJDDialog() {
 
 // ==================== 简历编辑功能（新增） ====================
 
-function initializeProjectContentEditor(proj) {
+function initializeExperienceContentEditor(proj) {
   const blocks = Array.isArray(proj.content_blocks) ? proj.content_blocks : []
-  const intro = blocks.find(block => block?.type === 'paragraph' && /简介|背景|概述|说明/.test(block.label || ''))
-  const duties = blocks.find(block => block?.type === 'numbered_list' && /职责|负责内容/.test(block.label || ''))
+  const intro = blocks.find(block => resolveContentBlockFlow(block).semanticRole === 'introduction')
+  const duties = blocks.find(block => resolveContentBlockFlow(block).semanticRole === 'responsibilities')
   const extraBlocks = blocks.filter(block => block !== intro && block !== duties)
-  proj._introLabel = intro?.label || '项目简介'
-  proj._dutiesLabel = duties?.label || '项目职责'
+  proj._introLabel = intro ? String(intro.label ?? '') : '项目简介'
+  proj._dutiesLabel = duties ? String(duties.label ?? '') : '项目职责'
   proj._introLabelBold = intro?.label_bold !== false
   proj._dutiesLabelBold = duties?.label_bold !== false
   proj._introText = intro?.text || ''
@@ -2032,49 +2042,32 @@ function initializeProjectContentEditor(proj) {
   }
 }
 
-function contentBlocksToEditableLines(item, { labelsAsContent = false } = {}) {
-  const blocks = Array.isArray(item?.content_blocks) ? item.content_blocks : []
-  if (!blocks.length) return item?.details || []
-  const lines = []
-  blocks.forEach(block => {
-    const label = String(block?.label || '').trim()
-    const editableLabel = labelsAsContent && label
-      ? (block?.label_bold === false ? plainInlineText(label) : `**${plainInlineText(label)}**`)
-      : label
-    if (block?.type === 'paragraph') {
-      const text = String(block?.text || '').trim()
-      if (label || text) lines.push(label ? `${editableLabel}：${text}` : text)
-      return
-    }
-    if (label) lines.push(`${editableLabel}：`)
-    ;(block?.items || []).forEach((detail, index) => {
-      const text = String(detail || '').trim()
-      if (!text) return
-      lines.push(block.type === 'numbered_list' ? `(${index + 1}) ${text}` : text)
-    })
-  })
-  return lines
+function initializeProjectContentEditor(proj) {
+  initializeExperienceContentEditor(proj)
 }
 
 function initializeWorkContentEditor(work) {
-  work._detailsText = arrayToMultiline(contentBlocksToEditableLines(work, { labelsAsContent: true }))
+  initializeExperienceContentEditor(work)
+  work._detailsText = work._extraDetailsText
 }
 
-function editableWorkLinesToContentBlocks(work) {
-  const lines = multilineToArray(work?._detailsText)
+function editableExperienceToContentBlocks(work) {
+  const introText = String(work?._introText || '').trim()
+  const duties = multilineToArray(work?._dutiesText)
+  const lines = multilineToArray(work?._detailsText ?? work?._extraDetailsText)
   const blocks = []
-  let activeBlock = null
-  for (const raw of lines) {
-    const line = String(raw || '').trim()
-    const numbered = /^\s*[（(]?\d+[）).、]/.test(plainInlineText(line))
-    const type = numbered ? 'numbered_list' : 'bullet_list'
-    if (!activeBlock || activeBlock.type !== type) {
-      activeBlock = { type, label: '', label_bold: true, text: '', items: [] }
-      blocks.push(activeBlock)
-    }
-    activeBlock.items.push(numbered ? line.replace(/^(\*\*)?\s*[（(]?\d+[）).、]\s*/, '$1') : line)
-  }
-  return blocks.filter(block => block.items.length)
+  if (introText) blocks.push({
+    type: 'paragraph', semantic_role: 'introduction', label: String(work?._introLabel || '').trim(),
+    label_bold: work?._introLabelBold !== false, text: introText, items: []
+  })
+  if (duties.length) blocks.push({
+    type: 'numbered_list', semantic_role: 'responsibilities', label: String(work?._dutiesLabel || '').trim(),
+    label_bold: work?._dutiesLabelBold !== false, text: '', items: duties
+  })
+  if (lines.length) blocks.push({
+    type: 'bullet_list', semantic_role: 'generic', label: '', label_bold: true, text: '', items: lines
+  })
+  return blocks
 }
 
 // 打开简历编辑弹窗
@@ -2331,7 +2324,15 @@ function addWork() {
     job_title: '',
     date_range: ['', ''],
     job_type: '全职',
-    details: ['']
+    content_blocks: [],
+    details: [],
+    _introLabel: '项目简介',
+    _dutiesLabel: '项目职责',
+    _introLabelBold: true,
+    _dutiesLabelBold: true,
+    _introText: '',
+    _dutiesText: '',
+    _detailsText: ''
   })
 }
 
@@ -2466,20 +2467,14 @@ async function saveResume() {
     dataToSave.work_experience?.forEach(work => {
       convertDateRangeToSave(work)
       if (work._detailsText !== undefined) {
-        work.content_blocks = editableWorkLinesToContentBlocks(work)
+        work.content_blocks = editableExperienceToContentBlocks(work)
         work.details = []
-        delete work._detailsText
+        for (const key of ['_introLabel', '_dutiesLabel', '_introLabelBold', '_dutiesLabelBold', '_introText', '_dutiesText', '_detailsText', '_extraDetailsText']) delete work[key]
       }
     })
     dataToSave.project_experience?.forEach(proj => {
       convertDateRangeToSave(proj)
-      const introText = String(proj._introText || '').trim()
-      const duties = multilineToArray(proj._dutiesText)
-      const extras = multilineToArray(proj._extraDetailsText)
-      proj.content_blocks = []
-      if (introText) proj.content_blocks.push({ type: 'paragraph', label: proj._introLabel || '项目简介', label_bold: proj._introLabelBold !== false, text: introText, items: [] })
-      if (duties.length) proj.content_blocks.push({ type: 'numbered_list', label: proj._dutiesLabel || '项目职责', label_bold: proj._dutiesLabelBold !== false, text: '', items: duties })
-      if (extras.length) proj.content_blocks.push({ type: 'bullet_list', label: '', label_bold: true, text: '', items: extras })
+      proj.content_blocks = editableExperienceToContentBlocks(proj)
       proj.details = []
       delete proj._introLabel
       delete proj._dutiesLabel
@@ -4451,14 +4446,49 @@ watch(
                   </div>
                 </div>
               </div>
-              <!-- 工作内容 -->
+              <!-- 可选的项目化工作内容；普通工作内容仍可无标签显示。 -->
               <div class="array-item-nested">
-                <label>工作内容</label>
+                <div class="semantic-label-heading">
+                  <label>简介标签</label>
+                  <input v-model="work._introLabel" class="semantic-label-input" placeholder="项目简介" />
+                  <button type="button" @click="work._introLabelBold = !work._introLabelBold">
+                    {{ work._introLabelBold ? '取消加粗' : '设为加粗' }}
+                  </button>
+                </div>
                 <RichTextEditor
-                  v-model="work._detailsText"
-                  placeholder="请输入工作内容，支持换行"
+                  v-model="work._introText"
+                  placeholder="可选；填写该工作中具体项目的背景和目标"
                   class="rich-editor-field"
                   :resume-metrics="resumeEditorMetrics"
+                  :resume-flow="projectIntroFlow(work)"
+                />
+                <div v-if="hasEditorText(work._introText) && !hasEditorText(work._introLabel)" class="semantic-hidden-notice">标签为空，该简介已保留但不会显示或导出。</div>
+              </div>
+              <div class="array-item-nested">
+                <div class="semantic-label-heading">
+                  <label>职责标签</label>
+                  <input v-model="work._dutiesLabel" class="semantic-label-input" placeholder="项目职责" />
+                  <button type="button" @click="work._dutiesLabelBold = !work._dutiesLabelBold">
+                    {{ work._dutiesLabelBold ? '取消加粗' : '设为加粗' }}
+                  </button>
+                </div>
+                <RichTextEditor
+                  v-model="work._dutiesText"
+                  placeholder="可选；每行一项，模板自动编号"
+                  class="rich-editor-field"
+                  :resume-metrics="resumeEditorMetrics"
+                  :resume-flow="projectDutiesFlow(work)"
+                />
+                <div v-if="hasEditorText(work._dutiesText) && !hasEditorText(work._dutiesLabel)" class="semantic-hidden-notice">标签为空，该职责内容已保留但不会显示或导出。</div>
+              </div>
+              <div class="array-item-nested">
+                <label>普通工作内容（无标签，每行一个分点）</label>
+                <RichTextEditor
+                  v-model="work._detailsText"
+                  placeholder="适用于不包含项目简介、项目职责的常规工作内容"
+                  class="rich-editor-field"
+                  :resume-metrics="resumeEditorMetrics"
+                  :resume-flow="genericDetailsFlow()"
                 />
               </div>
             </div>
@@ -4513,7 +4543,8 @@ watch(
               <!-- 项目内容 -->
               <div class="array-item-nested">
                 <div class="semantic-label-heading">
-                  <span :class="{ 'is-bold': proj._introLabelBold }">{{ proj._introLabel || '项目简介' }}</span>
+                  <label>简介标签</label>
+                  <input v-model="proj._introLabel" class="semantic-label-input" placeholder="项目简介" />
                   <button type="button" @click="proj._introLabelBold = !proj._introLabelBold">
                     {{ proj._introLabelBold ? '取消加粗' : '设为加粗' }}
                   </button>
@@ -4525,10 +4556,12 @@ watch(
                   :resume-metrics="resumeEditorMetrics"
                   :resume-flow="projectIntroFlow(proj)"
                 />
+                <div v-if="hasEditorText(proj._introText) && !hasEditorText(proj._introLabel)" class="semantic-hidden-notice">标签为空，该简介已保留但不会显示或导出。</div>
               </div>
               <div class="array-item-nested">
                 <div class="semantic-label-heading">
-                  <span :class="{ 'is-bold': proj._dutiesLabelBold }">{{ proj._dutiesLabel || '项目职责' }}（每行一条，模板自动编号）</span>
+                  <label>职责标签</label>
+                  <input v-model="proj._dutiesLabel" class="semantic-label-input" placeholder="项目职责" />
                   <button type="button" @click="proj._dutiesLabelBold = !proj._dutiesLabelBold">
                     {{ proj._dutiesLabelBold ? '取消加粗' : '设为加粗' }}
                   </button>
@@ -4538,7 +4571,9 @@ watch(
                   placeholder="每行填写一项职责，不需要手动输入序号"
                   class="rich-editor-field"
                   :resume-metrics="resumeEditorMetrics"
+                  :resume-flow="projectDutiesFlow(proj)"
                 />
+                <div v-if="hasEditorText(proj._dutiesText) && !hasEditorText(proj._dutiesLabel)" class="semantic-hidden-notice">标签为空，该职责内容已保留但不会显示或导出。</div>
               </div>
               <div class="array-item-nested">
                 <label>其他项目内容（可选）</label>
@@ -4547,6 +4582,7 @@ watch(
                   placeholder="不属于项目简介或项目职责的补充内容，每行一条"
                   class="rich-editor-field"
                   :resume-metrics="resumeEditorMetrics"
+                  :resume-flow="genericDetailsFlow()"
                 />
               </div>
             </div>
@@ -6629,6 +6665,36 @@ watch(
 
 .semantic-label-heading .is-bold,
 .semantic-label-toggle .is-bold { font-weight: 700; }
+
+.semantic-label-heading > label {
+  flex: 0 0 auto;
+  color: #bfc1c9;
+}
+
+.semantic-label-input {
+  flex: 1 1 180px;
+  min-width: 120px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  outline: none;
+  color: #ededf1;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.semantic-label-input:focus {
+  border-color: rgba(120, 166, 255, 0.62);
+  box-shadow: 0 0 0 3px rgba(120, 166, 255, 0.08);
+}
+
+.semantic-label-input::placeholder { color: #777780; }
+
+.semantic-hidden-notice {
+  margin-top: 6px;
+  color: #d2a968;
+  font-size: 0.75rem;
+}
 
 .semantic-label-heading button,
 .semantic-label-toggle {

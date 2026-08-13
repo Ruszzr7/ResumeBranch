@@ -175,7 +175,7 @@ def _normalize_details(value: Any) -> list[str]:
     return result
 
 
-def _normalize_project_blocks(value: Any, legacy_details: list[str]) -> list[dict]:
+def _normalize_project_blocks(value: Any, legacy_details: list[str], *, experience_kind: str = "project") -> list[dict]:
     """Normalize semantic blocks and migrate the common legacy details shape."""
     result: list[dict] = []
     if isinstance(value, list):
@@ -186,12 +186,20 @@ def _normalize_project_blocks(value: Any, legacy_details: list[str]) -> list[dic
             if block_type not in {"paragraph", "numbered_list", "bullet_list"}:
                 block_type = "paragraph" if _text(raw.get("text")) else "bullet_list"
             label = _text(raw.get("label"))
+            semantic_role = _text(raw.get("semantic_role"))
+            if semantic_role not in {"introduction", "responsibilities", "generic"}:
+                semantic_role = (
+                    "introduction" if label and block_type == "paragraph"
+                    else "responsibilities" if label
+                    else "generic"
+                )
             text = _text(raw.get("text"))
             items = [_LEADING_NUMBER_RE.sub("", item).strip() for item in _string_list(raw.get("items"))]
             items = [item for item in items if item]
             if text or items:
                 result.append({
                     "type": block_type,
+                    "semantic_role": semantic_role,
                     "label": label,
                     "label_bold": bool(raw.get("label_bold", True)),
                     "text": text,
@@ -199,6 +207,14 @@ def _normalize_project_blocks(value: Any, legacy_details: list[str]) -> list[dic
                 })
     if result or not legacy_details:
         return result
+
+    # Work details are user-authored body text. Never infer semantic labels
+    # from their wording; only explicit structured blocks may act as labels.
+    if experience_kind == "work":
+        return [{
+            "type": "bullet_list", "semantic_role": "generic", "label": "", "label_bold": True,
+            "text": "", "items": legacy_details,
+        }]
 
     active_duties: dict | None = None
     unmatched: list[str] = []
@@ -209,14 +225,14 @@ def _normalize_project_blocks(value: Any, legacy_details: list[str]) -> list[dic
             active_duties = None
             if intro_match.group(2).strip():
                 result.append({
-                    "type": "paragraph", "label": intro_match.group(1),
+                    "type": "paragraph", "semantic_role": "introduction", "label": intro_match.group(1),
                     "label_bold": True, "text": intro_match.group(2).strip(), "items": [],
                 })
             continue
         duty_match = _PROJECT_DUTY_RE.match(text)
         if duty_match:
             active_duties = {
-                "type": "numbered_list", "label": duty_match.group(1),
+                "type": "numbered_list", "semantic_role": "responsibilities", "label": duty_match.group(1),
                 "label_bold": True, "text": "", "items": [],
             }
             remainder = _LEADING_NUMBER_RE.sub("", duty_match.group(2)).strip()
@@ -224,7 +240,7 @@ def _normalize_project_blocks(value: Any, legacy_details: list[str]) -> list[dic
                 active_duties["items"].append(remainder)
             result.append(active_duties)
             continue
-        if active_duties is not None and (_LEADING_NUMBER_RE.match(text) or active_duties["items"]):
+        if active_duties is not None:
             clean = _LEADING_NUMBER_RE.sub("", text).strip()
             if clean:
                 active_duties["items"].append(clean)
@@ -232,7 +248,7 @@ def _normalize_project_blocks(value: Any, legacy_details: list[str]) -> list[dic
         unmatched.append(text)
     if unmatched:
         result.append({
-            "type": "bullet_list", "label": "", "label_bold": True,
+            "type": "bullet_list", "semantic_role": "generic", "label": "", "label_bold": True,
             "text": "", "items": unmatched,
         })
     return [block for block in result if block.get("text") or block.get("items")]
@@ -356,7 +372,9 @@ def normalize_resume_data(data: dict) -> dict:
         item.setdefault("job_type", _text(item.pop("type", "")))
         item["date_range"] = _date_range(item)
         item["details"] = _normalize_details(item.get("details", item.pop("content", [])))
-        item["content_blocks"] = _normalize_project_blocks(item.get("content_blocks"), item["details"])
+        item["content_blocks"] = _normalize_project_blocks(
+            item.get("content_blocks"), item["details"], experience_kind="work",
+        )
     normalized["work_experience"] = work_items
 
     project_items = normalized.get("project_experience") or []

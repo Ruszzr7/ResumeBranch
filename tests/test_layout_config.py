@@ -8,8 +8,10 @@ from backend.layout_config import (
     apply_layout_change_groups,
     build_layout_changes,
     default_layout_config,
+    format_compact_academic_metric,
     normalize_layout_config,
     resolve_content_block_flow,
+    resolve_education_column_widths,
     resolve_layout_tokens,
     reset_layout_section,
 )
@@ -32,6 +34,15 @@ class LayoutConfigTests(unittest.TestCase):
         self.assertFalse(resolve_content_block_flow({
             "type": "paragraph", "label": "项目简介", "label_bold": False,
         })["labelBold"])
+        self.assertFalse(resolve_content_block_flow({
+            "type": "paragraph", "semantic_role": "introduction", "label": "",
+        })["visible"])
+        self.assertTrue(resolve_content_block_flow({
+            "type": "bullet_list", "semantic_role": "generic", "label": "",
+        })["visible"])
+        self.assertEqual(resolve_content_block_flow({
+            "type": "numbered_list", "semantic_role": "responsibilities", "label": "主要贡献",
+        })["contentIndentLevels"], 2)
 
     def test_defaults_are_complete_and_independent(self):
         first = default_layout_config()
@@ -59,7 +70,7 @@ class LayoutConfigTests(unittest.TestCase):
                 "eastAsiaFont": "Random CJK",
             },
         })
-        self.assertEqual(config["version"], 5)
+        self.assertEqual(config["version"], 6)
         self.assertEqual(config["typography"]["preset"], "microsoft-office")
         self.assertEqual(config["typography"]["latinFont"], "Arial")
         self.assertEqual(config["typography"]["eastAsiaFont"], "Microsoft YaHei")
@@ -69,10 +80,28 @@ class LayoutConfigTests(unittest.TestCase):
             "version": 3,
             "global": {"fontSize": 10.5, "lineHeight": 1.32, "moduleMargin": 0.45},
         })
-        self.assertEqual(config["version"], 5)
+        self.assertEqual(config["version"], 6)
         self.assertEqual(config["global"]["fontSize"], 9)
         self.assertEqual(config["global"]["lineHeight"], 1.28)
         self.assertEqual(config["global"]["moduleMargin"], 0.55)
+
+    def test_invalid_enums_unknown_fields_and_duplicate_sections_normalize_deterministically(self):
+        config = normalize_layout_config({
+            "version": 6,
+            "global": {
+                "density": "invalid", "titleStyle": "invalid",
+                "sectionOrder": ["skills", "education", "skills", "invalid"],
+                "hiddenSections": ["honors", "invalid"],
+            },
+            "project_experience": {"detailsStyle": "numbered"},
+            "basics": {"hiddenFields": ["phone", "invalid"]},
+        })
+        self.assertEqual(config["global"]["density"], "compact")
+        self.assertEqual(config["global"]["titleStyle"], "underline")
+        self.assertEqual(config["global"]["sectionOrder"].count("skills"), 1)
+        self.assertEqual(config["global"]["hiddenSections"], ["honors"])
+        self.assertEqual(config["project_experience"]["detailsStyle"], "bullets")
+        self.assertEqual(config["basics"]["hiddenFields"], ["phone"])
         self.assertEqual(config["typography"]["fontSizes"], {
             "name": 14, "sectionTitle": 11, "entryTitle": 10,
             "meta": 9, "body": 9, "label": 9,
@@ -83,7 +112,7 @@ class LayoutConfigTests(unittest.TestCase):
             "version": 4,
             "global": {"fontSize": 9.5},
         })
-        self.assertEqual(config["version"], 5)
+        self.assertEqual(config["version"], 6)
         self.assertEqual(config["typography"]["fontSizes"], {
             "name": 14, "sectionTitle": 11.5, "entryTitle": 10.5,
             "meta": 9.5, "body": 9.5, "label": 9.5,
@@ -108,6 +137,20 @@ class LayoutConfigTests(unittest.TestCase):
             "name": 20, "sectionTitle": 11.5, "entryTitle": 8.5,
             "meta": 10, "body": 10.5, "label": 12,
         })
+
+    def test_v5_standard_default_line_height_migrates_to_compact_export_rhythm(self):
+        config = normalize_layout_config({
+            "version": 5,
+            "global": {"density": "standard", "lineHeight": 1.35},
+        })
+        self.assertEqual(config["version"], 6)
+        self.assertEqual(config["global"]["lineHeight"], 1.28)
+
+        custom = normalize_layout_config({
+            "version": 5,
+            "global": {"density": "standard", "lineHeight": 1.4},
+        })
+        self.assertEqual(custom["global"]["lineHeight"], 1.4)
 
     def test_shared_tokens_convert_spacing_to_physical_units_once(self):
         tokens = resolve_layout_tokens(default_layout_config(), {
@@ -136,6 +179,38 @@ class LayoutConfigTests(unittest.TestCase):
         self.assertAlmostEqual(tokens["paragraphSpacingPt"], 0.81)
         self.assertEqual(tokens["marginTopMm"], 7)
 
+    def test_compact_education_middle_expands_symmetrically_for_gpa_and_rank(self):
+        tokens = resolve_layout_tokens(default_layout_config())
+        short = resolve_education_column_widths(
+            tokens,
+            schools=["中山大学"],
+            dates=["2024.09 - 2027.06"],
+            degree_majors=["硕士 · 电子信息"],
+            compact_metrics=["4.0/5.0 (前5%)"],
+        )
+        long = resolve_education_column_widths(
+            tokens,
+            schools=["中山大学"],
+            dates=["2024.09 - 2027.06"],
+            degree_majors=["硕士 · 电子信息工程与人工智能"],
+            compact_metrics=["4.0/5.0 (前5%)"],
+        )
+
+        self.assertGreater(long["middleMm"], short["middleMm"])
+        self.assertAlmostEqual(short["sideMm"] * 2 + short["middleMm"], 192.0, places=2)
+        self.assertAlmostEqual(long["sideMm"] * 2 + long["middleMm"], 192.0, places=2)
+
+    def test_compact_metric_preserves_user_ranking_wording(self):
+        base = {"gpa": "3.8", "gpa_scale": "5.0"}
+        self.assertEqual(
+            format_compact_academic_metric({**base, "ranking": "10%"}),
+            "3.8/5.0 (10%)",
+        )
+        self.assertEqual(
+            format_compact_academic_metric({**base, "ranking": "前10%"}),
+            "3.8/5.0 (前10%)",
+        )
+
     def test_pdf_html_consumes_the_shared_font_and_spacing_tokens(self):
         html = render_resume_to_html(
             {"basics": {"name": "张三"}},
@@ -147,6 +222,8 @@ class LayoutConfigTests(unittest.TestCase):
         self.assertIn("--name-font-size: 14pt;", html)
         self.assertIn("--meta-font-weight: 400;", html)
         self.assertIn("--entry-title-font-weight: 700;", html)
+        self.assertIn("margin-top: var(--module-margin);", html)
+        self.assertIn(".section {\n        margin-bottom: 0;", html)
         self.assertIn("margin-bottom: var(--paragraph-spacing);", html)
 
     def test_three_column_forces_metrics_into_information_column(self):
@@ -190,6 +267,7 @@ class LayoutConfigTests(unittest.TestCase):
         self.assertEqual(result["basics"]["preset"], "left-aligned")
         self.assertEqual(result["education"]["preset"], "three-column")
         self.assertEqual(result["education"]["schoolTagStyle"], "text")
+        self.assertEqual(result["global"]["lineHeight"], 1.28)
         self.assertEqual(result["global"]["hiddenSections"], ["self_evaluation"])
         self.assertEqual(result["basics"]["hiddenFields"], ["gender"])
 

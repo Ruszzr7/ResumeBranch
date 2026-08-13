@@ -56,17 +56,19 @@ test('project introduction line measurement includes its rendered semantic prefi
   assert.ok(appSource.includes(':resume-flow="projectIntroFlow(proj)"'))
 })
 
-test('project labels keep a separate weight toggle while work prefixes remain editable content', () => {
+test('work and project semantic labels are editable, weighted separately, and hide when blank', () => {
   assert.equal(editorSource.includes('semanticLabelStates'), false)
   assert.equal(editorSource.includes('data-semantic-label="true"'), false)
   assert.equal(editorSource.includes('semantic-label-weight-change'), false)
   assert.equal(appSource.includes('_contentLabelBold'), false)
   assert.equal(appSource.includes(':semantic-label-states="work.'), false)
-  assert.ok(appSource.includes('contentBlocksToEditableLines(work, { labelsAsContent: true })'))
-  assert.ok(appSource.includes('`**${plainInlineText(label)}**`'))
+  assert.ok(appSource.includes('v-model="work._introLabel"'))
+  assert.ok(appSource.includes('v-model="work._dutiesLabel"'))
+  assert.ok(appSource.includes('v-model="proj._introLabel"'))
+  assert.ok(appSource.includes('标签为空，该职责内容已保留但不会显示或导出'))
   assert.equal(appSource.includes("'项目简介', '项目背景', '项目概述', '项目说明'"), false)
-  assert.ok(appSource.includes('label_bold: proj._introLabelBold !== false'))
-  assert.ok(appSource.includes('work.content_blocks = editableWorkLinesToContentBlocks(work)'))
+  assert.ok(appSource.includes("semantic_role: 'introduction'"))
+  assert.ok(appSource.includes('work.content_blocks = editableExperienceToContentBlocks(work)'))
   assert.equal(appSource.includes('work.content_blocks = []'), false)
 })
 

@@ -41,7 +41,7 @@ class LayoutRuleTests(unittest.TestCase):
                 "sectionOrder": ["education", "project_experience", "others"],
             },
         })
-        self.assertEqual(layout["version"], 5)
+        self.assertEqual(layout["version"], 6)
         self.assertEqual(layout["global"]["fontSize"], 9)
         self.assertEqual(layout["global"]["lineHeight"], 1.28)
         self.assertIn("skills", layout["global"]["sectionOrder"])
@@ -79,7 +79,10 @@ class LayoutRuleTests(unittest.TestCase):
     def test_pdf_and_word_apply_the_same_semantic_break_anchor(self):
         style = {"pageBreakBefore": "work_experience:1"}
         html = render_resume_to_html(resume_with_two_jobs(), style)
-        self.assertIn('class="work-item page-break-before"', html)
+        self.assertIn(
+            'class="work-item preset-classic date-right page-break-before"',
+            html,
+        )
 
         docx = generate_docx(resume_with_two_jobs(), style)
         with ZipFile(BytesIO(docx)) as archive:
@@ -217,7 +220,7 @@ class LayoutRuleTests(unittest.TestCase):
         for expected in ("2002.06", "协作臂模型预测阻抗控制", "研究生二等奖学金", "校园经历", "学生组织负责人"):
             self.assertIn(expected, combined)
 
-    def test_project_semantic_blocks_have_no_outer_bullets_or_role_placeholder(self):
+    def test_project_semantic_labels_use_outer_bullets_and_numbered_children(self):
         data = resume_with_two_jobs()
         data["project_experience"] = [{
             "project_name": "机器人控制",
@@ -230,12 +233,60 @@ class LayoutRuleTests(unittest.TestCase):
         html = render_resume_to_html(data)
 
         self.assertIn('<span class="project-inline-label is-bold">项目简介：</span>面向展厅导航', html)
+        self.assertIn('block-paragraph has-semantic-label', html)
+        self.assertIn('block-numbered_list has-semantic-label', html)
         self.assertIn('<ol class="project-numbered-list">', html)
+        self.assertIn('.project-content-block.has-semantic-label > .project-numbered-list', html)
+        self.assertIn('padding-left: var(--list-text-indent)', html)
         self.assertNotIn("（1）训练策略", html)
         self.assertNotIn(">角色<", html)
         self.assertIn("专业技能", html)
         self.assertLess(html.index("专业技能"), html.index("项目经历"))
         self.assertIn("body, .degree-major", html)
+
+    def test_forced_item_break_preserves_template_and_date_classes(self):
+        data = resume_with_two_jobs()
+        data["project_experience"] = [
+            {"project_name": "A", "date_range": ["2025.01", "2025.02"]},
+            {"project_name": "B", "date_range": ["2025.03", "2025.04"]},
+        ]
+        html = render_resume_to_html(
+            data,
+            {"pageBreakBefore": "project_experience:1"},
+            layout_config=apply_layout_template({}, "compact-tech"),
+        )
+        self.assertIn(
+            'class="project-item preset-compact date-right page-break-before"',
+            html,
+        )
+
+    def test_blank_semantic_label_hides_preserved_content_but_generic_content_remains(self):
+        data = resume_with_two_jobs()
+        data["work_experience"][0]["content_blocks"] = [
+            {
+                "type": "paragraph", "semantic_role": "introduction", "label": "",
+                "label_bold": True, "text": "保留但隐藏的简介", "items": [],
+            },
+            {
+                "type": "numbered_list", "semantic_role": "responsibilities", "label": "",
+                "label_bold": True, "text": "", "items": ["保留但隐藏的职责"],
+            },
+            {
+                "type": "bullet_list", "semantic_role": "generic", "label": "",
+                "label_bold": True, "text": "", "items": ["仍然显示的普通内容"],
+            },
+        ]
+
+        html = render_resume_to_html(data)
+        self.assertNotIn("保留但隐藏的简介", html)
+        self.assertNotIn("保留但隐藏的职责", html)
+        self.assertIn("仍然显示的普通内容", html)
+
+        document = Document(BytesIO(generate_docx(data)))
+        combined = "\n".join(paragraph.text for paragraph in document.paragraphs)
+        self.assertNotIn("保留但隐藏的简介", combined)
+        self.assertNotIn("保留但隐藏的职责", combined)
+        self.assertIn("仍然显示的普通内容", combined)
 
     def test_semantic_label_weight_and_body_justification_match_pdf_and_word(self):
         data = resume_with_two_jobs()
@@ -259,23 +310,36 @@ class LayoutRuleTests(unittest.TestCase):
         self.assertFalse(label_run.bold)
         self.assertEqual(paragraph.alignment, WD_ALIGN_PARAGRAPH.JUSTIFY)
 
-    def test_numbered_skill_keeps_its_number_and_uses_flush_wrapping(self):
+    def test_numbered_skill_keeps_its_number_and_uses_hanging_indent(self):
         data = resume_with_two_jobs()
         data["others"]["skills"] = ["1. Python 与 FastAPI", "沟通协作"]
 
         html = render_resume_to_html(data)
 
-        self.assertIn('<li class="list-item native-marker">1. Python 与 FastAPI</li>', html)
-        self.assertIn('<li class="list-item">沟通协作</li>', html)
+        self.assertIn(
+            '<li class="list-item skill-list-item native-marker"><span class="native-list-marker">1.</span><span class="native-list-content">Python 与 FastAPI</span></li>',
+            html,
+        )
+        self.assertIn('<li class="list-item skill-list-item">沟通协作</li>', html)
         self.assertIn('.list-item.native-marker::before { content: none; }', html)
+        self.assertIn('.list-item.skill-list-item.native-marker {', html)
+        self.assertIn('grid-template-columns: var(--list-text-indent) minmax(0, 1fr);', html)
 
         document = Document(BytesIO(generate_docx(data)))
-        numbered = next(paragraph for paragraph in document.paragraphs if "1. Python" in paragraph.text)
+        numbered = next(
+            paragraph for paragraph in document.paragraphs
+            if "1." in paragraph.text and "Python" in paragraph.text
+        )
         plain = next(paragraph for paragraph in document.paragraphs if "沟通协作" in paragraph.text)
         self.assertNotEqual(numbered.style.name, "List Bullet")
         self.assertEqual(plain.style.name, "List Bullet")
-        self.assertEqual(numbered.paragraph_format.left_indent.mm, 0)
-        self.assertEqual(numbered.paragraph_format.first_line_indent.mm, 0)
+        self.assertGreater(numbered.paragraph_format.left_indent.mm, 0)
+        self.assertAlmostEqual(
+            numbered.paragraph_format.first_line_indent.mm,
+            -numbered.paragraph_format.left_indent.mm,
+            places=1,
+        )
+        self.assertTrue(numbered.text.startswith("\t1.\tPython"))
         self.assertGreater(plain.paragraph_format.left_indent.mm, 0)
         self.assertLess(plain.paragraph_format.first_line_indent.mm, 0)
 
@@ -293,9 +357,14 @@ class LayoutRuleTests(unittest.TestCase):
 
         document = Document(BytesIO(generate_docx(data)))
         numbered = next(paragraph for paragraph in document.paragraphs if "(1)" in paragraph.text)
+        label = next(paragraph for paragraph in document.paragraphs if "Responsibilities" in paragraph.text)
 
         self.assertGreater(numbered.paragraph_format.left_indent.mm, 0)
         self.assertLess(numbered.paragraph_format.first_line_indent.mm, 0)
+        self.assertGreater(
+            numbered.paragraph_format.left_indent.mm,
+            label.paragraph_format.left_indent.mm,
+        )
         self.assertEqual(numbered.text.count("\t"), 2)
         self.assertNotIn("(1) ", numbered.text)
 
@@ -442,8 +511,10 @@ class LayoutRuleTests(unittest.TestCase):
         self.assertIn("font-kerning: none", html)
         self.assertIn("font-variant-ligatures: none", html)
         self.assertIn("font-synthesis: none", html)
-        self.assertIn("flex: 1 1 0", html)
-        self.assertIn("flex: 0 0 36mm", html)
+        self.assertIn("--education-side-column: 42mm", html)
+        self.assertIn("grid-template-columns: var(--education-side-column) minmax(0, 1fr) var(--education-side-column)", html)
+        self.assertIn(".education-item .education-middle-column", html)
+        self.assertIn("text-align: left", html)
         self.assertIn("margin-right: 0", html)
         self.assertIn("position: static", html)
         self.assertNotIn("right: 6mm", html)
@@ -469,9 +540,97 @@ class LayoutRuleTests(unittest.TestCase):
         with ZipFile(BytesIO(generate_docx(data, layout_config=layout))) as archive:
             document_xml = archive.read("word/document.xml").decode("utf-8")
 
+        document = Document(BytesIO(generate_docx(data, layout_config=layout)))
+        education_table = next(
+            table for table in document.tables
+            if any("暨南大学" in cell.text for cell in table.rows[0].cells)
+        )
+
         self.assertIn('<w:tblLayout w:type="fixed"', document_xml)
         self.assertIn('<w:tblW w:type="dxa" w:w="10885"', document_xml)
         self.assertNotIn('<w:end w:w="80" w:type="dxa"', document_xml)
+        self.assertEqual(len(education_table.columns), 3)
+        self.assertEqual(education_table.cell(0, 1).text, "硕士 · 电子信息")
+        self.assertAlmostEqual(
+            education_table.columns[0].width.mm,
+            education_table.columns[2].width.mm,
+            places=1,
+        )
+        self.assertAlmostEqual(
+            sum(column.width.mm for column in education_table.columns),
+            192.0,
+            places=1,
+        )
+        self.assertEqual(education_table.cell(0, 1).paragraphs[0].alignment, WD_ALIGN_PARAGRAPH.LEFT)
+        self.assertEqual(education_table.cell(0, 2).paragraphs[0].alignment, WD_ALIGN_PARAGRAPH.RIGHT)
+
+    def test_compact_education_keeps_degree_gpa_and_rank_in_centered_middle_frame(self):
+        data = resume_with_two_jobs()
+        data["education"] = [{
+            "school_name": "中山大学",
+            "degree": "硕士",
+            "major": "电子信息",
+            "gpa": "4.0",
+            "gpa_scale": "5.0",
+            "ranking": "前5%",
+            "date_range": ["2024.09", "2027.06"],
+        }]
+        layout = apply_layout_template({}, "compact-tech")
+
+        html = render_resume_to_html(data, layout_config=layout)
+        self.assertIn("硕士 · 电子信息", html)
+        self.assertIn("硕士 · 电子信息 · 4.0/5.0 (前5%)", html)
+        self.assertNotIn("硕士 · 电子信息 |", html)
+        self.assertIn("--education-compact-side-column:", html)
+        self.assertIn("--education-middle-column:", html)
+
+        content = generate_docx(data, layout_config=layout)
+        document = Document(BytesIO(content))
+        education_table = next(
+            table for table in document.tables
+            if any("中山大学" in cell.text for cell in table.rows[0].cells)
+        )
+        self.assertEqual(len(education_table.columns), 3)
+        self.assertEqual(
+            education_table.cell(0, 1).text,
+            "硕士 · 电子信息 · 4.0/5.0 (前5%)",
+        )
+        self.assertAlmostEqual(
+            education_table.columns[0].width.mm,
+            education_table.columns[2].width.mm,
+            places=1,
+        )
+        self.assertEqual(education_table.cell(0, 1).paragraphs[0].alignment, WD_ALIGN_PARAGRAPH.LEFT)
+
+        with ZipFile(BytesIO(content)) as archive:
+            settings_xml = archive.read("word/settings.xml").decode("utf-8")
+            document_xml = archive.read("word/document.xml").decode("utf-8")
+        self.assertIn('<w:characterSpacingControl w:val="doNotCompress"', settings_xml)
+        self.assertIn('w:eastAsia="zh-CN"', settings_xml)
+        self.assertIn('<w:overflowPunct w:val="0"', document_xml)
+
+    def test_mixed_text_keeps_source_spaces_and_section_divider_gap_matches(self):
+        data = resume_with_two_jobs()
+        mixed_text = "混排正文与 ASCII token 保留普通空格和自然换行"
+        data["work_experience"][0]["details"] = [mixed_text]
+        layout = apply_layout_template({}, "compact-tech")
+
+        html = render_resume_to_html(data, layout_config=layout)
+        self.assertIn(mixed_text, html)
+        self.assertIn("--section-title-border-gap: 1.1pt", html)
+        self.assertIn("padding-bottom: var(--section-title-border-gap)", html)
+
+        document = Document(BytesIO(generate_docx(data, layout_config=layout)))
+        body = next(paragraph for paragraph in document.paragraphs if "ASCII token" in paragraph.text)
+        self.assertIn(mixed_text, body.text)
+        self.assertNotIn("\u00a0", body.text)
+        self.assertNotIn("\u2060", body.text)
+        heading = next(
+            paragraph for paragraph in document.paragraphs
+            if paragraph.runs and paragraph._p.xpath("./w:pPr/w:pBdr")
+        )
+        border = heading._p.xpath("./w:pPr/w:pBdr/w:bottom")[0]
+        self.assertEqual(border.get("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}space"), "1")
 
 
 if __name__ == "__main__":

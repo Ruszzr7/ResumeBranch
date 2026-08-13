@@ -11,7 +11,7 @@ import math
 from typing import Any
 
 
-LAYOUT_SCHEMA_VERSION = 5
+LAYOUT_SCHEMA_VERSION = 6
 
 FONT_SIZE_LIMITS: dict[str, tuple[float, float]] = {
     "name": (12.0, 20.0),
@@ -30,13 +30,59 @@ def resolve_content_block_flow(block: dict[str, Any] | None = None) -> dict[str,
     if block_type not in {"paragraph", "numbered_list", "bullet_list"}:
         block_type = "paragraph"
     label = str(block.get("label") or "").strip()
+    semantic_role = str(block.get("semantic_role") or "").strip()
+    if semantic_role not in {"introduction", "responsibilities", "generic"}:
+        if label and block_type == "paragraph":
+            semantic_role = "introduction"
+        elif label:
+            semantic_role = "responsibilities"
+        else:
+            semantic_role = "generic"
+    requires_label = semantic_role != "generic"
+    # A labeled list has two visible hierarchy levels: the outer semantic
+    # label and its child bullets/numbers. Paragraph labels remain at level 1,
+    # as do generic lists without an outer label.
+    if requires_label and label and block_type in {"numbered_list", "bullet_list"}:
+        content_indent_levels = 2
+    else:
+        content_indent_levels = (
+            1 if requires_label or block_type in {"numbered_list", "bullet_list"}
+            else 0
+        )
     placement = "none" if not label else ("inline" if block_type == "paragraph" else "separate")
     return {
         "type": block_type,
         "label": label,
+        "semanticRole": semantic_role,
+        "requiresLabel": requires_label,
+        "visible": not requires_label or bool(label),
+        "labelMarker": "bullet" if requires_label and label else "none",
+        "contentIndentLevels": content_indent_levels,
         "labelPlacement": placement,
         "labelBold": block.get("label_bold") is not False,
     }
+
+
+def format_compact_academic_metric(
+    item: dict[str, Any] | None,
+    hidden_metrics: set[str] | list[str] | tuple[str, ...] = (),
+    *,
+    average_score_label: str = "平均分",
+) -> str:
+    """Format compact education metrics once for both export renderers."""
+    item = item or {}
+    hidden = set(hidden_metrics)
+    metric = ""
+    if item.get("gpa") and "gpa" not in hidden:
+        metric = str(item["gpa"])
+        if item.get("gpa_scale"):
+            metric += f'/{item["gpa_scale"]}'
+    elif item.get("average_score") and "average_score" not in hidden:
+        metric = f'{average_score_label}：{item["average_score"]}'
+    if item.get("ranking") and "ranking" not in hidden:
+        ranking = str(item["ranking"]).strip().strip("()（）")
+        metric = f"{metric} ({ranking})" if metric else f"({ranking})"
+    return metric
 
 
 def _semantic_font_sizes(body_size: float) -> dict[str, float]:
@@ -140,7 +186,7 @@ DEFAULT_LAYOUT_CONFIG: dict[str, Any] = {
 
 DENSITY_VALUES = {
     "compact": {"fontSize": 9.0, "lineHeight": 1.28, "moduleMargin": 0.55},
-    "standard": {"fontSize": 9.5, "lineHeight": 1.35, "moduleMargin": 0.65},
+    "standard": {"fontSize": 9.5, "lineHeight": 1.28, "moduleMargin": 0.65},
     "comfortable": {"fontSize": 10.0, "lineHeight": 1.45, "moduleMargin": 0.8},
 }
 
@@ -383,6 +429,16 @@ def normalize_layout_config(value: dict | None) -> dict:
     global_config = result["global"]
     global_config["fontSize"] = _half_point(global_config.get("fontSize"), 8, 11.5, 9)
 
+    # v6 keeps the standard resume density compact enough for the established
+    # one-page export baseline. Only the old standard preset value is migrated;
+    # other user-defined line heights remain untouched.
+    if (
+        supplied_version < 6
+        and global_config.get("density") == "standard"
+        and float(global_config.get("lineHeight", 0)) == 1.35
+    ):
+        global_config["lineHeight"] = 1.28
+
     # v5 records every semantic font size explicitly. Existing configurations
     # resolve to exactly the same v4 hierarchy, while global.fontSize remains
     # the backwards-compatible body-size field.
@@ -414,7 +470,9 @@ def normalize_layout_config(value: dict | None) -> dict:
     global_config["marginHorizontal"] = _bounded_number(global_config.get("marginHorizontal"), 3, 12, 9)
     global_config["splitWorkExperience"] = bool(global_config.get("splitWorkExperience"))
 
-    order = [item for item in global_config.get("sectionOrder", []) if item in SECTION_IDS]
+    order = list(dict.fromkeys(
+        item for item in global_config.get("sectionOrder", []) if item in SECTION_IDS
+    ))
     if not global_config["splitWorkExperience"]:
         order = [item for item in order if item != "internship_experience"]
     elif "internship_experience" not in order:
@@ -535,10 +593,15 @@ def resolve_layout_tokens(config: dict | None = None, style: dict | None = None)
         "letterSpacingPt": 0.0,
         "lineHeight": line_height,
         "bodyLineHeightPt": body_font_size * line_height,
+        "metaLineHeightPt": meta_font_size * line_height,
+        "entryTitleLineHeightPt": entry_title_font_size * line_height,
+        "sectionTitleLineHeightPt": section_title_font_size * line_height,
+        "nameLineHeightPt": name_font_size * line_height,
         "moduleMargin": module_margin,
         "moduleSpacingPt": font_size * module_margin,
         "headerNameAfterPt": body_font_size * 0.27,
         "sectionTitleAfterPt": body_font_size * 0.25,
+        "sectionTitleBorderGapPt": section_title_font_size * 0.1,
         "itemSpacingPt": body_font_size * 0.22,
         "paragraphSpacingPt": body_font_size * 0.09,
         "contentBlockSpacingPt": body_font_size * 0.14,
@@ -548,10 +611,77 @@ def resolve_layout_tokens(config: dict | None = None, style: dict | None = None)
         # first character and every wrapped line begin at this physical point.
         "listTextIndentPt": body_font_size * 1.55,
         "listMarkerGapPt": body_font_size * 0.25,
+        "educationMiddleMinMm": 30.0,
+        "educationColumnBreathingMm": 4.0,
+        "educationSideColumnMm": 42.0,
         "marginTopMm": _bounded_number(overrides.get("marginTop", global_config["marginVertical"]), 3, 12, global_config["marginVertical"]),
         "marginBottomMm": _bounded_number(overrides.get("marginBottom", global_config["marginVertical"]), 3, 12, global_config["marginVertical"]),
         "marginLeftMm": _bounded_number(overrides.get("marginLeft", global_config["marginHorizontal"]), 3, 12, global_config["marginHorizontal"]),
         "marginRightMm": _bounded_number(overrides.get("marginRight", global_config["marginHorizontal"]), 3, 12, global_config["marginHorizontal"]),
+    }
+
+
+def estimate_text_width_pt(value: object, font_size_pt: float) -> float:
+    """Estimate one unbroken label using the shared Arial/YaHei metrics.
+
+    The result is not used to lay out body prose.  It only chooses a stable
+    physical width for the centered education metadata group before all three
+    renderers perform their own final glyph shaping.
+    """
+    units = 0.0
+    for char in str(value or ""):
+        codepoint = ord(char)
+        if (
+            0x3400 <= codepoint <= 0x4DBF
+            or 0x4E00 <= codepoint <= 0x9FFF
+            or 0xF900 <= codepoint <= 0xFAFF
+            or 0xFF00 <= codepoint <= 0xFFEF
+        ):
+            units += 1.0
+        elif char.isspace():
+            units += 0.28
+        elif char.isupper():
+            units += 0.62
+        elif char.islower():
+            units += 0.52
+        elif char.isdigit():
+            units += 0.56
+        else:
+            units += 0.35
+    return units * float(font_size_pt)
+
+
+def resolve_education_column_widths(
+    tokens: dict[str, Any],
+    *,
+    schools: list[str],
+    dates: list[str],
+    degree_majors: list[str],
+    compact_metrics: list[str],
+) -> dict[str, float]:
+    """Return symmetric education columns with a centered, single-line-first middle group."""
+    printable_mm = 210.0 - tokens["marginLeftMm"] - tokens["marginRightMm"]
+    meta_size = tokens["metaFontSizePt"]
+    entry_size = tokens["entryTitleFontSizePt"]
+    breathing_mm = tokens["educationColumnBreathingMm"]
+
+    side_needed_mm = max(
+        36.0,
+        max((estimate_text_width_pt(value, entry_size) for value in schools), default=0.0) * 25.4 / 72.0,
+        max((estimate_text_width_pt(value, meta_size) for value in dates), default=0.0) * 25.4 / 72.0,
+    ) + breathing_mm
+    middle_needed_mm = tokens["educationMiddleMinMm"]
+    for degree_major, metric in zip(degree_majors, compact_metrics):
+        display_value = f"{degree_major} · {metric}" if metric else degree_major
+        width_pt = estimate_text_width_pt(display_value, meta_size)
+        middle_needed_mm = max(middle_needed_mm, width_pt * 25.4 / 72.0 + breathing_mm)
+
+    middle_max_mm = max(tokens["educationMiddleMinMm"], printable_mm - side_needed_mm * 2)
+    middle_mm = min(middle_needed_mm, middle_max_mm)
+    side_mm = max(0.0, (printable_mm - middle_mm) / 2.0)
+    return {
+        "sideMm": side_mm,
+        "middleMm": middle_mm,
     }
 
 

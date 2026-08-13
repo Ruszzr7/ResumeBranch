@@ -48,6 +48,15 @@ def resume_with_repeated_text():
 
 
 class InlineFormattingTests(unittest.TestCase):
+    def test_rendering_preserves_source_whitespace_and_natural_break_points(self):
+        for value in (
+            "中文与 ASCII token 保留普通空格",
+            "括号（全角）与(parentheses)保持原样",
+            "混排 A1/B2、C++ API，标点不被改写",
+        ):
+            self.assertEqual(plain_inline_text(value), value)
+            self.assertEqual(format_inline_html(value), value)
+
     def test_parser_preserves_unmatched_markers_as_literal_text(self):
         value = "负责 **核心模块"
         self.assertEqual(plain_inline_text(value), value)

@@ -98,9 +98,10 @@ class ResumeDataNormalizationTests(unittest.TestCase):
 
         self.assertEqual(details, ["项目职责：", "（1）完成模块A", "（2）完成模块B", "（3）验证模块C"])
         self.assertEqual(work["date_range"], ["2025.01", "2025.06"])
-        self.assertEqual(work["content_blocks"][0]["type"], "numbered_list")
-        self.assertEqual(work["content_blocks"][0]["label"], "项目职责")
-        self.assertEqual(work["content_blocks"][0]["items"], ["完成模块A", "完成模块B", "验证模块C"])
+        self.assertEqual(work["content_blocks"][0]["type"], "bullet_list")
+        self.assertEqual(work["content_blocks"][0]["semantic_role"], "generic")
+        self.assertEqual(work["content_blocks"][0]["label"], "")
+        self.assertEqual(work["content_blocks"][0]["items"], details)
 
     def test_migrates_project_details_into_semantic_blocks(self):
         source = {
@@ -121,11 +122,61 @@ class ResumeDataNormalizationTests(unittest.TestCase):
 
         self.assertEqual(project["role"], "")
         self.assertEqual(project["content_blocks"][0], {
-            "type": "paragraph", "label": "项目简介", "label_bold": True,
+            "type": "paragraph", "semantic_role": "introduction", "label": "项目简介", "label_bold": True,
             "text": "面向展厅导航场景", "items": [],
         })
         self.assertEqual(project["content_blocks"][1]["type"], "numbered_list")
         self.assertEqual(project["content_blocks"][1]["items"], ["完成轨迹训练", "验证控制策略"])
+
+    def test_work_body_text_is_never_promoted_to_semantic_labels_by_wording(self):
+        source = {
+            "basics": {"name": "测试"},
+            "work_experience": [{
+                "company_name": "示例公司", "job_title": "工程师", "job_type": "实习",
+                "content_blocks": [{
+                    "type": "bullet_list", "label": "", "items": [
+                        "**项目简介：面向展厅导航**",
+                        "**项目职责**：",
+                        "完成策略训练",
+                        "完成真机验证",
+                    ],
+                }],
+            }],
+        }
+
+        blocks = normalize_resume_data(source)["work_experience"][0]["content_blocks"]
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0]["semantic_role"], "generic")
+        self.assertEqual(blocks[0]["label"], "")
+        self.assertEqual(blocks[0]["items"], [
+            "**项目简介：面向展厅导航**",
+            "**项目职责**：",
+            "完成策略训练",
+            "完成真机验证",
+        ])
+
+    def test_hidden_work_intro_does_not_reclassify_generic_content(self):
+        source = {
+            "basics": {"name": "测试"},
+            "work_experience": [{
+                "company_name": "示例公司",
+                "content_blocks": [
+                    {
+                        "type": "paragraph", "semantic_role": "introduction",
+                        "label": "", "text": "保留但隐藏的介绍",
+                    },
+                    {
+                        "type": "bullet_list", "semantic_role": "generic",
+                        "label": "", "items": ["日常工作内容"],
+                    },
+                ],
+            }],
+        }
+
+        blocks = normalize_resume_data(source)["work_experience"][0]["content_blocks"]
+        self.assertEqual(blocks[0]["semantic_role"], "introduction")
+        self.assertEqual(blocks[0]["label"], "")
+        self.assertEqual(blocks[1]["semantic_role"], "generic")
 
     def test_promotes_common_skill_custom_section(self):
         result = normalize_resume_data({

@@ -23,6 +23,11 @@ DEFAULT_FONT_SPEC = {
     "eastAsiaFont": "Microsoft YaHei",
 }
 
+_NATIVE_LIST_MARKER_RE = re.compile(
+    r"^\s*([（(]?\d{1,2}[）).、．]|[一二三四五六七八九十]+[、.．])\s*(.*)$",
+    re.DOTALL,
+)
+
 
 def _set_cell_borderless(cell) -> None:
     tc_pr = cell._tc.get_or_add_tcPr()
@@ -46,7 +51,13 @@ def _set_cell_margins(cell, top=0, start=0, bottom=0, end=0) -> None:
     if tc_mar is None:
         tc_mar = OxmlElement("w:tcMar")
         tc_pr.append(tc_mar)
-    for margin, value in (("top", top), ("start", start), ("bottom", bottom), ("end", end)):
+    # Write both legacy and directional names.  The document is intentionally
+    # compatible with Word 2010+, whose table inheritance can otherwise retain
+    # the template's 108-dxa left/right padding despite start/end overrides.
+    for margin, value in (
+        ("top", top), ("left", start), ("start", start),
+        ("bottom", bottom), ("right", end), ("end", end),
+    ):
         node = tc_mar.find(qn(f"w:{margin}"))
         if node is None:
             node = OxmlElement(f"w:{margin}")
@@ -95,6 +106,33 @@ def _disable_document_grid(section) -> None:
         section_properties.remove(document_grid)
 
 
+def _configure_chinese_document(document) -> None:
+    """Make Word use Simplified-Chinese punctuation and theme rules."""
+    settings = document.settings._element
+    character_spacing = settings.find(qn("w:characterSpacingControl"))
+    if character_spacing is None:
+        character_spacing = OxmlElement("w:characterSpacingControl")
+        settings.insert(0, character_spacing)
+    # Keep full-width punctuation at its authored width, matching Chromium's
+    # preview/PDF layout instead of letting Word compress punctuation runs.
+    character_spacing.set(qn("w:val"), "doNotCompress")
+
+    theme_language = settings.find(qn("w:themeFontLang"))
+    if theme_language is None:
+        theme_language = OxmlElement("w:themeFontLang")
+        settings.append(theme_language)
+    theme_language.set(qn("w:val"), "en-US")
+    theme_language.set(qn("w:eastAsia"), "zh-CN")
+
+def _set_language(run_properties) -> None:
+    language = run_properties.find(qn("w:lang"))
+    if language is None:
+        language = OxmlElement("w:lang")
+        run_properties.append(language)
+    language.set(qn("w:val"), "en-US")
+    language.set(qn("w:eastAsia"), "zh-CN")
+
+
 def _set_font(run, size: float, bold: bool = False, color: str = "212529", fonts: dict | None = None) -> None:
     font_spec = fonts or DEFAULT_FONT_SPEC
     latin_font = font_spec["latinFont"]
@@ -108,6 +146,7 @@ def _set_font(run, size: float, bold: bool = False, color: str = "212529", fonts
     run.font.bold = bold
     run.font.color.rgb = RGBColor.from_string(color)
     run_properties = run._element.get_or_add_rPr()
+    _set_language(run_properties)
     spacing = run_properties.find(qn("w:spacing"))
     if spacing is None:
         spacing = OxmlElement("w:spacing")
@@ -154,6 +193,13 @@ def _paragraph_spacing(paragraph, *, before=0, after=0, line=1.15) -> None:
     fmt.line_spacing = line
 
 
+def _increase_paragraph_after(paragraph, amount_pt: float) -> None:
+    """Add an outer spacing token without discarding inner paragraph spacing."""
+    current = paragraph.paragraph_format.space_after
+    current_pt = current.pt if current is not None else 0.0
+    paragraph.paragraph_format.space_after = Pt(current_pt + amount_pt)
+
+
 def _two_column_line(
     document,
     left: str,
@@ -167,6 +213,7 @@ def _two_column_line(
     left_runs: list[tuple[str, float, bool]] | None = None,
     total_width_mm: float = 185.0,
     right_width_mm: float = 40.0,
+    line_height_pt: float | None = None,
 ) -> None:
     table = document.add_table(rows=1, cols=2)
     _set_fixed_table_widths(table, (max(0.0, total_width_mm - right_width_mm), right_width_mm))
@@ -175,8 +222,9 @@ def _two_column_line(
         _set_cell_margins(cell)
         cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
     left_p, right_p = table.cell(0, 0).paragraphs[0], table.cell(0, 1).paragraphs[0]
-    _paragraph_spacing(left_p, after=0, line=1.05)
-    _paragraph_spacing(right_p, after=0, line=1.05)
+    exact_line_height = Pt(line_height_pt or font_size * 1.28)
+    _paragraph_spacing(left_p, after=0, line=exact_line_height)
+    _paragraph_spacing(right_p, after=0, line=exact_line_height)
     if left_runs:
         for text, run_size, run_bold in left_runs:
             if text:
@@ -225,15 +273,29 @@ def _bullet(
     after: float = 1.5,
     fonts: dict | None = None,
     text_indent_mm: float = 4.5,
+    native_hanging: bool = False,
+    native_marker_gap_mm: float = 0.8,
 ) -> None:
     value = str(text)
     line_spacing = Pt(exact_line_height) if exact_line_height is not None else 1.12
-    if re.match(r"^\s*(?:[（(]?\d{1,2}[）).、．]|[一二三四五六七八九十]+[、.．])\s*", value):
+    marker_match = _NATIVE_LIST_MARKER_RE.match(value)
+    if marker_match:
         paragraph = document.add_paragraph()
         paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
         _paragraph_spacing(paragraph, after=after, line=line_spacing)
-        _set_flush_indent(paragraph)
-        _add_markdown_runs(paragraph, value, font_size, fonts=fonts)
+        if native_hanging:
+            _set_numbered_indent(
+                paragraph,
+                text_indent_mm=text_indent_mm,
+                marker_gap_mm=native_marker_gap_mm,
+            )
+            _set_font(paragraph.add_run("\t"), font_size, fonts=fonts)
+            _set_font(paragraph.add_run(marker_match.group(1)), font_size, fonts=fonts)
+            _set_font(paragraph.add_run("\t"), font_size, fonts=fonts)
+            _add_markdown_runs(paragraph, marker_match.group(2), font_size, fonts=fonts)
+        else:
+            _set_flush_indent(paragraph)
+            _add_markdown_runs(paragraph, value, font_size, fonts=fonts)
         return
     paragraph = document.add_paragraph(style="List Bullet")
     paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
@@ -251,7 +313,13 @@ def generate_docx(
 ) -> bytes:
     """Return an editable DOCX that follows the controlled layout configuration."""
     from .layout import apply_page_mode_defaults
-    from .layout_config import normalize_layout_config, resolve_content_block_flow, resolve_layout_tokens
+    from .layout_config import (
+        format_compact_academic_metric,
+        normalize_layout_config,
+        resolve_content_block_flow,
+        resolve_education_column_widths,
+        resolve_layout_tokens,
+    )
 
     data = normalize_resume_data(resume_data)
     labels = LABELS.get(lang, LABELS["zh"])
@@ -296,6 +364,7 @@ def generate_docx(
     hidden_sections = set(global_layout["hiddenSections"])
 
     document = Document()
+    _configure_chinese_document(document)
     section = document.sections[0]
     section.start_type = WD_SECTION.NEW_PAGE
     section.page_width, section.page_height = Mm(210), Mm(297)
@@ -311,6 +380,7 @@ def generate_docx(
     for script in ("ascii", "hAnsi", "cs"):
         normal_fonts.set(qn(f"w:{script}"), font_spec["latinFont"])
     normal_fonts.set(qn("w:eastAsia"), font_spec["eastAsiaFont"])
+    _set_language(normal._element.get_or_add_rPr())
     normal.font.size = Pt(body_font_size)
     normal.font.bold = body_bold
     normal.paragraph_format.space_after = Pt(0)
@@ -320,12 +390,22 @@ def generate_docx(
     def title(section_id: str, fallback: str) -> None:
         text = global_layout.get("titleOverrides", {}).get(section_id, {}).get(lang, fallback)
         paragraph = document.add_paragraph()
-        _paragraph_spacing(paragraph, before=module_spacing, after=tokens["sectionTitleAfterPt"], line=1)
+        _paragraph_spacing(
+            paragraph,
+            before=module_spacing,
+            after=tokens["sectionTitleAfterPt"],
+            line=Pt(tokens["sectionTitleLineHeightPt"]),
+        )
         _add_markdown_runs(paragraph, text, section_title_font_size, fonts=font_spec, base_bold=section_title_bold)
         p_pr = paragraph._p.get_or_add_pPr()
         borders = OxmlElement("w:pBdr")
         bottom = OxmlElement("w:bottom")
-        for key, value in (("val", "single"), ("sz", "6"), ("space", "3"), ("color", "333333")):
+        for key, value in (
+            ("val", "single"),
+            ("sz", "6"),
+            ("space", str(round(tokens["sectionTitleBorderGapPt"]))),
+            ("color", "333333"),
+        ):
             bottom.set(qn(f"w:{key}"), value)
         borders.append(bottom)
         p_pr.append(borders)
@@ -374,7 +454,7 @@ def generate_docx(
     alignment = WD_ALIGN_PARAGRAPH.LEFT if basics_layout["preset"] == "left-aligned" else WD_ALIGN_PARAGRAPH.CENTER
     name_p = content_cell.paragraphs[0]
     name_p.alignment = alignment
-    _paragraph_spacing(name_p, after=tokens["headerNameAfterPt"], line=1)
+    _paragraph_spacing(name_p, after=tokens["headerNameAfterPt"], line=Pt(tokens["nameLineHeightPt"]))
     _add_markdown_runs(name_p, basics.get("name") or labels["nameNotSet"], name_font_size, fonts=font_spec, base_bold=name_bold)
     contact_values = [str(basics.get(key)) for key in ("gender",) if basics.get(key) and key not in hidden_basics]
     if basics.get("birth_date") and "birth_date" not in hidden_basics:
@@ -425,9 +505,33 @@ def generate_docx(
             return
         cfg = layout["education"]
         hidden_metrics = set(cfg["hiddenMetrics"])
+        schools = [str(item.get("school_name") or labels["schoolNotSet"]) for item in items]
+        dates = [_date_range(item) for item in items]
+        degree_majors = [
+            " · ".join(value for value in (item.get("degree", ""), item.get("major", "")) if value)
+            for item in items
+        ]
+
+        def compact_metric(item: dict) -> str:
+            return format_compact_academic_metric(
+                item,
+                hidden_metrics,
+                average_score_label=labels["averageScore"],
+            )
+
+        compact_metrics = [compact_metric(item) for item in items]
+        compact_widths = resolve_education_column_widths(
+            tokens,
+            schools=schools,
+            dates=dates,
+            degree_majors=degree_majors,
+            compact_metrics=compact_metrics,
+        )
         maybe_break("education:0")
         title("education", labels["education"])
         for index, item in enumerate(items):
+            item_paragraph_start = len(document.paragraphs)
+            item_table_start = len(document.tables)
             if index:
                 maybe_break(f"education:{index}")
             school = item.get("school_name") or labels["schoolNotSet"]
@@ -436,7 +540,8 @@ def generate_docx(
             if cfg["schoolTagStyle"] == "hidden":
                 tag_text = ""
             degree = " · ".join(value for value in (item.get("degree", ""), item.get("major", "")) if value)
-            date = _date_range(item)
+            degree = degree_majors[index]
+            date = dates[index]
             metrics = []
             if item.get("gpa") and "gpa" not in hidden_metrics:
                 value = str(item["gpa"]) + (f'/{item["gpa_scale"]}' if item.get("gpa_scale") else "")
@@ -446,30 +551,48 @@ def generate_docx(
             if item.get("average_score") and "average_score" not in hidden_metrics:
                 metrics.append(f'{labels["averageScore"]}{colon}{item["average_score"]}')
             if cfg["preset"] in {"three-column", "compact"}:
-                table = document.add_table(rows=1, cols=4)
-                education_date_width_mm = 42.0
-                education_widths = (
-                    44.0,
-                    45.0,
-                    max(0.0, printable_width_mm - 44.0 - 45.0 - education_date_width_mm),
-                    education_date_width_mm,
-                )
+                table = document.add_table(rows=1, cols=3)
+                if cfg["preset"] == "compact":
+                    education_widths = (
+                        compact_widths["sideMm"],
+                        compact_widths["middleMm"],
+                        compact_widths["sideMm"],
+                    )
+                else:
+                    education_side_width_mm = tokens["educationSideColumnMm"]
+                    education_widths = (
+                        education_side_width_mm,
+                        max(0.0, printable_width_mm - education_side_width_mm * 2),
+                        education_side_width_mm,
+                    )
                 _set_fixed_table_widths(table, education_widths)
                 for cell in table.rows[0].cells:
                     _set_cell_borderless(cell)
                     _set_cell_margins(cell)
-                values = [school, degree, " · ".join(metrics), date]
-                cell_sizes = (entry_title_font_size, meta_font_size, meta_font_size, meta_font_size)
+                compact_value = compact_metrics[index]
+                middle_parts = [value for value in (degree, " | ".join(metrics)) if value]
+                middle_value = degree if cfg["preset"] == "compact" else " | ".join(middle_parts)
+                values = [school, middle_value, date]
+                cell_sizes = (entry_title_font_size, meta_font_size, meta_font_size)
                 for cell_index, (cell, value, cell_size) in enumerate(zip(table.rows[0].cells, values, cell_sizes)):
                     p = cell.paragraphs[0]
-                    _paragraph_spacing(p, after=0, line=Pt(body_line_height))
+                    _paragraph_spacing(p, after=0, line=Pt(tokens["entryTitleLineHeightPt"]))
                     if cell_index == 0:
                         _add_markdown_runs(p, school, entry_title_font_size, fonts=font_spec, base_bold=entry_title_bold)
                         if tag_text:
                             _add_markdown_runs(p, f" · {tag_text}", label_font_size, fonts=font_spec, base_bold=meta_bold)
+                    elif cell_index == 1 and cfg["preset"] == "compact" and compact_value:
+                        _add_markdown_runs(
+                            p,
+                            " · ".join(value for value in (degree, compact_value) if value),
+                            cell_size,
+                            fonts=font_spec,
+                            base_bold=meta_bold,
+                        )
                     else:
                         _add_markdown_runs(p, value, cell_size, fonts=font_spec, base_bold=meta_bold)
-                table.cell(0, 3).paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                table.cell(0, 1).paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.LEFT
+                table.cell(0, 2).paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
             else:
                 _two_column_line(
                     document, school, date, entry_title_font_size,
@@ -479,6 +602,7 @@ def generate_docx(
                         (f" · {tag_text}" if tag_text else "", label_font_size, meta_bold),
                     ],
                     total_width_mm=printable_width_mm,
+                    line_height_pt=tokens["entryTitleLineHeightPt"],
                 )
                 if degree:
                     p = document.add_paragraph()
@@ -507,6 +631,11 @@ def generate_docx(
                             _add_markdown_runs(p, thesis["title"], body_font_size, fonts=font_spec, base_bold=label_bold)
                     if cfg["thesisDisplay"] == "expanded":
                         add_details(thesis.get("details"), "bullets")
+            if len(document.paragraphs) > item_paragraph_start:
+                _increase_paragraph_after(document.paragraphs[-1], tokens["itemSpacingPt"])
+            elif len(document.tables) > item_table_start:
+                for cell in document.tables[-1].rows[-1].cells:
+                    _increase_paragraph_after(cell.paragraphs[-1], tokens["itemSpacingPt"])
 
     def work_groups():
         items = list(data.get("work_experience") or [])
@@ -535,8 +664,15 @@ def generate_docx(
                 right_font_size=meta_font_size, right_color="111111", fonts=font_spec,
                 left_runs=entry_heading_runs(company, position),
                 total_width_mm=printable_width_mm,
+                line_height_pt=tokens["entryTitleLineHeightPt"],
             )
+            detail_start = len(document.paragraphs)
             add_content_blocks(item)
+            if len(document.paragraphs) > detail_start:
+                _increase_paragraph_after(document.paragraphs[-1], tokens["itemSpacingPt"])
+            else:
+                for cell in document.tables[-1].rows[-1].cells:
+                    _increase_paragraph_after(cell.paragraphs[-1], tokens["itemSpacingPt"])
 
     def add_content_blocks(item: dict) -> None:
         blocks = item.get("content_blocks") or []
@@ -545,28 +681,40 @@ def generate_docx(
             return
         for block in blocks:
             flow = resolve_content_block_flow(block)
+            if not flow["visible"]:
+                continue
             block_type = flow["type"]
             label = flow["label"]
             if block_type == "paragraph":
-                paragraph = document.add_paragraph()
+                paragraph = document.add_paragraph(style="List Bullet") if flow["labelMarker"] == "bullet" else document.add_paragraph()
                 paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
                 _paragraph_spacing(paragraph, after=tokens["contentBlockSpacingPt"], line=Pt(body_line_height))
+                if flow["labelMarker"] == "bullet":
+                    _set_hanging_indent(paragraph, left=list_text_indent_mm, hanging=min(3.0, list_text_indent_mm))
                 if label:
                     _add_markdown_runs(paragraph, f"{label}{colon}", label_font_size, fonts=font_spec, base_bold=label_bold and flow["labelBold"])
                 _add_markdown_runs(paragraph, block.get("text", ""), body_font_size, fonts=font_spec)
                 continue
             if flow["labelPlacement"] == "separate":
-                paragraph = document.add_paragraph()
+                paragraph = document.add_paragraph(style="List Bullet") if flow["labelMarker"] == "bullet" else document.add_paragraph()
                 _paragraph_spacing(paragraph, after=tokens["contentLabelSpacingPt"], line=Pt(body_line_height))
+                if flow["labelMarker"] == "bullet":
+                    _set_hanging_indent(paragraph, left=list_text_indent_mm, hanging=min(3.0, list_text_indent_mm))
                 _add_markdown_runs(paragraph, f"{label}{colon}", label_font_size, fonts=font_spec, base_bold=label_bold and flow["labelBold"])
-            for detail_index, detail in enumerate(block.get("items") or [], 1):
+            details = block.get("items") or []
+            for detail_index, detail in enumerate(details, 1):
+                trailing_block_spacing = tokens["contentBlockSpacingPt"] if detail_index == len(details) else 0
                 if block_type == "numbered_list":
                     paragraph = document.add_paragraph()
                     paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-                    _paragraph_spacing(paragraph, after=tokens["numberedItemSpacingPt"], line=Pt(body_line_height))
+                    _paragraph_spacing(
+                        paragraph,
+                        after=tokens["numberedItemSpacingPt"] + trailing_block_spacing,
+                        line=Pt(body_line_height),
+                    )
                     _set_numbered_indent(
                         paragraph,
-                        text_indent_mm=list_text_indent_mm,
+                        text_indent_mm=list_text_indent_mm * flow["contentIndentLevels"],
                         marker_gap_mm=list_marker_gap_mm,
                     )
                     _set_font(paragraph.add_run("\t"), body_font_size, fonts=font_spec)
@@ -579,9 +727,9 @@ def generate_docx(
                         detail,
                         body_font_size,
                         exact_line_height=body_line_height,
-                        after=tokens["paragraphSpacingPt"],
+                        after=tokens["paragraphSpacingPt"] + trailing_block_spacing,
                         fonts=font_spec,
-                        text_indent_mm=list_text_indent_mm,
+                        text_indent_mm=list_text_indent_mm * flow["contentIndentLevels"],
                     )
 
     def render_projects() -> None:
@@ -602,12 +750,19 @@ def generate_docx(
                 right_font_size=meta_font_size, right_color="111111", fonts=font_spec,
                 left_runs=entry_heading_runs(project_name, role if cfg["preset"] == "compact" else ""),
                 total_width_mm=printable_width_mm,
+                line_height_pt=tokens["entryTitleLineHeightPt"],
             )
+            detail_start = len(document.paragraphs)
             if cfg["preset"] != "compact" and role:
                 p = document.add_paragraph()
                 _paragraph_spacing(p, after=0, line=Pt(body_line_height))
                 _add_markdown_runs(p, role, meta_font_size, fonts=font_spec)
             add_content_blocks(item)
+            if len(document.paragraphs) > detail_start:
+                _increase_paragraph_after(document.paragraphs[-1], tokens["itemSpacingPt"])
+            else:
+                for cell in document.tables[-1].rows[-1].cells:
+                    _increase_paragraph_after(cell.paragraphs[-1], tokens["itemSpacingPt"])
 
     def render_skills() -> None:
         skills = (data.get("others") or {}).get("skills") or []
@@ -615,7 +770,15 @@ def generate_docx(
             return
         title("skills", labels["skills"])
         for value in skills:
-            _bullet(document, value, body_font_size, exact_line_height=body_line_height, after=tokens["paragraphSpacingPt"], fonts=font_spec, text_indent_mm=list_text_indent_mm)
+            _bullet(
+                document, value, body_font_size,
+                exact_line_height=body_line_height,
+                after=tokens["paragraphSpacingPt"],
+                fonts=font_spec,
+                text_indent_mm=list_text_indent_mm,
+                native_hanging=True,
+                native_marker_gap_mm=list_marker_gap_mm,
+            )
 
     def render_others() -> None:
         values = data.get("others") or {}

@@ -18,11 +18,15 @@ def format_markdown(text: str) -> str:
     return format_inline_html(text)
 
 
-_NATIVE_LIST_MARKER_RE = re.compile(r"^\s*(?:[（(]?\d{1,2}[）).、．]|[一二三四五六七八九十]+[、.．])\s*")
+_NATIVE_LIST_MARKER_RE = re.compile(
+    r"^\s*([（(]?\d{1,2}[）).、．]|[一二三四五六七八九十]+[、.．])\s*(.*)$",
+    re.DOTALL,
+)
 
 
-def _has_native_list_marker(value: object) -> bool:
-    return bool(_NATIVE_LIST_MARKER_RE.match(str(value or "")))
+def _split_native_list_marker(value: object) -> tuple[str, str] | None:
+    match = _NATIVE_LIST_MARKER_RE.match(str(value or ""))
+    return (match.group(1), match.group(2)) if match else None
 
 
 def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = None, lang: str = 'zh', layout_config: dict = None) -> str:
@@ -35,7 +39,13 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         lang: 语言，'zh' 或 'en'
     """
     resume_data = normalize_resume_data(resume_data)
-    from .layout_config import normalize_layout_config, resolve_content_block_flow, resolve_layout_tokens
+    from .layout_config import (
+        format_compact_academic_metric,
+        normalize_layout_config,
+        resolve_content_block_flow,
+        resolve_education_column_widths,
+        resolve_layout_tokens,
+    )
     layout_config = normalize_layout_config(layout_config)
     global_layout = layout_config["global"]
 
@@ -53,6 +63,30 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     line_height = tokens['lineHeight']
     font_size = tokens['fontSizePt']
     page_break_before = style.get('pageBreakBefore', '')
+
+    education_items = resume_data.get("education") or []
+    education_hidden_metrics = set(layout_config["education"]["hiddenMetrics"])
+
+    def compact_education_metric(item: dict) -> str:
+        return format_compact_academic_metric(
+            item,
+            education_hidden_metrics,
+            average_score_label=labels["averageScore"],
+        )
+
+    compact_education_metrics = [compact_education_metric(item) for item in education_items]
+    education_column_widths = resolve_education_column_widths(
+        tokens,
+        schools=[str(item.get("school_name") or labels["schoolNotSet"]) for item in education_items],
+        dates=[" - ".join(str(value) for value in (item.get("date_range") or [])[:2] if value) for item in education_items],
+        degree_majors=[
+            " · ".join(
+                value for value in (item.get("degree", ""), item.get("major", "")) if value
+            )
+            for item in education_items
+        ],
+        compact_metrics=compact_education_metrics,
+    )
 
     def break_class(key: str) -> str:
         return ' page-break-before' if page_break_before == key else ''
@@ -142,6 +176,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
             item_break = break_class(f"education:{edu_index}") if edu_index > 0 else ''
             html_parts.append(f'<div class="education-item preset-{education_layout["preset"]}{item_break}">')
             academic_metrics = []
+            compact_metric = compact_education_metrics[edu_index]
             if edu.get("gpa") and "gpa" not in hidden_metrics:
                 gpa_value = str(edu["gpa"])
                 if edu.get("gpa_scale"):
@@ -163,20 +198,24 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
                 html_parts.append('</div>')
 
             html_parts.append('</div>')
+            html_parts.append('<div class="education-middle-column">')
             html_parts.append('<div class="education-degree-column">')
             degree_major = []
             if edu.get("degree"):
                 degree_major.append(edu["degree"])
             if edu.get("major"):
                 degree_major.append(edu["major"])
+            if education_layout["preset"] == "compact" and compact_metric:
+                degree_major.append(compact_metric)
             if degree_major:
                 html_parts.append(f'<div class="degree-major">{format_markdown(" · ".join(degree_major))}</div>')
             html_parts.append('</div>')
-            if academic_metrics:
+            if education_layout["preset"] != "compact" and academic_metrics:
                 html_parts.append('<div class="education-metrics-column academic-metrics">')
                 for metric in academic_metrics:
                     html_parts.append(f'<span>{format_markdown(metric)}</span>')
                 html_parts.append('</div>')
+            html_parts.append('</div>')
 
             date_range = edu.get("date_range", [])
             date_str = ""
@@ -231,8 +270,8 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         for item_position, (work_index, work) in enumerate(section_items):
             item_break = break_class(f"{section_id}:{work_index}") if item_position > 0 else ''
             work_classes = (
-                "work-item page-break-before"
-                if item_break else f'work-item preset-{work_layout["preset"]} date-{work_layout["datePosition"]}'
+                f'work-item preset-{work_layout["preset"]} '
+                f'date-{work_layout["datePosition"]}{item_break}'
             )
             html_parts.append(f'<div class="{work_classes}">')
             html_parts.append('<div class="work-header">')
@@ -261,11 +300,14 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
             # 工作详情沿用与项目经历一致的语义块，避免标题和已编号内容被重复加圆点。
             for block in work.get("content_blocks") or []:
                 flow = resolve_content_block_flow(block)
+                if not flow["visible"]:
+                    continue
                 block_type = flow["type"]
                 label = flow["label"]
                 label_class = " is-bold" if flow["labelBold"] else ""
                 label_html = f'<span class="project-inline-label{label_class}">{format_markdown(label)}：</span>' if label else ''
-                html_parts.append(f'<div class="project-content-block block-{block_type}">')
+                semantic_class = " has-semantic-label" if flow["labelMarker"] == "bullet" else ""
+                html_parts.append(f'<div class="project-content-block block-{block_type}{semantic_class}">')
                 if block_type == "paragraph":
                     html_parts.append(f'<p class="project-paragraph">{label_html}{format_markdown(block.get("text", ""))}</p>')
                 else:
@@ -295,8 +337,8 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         for project_index, project in enumerate(resume_data["project_experience"]):
             item_break = break_class(f"project_experience:{project_index}") if project_index > 0 else ''
             project_classes = (
-                "project-item page-break-before"
-                if item_break else f'project-item preset-{project_layout["preset"]} date-{project_layout["datePosition"]}'
+                f'project-item preset-{project_layout["preset"]} '
+                f'date-{project_layout["datePosition"]}{item_break}'
             )
             html_parts.append(f'<div class="{project_classes}">')
             html_parts.append('<div class="project-header">')
@@ -327,11 +369,14 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
             # 项目详情使用语义块：标题不带圆点，职责内部保留编号。
             for block in project.get("content_blocks") or []:
                 flow = resolve_content_block_flow(block)
+                if not flow["visible"]:
+                    continue
                 block_type = flow["type"]
                 label = flow["label"]
                 label_class = " is-bold" if flow["labelBold"] else ""
                 label_html = f'<span class="project-inline-label{label_class}">{format_markdown(label)}：</span>' if label else ''
-                html_parts.append(f'<div class="project-content-block block-{block_type}">')
+                semantic_class = " has-semantic-label" if flow["labelMarker"] == "bullet" else ""
+                html_parts.append(f'<div class="project-content-block block-{block_type}{semantic_class}">')
                 if block_type == "paragraph":
                     html_parts.append(f'<p class="project-paragraph">{label_html}{format_markdown(block.get("text", ""))}</p>')
                 else:
@@ -398,8 +443,18 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         html_parts.append(f'<h2 class="section-title title-{global_layout["titleStyle"]}">{format_markdown(section_title(section_id, title))}</h2>')
         html_parts.append('<ul class="list-items">')
         for value in values:
-            marker_class = " native-marker" if _has_native_list_marker(value) else ""
-            html_parts.append(f'<li class="list-item{marker_class}">{format_markdown(value)}</li>')
+            marker_parts = _split_native_list_marker(value)
+            marker_class = " native-marker" if marker_parts else ""
+            section_item_class = " skill-list-item" if section_id == "skills" else ""
+            if section_id == "skills" and marker_parts:
+                marker, content = marker_parts
+                item_html = (
+                    f'<span class="native-list-marker">{escape(marker)}</span>'
+                    f'<span class="native-list-content">{format_markdown(content)}</span>'
+                )
+            else:
+                item_html = format_markdown(value)
+            html_parts.append(f'<li class="list-item{section_item_class}{marker_class}">{item_html}</li>')
         html_parts.append('</ul></section>')
         commit_section(section_id, chunk_start)
 
@@ -461,6 +516,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         --module-margin: {tokens['moduleSpacingPt']:g}pt;
         --header-name-after: {tokens['headerNameAfterPt']:g}pt;
         --section-title-after: {tokens['sectionTitleAfterPt']:g}pt;
+        --section-title-border-gap: {tokens['sectionTitleBorderGapPt']:g}pt;
         --item-spacing: {tokens['itemSpacingPt']:g}pt;
         --paragraph-spacing: {tokens['paragraphSpacingPt']:g}pt;
         --content-block-spacing: {tokens['contentBlockSpacingPt']:g}pt;
@@ -468,6 +524,9 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         --numbered-item-spacing: {tokens['numberedItemSpacingPt']:g}pt;
         --list-text-indent: {tokens['listTextIndentPt']:g}pt;
         --list-marker-gap: {tokens['listMarkerGapPt']:g}pt;
+        --education-side-column: {tokens['educationSideColumnMm']:g}mm;
+        --education-compact-side-column: {education_column_widths['sideMm']:g}mm;
+        --education-middle-column: {education_column_widths['middleMm']:g}mm;
         --line-height: {line_height};
     }}
 
@@ -554,7 +613,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     .inline-label {{ font-size: var(--label-font-size); }}
 
     .section {{
-        margin-bottom: var(--module-margin);
+        margin-bottom: 0;
     }}
 
     .section-title {{
@@ -684,10 +743,10 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         align-items: start;
     }}
     .education-item .school-info {{ grid-column: 1; grid-row: 1; }}
-    .education-item .education-degree-column {{ grid-column: 1; grid-row: 2; }}
-    .education-item .education-metrics-column {{ grid-column: 1; grid-row: 3; }}
+    .education-item .education-middle-column {{ grid-column: 1; grid-row: 2; }}
     .education-item .graduation-date {{ grid-column: 2; grid-row: 1; }}
     .education-item .school-info,
+    .education-item .education-middle-column,
     .education-item .education-degree-column,
     .education-item .education-metrics-column {{
         min-width: 0;
@@ -695,33 +754,46 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         word-break: break-word;
     }}
     .education-item.preset-compact .education-header {{
-        display: flex;
+        display: grid;
         width: 100%;
-        flex-wrap: nowrap;
-        column-gap: 0.65em;
+        grid-template-columns: var(--education-compact-side-column) var(--education-middle-column) var(--education-compact-side-column);
+        column-gap: 0;
         align-items: baseline;
     }}
-    .education-item.preset-compact .school-info {{ grid-column: 1; grid-row: 1; gap: 0.3em; }}
-    .education-item.preset-compact .school-info,
-    .education-item.preset-compact .education-degree-column,
-    .education-item.preset-compact .education-metrics-column {{ flex: 1 1 0; min-width: 0; }}
-    .education-item.preset-compact .graduation-date {{ grid-column: 4; grid-row: 1; }}
     .education-item.preset-three-column .education-header {{
-        display: flex;
+        display: grid;
         width: 100%;
-        flex-wrap: nowrap;
-        column-gap: 1.1em;
+        grid-template-columns: var(--education-side-column) minmax(0, 1fr) var(--education-side-column);
+        column-gap: 0;
         align-items: baseline;
     }}
+    .education-item.preset-compact .school-info,
     .education-item.preset-three-column .school-info,
+    .education-item.preset-compact .education-middle-column,
+    .education-item.preset-three-column .education-middle-column,
+    .education-item.preset-compact .education-degree-column,
     .education-item.preset-three-column .education-degree-column,
-    .education-item.preset-three-column .education-metrics-column {{ flex: 1 1 0; min-width: 0; }}
-    .education-item.preset-three-column .graduation-date {{ grid-column: 4; grid-row: 1; }}
+    .education-item.preset-compact .education-metrics-column,
+    .education-item.preset-three-column .education-metrics-column {{ min-width: 0; }}
+    .education-item.preset-compact .school-info,
+    .education-item.preset-three-column .school-info {{ grid-column: 1; grid-row: 1; gap: 0.3em; }}
+    .education-item.preset-compact .education-middle-column,
+    .education-item.preset-three-column .education-middle-column {{
+        grid-column: 2;
+        grid-row: 1;
+        display: flex;
+        align-items: baseline;
+        flex-wrap: wrap;
+        column-gap: var(--education-metric-gap);
+        row-gap: 0;
+        text-align: left;
+    }}
     .education-item.preset-compact .graduation-date,
     .education-item.preset-three-column .graduation-date {{
+        grid-column: 3;
+        grid-row: 1;
         position: static;
-        flex: 0 0 36mm;
-        width: 36mm;
+        width: auto;
         min-width: 0;
         margin-right: 0;
         text-align: right;
@@ -829,6 +901,17 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     }}
 
     .list-item.native-marker {{ padding-left: 0; }}
+    .list-item.skill-list-item.native-marker {{
+        display: grid;
+        grid-template-columns: var(--list-text-indent) minmax(0, 1fr);
+        padding-left: 0;
+        text-indent: 0;
+    }}
+    .skill-list-item .native-list-marker {{
+        padding-right: var(--list-marker-gap);
+        text-align: right;
+    }}
+    .skill-list-item .native-list-content {{ min-width: 0; }}
     .list-item.native-marker::before {{ content: none; }}
 
     .details-paragraph .list-item {{ padding-left: 0; }}
@@ -961,8 +1044,9 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     .cert-lang-line, .inline-list-item, .self-eval-item {{ color: #111111; }}
     .contact-info, .separator {{ color: #333333; }}
     .section-title {{
+        margin-top: var(--module-margin);
         margin-bottom: var(--section-title-after);
-        padding-bottom: 0.1em;
+        padding-bottom: var(--section-title-border-gap);
         color: #111111;
         font-weight: var(--section-title-font-weight);
     }}
@@ -983,6 +1067,10 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         padding: 0;
         counter-reset: project-duty;
     }}
+    .project-content-block.has-semantic-label > .project-numbered-list,
+    .project-content-block.has-semantic-label > .list-items {{
+        margin-left: var(--list-text-indent);
+    }}
     .project-numbered-list > li {{
         position: relative;
         margin-bottom: var(--numbered-item-spacing);
@@ -997,7 +1085,20 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         text-align: right;
         white-space: nowrap;
     }}
-
+    .project-content-block.has-semantic-label > .project-paragraph,
+    .project-content-block.has-semantic-label > .project-block-label {{
+        position: relative;
+        padding-left: var(--list-text-indent);
+    }}
+    .project-content-block.has-semantic-label > .project-paragraph::before,
+    .project-content-block.has-semantic-label > .project-block-label::before {{
+        content: "•";
+        position: absolute;
+        left: 0;
+        width: calc(var(--list-text-indent) - var(--list-marker-gap));
+        text-align: center;
+        font-weight: 700;
+    }}
     .resume-container {{
         overflow: visible;
         max-height: none;

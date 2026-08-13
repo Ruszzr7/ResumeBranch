@@ -1,5 +1,5 @@
 export const DEFAULT_LAYOUT_CONFIG = Object.freeze({
-  version: 5,
+  version: 6,
   typography: {
     preset: 'microsoft-office',
     latinFont: 'Arial',
@@ -42,6 +42,32 @@ const SECTION_IDS = new Set([
   'education', 'skills', 'research_interests', 'honors', 'work_experience',
   'internship_experience', 'project_experience', 'custom_sections', 'others', 'self_evaluation'
 ])
+const ENUMS = Object.freeze({
+  'typography.preset': ['microsoft-office'],
+  'global.density': ['compact', 'standard', 'comfortable'],
+  'global.titleStyle': ['underline', 'plain'],
+  'basics.preset': ['centered', 'left-aligned'],
+  'basics.contactLayout': ['inline', 'stacked'],
+  'basics.photoPosition': ['right', 'hidden'],
+  'education.preset': ['classic', 'compact', 'three-column'],
+  'education.schoolTagStyle': ['filled', 'outline', 'text', 'hidden'],
+  'education.metricsPlacement': ['below', 'with-degree', 'info-column'],
+  'education.thesisDisplay': ['expanded', 'compact', 'hidden'],
+  'work_experience.preset': ['classic', 'compact'],
+  'work_experience.detailsStyle': ['bullets', 'paragraph'],
+  'work_experience.datePosition': ['right', 'inline'],
+  'project_experience.preset': ['classic', 'compact'],
+  'project_experience.detailsStyle': ['bullets', 'paragraph'],
+  'project_experience.datePosition': ['right', 'inline'],
+  'others.preset': ['inline', 'tags', 'stacked'],
+  'others.separator': ['pipe', 'dot'],
+  'self_evaluation.preset': ['paragraphs', 'bullets', 'compact']
+})
+const ALLOWED_HIDDEN_FIELDS = Object.freeze({
+  basics: new Set(['gender', 'birth_date', 'phone', 'email', 'target_position', 'photo', 'additional_fields']),
+  education: new Set(['gpa', 'ranking', 'average_score']),
+  others: new Set(['skills', 'certificates', 'languages'])
+})
 
 function mergeKnown(target, source, template) {
   if (!source || typeof source !== 'object') return
@@ -59,7 +85,7 @@ export function normalizeLayoutConfig(value = {}) {
   const suppliedVersion = Number(value?.version || 1)
   const result = clone(DEFAULT_LAYOUT_CONFIG)
   mergeKnown(result, value, DEFAULT_LAYOUT_CONFIG)
-  result.version = 5
+  result.version = 6
   const suppliedGlobal = value?.global || {}
   if (suppliedVersion < 2 && ['fontSize', 'lineHeight', 'moduleMargin', 'marginVertical']
     .every((field, index) => Number(suppliedGlobal[field] ?? [11, 1.6, 1, 9][index]) === [11, 1.6, 1, 9][index])) {
@@ -81,11 +107,21 @@ export function normalizeLayoutConfig(value = {}) {
     const number = Number(candidate)
     return Number.isFinite(number) ? Math.min(Math.max(number, min), max) : fallback
   }
+  for (const [path, allowed] of Object.entries(ENUMS)) {
+    const [section, key] = path.split('.')
+    if (!allowed.includes(result[section][key])) result[section][key] = clone(DEFAULT_LAYOUT_CONFIG[section][key])
+  }
   result.global.fontSize = Math.round(boundedConfigNumber(result.global.fontSize, 8, 11.5, 9) * 2) / 2
+  // v6 restores the compact standard-density line rhythm used by the
+  // established one-page export baseline. Explicit non-default values remain.
+  if (suppliedVersion < 6 && result.global.density === 'standard' && Number(result.global.lineHeight) === 1.35) {
+    result.global.lineHeight = 1.28
+  }
   result.global.lineHeight = boundedConfigNumber(result.global.lineHeight, 1.1, 2.2, 1.28)
   result.global.moduleMargin = boundedConfigNumber(result.global.moduleMargin, 0.25, 2, 0.55)
-  if (result.education.preset === 'three-column') result.education.metricsPlacement = 'info-column'
-  if (result.basics.photoPosition === 'hidden' && !result.basics.hiddenFields.includes('photo')) result.basics.hiddenFields.push('photo')
+  result.global.marginVertical = boundedConfigNumber(result.global.marginVertical, 3, 12, 9)
+  result.global.marginHorizontal = boundedConfigNumber(result.global.marginHorizontal, 3, 12, 9)
+  result.global.splitWorkExperience = Boolean(result.global.splitWorkExperience)
   result.global.sectionOrder = [...new Set((Array.isArray(result.global.sectionOrder) ? result.global.sectionOrder : [])
     .filter(item => SECTION_IDS.has(item)))]
   if (result.global.splitWorkExperience && !result.global.sectionOrder.includes('internship_experience')) {
@@ -104,6 +140,46 @@ export function normalizeLayoutConfig(value = {}) {
   insertAfter('research_interests', 'skills')
   insertAfter('honors', 'research_interests')
   insertAfter('custom_sections', 'project_experience')
+  for (const item of SECTION_IDS) {
+    if (item !== 'internship_experience' || result.global.splitWorkExperience) insertAfter(item)
+  }
+  result.global.hiddenSections = [...new Set(
+    (Array.isArray(result.global.hiddenSections) ? result.global.hiddenSections : []).filter(item => SECTION_IDS.has(item))
+  )]
+  const cleanTitles = {}
+  if (result.global.titleOverrides && typeof result.global.titleOverrides === 'object' && !Array.isArray(result.global.titleOverrides)) {
+    for (const [section, translations] of Object.entries(result.global.titleOverrides)) {
+      if (!SECTION_IDS.has(section) || !translations || typeof translations !== 'object' || Array.isArray(translations)) continue
+      const clean = {}
+      for (const language of ['zh', 'en']) {
+        const text = String(translations[language] || '').trim().slice(0, 40)
+        if (text) clean[language] = text
+      }
+      if (Object.keys(clean).length) cleanTitles[section] = clean
+    }
+  }
+  result.global.titleOverrides = cleanTitles
+  for (const [section, allowed] of Object.entries(ALLOWED_HIDDEN_FIELDS)) {
+    const key = section === 'education' ? 'hiddenMetrics' : 'hiddenFields'
+    result[section][key] = [...new Set(
+      (Array.isArray(result[section][key]) ? result[section][key] : []).filter(item => allowed.has(item))
+    )]
+  }
+  if (result.basics.photoPosition === 'hidden' && !result.basics.hiddenFields.includes('photo')) result.basics.hiddenFields.push('photo')
+  if (result.basics.hiddenFields.includes('photo')) result.basics.photoPosition = 'hidden'
+  if (result.education.preset === 'three-column') {
+    result.education.metricsPlacement = 'info-column'
+  } else if (result.education.metricsPlacement === 'info-column') {
+    result.education.metricsPlacement = result.education.preset === 'classic' ? 'below' : 'with-degree'
+  }
+  result.others.fieldOrder = (Array.isArray(result.others.fieldOrder) ? result.others.fieldOrder : [])
+    .filter(item => ALLOWED_HIDDEN_FIELDS.others.has(item))
+  for (const item of ['skills', 'certificates', 'languages']) {
+    if (!result.others.fieldOrder.includes(item)) result.others.fieldOrder.push(item)
+  }
+  result.work_experience.showJobType = Boolean(result.work_experience.showJobType)
+  result.project_experience.showRole = Boolean(result.project_experience.showRole)
+  result.project_experience.showDate = Boolean(result.project_experience.showDate)
   const suppliedFontSizes = value?.typography?.fontSizes
   if (suppliedVersion < 5 || !suppliedFontSizes || typeof suppliedFontSizes !== 'object' || Array.isArray(suppliedFontSizes)) {
     result.typography.fontSizes = semanticFontSizes(result.global.fontSize)
@@ -168,10 +244,15 @@ export function resolveLayoutTokens(value = {}, style = {}) {
     letterSpacingPt: 0,
     lineHeight,
     bodyLineHeightPt: bodyFontSizePt * lineHeight,
+    metaLineHeightPt: metaFontSizePt * lineHeight,
+    entryTitleLineHeightPt: entryTitleFontSizePt * lineHeight,
+    sectionTitleLineHeightPt: sectionTitleFontSizePt * lineHeight,
+    nameLineHeightPt: nameFontSizePt * lineHeight,
     moduleMargin,
     moduleSpacingPt: fontSizePt * moduleMargin,
     headerNameAfterPt: bodyFontSizePt * 0.27,
     sectionTitleAfterPt: bodyFontSizePt * 0.25,
+    sectionTitleBorderGapPt: sectionTitleFontSizePt * 0.1,
     itemSpacingPt: bodyFontSizePt * 0.22,
     paragraphSpacingPt: bodyFontSizePt * 0.09,
     contentBlockSpacingPt: bodyFontSizePt * 0.14,
@@ -179,11 +260,69 @@ export function resolveLayoutTokens(value = {}, style = {}) {
     numberedItemSpacingPt: bodyFontSizePt * 0.08,
     listTextIndentPt: bodyFontSizePt * 1.55,
     listMarkerGapPt: bodyFontSizePt * 0.25,
+    educationMiddleMinMm: 30,
+    educationColumnBreathingMm: 4,
+    educationSideColumnMm: 42,
     marginTopMm: bounded(style.marginTop ?? global.marginVertical, 3, 12, global.marginVertical),
     marginBottomMm: bounded(style.marginBottom ?? global.marginVertical, 3, 12, global.marginVertical),
     marginLeftMm: bounded(style.marginLeft ?? global.marginHorizontal, 3, 12, global.marginHorizontal),
     marginRightMm: bounded(style.marginRight ?? global.marginHorizontal, 3, 12, global.marginHorizontal)
   }
+}
+
+export function estimateTextWidthPt(value = '', fontSizePt = 9) {
+  let units = 0
+  for (const char of String(value ?? '')) {
+    const codepoint = char.codePointAt(0)
+    if ((codepoint >= 0x3400 && codepoint <= 0x4dbf)
+      || (codepoint >= 0x4e00 && codepoint <= 0x9fff)
+      || (codepoint >= 0xf900 && codepoint <= 0xfaff)
+      || (codepoint >= 0xff00 && codepoint <= 0xffef)) units += 1
+    else if (/\s/u.test(char)) units += 0.28
+    else if (/[A-Z]/.test(char)) units += 0.62
+    else if (/[a-z]/.test(char)) units += 0.52
+    else if (/[0-9]/.test(char)) units += 0.56
+    else units += 0.35
+  }
+  return units * Number(fontSizePt)
+}
+
+export function resolveEducationColumnWidths(tokens, { schools = [], dates = [], degreeMajors = [], compactMetrics = [] } = {}) {
+  const printableMm = 210 - tokens.marginLeftMm - tokens.marginRightMm
+  const breathingMm = tokens.educationColumnBreathingMm
+  const sideNeededMm = Math.max(
+    36,
+    ...schools.map(value => estimateTextWidthPt(value, tokens.entryTitleFontSizePt) * 25.4 / 72),
+    ...dates.map(value => estimateTextWidthPt(value, tokens.metaFontSizePt) * 25.4 / 72)
+  ) + breathingMm
+  let middleNeededMm = tokens.educationMiddleMinMm
+  degreeMajors.forEach((degreeMajor, index) => {
+    const metric = compactMetrics[index] || ''
+    const displayValue = metric ? `${degreeMajor} · ${metric}` : degreeMajor
+    const widthPt = estimateTextWidthPt(displayValue, tokens.metaFontSizePt)
+    middleNeededMm = Math.max(middleNeededMm, widthPt * 25.4 / 72 + breathingMm)
+  })
+  const middleMaxMm = Math.max(tokens.educationMiddleMinMm, printableMm - sideNeededMm * 2)
+  const middleMm = Math.min(middleNeededMm, middleMaxMm)
+  return {
+    sideMm: Math.max(0, (printableMm - middleMm) / 2),
+    middleMm
+  }
+}
+
+export function formatCompactAcademicMetric(item = {}, hiddenMetrics = [], averageScoreLabel = '平均分') {
+  const hidden = new Set(hiddenMetrics)
+  let metric = ''
+  if (item?.gpa && !hidden.has('gpa')) {
+    metric = `${item.gpa}${item.gpa_scale ? `/${item.gpa_scale}` : ''}`
+  } else if (item?.average_score && !hidden.has('average_score')) {
+    metric = `${averageScoreLabel}：${item.average_score}`
+  }
+  if (item?.ranking && !hidden.has('ranking')) {
+    const ranking = String(item.ranking).trim().replace(/^[（(]|[）)]$/g, '')
+    metric = metric ? `${metric} (${ranking})` : `(${ranking})`
+  }
+  return metric
 }
 
 // Keep content-flow decisions in one place. Preview rendering and editor line
@@ -194,10 +333,28 @@ export function resolveContentBlockFlow(block = {}) {
     ? block.type
     : 'paragraph'
   const label = String(block?.label || '').trim()
+  let semanticRole = String(block?.semantic_role || '').trim()
+  if (!['introduction', 'responsibilities', 'generic'].includes(semanticRole)) {
+    semanticRole = label && type === 'paragraph'
+      ? 'introduction'
+      : (label ? 'responsibilities' : 'generic')
+  }
+  const requiresLabel = semanticRole !== 'generic'
+  // Labeled lists preserve two visible hierarchy levels: the outer semantic
+  // label and its child bullets/numbers. Generic lists use one level.
+  const isList = ['numbered_list', 'bullet_list'].includes(type)
+  const contentIndentLevels = requiresLabel && label && isList
+    ? 2
+    : ((requiresLabel || isList) ? 1 : 0)
   const labelPlacement = !label ? 'none' : (type === 'paragraph' ? 'inline' : 'separate')
   return {
     type,
     label,
+    semanticRole,
+    requiresLabel,
+    visible: !requiresLabel || Boolean(label),
+    labelMarker: requiresLabel && label ? 'bullet' : 'none',
+    contentIndentLevels,
     labelPlacement,
     labelBold: block?.label_bold !== false,
     prefixText: label ? `${label}：` : ''

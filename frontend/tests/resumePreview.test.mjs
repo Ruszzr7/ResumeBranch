@@ -71,15 +71,27 @@ test('resume fields render the escaped bold-only protocol', () => {
 })
 
 test('work and project details share semantic block rendering', () => {
-  assert.ok(previewSource.includes('projectContentBlocks(entry.item).length'))
+  assert.ok(previewSource.includes("projectContentBlocks(entry.item, 'work').length"))
+  assert.ok(previewSource.includes('projectContentBlocks(item).length'))
   assert.ok(previewSource.includes("block.type === 'numbered_list'"))
   assert.ok(previewSource.includes('project-block-label'))
 })
 
-test('preview pagination uses a small safety margin consistent with PDF export', () => {
-  assert.equal(previewSource.includes('pageContentHeight - 120'), false)
-  assert.equal(previewSource.includes('pageContentHeight - 150'), false)
+test('preview pagination measures shared spacing and uses a strict page boundary', () => {
+  assert.ok(previewSource.includes('child.getBoundingClientRect().height + marginTop + marginBottom'))
+  assert.ok(previewSource.includes('Number.parseFloat(computed.marginTop)'))
+  assert.ok(previewSource.includes('Number.parseFloat(computed.marginBottom)'))
   assert.ok(previewSource.includes('pageContentHeight - 8'))
+  assert.ok(previewSource.includes('pageContentHeight + 1'))
+  assert.ok(previewSource.includes('pageContentHeight - 12'))
+  assert.equal(previewSource.includes('pageContentHeight + 50'), false)
+})
+
+test('legacy work details remain body content regardless of their wording', () => {
+  assert.ok(previewSource.includes("function projectContentBlocks(item, experienceKind = 'project')"))
+  assert.ok(previewSource.includes("if (experienceKind === 'work')"))
+  assert.ok(previewSource.includes("projectContentBlocks(entry.item, 'work')"))
+  assert.ok(previewSource.includes("projectContentBlocks(item, 'work')"))
 })
 
 test('layout menu opens a dedicated bidirectional manual ordering dialog', () => {
@@ -113,7 +125,11 @@ test('numbered generic items suppress the redundant outer bullet', () => {
   assert.ok(previewSource.includes('hasNativeListMarker'))
   assert.ok(previewSource.includes("'has-native-marker': hasNativeListMarker(item)"))
   assert.ok(previewSource.includes('.generic-list-item.has-native-marker::before'))
-  assert.ok(previewSource.includes('.generic-list-item.has-native-marker {\n  padding-left: 0;'))
+  assert.ok(previewSource.includes("'skill-list-item', { 'has-native-marker': hasNativeListMarker(item) }"))
+  assert.ok(previewSource.includes('.generic-list-item.skill-list-item.has-native-marker {'))
+  assert.ok(previewSource.includes('grid-template-columns: var(--list-text-indent) minmax(0, 1fr);'))
+  assert.ok(previewSource.includes('class="native-list-marker"'))
+  assert.ok(previewSource.includes('class="native-list-content"'))
 })
 
 test('imported source can be viewed read-only without replacing the structured resume', () => {
@@ -149,20 +165,37 @@ test('single-page preview does not render a redundant 1 / 1 footer', () => {
   assert.ok(previewSource.includes('v-if="pageCount > 1" class="page-footer"'))
 })
 
-test('one-line education dates stay in the normal four-column flow', () => {
-  assert.ok(previewSource.includes('flex: 1 1 0'))
-  assert.ok(previewSource.includes('flex: 0 0 36mm'))
+test('one-line education uses symmetric outer columns and a left-aligned middle frame', () => {
+  assert.ok(previewSource.includes("'--education-side-column': `${layoutTokens.value.educationSideColumnMm}mm`"))
+  assert.ok(previewSource.includes("'--education-compact-side-column': `${educationColumnWidths.value.sideMm}mm`"))
+  assert.ok(previewSource.includes("'--education-middle-column': `${educationColumnWidths.value.middleMm}mm`"))
+  assert.ok(previewSource.includes('grid-template-columns: var(--education-compact-side-column) var(--education-middle-column) var(--education-compact-side-column)'))
+  assert.ok(previewSource.includes('grid-template-columns: var(--education-side-column) minmax(0, 1fr) var(--education-side-column)'))
+  assert.ok(previewSource.includes('class="education-middle-column"'))
+  assert.ok(previewSource.includes('compactAcademicMetric(item)'))
+  assert.ok(previewSource.includes('compactEducationMiddle(item)'))
+  assert.ok(previewSource.includes('formatCompactAcademicMetric(item, hidden, t.value.averageScore)'))
+  assert.ok(previewSource.includes("filter(Boolean).join(' · ')"))
+  assert.ok(previewSource.includes('text-align: left'))
   assert.ok(previewSource.includes('margin-right: 0'))
   assert.ok(previewSource.includes('position: static'))
   assert.equal(previewSource.includes('right: 6mm'), false)
 })
 
-test('bullets and numbered responsibilities share one text start token', () => {
+test('semantic labels and their numbered responsibilities preserve nested indentation', () => {
   assert.ok(previewSource.includes("'--list-text-indent': `${layoutTokens.value.listTextIndentPt}pt`"))
   assert.ok(previewSource.includes("'--list-marker-gap': `${layoutTokens.value.listMarkerGapPt}pt`"))
   assert.ok(previewSource.includes('padding-left: var(--list-text-indent)'))
   assert.ok(previewSource.includes('width: calc(var(--list-text-indent) - var(--list-marker-gap))'))
+  assert.ok(previewSource.includes('.project-content-block.has-semantic-label > .project-numbered-list'))
+  assert.ok(previewSource.includes('margin-left: var(--list-text-indent)'))
   assert.ok(previewSource.includes(".list-item::before {\n  content: '•';\n  position: absolute;\n  left: 0;\n  width: calc(var(--list-text-indent) - var(--list-marker-gap));\n  text-align: center;"))
+})
+
+test('preview applies shared module spacing before every section title', () => {
+  assert.ok(previewSource.includes('margin-top: var(--module-margin)'))
+  assert.ok(previewSource.includes('margin-bottom: var(--section-title-after)'))
+  assert.ok(previewSource.includes('padding-bottom: var(--section-title-border-gap)'))
 })
 
 test('narrow resume toolbar uses the dark workspace palette', () => {

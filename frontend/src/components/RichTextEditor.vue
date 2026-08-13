@@ -55,12 +55,15 @@ const displayLineCount = ref(0) // 按当前简历正文排版估算的视觉行
 function measureResumeLineCount(text) {
   if (!text?.trim() || typeof document === 'undefined') return 0
   const metrics = props.resumeMetrics || {}
+  const flow = props.resumeFlow || {}
+  if (flow.visible === false) return 0
+  const indentPx = (Number(metrics.listTextIndentPt) || 0) * (96 / 72) * (Number(flow.contentIndentLevels) || 0)
   const measurer = document.createElement('div')
   Object.assign(measurer.style, {
     position: 'fixed',
     left: '-10000px',
     top: '0',
-    width: `${Math.max(1, Number(metrics.contentWidthPx) || 725)}px`,
+    width: `${Math.max(1, (Number(metrics.contentWidthPx) || 725) - indentPx)}px`,
     height: 'auto',
     margin: '0',
     padding: '0',
@@ -77,7 +80,6 @@ function measureResumeLineCount(text) {
     fontWeight: '400',
     lineHeight: String(Number(metrics.lineHeight) || 1.28)
   })
-  const flow = props.resumeFlow || {}
   if (flow.labelPlacement === 'inline' && flow.prefixText) {
     const prefix = document.createElement(flow.labelBold === false ? 'span' : 'strong')
     prefix.textContent = flow.prefixText
@@ -475,9 +477,12 @@ watch(() => [
   props.resumeMetrics?.lineHeight,
   props.resumeMetrics?.contentWidthPx,
   props.resumeMetrics?.fontFamilyCss,
+  props.resumeMetrics?.listTextIndentPt,
   props.resumeFlow?.labelPlacement,
   props.resumeFlow?.prefixText,
-  props.resumeFlow?.labelBold
+  props.resumeFlow?.labelBold,
+  props.resumeFlow?.visible,
+  props.resumeFlow?.contentIndentLevels
 ], () => nextTick(updateLineCount))
 
 onMounted(() => {

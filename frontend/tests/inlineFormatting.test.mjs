@@ -3,6 +3,17 @@ import assert from 'node:assert/strict'
 
 import { formatInlineHtml, parseInlineBold, plainInlineText } from '../src/utils/inlineFormatting.js'
 
+test('rendering preserves source whitespace and natural break points', () => {
+  for (const value of [
+    '中文与 ASCII token 保留普通空格',
+    '括号（全角）与(parentheses)保持原样',
+    '混排 A1/B2、C++ API，标点不被改写'
+  ]) {
+    assert.equal(plainInlineText(value), value)
+    assert.equal(formatInlineHtml(value), value)
+  }
+})
+
 test('paired bold markers become the only allowed inline element', () => {
   assert.equal(
     formatInlineHtml('<img src=x onerror="boom"> **安全结果**'),

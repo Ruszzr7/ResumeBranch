@@ -7,8 +7,10 @@ import {
   DEFAULT_LAYOUT_CONFIG,
   FONT_SIZE_LABELS,
   FONT_SIZE_LIMITS,
+  formatCompactAcademicMetric,
   normalizeLayoutConfig,
   resolveContentBlockFlow,
+  resolveEducationColumnWidths,
   resolveLayoutTokens,
   sectionTitle,
   sectionOrder,
@@ -180,10 +182,15 @@ function academicMetrics(item) {
   return metrics
 }
 
-function projectContentBlocks(item) {
-  if (Array.isArray(item?.content_blocks) && item.content_blocks.length) return item.content_blocks
+function projectContentBlocks(item, experienceKind = 'project') {
+  if (Array.isArray(item?.content_blocks) && item.content_blocks.length) {
+    return item.content_blocks.filter(block => resolveContentBlockFlow(block).visible)
+  }
   const details = Array.isArray(item?.details) ? item.details.filter(Boolean) : []
   if (!details.length) return []
+  if (experienceKind === 'work') {
+    return [{ type: 'bullet_list', semantic_role: 'generic', label: '', label_bold: true, text: '', items: details }]
+  }
   const blocks = []
   let duties = null
   const extras = []
@@ -192,14 +199,14 @@ function projectContentBlocks(item) {
     const intro = text.match(/^(项目简介|项目背景|项目概述|项目说明)\s*[：:]\s*(.*)$/)
     const duty = text.match(/^(项目职责|主要职责|个人职责|负责内容)\s*[：:]?\s*(.*)$/)
     if (intro) {
-      blocks.push({ type: 'paragraph', label: intro[1], label_bold: true, text: intro[2], items: [] })
+      blocks.push({ type: 'paragraph', semantic_role: 'introduction', label: intro[1], label_bold: true, text: intro[2], items: [] })
     } else if (duty) {
-      duties = { type: 'numbered_list', label: duty[1], label_bold: true, text: '', items: [] }
+      duties = { type: 'numbered_list', semantic_role: 'responsibilities', label: duty[1], label_bold: true, text: '', items: [] }
       if (duty[2]) duties.items.push(duty[2].replace(/^\s*[（(]?\d+[）).、]\s*/, ''))
       blocks.push(duties)
     } else if (duties || /^\s*[（(]?\d+[）).、]/.test(text)) {
       if (!duties) {
-        duties = { type: 'numbered_list', label: '项目职责', label_bold: true, text: '', items: [] }
+        duties = { type: 'numbered_list', semantic_role: 'responsibilities', label: '项目职责', label_bold: true, text: '', items: [] }
         blocks.push(duties)
       }
       duties.items.push(text.replace(/^\s*[（(]?\d+[）).、]\s*/, ''))
@@ -207,7 +214,7 @@ function projectContentBlocks(item) {
       extras.push(text)
     }
   }
-  if (extras.length) blocks.push({ type: 'bullet_list', label: '', label_bold: true, text: '', items: extras })
+  if (extras.length) blocks.push({ type: 'bullet_list', semantic_role: 'generic', label: '', label_bold: true, text: '', items: extras })
   return blocks.filter(block => block.text || block.items?.length)
 }
 
@@ -220,8 +227,23 @@ function workPosition(item) {
   ].filter(Boolean).join(' ')
 }
 
+function nativeListMarkerParts(value) {
+  const text = String(value || '')
+  const match = text.match(/^\s*([（(]?\d{1,2}[）).、．]|[一二三四五六七八九十]+[、.．])\s*(.*)$/s)
+  return match ? { marker: match[1], content: match[2] } : null
+}
+
+function compactAcademicMetric(item) {
+  const hidden = moduleLayout('education').hiddenMetrics || []
+  return formatCompactAcademicMetric(item, hidden, t.value.averageScore)
+}
+
+function compactEducationMiddle(item) {
+  return [item?.degree, item?.major, compactAcademicMetric(item)].filter(Boolean).join(' · ')
+}
+
 function hasNativeListMarker(value) {
-  return /^\s*(?:[（(]?\d{1,2}[）).、．]|[一二三四五六七八九十]+[、.．])\s*/.test(String(value || ''))
+  return Boolean(nativeListMarkerParts(value))
 }
 
 const emit = defineEmits(['open-jd-dialog', 'open-resume-edit', 'open-resume-import', 'toggle-lang', 'use-layout-prompt', 'request-layout-template', 'layout-updated'])
@@ -448,6 +470,11 @@ function contentBlockLabelBold(block, placement) {
   return flow.labelPlacement === placement && flow.labelBold
 }
 
+function contentBlockClasses(block) {
+  const flow = resolveContentBlockFlow(block)
+  return [`block-${flow.type}`, { 'has-semantic-label': flow.labelMarker === 'bullet' }]
+}
+
 function openFontSizeDialog() {
   fontSizeDraft.value = { ...fontSizes.value }
   fontSizeSaveError.value = ''
@@ -586,6 +613,15 @@ const layoutTokens = computed(() => resolveLayoutTokens(renderLayout.value, {
   marginLeft: marginHorizontal.value,
   marginRight: marginHorizontal.value
 }))
+const educationColumnWidths = computed(() => {
+  const items = props.data?.education || []
+  return resolveEducationColumnWidths(layoutTokens.value, {
+    schools: items.map(item => String(item?.school_name || '')),
+    dates: items.map(item => (item?.date_range || []).slice(0, 2).filter(Boolean).join(' - ')),
+    degreeMajors: items.map(item => [item?.degree, item?.major].filter(Boolean).join(' · ')),
+    compactMetrics: items.map(compactAcademicMetric)
+  })
+})
 const pageStyles = computed(() => ({
   fontFamily: layoutTokens.value.fontFamilyCss,
   fontSize: `${layoutTokens.value.fontSizePt}pt`,
@@ -611,13 +647,17 @@ const pageStyles = computed(() => ({
   '--module-margin': `${layoutTokens.value.moduleSpacingPt}pt`,
   '--header-name-after': `${layoutTokens.value.headerNameAfterPt}pt`,
   '--section-title-after': `${layoutTokens.value.sectionTitleAfterPt}pt`,
+  '--section-title-border-gap': `${layoutTokens.value.sectionTitleBorderGapPt}pt`,
   '--item-spacing': `${layoutTokens.value.itemSpacingPt}pt`,
   '--paragraph-spacing': `${layoutTokens.value.paragraphSpacingPt}pt`,
   '--content-block-spacing': `${layoutTokens.value.contentBlockSpacingPt}pt`,
   '--content-label-spacing': `${layoutTokens.value.contentLabelSpacingPt}pt`,
   '--numbered-item-spacing': `${layoutTokens.value.numberedItemSpacingPt}pt`,
   '--list-text-indent': `${layoutTokens.value.listTextIndentPt}pt`,
-  '--list-marker-gap': `${layoutTokens.value.listMarkerGapPt}pt`
+  '--list-marker-gap': `${layoutTokens.value.listMarkerGapPt}pt`,
+  '--education-side-column': `${layoutTokens.value.educationSideColumnMm}mm`,
+  '--education-compact-side-column': `${educationColumnWidths.value.sideMm}mm`,
+  '--education-middle-column': `${educationColumnWidths.value.middleMm}mm`
 }))
 
 const pagePaddingStyle = computed(() => ({
@@ -773,7 +813,7 @@ const allItems = computed(() => {
         push({ type: `${prefix}-title`, groupId: `${section}:${entries[0].dataIndex}`, breakKey: `${section}:${entries[0].dataIndex}`, isSectionTitle: true })
         entries.forEach(({ item, dataIndex }) => {
           push({ type: `${prefix}-item`, dataIndex, groupId: `${section}:${dataIndex}`, breakKey: `${section}:${dataIndex}` })
-          if (projectContentBlocks(item).length) push({ type: `${prefix}-details`, dataIndex, groupId: `${section}:${dataIndex}`, breakKey: `${section}:${dataIndex}` })
+          if (projectContentBlocks(item, 'work').length) push({ type: `${prefix}-details`, dataIndex, groupId: `${section}:${dataIndex}`, breakKey: `${section}:${dataIndex}` })
         })
       }
     }
@@ -900,11 +940,15 @@ const calculatePagination = async () => {
     return
   }
 
-  // 直接累加每个元素的高度，找到最佳分页点
+  // 使用完整外部高度参与分页。offsetHeight 不包含 margin，会漏算模块
+  // 标题段前距、段后距和条目间距，导致实际两页被误判为一页。
   const elementHeights = children.map((child, idx) => {
+    const computed = getComputedStyle(child)
+    const marginTop = Number.parseFloat(computed.marginTop) || 0
+    const marginBottom = Number.parseFloat(computed.marginBottom) || 0
     return {
       idx,
-      height: child.offsetHeight  // 使用 offsetHeight
+      height: child.getBoundingClientRect().height + marginTop + marginBottom
     }
   })
 
@@ -920,8 +964,8 @@ const calculatePagination = async () => {
     const pageContents = document.querySelectorAll('.page-content')
     if (pageContents.length === 0) return
 
-    const adjusted = Array.from(pageContents).some(el => el.scrollHeight > pageContentHeight + 50)
-    if (adjusted) applyAutomaticPagination(elementHeights, pageContentHeight - 24)
+    const adjusted = Array.from(pageContents).some(el => el.scrollHeight > pageContentHeight + 1)
+    if (adjusted) applyAutomaticPagination(elementHeights, pageContentHeight - 12)
   }
 
   // 延迟验证，确保DOM已完全渲染
@@ -1424,11 +1468,13 @@ const getItemIndex = (type, dataIndex) => {
                 <span v-for="(tag, tIdx) in item.school_tags" :key="tIdx" class="school-tag" :class="`tag-${moduleLayout('education').schoolTagStyle}`" v-html="formatText(tag)"></span>
               </div>
             </div>
-            <div class="education-degree-column">
-              <div class="degree-major" v-html="formatText([item.degree, item.major].filter(Boolean).join(' · '))"></div>
-            </div>
-            <div v-if="academicMetrics(item).length" class="education-metrics-column academic-metrics">
-              <span v-for="metric in academicMetrics(item)" :key="metric" v-html="formatText(metric)"></span>
+            <div class="education-middle-column">
+              <div class="education-degree-column">
+                <div class="degree-major" v-html="formatText(moduleLayout('education').preset === 'compact' ? compactEducationMiddle(item) : [item.degree, item.major].filter(Boolean).join(' · '))"></div>
+              </div>
+              <div v-if="moduleLayout('education').preset !== 'compact' && academicMetrics(item).length" class="education-metrics-column academic-metrics">
+                <span v-for="metric in academicMetrics(item)" :key="metric" v-html="formatText(metric)"></span>
+              </div>
             </div>
             <span class="graduation-date" v-html="formatText(`${item.date_range?.[0] || ''} - ${item.date_range?.[1] || '至今'}`)"></span>
           </div>
@@ -1450,7 +1496,10 @@ const getItemIndex = (type, dataIndex) => {
 
       <template v-if="data.others?.skills?.length && !hiddenSection('skills')">
         <h2 class="pageable-item section-title" :class="`title-${layout.global.titleStyle}`" :style="moduleOrder('skills')" data-module="skills" v-html="formatText(displayTitle('skills', t.skillsSection))"></h2>
-        <div v-for="(item, idx) in data.others.skills" :key="`source-skill-${idx}`" :class="['pageable-item', 'generic-list-item', { 'has-native-marker': hasNativeListMarker(item) }]" :style="moduleOrder('skills')" v-html="formatText(item)"></div>
+        <div v-for="(item, idx) in data.others.skills" :key="`source-skill-${idx}`" :class="['pageable-item', 'generic-list-item', 'skill-list-item', { 'has-native-marker': hasNativeListMarker(item) }]" :style="moduleOrder('skills')">
+          <template v-if="nativeListMarkerParts(item)"><span class="native-list-marker">{{ nativeListMarkerParts(item).marker }}</span><span class="native-list-content" v-html="formatText(nativeListMarkerParts(item).content)"></span></template>
+          <span v-else v-html="formatText(item)"></span>
+        </div>
       </template>
 
       <template v-if="data.research_interests?.length && !hiddenSection('research_interests')">
@@ -1476,8 +1525,8 @@ const getItemIndex = (type, dataIndex) => {
               <span class="work-period" v-html="formatText(`${entry.item.date_range?.[0] || ''} - ${entry.item.date_range?.[1] || '至今'}`)"></span>
             </div>
           </div>
-          <div v-if="projectContentBlocks(entry.item).length" class="pageable-item work-details" :class="`details-${moduleLayout('work_experience').detailsStyle}`" :style="moduleOrder(section.id)">
-            <div v-for="(block, bIdx) in projectContentBlocks(entry.item)" :key="bIdx" class="project-content-block" :class="`block-${block.type}`">
+          <div v-if="projectContentBlocks(entry.item, 'work').length" class="pageable-item work-details" :class="`details-${moduleLayout('work_experience').detailsStyle}`" :style="moduleOrder(section.id)">
+            <div v-for="(block, bIdx) in projectContentBlocks(entry.item, 'work')" :key="bIdx" class="project-content-block" :class="contentBlockClasses(block)">
               <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(block.text)"></span></p>
               <template v-else>
                 <div v-if="contentBlockLabel(block, 'separate')" class="project-block-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'separate') }" v-html="`${formatText(contentBlockLabel(block, 'separate'))}：`"></div>
@@ -1508,7 +1557,7 @@ const getItemIndex = (type, dataIndex) => {
             </div>
           </div>
           <div v-if="projectContentBlocks(item).length" class="pageable-item project-details" :style="moduleOrder('project_experience')">
-            <div v-for="(block, blockIndex) in projectContentBlocks(item)" :key="blockIndex" class="project-content-block" :class="`block-${block.type}`">
+            <div v-for="(block, blockIndex) in projectContentBlocks(item)" :key="blockIndex" class="project-content-block" :class="contentBlockClasses(block)">
               <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(block.text)"></span></p>
               <template v-else>
                 <div v-if="contentBlockLabel(block, 'separate')" class="project-block-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'separate') }" v-html="`${formatText(contentBlockLabel(block, 'separate'))}：`"></div>
@@ -1611,7 +1660,10 @@ const getItemIndex = (type, dataIndex) => {
 
       <template v-if="data.others?.skills?.length">
         <h2 class="section-title">{{ t.skillsSection }}</h2>
-        <div v-for="(item, idx) in data.others.skills" :key="`print-skill-${idx}`" :class="['generic-list-item', { 'has-native-marker': hasNativeListMarker(item) }]" v-html="formatText(item)"></div>
+        <div v-for="(item, idx) in data.others.skills" :key="`print-skill-${idx}`" :class="['generic-list-item', 'skill-list-item', { 'has-native-marker': hasNativeListMarker(item) }]">
+          <template v-if="nativeListMarkerParts(item)"><span class="native-list-marker">{{ nativeListMarkerParts(item).marker }}</span><span class="native-list-content" v-html="formatText(nativeListMarkerParts(item).content)"></span></template>
+          <span v-else v-html="formatText(item)"></span>
+        </div>
       </template>
 
       <template v-if="data.research_interests?.length">
@@ -1635,7 +1687,7 @@ const getItemIndex = (type, dataIndex) => {
             </div>
             <span class="work-period" v-html="formatText(`${item.date_range?.[0] || ''} - ${item.date_range?.[1] || '至今'}`)"></span>
           </div>
-          <div v-for="(block, bIdx) in projectContentBlocks(item)" :key="bIdx" class="project-content-block" :class="`block-${block.type}`">
+            <div v-for="(block, bIdx) in projectContentBlocks(item, 'work')" :key="bIdx" class="project-content-block" :class="contentBlockClasses(block)">
             <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(block.text)"></span></p>
             <template v-else>
               <div v-if="contentBlockLabel(block, 'separate')" class="project-block-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'separate') }" v-html="`${formatText(contentBlockLabel(block, 'separate'))}：`"></div>
@@ -1662,7 +1714,7 @@ const getItemIndex = (type, dataIndex) => {
               <span v-else-if="item.role" v-html="formatText(item.role)"></span>
             </div>
           </div>
-          <div v-for="(block, blockIndex) in projectContentBlocks(item)" :key="blockIndex" class="project-content-block" :class="`block-${block.type}`">
+            <div v-for="(block, blockIndex) in projectContentBlocks(item)" :key="blockIndex" class="project-content-block" :class="contentBlockClasses(block)">
             <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(block.text)"></span></p>
             <template v-else>
               <div v-if="contentBlockLabel(block, 'separate')" class="project-block-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'separate') }" v-html="`${formatText(contentBlockLabel(block, 'separate'))}：`"></div>
@@ -1742,11 +1794,13 @@ const getItemIndex = (type, dataIndex) => {
                         <span v-for="(tag, tIdx) in item.school_tags" :key="tIdx" class="school-tag" :class="`tag-${moduleLayout('education').schoolTagStyle}`" v-html="formatText(tag)"></span>
                       </div>
                     </div>
-                    <div class="education-degree-column">
-                      <div class="degree-major" v-html="formatText([item.degree, item.major].filter(Boolean).join(' · '))"></div>
-                    </div>
-                    <div v-if="academicMetrics(item).length" class="education-metrics-column academic-metrics">
-                      <span v-for="metric in academicMetrics(item)" :key="metric" v-html="formatText(metric)"></span>
+                    <div class="education-middle-column">
+                      <div class="education-degree-column">
+                        <div class="degree-major" v-html="formatText(moduleLayout('education').preset === 'compact' ? compactEducationMiddle(item) : [item.degree, item.major].filter(Boolean).join(' · '))"></div>
+                      </div>
+                      <div v-if="moduleLayout('education').preset !== 'compact' && academicMetrics(item).length" class="education-metrics-column academic-metrics">
+                        <span v-for="metric in academicMetrics(item)" :key="metric" v-html="formatText(metric)"></span>
+                      </div>
                     </div>
                     <span class="graduation-date" v-html="formatText(`${item.date_range?.[0] || ''} - ${item.date_range?.[1] || '至今'}`)"></span>
                   </div>
@@ -1768,7 +1822,10 @@ const getItemIndex = (type, dataIndex) => {
 
             <template v-if="data.others?.skills?.length && !hiddenSection('skills')">
               <h2 v-if="isItemVisible({index: getItemIndex('skills-title', 0)}, page - 1)" class="section-title" :class="`title-${layout.global.titleStyle}`" :style="moduleOrder('skills')" data-module="skills" v-html="formatText(displayTitle('skills', t.skillsSection))"></h2>
-              <div v-for="(item, idx) in data.others.skills" v-show="isItemVisible({index: getItemIndex('skills-item', idx)}, page - 1)" :key="`page-${page}-skill-${idx}`" :class="['generic-list-item', { 'has-native-marker': hasNativeListMarker(item) }]" :style="moduleOrder('skills')" v-html="formatText(item)"></div>
+              <div v-for="(item, idx) in data.others.skills" v-show="isItemVisible({index: getItemIndex('skills-item', idx)}, page - 1)" :key="`page-${page}-skill-${idx}`" :class="['generic-list-item', 'skill-list-item', { 'has-native-marker': hasNativeListMarker(item) }]" :style="moduleOrder('skills')">
+                <template v-if="nativeListMarkerParts(item)"><span class="native-list-marker">{{ nativeListMarkerParts(item).marker }}</span><span class="native-list-content" v-html="formatText(nativeListMarkerParts(item).content)"></span></template>
+                <span v-else v-html="formatText(item)"></span>
+              </div>
             </template>
 
             <template v-if="data.research_interests?.length && !hiddenSection('research_interests')">
@@ -1795,8 +1852,8 @@ const getItemIndex = (type, dataIndex) => {
                   </div>
                 </div>
                 <!-- 工作详情（独立分页项） -->
-                <div v-if="projectContentBlocks(entry.item).length && isItemVisible({index: getItemIndex(`${workTypePrefix(section.id)}-details`, entry.dataIndex)}, page - 1)" class="work-details" :class="`details-${moduleLayout('work_experience').detailsStyle}`" :style="moduleOrder(section.id)">
-                  <div v-for="(block, bIdx) in projectContentBlocks(entry.item)" :key="bIdx" class="project-content-block" :class="`block-${block.type}`">
+                <div v-if="projectContentBlocks(entry.item, 'work').length && isItemVisible({index: getItemIndex(`${workTypePrefix(section.id)}-details`, entry.dataIndex)}, page - 1)" class="work-details" :class="`details-${moduleLayout('work_experience').detailsStyle}`" :style="moduleOrder(section.id)">
+                  <div v-for="(block, bIdx) in projectContentBlocks(entry.item, 'work')" :key="bIdx" class="project-content-block" :class="contentBlockClasses(block)">
                     <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(block.text)"></span></p>
                     <template v-else>
                       <div v-if="contentBlockLabel(block, 'separate')" class="project-block-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'separate') }" v-html="`${formatText(contentBlockLabel(block, 'separate'))}：`"></div>
@@ -1827,7 +1884,7 @@ const getItemIndex = (type, dataIndex) => {
                 </div>
                 <!-- 项目详情（独立分页项） -->
                 <div v-if="projectContentBlocks(item).length && isItemVisible({index: getItemIndex('project-details', idx)}, page - 1)" :key="'proj-details-'+idx" class="project-details" :style="moduleOrder('project_experience')">
-                  <div v-for="(block, blockIndex) in projectContentBlocks(item)" :key="blockIndex" class="project-content-block" :class="`block-${block.type}`">
+                  <div v-for="(block, blockIndex) in projectContentBlocks(item)" :key="blockIndex" class="project-content-block" :class="contentBlockClasses(block)">
                     <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(block.text)"></span></p>
                     <template v-else>
                       <div v-if="contentBlockLabel(block, 'separate')" class="project-block-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'separate') }" v-html="`${formatText(contentBlockLabel(block, 'separate'))}：`"></div>
@@ -2832,10 +2889,10 @@ const getItemIndex = (type, dataIndex) => {
   align-items: start;
 }
 .education-item .school-info { grid-column: 1; grid-row: 1; }
-.education-item .education-degree-column { grid-column: 1; grid-row: 2; }
-.education-item .education-metrics-column { grid-column: 1; grid-row: 3; }
+.education-item .education-middle-column { grid-column: 1; grid-row: 2; }
 .education-item .graduation-date { grid-column: 2; grid-row: 1; }
 .education-item .school-info,
+.education-item .education-middle-column,
 .education-item .education-degree-column,
 .education-item .education-metrics-column {
   min-width: 0;
@@ -2843,32 +2900,46 @@ const getItemIndex = (type, dataIndex) => {
   word-break: break-word;
 }
 .education-item.preset-compact .education-header {
-  display: flex;
+  display: grid;
   width: 100%;
-  flex-wrap: nowrap;
-  column-gap: 0.65em;
+  grid-template-columns: var(--education-compact-side-column) var(--education-middle-column) var(--education-compact-side-column);
+  column-gap: 0;
+  align-items: baseline;
+}
+.education-item.preset-three-column .education-header {
+  display: grid;
+  width: 100%;
+  grid-template-columns: var(--education-side-column) minmax(0, 1fr) var(--education-side-column);
+  column-gap: 0;
   align-items: baseline;
 }
 .education-item.preset-compact .school-info,
-.education-item.preset-compact .education-degree-column,
-.education-item.preset-compact .education-metrics-column { flex: 1 1 0; min-width: 0; }
-.education-item.preset-compact .graduation-date { grid-column: 4; grid-row: 1; }
-.education-item.preset-three-column .education-header {
-  display: flex;
-  width: 100%;
-  flex-wrap: nowrap;
-  column-gap: 1.1em;
-  align-items: baseline;
-}
 .education-item.preset-three-column .school-info,
+.education-item.preset-compact .education-middle-column,
+.education-item.preset-three-column .education-middle-column,
+.education-item.preset-compact .education-degree-column,
 .education-item.preset-three-column .education-degree-column,
-.education-item.preset-three-column .education-metrics-column { flex: 1 1 0; min-width: 0; }
-.education-item.preset-three-column .graduation-date { grid-column: 4; grid-row: 1; }
+.education-item.preset-compact .education-metrics-column,
+.education-item.preset-three-column .education-metrics-column { min-width: 0; }
+.education-item.preset-compact .school-info,
+.education-item.preset-three-column .school-info { grid-column: 1; grid-row: 1; gap: 0.3em; }
+.education-item.preset-compact .education-middle-column,
+.education-item.preset-three-column .education-middle-column {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  column-gap: var(--education-metric-gap);
+  row-gap: 0;
+  text-align: left;
+}
 .education-item.preset-compact .graduation-date,
 .education-item.preset-three-column .graduation-date {
+  grid-column: 3;
+  grid-row: 1;
   position: static;
-  flex: 0 0 36mm;
-  width: 36mm;
+  width: auto;
   min-width: 0;
   margin-right: 0;
   text-align: right;
@@ -2924,14 +2995,28 @@ const getItemIndex = (type, dataIndex) => {
 .generic-list-item.has-native-marker {
   padding-left: 0;
 }
+.generic-list-item.skill-list-item.has-native-marker {
+  display: grid;
+  grid-template-columns: var(--list-text-indent) minmax(0, 1fr);
+  padding-left: 0;
+  text-indent: 0;
+}
+.skill-list-item .native-list-marker {
+  padding-right: var(--list-marker-gap);
+  text-align: right;
+}
+.skill-list-item .native-list-content {
+  min-width: 0;
+}
 .generic-list-item.has-native-marker::before {
   content: none;
 }
 .page-content .section-title,
 .content-source .section-title,
 .print-container .section-title {
+  margin-top: var(--module-margin);
   margin-bottom: var(--section-title-after);
-  padding-bottom: 0.1em;
+  padding-bottom: var(--section-title-border-gap);
   color: #111;
   font-weight: var(--section-title-font-weight);
 }
@@ -2981,6 +3066,10 @@ const getItemIndex = (type, dataIndex) => {
   padding: 0;
   counter-reset: project-duty;
 }
+.project-content-block.has-semantic-label > .project-numbered-list,
+.project-content-block.has-semantic-label > .list-items {
+  margin-left: var(--list-text-indent);
+}
 .project-numbered-list > li {
   position: relative;
   margin-bottom: var(--numbered-item-spacing);
@@ -2994,6 +3083,20 @@ const getItemIndex = (type, dataIndex) => {
   width: calc(var(--list-text-indent) - var(--list-marker-gap));
   text-align: right;
   white-space: nowrap;
+}
+.project-content-block.has-semantic-label > .project-paragraph,
+.project-content-block.has-semantic-label > .project-block-label {
+  position: relative;
+  padding-left: var(--list-text-indent);
+}
+.project-content-block.has-semantic-label > .project-paragraph::before,
+.project-content-block.has-semantic-label > .project-block-label::before {
+  content: '•';
+  position: absolute;
+  left: 0;
+  width: calc(var(--list-text-indent) - var(--list-marker-gap));
+  text-align: center;
+  font-weight: 700;
 }
 .details-paragraph .list-item { padding-left: 0; list-style: none; }
 .details-paragraph .list-item::before { content: none; }

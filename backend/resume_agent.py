@@ -25,7 +25,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 from dataclasses import dataclass
-from typing import List, Literal
+from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
 
 from .resume_data import normalize_resume_data
@@ -155,6 +155,9 @@ class ProjectContentBlock(BaseModel):
     """经历正文的语义块，避免标题、正文和编号被统一渲染成圆点列表。"""
     type: Literal["paragraph", "numbered_list", "bullet_list"] = Field(
         default="paragraph", description="段落、编号列表或普通分点列表"
+    )
+    semantic_role: Optional[Literal["introduction", "responsibilities", "generic"]] = Field(
+        default=None, description="稳定语义角色；旧数据缺省时由类型和标签兼容推断"
     )
     label: str = Field(default="", description="例如项目简介、项目职责")
     label_bold: bool = Field(default=True, description="语义标签是否加粗")
@@ -613,8 +616,9 @@ def build_resume_extract_prompt() -> str:
         "都进入 others.skills，即使其中包含 CET-4/CET-6、英语、证书或认证；只有原文存在独立的证书/资格栏目时才写入"
         "others.certificates，只有原文存在独立的语言/外语能力栏目时才写入 others.languages。禁止把原简历一个栏目拆成多个新栏目，"
         "也不要跨数组重复同一内容。不能把专业技能放入 custom_sections，也不能把荣誉混入 certificates。\n"
-        "【经历语义】工作和项目内容优先写入各自的 content_blocks：项目简介/项目背景使用 paragraph；"
-        "项目职责/主要职责使用 numbered_list，label 保留原文标题且 label_bold=true；"
+        "【经历语义】工作和项目内容优先写入各自的 content_blocks：项目简介/项目背景使用 paragraph 且 semantic_role=introduction；"
+        "项目职责/主要职责使用 numbered_list 且 semantic_role=responsibilities；普通无标签内容使用 bullet_list 且 semantic_role=generic。"
+        "label 保留原文标题且 label_bold=true；语义标签为空表示保留内容但不显示，不能擅自补回默认标签；"
         "原文中的（1）（2）或 (1)(2) 等编号只作为 items 的边界，items 内不要重复序号。"
         "原文没有项目角色时 role 必须为空，禁止输出‘角色’、‘项目成员’等占位词。\n"
         "【经历粒度】没有语义标题的普通工作描述才逐条进入 details，禁止合成一个长字符串；"
