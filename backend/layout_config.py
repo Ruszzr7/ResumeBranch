@@ -11,7 +11,7 @@ import math
 from typing import Any
 
 
-LAYOUT_SCHEMA_VERSION = 6
+LAYOUT_SCHEMA_VERSION = 8
 
 FONT_SIZE_LIMITS: dict[str, tuple[float, float]] = {
     "name": (12.0, 20.0),
@@ -106,9 +106,10 @@ TYPOGRAPHY_PRESETS: dict[str, dict[str, Any]] = {
 
 SECTION_IDS = (
     "education",
-    "skills",
-    "research_interests",
     "honors",
+    "publications",
+    "research_interests",
+    "skills",
     "work_experience",
     "internship_experience",
     "project_experience",
@@ -116,6 +117,97 @@ SECTION_IDS = (
     "others",
     "self_evaluation",
 )
+
+MODULE_COMPONENTS: dict[str, tuple[str, ...]] = {
+    "basics": ("name", "target_position", "personal_meta", "contact", "additional_fields", "photo"),
+    "education": ("school", "school_tags", "degree", "major", "metrics", "date", "theses"),
+    "skills": ("items",),
+    "research_interests": ("items",),
+    "honors": ("items",),
+    "publications": ("items",),
+    "work_experience": ("organization", "position", "job_type", "date", "content"),
+    "internship_experience": ("organization", "position", "job_type", "date", "content"),
+    "project_experience": ("project_name", "role", "date", "content"),
+    "custom_sections": ("items",),
+    "others": ("certificates", "languages"),
+    "self_evaluation": ("items",),
+}
+
+REQUIRED_COMPONENTS = {
+    "basics": {"name"},
+    "education": {"school"},
+    "skills": {"items"},
+    "research_interests": {"items"},
+    "honors": {"items"},
+    "publications": {"items"},
+    "work_experience": {"organization", "content"},
+    "internship_experience": {"organization", "content"},
+    "project_experience": {"project_name", "content"},
+    "custom_sections": {"items"},
+    "others": set(),
+    "self_evaluation": {"items"},
+}
+
+LONG_TEXT_COMPONENTS = {
+    ("education", "theses"),
+    ("work_experience", "content"),
+    ("internship_experience", "content"),
+    ("project_experience", "content"),
+    ("skills", "items"),
+    ("research_interests", "items"),
+    ("honors", "items"),
+    ("publications", "items"),
+    ("custom_sections", "items"),
+    ("self_evaluation", "items"),
+}
+
+DEFAULT_COMPONENT_ROWS: dict[str, list[dict[str, Any]]] = {
+    "basics": [
+        {"cells": [{"components": ["name"], "flow": "stacked", "width": "fill", "alignment": "left"}, {"components": ["photo"], "flow": "stacked", "width": "content", "alignment": "right"}]},
+        {"cells": [{"components": ["target_position"], "flow": "stacked", "width": "fill", "alignment": "left"}]},
+        {"cells": [{"components": ["personal_meta", "contact", "additional_fields"], "flow": "inline", "width": "fill", "alignment": "left"}]},
+    ],
+    "education": [
+        {"cells": [{"components": ["school", "school_tags"], "flow": "inline", "width": "content", "alignment": "left"}, {"components": ["degree", "major", "metrics"], "flow": "inline", "width": "fill", "alignment": "left"}, {"components": ["date"], "flow": "inline", "width": "content", "alignment": "right"}]},
+        {"cells": [{"components": ["theses"], "flow": "stacked", "width": "fill", "alignment": "justify"}]},
+    ],
+    "work_experience": [
+        {"cells": [{"components": ["organization", "position", "job_type"], "flow": "inline", "width": "fill", "alignment": "left"}, {"components": ["date"], "flow": "inline", "width": "content", "alignment": "right"}]},
+        {"cells": [{"components": ["content"], "flow": "stacked", "width": "fill", "alignment": "justify"}]},
+    ],
+    "internship_experience": [
+        {"cells": [{"components": ["organization", "position", "job_type"], "flow": "inline", "width": "fill", "alignment": "left"}, {"components": ["date"], "flow": "inline", "width": "content", "alignment": "right"}]},
+        {"cells": [{"components": ["content"], "flow": "stacked", "width": "fill", "alignment": "justify"}]},
+    ],
+    "project_experience": [
+        {"cells": [{"components": ["project_name", "role"], "flow": "inline", "width": "fill", "alignment": "left"}, {"components": ["date"], "flow": "inline", "width": "content", "alignment": "right"}]},
+        {"cells": [{"components": ["content"], "flow": "stacked", "width": "fill", "alignment": "justify"}]},
+    ],
+    "skills": [{"cells": [{"components": ["items"], "flow": "stacked", "width": "fill", "alignment": "justify"}]}],
+    "research_interests": [{"cells": [{"components": ["items"], "flow": "stacked", "width": "fill", "alignment": "justify"}]}],
+    "honors": [{"cells": [{"components": ["items"], "flow": "stacked", "width": "fill", "alignment": "justify"}]}],
+    "publications": [{"cells": [{"components": ["items"], "flow": "stacked", "width": "fill", "alignment": "justify"}]}],
+    "custom_sections": [{"cells": [{"components": ["items"], "flow": "stacked", "width": "fill", "alignment": "justify"}]}],
+    "others": [{"cells": [{"components": ["certificates", "languages"], "flow": "inline", "width": "fill", "alignment": "left"}]}],
+    "self_evaluation": [{"cells": [{"components": ["items"], "flow": "stacked", "width": "fill", "alignment": "justify"}]}],
+}
+
+
+def _module_contract(module_id: str, **values: Any) -> dict[str, Any]:
+    return {
+        "titleStyle": None,
+        "titleAlignment": None,
+        "paragraphSpacing": 0.09,
+        "itemSpacing": 0.22,
+        "contentBlockSpacing": 0.14,
+        "rowSpacing": 0.0,
+        # Marker columns provide their own hanging indent. Module indentation
+        # is an additional user-controlled offset and therefore defaults to 0.
+        "indentLevel": 0,
+        "hiddenComponents": [],
+        "componentRows": deepcopy(DEFAULT_COMPONENT_ROWS[module_id]),
+        **values,
+    }
 
 DEFAULT_LAYOUT_CONFIG: dict[str, Any] = {
     "version": LAYOUT_SCHEMA_VERSION,
@@ -127,16 +219,17 @@ DEFAULT_LAYOUT_CONFIG: dict[str, Any] = {
     "global": {
         "density": "compact",
         "fontSize": 9.0,
-        "lineHeight": 1.28,
-        "moduleMargin": 0.55,
-        "marginVertical": 8.0,
+        "lineHeight": 1.25,
+        "moduleMargin": 0.5,
+        "marginVertical": 8.5,
         "marginHorizontal": 9.0,
         "titleStyle": "underline",
         "sectionOrder": [
             "education",
-            "skills",
-            "research_interests",
             "honors",
+            "publications",
+            "research_interests",
+            "skills",
             "work_experience",
             "project_experience",
             "custom_sections",
@@ -146,84 +239,56 @@ DEFAULT_LAYOUT_CONFIG: dict[str, Any] = {
         "hiddenSections": [],
         "splitWorkExperience": False,
         "titleOverrides": {},
+        "sectionPlacements": {},
     },
-    "basics": {
-        "preset": "centered",
-        "contactLayout": "inline",
-        "photoPosition": "right",
-        "hiddenFields": [],
-    },
-    "education": {
-        "preset": "classic",
-        "schoolTagStyle": "filled",
-        "metricsPlacement": "below",
-        "hiddenMetrics": [],
-        "thesisDisplay": "expanded",
-    },
-    "work_experience": {
-        "preset": "classic",
-        "detailsStyle": "bullets",
-        "datePosition": "right",
-        "showJobType": True,
-    },
-    "project_experience": {
-        "preset": "classic",
-        "detailsStyle": "bullets",
-        "datePosition": "right",
-        "showRole": True,
-        "showDate": True,
-    },
-    "others": {
-        "preset": "inline",
-        "fieldOrder": ["certificates", "languages"],
-        "hiddenFields": [],
-        "separator": "pipe",
-    },
-    "self_evaluation": {
-        "preset": "paragraphs",
-    },
+    "basics": _module_contract("basics",
+        preset="left-aligned",
+        contactLayout="inline",
+        photoPosition="right",
+        photoWidthMm=21.0,
+        hiddenFields=[],
+    ),
+    "education": _module_contract("education",
+        preset="compact",
+        schoolTagStyle="text",
+        metricsPlacement="with-degree",
+        hiddenMetrics=[],
+        thesisDisplay="expanded",
+    ),
+    "skills": _module_contract("skills", listStyle="bullet"),
+    "research_interests": _module_contract("research_interests", listStyle="bullet"),
+    "honors": _module_contract("honors", listStyle="bullet"),
+    "publications": _module_contract("publications", listStyle="bullet"),
+    "work_experience": _module_contract("work_experience",
+        preset="compact",
+        detailsStyle="bullets",
+        datePosition="right",
+        showJobType=True,
+    ),
+    "internship_experience": _module_contract("internship_experience",
+        preset="compact", detailsStyle="bullets", datePosition="right", showJobType=True,
+    ),
+    "project_experience": _module_contract("project_experience",
+        preset="compact",
+        detailsStyle="bullets",
+        datePosition="right",
+        showRole=True,
+        showDate=True,
+    ),
+    "custom_sections": _module_contract("custom_sections", listStyle="bullet"),
+    "others": _module_contract("others",
+        preset="tags",
+        fieldOrder=["skills", "certificates", "languages"],
+        hiddenFields=[],
+        separator="dot",
+    ),
+    "self_evaluation": _module_contract("self_evaluation", preset="compact", listStyle="paragraph"),
 }
 
 DENSITY_VALUES = {
-    "compact": {"fontSize": 9.0, "lineHeight": 1.28, "moduleMargin": 0.55},
-    "standard": {"fontSize": 9.5, "lineHeight": 1.28, "moduleMargin": 0.65},
+    "compact": {"fontSize": 9.0, "lineHeight": 1.25, "moduleMargin": 0.5},
+    "standard": {"fontSize": 9.5, "lineHeight": 1.25, "moduleMargin": 0.65},
     "comfortable": {"fontSize": 10.0, "lineHeight": 1.45, "moduleMargin": 0.8},
-}
-
-LAYOUT_TEMPLATES = {
-    "classic-professional": {
-        "label": "经典专业",
-        "density": "standard",
-        "global": {"titleStyle": "underline", "marginVertical": 10.0, "marginHorizontal": 10.0},
-        "basics": {"preset": "centered", "contactLayout": "inline"},
-        "education": {"preset": "classic", "schoolTagStyle": "outline", "metricsPlacement": "below"},
-        "work_experience": {"preset": "classic", "detailsStyle": "bullets", "datePosition": "right"},
-        "project_experience": {"preset": "classic", "detailsStyle": "bullets", "datePosition": "right"},
-        "others": {"preset": "inline", "separator": "dot"},
-        "self_evaluation": {"preset": "paragraphs"},
-    },
-    "modern-clean": {
-        "label": "简洁现代",
-        "density": "standard",
-        "global": {"titleStyle": "plain", "marginVertical": 10.0, "marginHorizontal": 10.0},
-        "basics": {"preset": "left-aligned", "contactLayout": "inline"},
-        "education": {"preset": "three-column", "schoolTagStyle": "text", "metricsPlacement": "info-column"},
-        "work_experience": {"preset": "classic", "detailsStyle": "bullets", "datePosition": "right"},
-        "project_experience": {"preset": "classic", "detailsStyle": "bullets", "datePosition": "right"},
-        "others": {"preset": "inline", "separator": "dot"},
-        "self_evaluation": {"preset": "paragraphs"},
-    },
-    "compact-tech": {
-        "label": "紧凑技术",
-        "density": "compact",
-        "global": {"titleStyle": "plain", "marginVertical": 8.5, "marginHorizontal": 9.0},
-        "basics": {"preset": "left-aligned", "contactLayout": "inline"},
-        "education": {"preset": "compact", "schoolTagStyle": "outline", "metricsPlacement": "with-degree"},
-        "work_experience": {"preset": "compact", "detailsStyle": "bullets", "datePosition": "right"},
-        "project_experience": {"preset": "compact", "detailsStyle": "bullets", "datePosition": "right"},
-        "others": {"preset": "tags", "separator": "dot"},
-        "self_evaluation": {"preset": "compact"},
-    },
 }
 
 ENUMS = {
@@ -237,9 +302,12 @@ ENUMS = {
     ("education", "schoolTagStyle"): {"filled", "outline", "text", "hidden"},
     ("education", "metricsPlacement"): {"below", "with-degree", "info-column"},
     ("education", "thesisDisplay"): {"expanded", "compact", "hidden"},
-    ("work_experience", "preset"): {"classic", "compact"},
+    ("work_experience", "preset"): {"compact"},
     ("work_experience", "detailsStyle"): {"bullets", "paragraph"},
     ("work_experience", "datePosition"): {"right", "inline"},
+    ("internship_experience", "preset"): {"compact"},
+    ("internship_experience", "detailsStyle"): {"bullets", "paragraph"},
+    ("internship_experience", "datePosition"): {"right", "inline"},
     ("project_experience", "preset"): {"classic", "compact"},
     ("project_experience", "detailsStyle"): {"bullets", "paragraph"},
     ("project_experience", "datePosition"): {"right", "inline"},
@@ -262,7 +330,9 @@ MODULE_LABELS = {
     "skills": "专业技能",
     "research_interests": "研究方向",
     "honors": "主要荣誉",
+    "publications": "论文",
     "work_experience": "工作/实习经历",
+    "internship_experience": "实习经历",
     "project_experience": "项目经历",
     "custom_sections": "自定义栏目",
     "others": "其他信息",
@@ -383,6 +453,117 @@ def _half_point(value: Any, minimum: float, maximum: float, fallback: float) -> 
     return math.floor(bounded * 2 + 0.5) / 2
 
 
+def _legacy_component_rows(module_id: str, config: dict[str, Any]) -> list[dict[str, Any]]:
+    """Translate v1-v6 presets into the renderer-neutral v7 row contract."""
+    rows = deepcopy(DEFAULT_COMPONENT_ROWS[module_id])
+    if module_id == "basics" and config.get("preset") == "centered":
+        return [
+            {"cells": [{"components": ["name", "target_position"], "flow": "stacked", "width": "fill", "alignment": "center"}, {"components": ["photo"], "flow": "stacked", "width": "content", "alignment": "right"}]},
+            {"cells": [{"components": ["personal_meta", "contact", "additional_fields"], "flow": config.get("contactLayout", "inline"), "width": "fill", "alignment": "center"}]},
+        ]
+    if module_id == "education" and config.get("preset") == "classic":
+        return [
+            {"cells": [{"components": ["school", "school_tags"], "flow": "inline", "width": "fill", "alignment": "left"}, {"components": ["date"], "flow": "inline", "width": "content", "alignment": "right"}]},
+            {"cells": [{"components": ["degree", "major"], "flow": "inline", "width": "fill", "alignment": "left"}]},
+            {"cells": [{"components": ["metrics"], "flow": "inline", "width": "fill", "alignment": "left"}]},
+            {"cells": [{"components": ["theses"], "flow": "stacked", "width": "fill", "alignment": "justify"}]},
+        ]
+    if module_id in {"work_experience", "internship_experience"} and config.get("datePosition") == "inline":
+        rows[0] = {"cells": [{"components": ["organization", "position", "job_type", "date"], "flow": "inline", "width": "fill", "alignment": "left"}]}
+    if module_id == "project_experience" and config.get("datePosition") == "inline":
+        rows[0] = {"cells": [{"components": ["project_name", "role", "date"], "flow": "inline", "width": "fill", "alignment": "left"}]}
+    return rows
+
+
+def _normalize_component_rows(module_id: str, supplied: Any, fallback: list[dict[str, Any]], hidden: set[str]) -> list[dict[str, Any]]:
+    allowed = set(MODULE_COMPONENTS[module_id])
+    seen: set[str] = set()
+    rows: list[dict[str, Any]] = []
+    candidates = supplied if isinstance(supplied, list) else []
+    for raw_row in candidates[:12]:
+        if not isinstance(raw_row, dict) or not isinstance(raw_row.get("cells"), list):
+            continue
+        cells = []
+        for raw_cell in raw_row["cells"][:3]:
+            if not isinstance(raw_cell, dict):
+                continue
+            components = []
+            for component in raw_cell.get("components", []):
+                if component in allowed and component not in hidden and component not in seen:
+                    components.append(component)
+            if not components:
+                continue
+            contains_long_text = any((module_id, component) in LONG_TEXT_COMPONENTS for component in components)
+            # Long prose/list components always occupy a full-width cell. This
+            # is the common subset that remains editable and stable in Word.
+            if contains_long_text:
+                components = [component for component in components if (module_id, component) in LONG_TEXT_COMPONENTS]
+                alignment = raw_cell.get("alignment") if raw_cell.get("alignment") in {"left", "justify"} else "justify"
+                width = "fill"
+                flow = "stacked"
+            else:
+                alignment = raw_cell.get("alignment") if raw_cell.get("alignment") in {"left", "center", "right"} else "left"
+                width = raw_cell.get("width") if raw_cell.get("width") in {"content", "fill", "equal"} else "fill"
+                flow = raw_cell.get("flow") if raw_cell.get("flow") in {"inline", "stacked"} else "inline"
+            if "photo" in components:
+                components = ["photo"]
+                width, flow, alignment = "content", "stacked", "right"
+            seen.update(components)
+            cells.append({
+                "components": components,
+                "flow": flow,
+                "width": width,
+                "alignment": alignment,
+            })
+        if cells:
+            # A long text cell cannot share its row with narrow metadata cells.
+            long_cell = next((cell for cell in cells if any((module_id, item) in LONG_TEXT_COMPONENTS for item in cell["components"])), None)
+            rows.append({"cells": [long_cell] if long_cell else cells})
+
+    missing = [component for component in MODULE_COMPONENTS[module_id] if component not in seen and component not in hidden]
+    if missing:
+        for fallback_row in fallback:
+            cells = []
+            for fallback_cell in fallback_row["cells"]:
+                components = [item for item in fallback_cell["components"] if item in missing]
+                if components:
+                    cells.append({**deepcopy(fallback_cell), "components": components})
+                    for item in components:
+                        if item in missing:
+                            missing.remove(item)
+            if cells:
+                rows.append({"cells": cells})
+    return rows or deepcopy(fallback)
+
+
+def _normalize_module_contract(result: dict[str, Any], source: dict | None, supplied_version: int) -> None:
+    source = source if isinstance(source, dict) else {}
+    for module_id in MODULE_COMPONENTS:
+        module = result[module_id]
+        # Section title styling and alignment are document-wide rules. Legacy
+        # per-module overrides are accepted on input but deliberately cleared.
+        module["titleStyle"] = None
+        module["titleAlignment"] = None
+        module["paragraphSpacing"] = _bounded_number(module.get("paragraphSpacing"), 0, 1.5, 0.09)
+        module["itemSpacing"] = _bounded_number(module.get("itemSpacing"), 0, 2, 0.22)
+        module["contentBlockSpacing"] = _bounded_number(module.get("contentBlockSpacing"), 0, 2, 0.14)
+        module["rowSpacing"] = _bounded_number(module.get("rowSpacing"), 0, 2, 0)
+        try:
+            indent = int(module.get("indentLevel", 0))
+        except (TypeError, ValueError):
+            indent = 0
+        module["indentLevel"] = min(max(indent, 0), 3)
+        hidden = {
+            component for component in module.get("hiddenComponents", [])
+            if component in MODULE_COMPONENTS[module_id] and component not in REQUIRED_COMPONENTS[module_id]
+        }
+        module["hiddenComponents"] = [item for item in MODULE_COMPONENTS[module_id] if item in hidden]
+        fallback = _legacy_component_rows(module_id, module) if supplied_version < 7 else deepcopy(DEFAULT_COMPONENT_ROWS[module_id])
+        raw_module = source.get(module_id) if isinstance(source.get(module_id), dict) else {}
+        raw_rows = raw_module.get("componentRows") if supplied_version >= 7 else fallback
+        module["componentRows"] = _normalize_component_rows(module_id, raw_rows, fallback, hidden)
+
+
 def normalize_layout_config(value: dict | None) -> dict:
     """Normalize unknown/partial input into the complete current contract."""
     try:
@@ -464,12 +645,18 @@ def normalize_layout_config(value: dict | None) -> dict:
     typography = result["typography"]
     typography.update(deepcopy(TYPOGRAPHY_PRESETS[typography["preset"]]))
 
-    global_config["lineHeight"] = _bounded_number(global_config.get("lineHeight"), 1.1, 2.2, 1.28)
-    global_config["moduleMargin"] = _bounded_number(global_config.get("moduleMargin"), 0.25, 2, 0.55)
+    global_config["lineHeight"] = _bounded_number(global_config.get("lineHeight"), 1.0, 1.8, 1.25)
+    global_config["moduleMargin"] = _bounded_number(global_config.get("moduleMargin"), 0.1, 1.0, 0.5)
     global_config["marginVertical"] = _bounded_number(global_config.get("marginVertical"), 3, 12, 9)
     global_config["marginHorizontal"] = _bounded_number(global_config.get("marginHorizontal"), 3, 12, 9)
     global_config["splitWorkExperience"] = bool(global_config.get("splitWorkExperience"))
 
+    old_default_order = [
+        "education", "skills", "research_interests", "honors", "publications",
+        "work_experience", "project_experience", "custom_sections", "others", "self_evaluation",
+    ]
+    if supplied_version < 8 and global_config.get("sectionOrder") == old_default_order:
+        global_config["sectionOrder"] = list(DEFAULT_LAYOUT_CONFIG["global"]["sectionOrder"])
     order = list(dict.fromkeys(
         item for item in global_config.get("sectionOrder", []) if item in SECTION_IDS
     ))
@@ -480,9 +667,10 @@ def normalize_layout_config(value: dict | None) -> dict:
         order.insert(work_index, "internship_experience")
     required = [item for item in SECTION_IDS if item != "internship_experience" or global_config["splitWorkExperience"]]
     insertion_points = {
-        "skills": "education",
-        "research_interests": "skills",
-        "honors": "research_interests",
+        "honors": "education",
+        "publications": "honors",
+        "research_interests": "publications",
+        "skills": "research_interests",
         "custom_sections": "project_experience",
     }
     for item in required:
@@ -497,7 +685,8 @@ def normalize_layout_config(value: dict | None) -> dict:
     global_config["hiddenSections"] = list(dict.fromkeys(
         item for item in global_config.get("hiddenSections", []) if item in SECTION_IDS
     ))
-    title_overrides = global_config.get("titleOverrides")
+    supplied_global_config = value.get("global") if isinstance(value, dict) and isinstance(value.get("global"), dict) else {}
+    title_overrides = supplied_global_config.get("titleOverrides", global_config.get("titleOverrides"))
     clean_titles = {}
     if isinstance(title_overrides, dict):
         for section, translations in title_overrides.items():
@@ -519,6 +708,7 @@ def normalize_layout_config(value: dict | None) -> dict:
         ))
 
     basics = result["basics"]
+    basics["photoWidthMm"] = _bounded_number(basics.get("photoWidthMm"), 15, 30, 21)
     if basics["photoPosition"] == "hidden" and "photo" not in basics["hiddenFields"]:
         basics["hiddenFields"].append("photo")
     if "photo" in basics["hiddenFields"]:
@@ -539,9 +729,46 @@ def normalize_layout_config(value: dict | None) -> dict:
 
     for key in ("showJobType",):
         result["work_experience"][key] = bool(result["work_experience"].get(key))
+        result["internship_experience"][key] = bool(result["internship_experience"].get(key))
     for key in ("showRole", "showDate"):
         result["project_experience"][key] = bool(result["project_experience"].get(key))
+    placements = supplied_global_config.get("sectionPlacements", global_config.get("sectionPlacements"))
+    placements = placements if isinstance(placements, dict) else {}
+    global_config["sectionPlacements"] = {
+        section: "education"
+        for section in ("research_interests", "honors", "publications", "others")
+        if placements.get(section) == "education"
+    }
+
+    for section in ("skills", "research_interests", "honors", "publications", "custom_sections", "self_evaluation"):
+        allowed_styles = {"paragraph", "bullet", "numbered"}
+        if result[section].get("listStyle") not in allowed_styles:
+            result[section]["listStyle"] = DEFAULT_LAYOUT_CONFIG[section]["listStyle"]
+    _normalize_module_contract(result, value, supplied_version)
     return result
+
+
+def resolve_module_layout(config: dict | None, module_id: str) -> dict[str, Any]:
+    """Resolve one module without introducing a second line-height source."""
+    normalized = normalize_layout_config(config)
+    if module_id not in MODULE_COMPONENTS:
+        raise KeyError(module_id)
+    module = deepcopy(normalized[module_id])
+    module["resolvedTitleStyle"] = module["titleStyle"] or normalized["global"]["titleStyle"]
+    module["resolvedTitleAlignment"] = module["titleAlignment"] or "left"
+    module["resolvedLineHeight"] = normalized["global"]["lineHeight"]
+    return module
+
+
+def component_position(config: dict | None, module_id: str, component_id: str) -> tuple[int, int] | None:
+    module = resolve_module_layout(config, module_id)
+    if component_id in module["hiddenComponents"]:
+        return None
+    for row_index, row in enumerate(module["componentRows"]):
+        for cell_index, cell in enumerate(row["cells"]):
+            if component_id in cell["components"]:
+                return row_index, cell_index
+    return None
 
 
 def resolve_layout_tokens(config: dict | None = None, style: dict | None = None) -> dict[str, Any]:
@@ -557,8 +784,8 @@ def resolve_layout_tokens(config: dict | None = None, style: dict | None = None)
     overrides = style if isinstance(style, dict) else {}
 
     font_size = _bounded_number(overrides.get("fontSize", global_config["fontSize"]), 8, 11.5, global_config["fontSize"])
-    line_height = _bounded_number(overrides.get("lineHeight", global_config["lineHeight"]), 1.1, 2.2, global_config["lineHeight"])
-    module_margin = _bounded_number(overrides.get("moduleMargin", global_config["moduleMargin"]), 0.25, 2, global_config["moduleMargin"])
+    line_height = _bounded_number(overrides.get("lineHeight", global_config["lineHeight"]), 1.0, 1.8, global_config["lineHeight"])
+    module_margin = _bounded_number(overrides.get("moduleMargin", global_config["moduleMargin"]), 0.1, 1.0, global_config["moduleMargin"])
     font_sizes = typography["fontSizes"]
     body_font_size = font_size
     meta_font_size = font_sizes["meta"]
@@ -614,10 +841,22 @@ def resolve_layout_tokens(config: dict | None = None, style: dict | None = None)
         "educationMiddleMinMm": 30.0,
         "educationColumnBreathingMm": 4.0,
         "educationSideColumnMm": 42.0,
+        "photoWidthMm": normalized["basics"]["photoWidthMm"],
+        "photoHeightMm": normalized["basics"]["photoWidthMm"] * 26.0 / 21.0,
         "marginTopMm": _bounded_number(overrides.get("marginTop", global_config["marginVertical"]), 3, 12, global_config["marginVertical"]),
         "marginBottomMm": _bounded_number(overrides.get("marginBottom", global_config["marginVertical"]), 3, 12, global_config["marginVertical"]),
         "marginLeftMm": _bounded_number(overrides.get("marginLeft", global_config["marginHorizontal"]), 3, 12, global_config["marginHorizontal"]),
         "marginRightMm": _bounded_number(overrides.get("marginRight", global_config["marginHorizontal"]), 3, 12, global_config["marginHorizontal"]),
+        "modules": {
+            module_id: {
+                "paragraphSpacingPt": body_font_size * normalized[module_id]["paragraphSpacing"],
+                "itemSpacingPt": body_font_size * normalized[module_id]["itemSpacing"],
+                "contentBlockSpacingPt": body_font_size * normalized[module_id]["contentBlockSpacing"],
+                "rowSpacingPt": body_font_size * normalized[module_id]["rowSpacing"],
+                "indentPt": body_font_size * 1.55 * normalized[module_id]["indentLevel"],
+            }
+            for module_id in MODULE_COMPONENTS
+        },
     }
 
 
@@ -695,17 +934,6 @@ def apply_density(config: dict, density: str) -> dict:
     return normalize_layout_config(result)
 
 
-def apply_layout_template(config: dict | None, template_id: str) -> dict:
-    """Apply a curated visual bundle while preserving content visibility and section order."""
-    template = LAYOUT_TEMPLATES.get(template_id)
-    if template is None:
-        return normalize_layout_config(config)
-    result = apply_density(config or {}, template["density"])
-    for section in ("typography", "global", "basics", "education", "work_experience", "project_experience", "others", "self_evaluation"):
-        result[section].update(deepcopy(template.get(section, {})))
-    return normalize_layout_config(result)
-
-
 def layout_digest_payload(config: dict | None) -> dict:
     return normalize_layout_config(config)
 
@@ -715,7 +943,7 @@ def build_layout_changes(before: dict | None, after: dict | None) -> list[dict]:
     old = normalize_layout_config(before)
     new = normalize_layout_config(after)
     changes = []
-    for section in ("global", "basics", "education", "work_experience", "project_experience", "others", "self_evaluation"):
+    for section in ("global", *MODULE_COMPONENTS):
         typography_changed = section == "global" and old["typography"] != new["typography"]
         if old[section] == new[section] and not typography_changed:
             continue
@@ -758,7 +986,7 @@ def apply_layout_change_groups(base: dict | None, candidate: dict | None, select
     old = normalize_layout_config(base)
     new = normalize_layout_config(candidate)
     selected = set(selected_ids)
-    for section in ("global", "basics", "education", "work_experience", "project_experience", "others", "self_evaluation"):
+    for section in ("global", *MODULE_COMPONENTS):
         if f"layout-{section}" in selected:
             old[section] = deepcopy(new[section])
             if section == "global":

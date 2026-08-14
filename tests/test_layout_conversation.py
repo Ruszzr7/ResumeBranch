@@ -96,10 +96,12 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pending["resume_candidate"]["basics"]["name"], "测试用户")
         self.assertEqual(pending["layout_candidate"]["education"]["preset"], "three-column")
 
-    async def test_complete_template_request_is_local_and_uses_existing_presets(self):
+    async def test_complete_default_layout_request_is_local_and_uses_current_defaults(self):
+        current_layout = default_layout_config()
+        current_layout["education"]["preset"] = "classic"
         state = AgentState(
-            messages=[HumanMessage(content="请应用简洁现代模板。")],
-            resume_data=resume_payload(), layout_data=default_layout_config(),
+            messages=[HumanMessage(content="请恢复默认排版。")],
+            resume_data=resume_payload(), layout_data=current_layout,
             user_id=7, task_id="task-1",
         )
         self.assertEqual(entry_router(state), "direct_edit")
@@ -108,13 +110,15 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
         llm.ainvoke.assert_not_called()
         candidate = result["pending_confirmation"]["layout_candidate"]
         self.assertEqual(candidate["basics"]["preset"], "left-aligned")
-        self.assertEqual(candidate["education"]["preset"], "three-column")
-        self.assertEqual(candidate["work_experience"]["preset"], "classic")
+        self.assertEqual(candidate["education"]["preset"], "compact")
+        self.assertEqual(candidate["work_experience"]["preset"], "compact")
 
     async def test_mixed_content_and_layout_request_uses_one_local_preview(self):
+        layout = default_layout_config()
+        layout["education"]["schoolTagStyle"] = "outline"
         state = AgentState(
             messages=[HumanMessage(content="把姓名改为张伟，学校标签不要黑底")],
-            resume_data=resume_payload(), layout_data=default_layout_config(),
+            resume_data=resume_payload(), layout_data=layout,
             user_id=7, task_id="task-1",
         )
         self.assertEqual(entry_router(state), "direct_edit")
@@ -179,6 +183,7 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_selecting_layout_group_persists_only_that_group(self):
         before_layout = default_layout_config()
+        before_layout["education"]["schoolTagStyle"] = "outline"
         after_layout = default_layout_config()
         after_layout["education"]["schoolTagStyle"] = "text"
         before_resume = resume_payload()

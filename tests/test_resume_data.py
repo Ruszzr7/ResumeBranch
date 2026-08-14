@@ -5,6 +5,14 @@ from backend.resume_agent import normalize_and_validate_resume
 
 
 class ResumeDataNormalizationTests(unittest.TestCase):
+    def test_publications_are_a_standalone_editable_string_list(self):
+        result = normalize_resume_data({
+            "publications": ["论文 A，已接收", {"text": "论文 B，返修"}],
+            "education": [{"school_name": "示例大学", "theses": []}],
+        })
+        self.assertEqual(result["publications"], ["论文 A，已接收", "论文 B，返修"])
+        self.assertEqual(result["education"][0]["theses"], [])
+
     def test_migrates_gpa_from_legacy_thesis(self):
         source = {
             "education": [

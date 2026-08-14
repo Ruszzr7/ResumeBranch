@@ -3,6 +3,7 @@ export const labels = {
   zh: {
     researchInterests: '研究方向',
     honors: '主要荣誉',
+    publications: '论文',
     skillsSection: '专业技能',
     birthDate: '出生年月',
     // 区块标题
@@ -74,6 +75,7 @@ export const labels = {
   en: {
     researchInterests: 'Research Interests',
     honors: 'Honors',
+    publications: 'Publications',
     skillsSection: 'Professional Skills',
     birthDate: 'Date of Birth',
     // 区块标题

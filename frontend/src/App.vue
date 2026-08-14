@@ -403,7 +403,7 @@ const resumeEditorMetrics = computed(() => {
   const tokens = resolveLayoutTokens(activeLayoutConfig.value)
   return {
     fontSizePt: tokens.bodyFontSizePt,
-    labelFontSizePt: tokens.labelFontSizePt,
+    labelFontSizePt: tokens.bodyFontSizePt,
     labelFontWeight: tokens.labelFontWeight,
     listTextIndentPt: tokens.listTextIndentPt,
     lineHeight: tokens.lineHeight,
@@ -412,18 +412,23 @@ const resumeEditorMetrics = computed(() => {
   }
 })
 const projectIntroFlow = project => resolveContentBlockFlow({
-  type: 'paragraph',
+  type: project?._introType || 'paragraph',
   semantic_role: 'introduction',
   label: project?._introLabel,
-  label_bold: project?._introLabelBold !== false
+  label_bold: false
 })
 const projectDutiesFlow = project => resolveContentBlockFlow({
-  type: 'numbered_list', semantic_role: 'responsibilities', label: project?._dutiesLabel,
-  label_bold: project?._dutiesLabelBold !== false
+  type: project?._dutiesType || 'numbered_list', semantic_role: 'responsibilities', label: project?._dutiesLabel,
+  label_bold: false
 })
 const genericDetailsFlow = () => resolveContentBlockFlow({
   type: 'bullet_list', semantic_role: 'generic', label: ''
 })
+const CONTENT_BLOCK_TYPE_OPTIONS = {
+  paragraph: '段落',
+  bullet_list: '分点',
+  numbered_list: '编号'
+}
 const hasEditorText = value => Boolean(String(value || '').trim())
 const showTaskCreateDialog = ref(false)
 const newTaskTitle = ref('')
@@ -549,6 +554,7 @@ const resumeFormData = ref({
   education: [],
   research_interests: [],
   honors: [],
+  publications: [],
   work_experience: [],
   project_experience: [],
   custom_sections: [],
@@ -567,7 +573,45 @@ const workDetailsText = ref('')
 const projectDetailsText = ref('')
 const researchInterestsText = ref('')
 const honorsText = ref('')
+const publicationsText = ref('')
 const selfEvalText = ref('')
+const EDITABLE_MODULE_TITLE_DEFAULTS = Object.freeze({
+  education: '教育经历',
+  honors: '主要荣誉',
+  publications: '论文',
+  research_interests: '研究方向',
+  skills: '专业技能',
+  work_experience: '工作经历',
+  project_experience: '项目经历',
+  others: '证书与语言',
+  self_evaluation: '自我评价'
+})
+const resumeModuleTitles = ref({ ...EDITABLE_MODULE_TITLE_DEFAULTS })
+let resumeEditorPreviousPreviewLayout = null
+
+function initializeResumeModuleTitles() {
+  const overrides = activeLayoutConfig.value.global?.titleOverrides || {}
+  resumeModuleTitles.value = Object.fromEntries(Object.entries(EDITABLE_MODULE_TITLE_DEFAULTS).map(([section, fallback]) => [
+    section,
+    overrides[section]?.[currentLang.value] || fallback
+  ]))
+}
+
+function buildResumeTitleLayout() {
+  const candidate = normalizeLayoutConfig(activeLayoutConfig.value)
+  for (const [section, fallback] of Object.entries(EDITABLE_MODULE_TITLE_DEFAULTS)) {
+    const title = String(resumeModuleTitles.value[section] || '').trim() || fallback
+    candidate.global.titleOverrides[section] = {
+      ...(candidate.global.titleOverrides[section] || {}),
+      [currentLang.value]: title
+    }
+  }
+  return normalizeLayoutConfig(candidate)
+}
+
+function previewResumeModuleTitles() {
+  previewLayoutConfig.value = buildResumeTitleLayout()
+}
 
 // 首次进入选择弹窗状态
 const showStartDialog = ref(false)
@@ -2002,12 +2046,12 @@ function initializeExperienceContentEditor(proj) {
   const intro = blocks.find(block => resolveContentBlockFlow(block).semanticRole === 'introduction')
   const duties = blocks.find(block => resolveContentBlockFlow(block).semanticRole === 'responsibilities')
   const extraBlocks = blocks.filter(block => block !== intro && block !== duties)
-  proj._introLabel = intro ? String(intro.label ?? '') : '项目简介'
-  proj._dutiesLabel = duties ? String(duties.label ?? '') : '项目职责'
-  proj._introLabelBold = intro?.label_bold !== false
-  proj._dutiesLabelBold = duties?.label_bold !== false
-  proj._introText = intro?.text || ''
-  proj._dutiesText = arrayToMultiline(duties?.items || [])
+  proj._introLabel = intro ? String(intro.label ?? '') : '**项目简介**'
+  proj._dutiesLabel = duties ? String(duties.label ?? '') : '**项目职责**'
+  proj._introType = intro?.type || 'paragraph'
+  proj._dutiesType = duties?.type || 'numbered_list'
+  proj._introText = intro?.type === 'paragraph' ? (intro?.text || '') : arrayToMultiline(intro?.items || [])
+  proj._dutiesText = duties?.type === 'paragraph' ? (duties?.text || '') : arrayToMultiline(duties?.items || [])
   proj._extraDetailsText = arrayToMultiline(extraBlocks.flatMap(block => block?.items?.length ? block.items : (block?.text ? [block.text] : [])))
 
   if (!blocks.length && Array.isArray(proj.details)) {
@@ -2047,26 +2091,72 @@ function initializeWorkContentEditor(work) {
 }
 
 function editableExperienceToContentBlocks(work) {
-  const introText = String(work?._introText || '').trim()
-  const duties = multilineToArray(work?._dutiesText)
+  const contentBlock = (semanticRole, label, type, rawText) => {
+    const resolvedType = CONTENT_BLOCK_TYPE_OPTIONS[type] ? type : 'paragraph'
+    const values = multilineToArray(rawText)
+    if (!values.length) return null
+    return {
+      type: resolvedType,
+      semantic_role: semanticRole,
+      label: String(label || '').trim(),
+      label_bold: false,
+      text: resolvedType === 'paragraph' ? values.join(' ') : '',
+      items: resolvedType === 'paragraph' ? [] : values
+    }
+  }
   const lines = multilineToArray(work?._detailsText ?? work?._extraDetailsText)
   const blocks = []
-  if (introText) blocks.push({
-    type: 'paragraph', semantic_role: 'introduction', label: String(work?._introLabel || '').trim(),
-    label_bold: work?._introLabelBold !== false, text: introText, items: []
-  })
-  if (duties.length) blocks.push({
-    type: 'numbered_list', semantic_role: 'responsibilities', label: String(work?._dutiesLabel || '').trim(),
-    label_bold: work?._dutiesLabelBold !== false, text: '', items: duties
-  })
+  const intro = contentBlock('introduction', work?._introLabel, work?._introType || 'paragraph', work?._introText)
+  const duties = contentBlock('responsibilities', work?._dutiesLabel, work?._dutiesType || 'numbered_list', work?._dutiesText)
+  if (intro) blocks.push(intro)
+  if (duties) blocks.push(duties)
   if (lines.length) blocks.push({
     type: 'bullet_list', semantic_role: 'generic', label: '', label_bold: true, text: '', items: lines
   })
   return blocks
 }
 
+function migrateEditableDefaultBold(data) {
+  if (!data || Number(data.formatting_version || 0) >= 1) return
+  const wrap = value => {
+    const text = String(value || '').trim()
+    return !text || (text.startsWith('**') && text.endsWith('**')) ? text : `**${text}**`
+  }
+  if (data.basics) {
+    data.basics.name = wrap(data.basics.name)
+    data.basics.target_position = wrap(data.basics.target_position)
+  }
+  for (const education of data.education || []) education.school_name = wrap(education.school_name)
+  for (const work of data.work_experience || []) {
+    work.company_name = wrap(work.company_name)
+    for (const block of work.content_blocks || []) {
+      if (block?.label) {
+        block.label = wrap(block.label)
+        block.label_bold = false
+      }
+    }
+  }
+  for (const project of data.project_experience || []) {
+    project.project_name = wrap(project.project_name)
+    for (const block of project.content_blocks || []) {
+      if (block?.label) {
+        block.label = wrap(block.label)
+        block.label_bold = false
+      }
+    }
+  }
+  data.formatting_version = 1
+}
+
 // 打开简历编辑弹窗
 function openResumeEditDialog() {
+  resumeEditorPreviousPreviewLayout = previewLayoutConfig.value
+    ? JSON.parse(JSON.stringify(previewLayoutConfig.value))
+    : null
+  initializeResumeModuleTitles()
+  newResumeSkill.value = ''
+  newResumeCert.value = ''
+  newResumeLang.value = ''
   // 深拷贝当前简历数据
   if (resumeData.value && Object.keys(resumeData.value).length > 0) {
     resumeFormData.value = JSON.parse(JSON.stringify(resumeData.value))
@@ -2077,6 +2167,7 @@ function openResumeEditDialog() {
       education: [],
       research_interests: [],
       honors: [],
+      publications: [],
       work_experience: [],
       project_experience: [],
       custom_sections: [],
@@ -2092,9 +2183,11 @@ function openResumeEditDialog() {
   resumeFormData.value.education = resumeFormData.value.education || []
   resumeFormData.value.research_interests = resumeFormData.value.research_interests || []
   resumeFormData.value.honors = resumeFormData.value.honors || []
+  resumeFormData.value.publications = resumeFormData.value.publications || []
   resumeFormData.value.work_experience = resumeFormData.value.work_experience || []
   resumeFormData.value.project_experience = resumeFormData.value.project_experience || []
   resumeFormData.value.custom_sections = resumeFormData.value.custom_sections || []
+  migrateEditableDefaultBold(resumeFormData.value)
   resumeFormData.value.others = resumeFormData.value.others || { skills: [], certificates: [], languages: [] }
   resumeFormData.value.self_evaluation = resumeFormData.value.self_evaluation || []
 
@@ -2139,6 +2232,7 @@ function openResumeEditDialog() {
 
   researchInterestsText.value = arrayToMultiline(resumeFormData.value.research_interests)
   honorsText.value = arrayToMultiline(resumeFormData.value.honors)
+  publicationsText.value = arrayToMultiline(resumeFormData.value.publications)
   // 转换自我评价为多行文本
   selfEvalText.value = arrayToMultiline(resumeFormData.value.self_evaluation || [])
 
@@ -2187,6 +2281,8 @@ function convertDateRangeToSave(item) {
 function closeResumeEditDialog() {
   isResumeEditDialogOpen.value = false
   photoError.value = ''
+  previewLayoutConfig.value = resumeEditorPreviousPreviewLayout
+  resumeEditorPreviousPreviewLayout = null
 }
 
 // 处理证件照上传
@@ -2307,7 +2403,10 @@ function removeEducation(index) {
 // 添加学校标签
 function addSchoolTag(edu) {
   if (edu.newSchoolTag && edu.newSchoolTag.trim()) {
-    edu.school_tags.push(edu.newSchoolTag.trim())
+    const tags = edu.newSchoolTag.split(/[\/·]/).map(tag => tag.trim()).filter(Boolean)
+    for (const tag of tags) {
+      if (!edu.school_tags.includes(tag)) edu.school_tags.push(tag)
+    }
     edu.newSchoolTag = ''
   }
 }
@@ -2321,10 +2420,8 @@ function addWork() {
     job_type: '全职',
     content_blocks: [],
     details: [],
-    _introLabel: '项目简介',
-    _dutiesLabel: '项目职责',
-    _introLabelBold: true,
-    _dutiesLabelBold: true,
+    _introLabel: '**项目简介**',
+    _dutiesLabel: '**项目职责**',
     _introText: '',
     _dutiesText: '',
     _detailsText: ''
@@ -2354,10 +2451,8 @@ function addProject() {
     date_range: ['', ''],
     content_blocks: [],
     details: [],
-    _introLabel: '项目简介',
-    _dutiesLabel: '项目职责',
-    _introLabelBold: true,
-    _dutiesLabelBold: true,
+    _introLabel: '**项目简介**',
+    _dutiesLabel: '**项目职责**',
     _introText: '',
     _dutiesText: '',
     _extraDetailsText: ''
@@ -2447,6 +2542,9 @@ function removeBasicAdditionalField(index) {
 async function saveResume() {
   isSaving.value = true
   try {
+    addResumeSkill()
+    addResumeCert()
+    addResumeLang()
     // 复制数据进行处理
     const dataToSave = JSON.parse(JSON.stringify(resumeFormData.value))
 
@@ -2464,7 +2562,7 @@ async function saveResume() {
       if (work._detailsText !== undefined) {
         work.content_blocks = editableExperienceToContentBlocks(work)
         work.details = []
-        for (const key of ['_introLabel', '_dutiesLabel', '_introLabelBold', '_dutiesLabelBold', '_introText', '_dutiesText', '_detailsText', '_extraDetailsText']) delete work[key]
+        for (const key of ['_introLabel', '_dutiesLabel', '_introLabelBold', '_dutiesLabelBold', '_introType', '_dutiesType', '_introText', '_dutiesText', '_detailsText', '_extraDetailsText']) delete work[key]
       }
     })
     dataToSave.project_experience?.forEach(proj => {
@@ -2475,6 +2573,8 @@ async function saveResume() {
       delete proj._dutiesLabel
       delete proj._introLabelBold
       delete proj._dutiesLabelBold
+      delete proj._introType
+      delete proj._dutiesType
       delete proj._introText
       delete proj._dutiesText
       delete proj._extraDetailsText
@@ -2482,6 +2582,7 @@ async function saveResume() {
 
     dataToSave.research_interests = multilineToArray(researchInterestsText.value)
     dataToSave.honors = multilineToArray(honorsText.value)
+    dataToSave.publications = multilineToArray(publicationsText.value)
     dataToSave.custom_sections = (dataToSave.custom_sections || [])
       .map(section => ({
         title: String(section.title || '').trim(),
@@ -2499,6 +2600,19 @@ async function saveResume() {
     })
 
     if (response.ok) {
+      const layoutCandidate = buildResumeTitleLayout()
+      const layoutResponse = await fetch(`/tasks/${currentTaskId.value}/layout`, {
+        method: 'PUT',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ layout_config: layoutCandidate })
+      })
+      const layoutPayload = await layoutResponse.json().catch(() => ({}))
+      if (!layoutResponse.ok) {
+        showNotice(layoutPayload.detail || '简历内容已保存，但模块标题保存失败，请重试')
+        return
+      }
+      handleLayoutUpdated(layoutPayload.layout_config || layoutCandidate)
+      resumeEditorPreviousPreviewLayout = null
       closeResumeEditDialog()
       // 刷新简历渲染
       loadResume()
@@ -4212,9 +4326,7 @@ watch(
 
           <div class="resume-form-section">
             <div class="resume-format-hint" role="note">
-              <span>选中文字后按</span>
-              <kbd>Ctrl+B</kbd>
-              <span>加粗或取消加粗；内容框右下方显示按当前正文设置预计在简历中所占行数</span>
+              <span>填写内容可按 Ctrl+B 加粗；内容框右下角显示当前设置下内容的预计占据行数</span>
             </div>
 
             <!-- 基本信息 -->
@@ -4248,7 +4360,7 @@ watch(
             <div class="form-grid">
               <div class="field-group">
                 <label>姓名</label>
-                <RichTextEditor v-model="resumeFormData.basics.name" placeholder="请输入" compact />
+                <RichTextEditor v-model="resumeFormData.basics.name" placeholder="请输入" compact default-bold />
               </div>
               <div class="field-group">
                 <label>性别</label>
@@ -4286,7 +4398,7 @@ watch(
             </div>
 
             <!-- 教育背景 -->
-            <h4 class="section-title">教育背景</h4>
+            <RichTextEditor v-model="resumeModuleTitles.education" class="module-title-editor" compact default-bold @update:modelValue="previewResumeModuleTitles" />
             <div v-for="(edu, i) in resumeFormData.education" :key="i" class="array-item">
               <div class="array-item-header">
                 <span>学历 {{ i + 1 }}</span>
@@ -4295,7 +4407,7 @@ watch(
               <div class="form-grid">
                 <div class="field-group">
                   <label>学校</label>
-                  <RichTextEditor v-model="edu.school_name" placeholder="请输入" compact />
+                  <RichTextEditor v-model="edu.school_name" placeholder="请输入" compact default-bold />
                 </div>
                 <div class="field-group">
                   <label>专业</label>
@@ -4365,22 +4477,15 @@ watch(
                       <span v-html="formatInlineHtml(tag)"></span>
                       <button @click="edu.school_tags.splice(j, 1)" class="tag-remove">×</button>
                     </span>
-                    <input v-model="edu.newSchoolTag" @keydown.enter="addSchoolTag(edu)" placeholder="回车添加标签" class="tag-input" />
+                    <RichTextEditor v-model="edu.newSchoolTag" placeholder="如 211 · 双一流" compact />
+                    <button type="button" class="tag-add-btn" @click="addSchoolTag(edu)">添加</button>
                   </div>
                 </div>
               </div>
             </div>
             <button @click="addEducation" class="add-btn">+ 添加学历</button>
 
-            <h4 class="section-title">研究方向</h4>
-            <RichTextEditor
-              v-model="researchInterestsText"
-              placeholder="每行一条研究方向，导入内容会按原文保留"
-              class="rich-editor-field"
-              :resume-metrics="resumeEditorMetrics"
-            />
-
-            <h4 class="section-title">主要荣誉</h4>
+            <RichTextEditor v-model="resumeModuleTitles.honors" class="module-title-editor" compact default-bold @update:modelValue="previewResumeModuleTitles" />
             <RichTextEditor
               v-model="honorsText"
               placeholder="每行一项奖学金、竞赛奖项或荣誉"
@@ -4388,8 +4493,40 @@ watch(
               :resume-metrics="resumeEditorMetrics"
             />
 
+            <RichTextEditor v-model="resumeModuleTitles.publications" class="module-title-editor" compact default-bold @update:modelValue="previewResumeModuleTitles" />
+            <RichTextEditor
+              v-model="publicationsText"
+              placeholder="论文标题（中科院一区 Top，IF 10），已接收"
+              class="rich-editor-field"
+              :resume-metrics="resumeEditorMetrics"
+            />
+
+            <RichTextEditor v-model="resumeModuleTitles.research_interests" class="module-title-editor" compact default-bold @update:modelValue="previewResumeModuleTitles" />
+            <RichTextEditor
+              v-model="researchInterestsText"
+              placeholder="每行一条研究方向，导入内容会按原文保留"
+              class="rich-editor-field"
+              :resume-metrics="resumeEditorMetrics"
+            />
+
+            <!-- 专业技能 -->
+            <RichTextEditor v-model="resumeModuleTitles.skills" class="module-title-editor" compact default-bold @update:modelValue="previewResumeModuleTitles" />
+            <div class="others-section">
+              <div class="field-group full-width">
+                <label>技能条目</label>
+                <div class="tags-input">
+                  <span v-for="(skill, i) in resumeFormData.others.skills" :key="i" class="tag">
+                    <span v-html="formatInlineHtml(skill)"></span>
+                    <button @click="resumeFormData.others.skills.splice(i, 1)" class="tag-remove">×</button>
+                  </span>
+                  <RichTextEditor v-model="newResumeSkill" placeholder="添加技能" compact />
+                  <button type="button" class="tag-add-btn" @click="addResumeSkill">添加</button>
+                </div>
+              </div>
+            </div>
+
             <!-- 工作经历 -->
-            <h4 class="section-title">工作经历</h4>
+            <RichTextEditor v-model="resumeModuleTitles.work_experience" class="module-title-editor" compact default-bold @update:modelValue="previewResumeModuleTitles" />
             <div v-for="(work, i) in resumeFormData.work_experience" :key="i" class="array-item">
               <div class="array-item-header">
                 <span>工作 {{ i + 1 }}</span>
@@ -4398,7 +4535,7 @@ watch(
               <div class="form-grid">
                 <div class="field-group">
                   <label>公司</label>
-                  <RichTextEditor v-model="work.company_name" placeholder="请输入" compact />
+                  <RichTextEditor v-model="work.company_name" placeholder="请输入" compact default-bold />
                 </div>
                 <div class="field-group">
                   <label>职位</label>
@@ -4443,16 +4580,15 @@ watch(
               </div>
               <!-- 可选的项目化工作内容；普通工作内容仍可无标签显示。 -->
               <div class="array-item-nested">
-                <div class="semantic-label-heading">
-                  <label>简介标签</label>
-                  <input v-model="work._introLabel" class="semantic-label-input" placeholder="项目简介" />
-                  <button type="button" @click="work._introLabelBold = !work._introLabelBold">
-                    {{ work._introLabelBold ? '取消加粗' : '设为加粗' }}
-                  </button>
+                <div class="content-block-heading-row">
+                  <RichTextEditor v-model="work._introLabel" placeholder="项目简介" compact default-bold />
+                  <select v-model="work._introType" aria-label="项目简介内容形式">
+                    <option v-for="(label, value) in CONTENT_BLOCK_TYPE_OPTIONS" :key="value" :value="value">{{ label }}</option>
+                  </select>
                 </div>
                 <RichTextEditor
                   v-model="work._introText"
-                  placeholder="可选；填写该工作中具体项目的背景和目标"
+                  placeholder="填写内容；分点或编号形式下每行一项"
                   class="rich-editor-field"
                   :resume-metrics="resumeEditorMetrics"
                   :resume-flow="projectIntroFlow(work)"
@@ -4460,16 +4596,15 @@ watch(
                 <div v-if="hasEditorText(work._introText) && !hasEditorText(work._introLabel)" class="semantic-hidden-notice">标签为空，该简介已保留但不会显示或导出。</div>
               </div>
               <div class="array-item-nested">
-                <div class="semantic-label-heading">
-                  <label>职责标签</label>
-                  <input v-model="work._dutiesLabel" class="semantic-label-input" placeholder="项目职责" />
-                  <button type="button" @click="work._dutiesLabelBold = !work._dutiesLabelBold">
-                    {{ work._dutiesLabelBold ? '取消加粗' : '设为加粗' }}
-                  </button>
+                <div class="content-block-heading-row">
+                  <RichTextEditor v-model="work._dutiesLabel" placeholder="项目职责" compact default-bold />
+                  <select v-model="work._dutiesType" aria-label="项目职责内容形式">
+                    <option v-for="(label, value) in CONTENT_BLOCK_TYPE_OPTIONS" :key="value" :value="value">{{ label }}</option>
+                  </select>
                 </div>
                 <RichTextEditor
                   v-model="work._dutiesText"
-                  placeholder="可选；每行一项，模板自动编号"
+                  placeholder="填写内容；分点或编号形式下每行一项"
                   class="rich-editor-field"
                   :resume-metrics="resumeEditorMetrics"
                   :resume-flow="projectDutiesFlow(work)"
@@ -4490,7 +4625,7 @@ watch(
             <button @click="addWork" class="add-btn">+ 添加工作经历</button>
 
             <!-- 项目经历 -->
-            <h4 class="section-title">项目经历</h4>
+            <RichTextEditor v-model="resumeModuleTitles.project_experience" class="module-title-editor" compact default-bold @update:modelValue="previewResumeModuleTitles" />
             <div v-for="(proj, i) in resumeFormData.project_experience" :key="i" class="array-item">
               <div class="array-item-header">
                 <span>项目 {{ i + 1 }}</span>
@@ -4499,7 +4634,7 @@ watch(
               <div class="form-grid">
                 <div class="field-group">
                   <label>项目名称</label>
-                  <RichTextEditor v-model="proj.project_name" placeholder="请输入" compact />
+                  <RichTextEditor v-model="proj.project_name" placeholder="请输入" compact default-bold />
                 </div>
                 <div class="field-group">
                   <label>角色</label>
@@ -4537,16 +4672,15 @@ watch(
               </div>
               <!-- 项目内容 -->
               <div class="array-item-nested">
-                <div class="semantic-label-heading">
-                  <label>简介标签</label>
-                  <input v-model="proj._introLabel" class="semantic-label-input" placeholder="项目简介" />
-                  <button type="button" @click="proj._introLabelBold = !proj._introLabelBold">
-                    {{ proj._introLabelBold ? '取消加粗' : '设为加粗' }}
-                  </button>
+                <div class="content-block-heading-row">
+                  <RichTextEditor v-model="proj._introLabel" placeholder="项目简介" compact default-bold />
+                  <select v-model="proj._introType" aria-label="项目简介内容形式">
+                    <option v-for="(label, value) in CONTENT_BLOCK_TYPE_OPTIONS" :key="value" :value="value">{{ label }}</option>
+                  </select>
                 </div>
                 <RichTextEditor
                   v-model="proj._introText"
-                  placeholder="简要说明项目背景和目标"
+                  placeholder="填写内容；分点或编号形式下每行一项"
                   class="rich-editor-field"
                   :resume-metrics="resumeEditorMetrics"
                   :resume-flow="projectIntroFlow(proj)"
@@ -4554,16 +4688,15 @@ watch(
                 <div v-if="hasEditorText(proj._introText) && !hasEditorText(proj._introLabel)" class="semantic-hidden-notice">标签为空，该简介已保留但不会显示或导出。</div>
               </div>
               <div class="array-item-nested">
-                <div class="semantic-label-heading">
-                  <label>职责标签</label>
-                  <input v-model="proj._dutiesLabel" class="semantic-label-input" placeholder="项目职责" />
-                  <button type="button" @click="proj._dutiesLabelBold = !proj._dutiesLabelBold">
-                    {{ proj._dutiesLabelBold ? '取消加粗' : '设为加粗' }}
-                  </button>
+                <div class="content-block-heading-row">
+                  <RichTextEditor v-model="proj._dutiesLabel" placeholder="项目职责" compact default-bold />
+                  <select v-model="proj._dutiesType" aria-label="项目职责内容形式">
+                    <option v-for="(label, value) in CONTENT_BLOCK_TYPE_OPTIONS" :key="value" :value="value">{{ label }}</option>
+                  </select>
                 </div>
                 <RichTextEditor
                   v-model="proj._dutiesText"
-                  placeholder="每行填写一项职责，不需要手动输入序号"
+                  placeholder="填写内容；分点或编号形式下每行一项"
                   class="rich-editor-field"
                   :resume-metrics="resumeEditorMetrics"
                   :resume-flow="projectDutiesFlow(proj)"
@@ -4583,7 +4716,7 @@ watch(
             </div>
             <button @click="addProject" class="add-btn">+ 添加项目经历</button>
 
-            <h4 class="section-title">其他原始栏目</h4>
+            <h4 class="section-title">自定义项目</h4>
             <div v-for="(section, sectionIndex) in resumeFormData.custom_sections" :key="`custom-section-${sectionIndex}`" class="array-item">
               <div class="array-item-header">
                 <span>自定义栏目 {{ sectionIndex + 1 }}</span>
@@ -4605,23 +4738,8 @@ watch(
             </div>
             <button type="button" @click="addCustomSection" class="add-btn">+ 添加自定义栏目</button>
 
-            <!-- 专业技能 -->
-            <h4 class="section-title">专业技能</h4>
-            <div class="others-section">
-              <div class="field-group full-width">
-                <label>技能条目</label>
-                <div class="tags-input">
-                  <span v-for="(skill, i) in resumeFormData.others.skills" :key="i" class="tag">
-                    <span v-html="formatInlineHtml(skill)"></span>
-                    <button @click="resumeFormData.others.skills.splice(i, 1)" class="tag-remove">×</button>
-                  </span>
-                  <input v-model="newResumeSkill" @keydown.enter="addResumeSkill" placeholder="回车添加技能" class="tag-input" />
-                </div>
-              </div>
-            </div>
-
             <!-- 补充信息 -->
-            <h4 class="section-title">证书与语言</h4>
+            <RichTextEditor v-model="resumeModuleTitles.others" class="module-title-editor" compact default-bold @update:modelValue="previewResumeModuleTitles" />
             <div class="others-section">
               <div class="field-group full-width">
                 <label>证书</label>
@@ -4630,7 +4748,8 @@ watch(
                     <span v-html="formatInlineHtml(cert)"></span>
                     <button @click="resumeFormData.others.certificates.splice(i, 1)" class="tag-remove">×</button>
                   </span>
-                  <input v-model="newResumeCert" @keydown.enter="addResumeCert" placeholder="回车添加证书" class="tag-input" />
+                  <RichTextEditor v-model="newResumeCert" placeholder="添加证书" compact />
+                  <button type="button" class="tag-add-btn" @click="addResumeCert">添加</button>
                 </div>
               </div>
               <div class="field-group full-width">
@@ -4640,13 +4759,14 @@ watch(
                     <span v-html="formatInlineHtml(lang)"></span>
                     <button @click="resumeFormData.others.languages.splice(i, 1)" class="tag-remove">×</button>
                   </span>
-                  <input v-model="newResumeLang" @keydown.enter="addResumeLang" placeholder="回车添加语言" class="tag-input" />
+                  <RichTextEditor v-model="newResumeLang" placeholder="添加语言" compact />
+                  <button type="button" class="tag-add-btn" @click="addResumeLang">添加</button>
                 </div>
               </div>
             </div>
 
             <!-- 自我评价 -->
-            <h4 class="section-title">自我评价</h4>
+            <RichTextEditor v-model="resumeModuleTitles.self_evaluation" class="module-title-editor" compact default-bold @update:modelValue="previewResumeModuleTitles" />
             <RichTextEditor
               v-model="selfEvalText"
               placeholder="请输入自我评价，支持换行"
@@ -6636,6 +6756,33 @@ watch(
   margin-top: 0.75rem;
 }
 
+.content-block-heading-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 104px;
+  gap: 8px;
+  align-items: stretch;
+  margin-bottom: 8px;
+}
+
+.content-block-heading-row select {
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  padding: 0 9px;
+  color: #ededf1;
+  background: #30323a;
+  font: inherit;
+  font-size: 0.78rem;
+}
+
+.module-title-editor {
+  margin: 1.35rem 0 0.7rem;
+}
+
+.module-title-editor :deep(.editor-content) {
+  font-weight: 700;
+}
+
 .array-item-nested > label {
   display: block;
   font-size: 0.75rem;
@@ -7814,6 +7961,20 @@ watch(
   background: transparent !important;
   border: 0;
   box-shadow: none;
+}
+.resume-dialog .tags-input .rich-editor {
+  flex: 1 1 160px;
+  min-width: 120px;
+}
+.resume-dialog .tags-input .tag-add-btn {
+  height: 34px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 7px;
+  color: #e8eaf0;
+  background: #343740;
+  font-size: 0.78rem;
+  cursor: pointer;
 }
 
 .resume-dialog .add-btn,

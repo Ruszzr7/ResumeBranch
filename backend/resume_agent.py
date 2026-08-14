@@ -33,7 +33,6 @@ from .inline_formatting import InlineFormatError, format_resume_text, plain_inli
 from .resume_changes import apply_resume_changes, build_resume_changes, resume_digest
 from .layout_config import (
     apply_density,
-    apply_layout_template,
     apply_layout_change_groups,
     build_layout_changes,
     default_layout_config,
@@ -201,10 +200,12 @@ class CustomSection(BaseModel):
 
 class Resume(BaseModel):
     """完整简历数据结构"""
+    formatting_version: int = Field(default=0, description="内联文字格式协议版本；0 为兼容旧默认粗体")
     basics: BasicInfo = Field(..., description="基本信息")
     education: List[Education] = Field(default_factory=list, description="教育背景")
     research_interests: List[str] = Field(default_factory=list, description="研究方向或研究兴趣")
     honors: List[str] = Field(default_factory=list, description="荣誉、奖项、奖学金")
+    publications: List[str] = Field(default_factory=list, description="论文，每个元素为一篇完整论文信息")
     work_experience: List[WorkExperience] = Field(default_factory=list, description="工作经历")
     project_experience: List[ProjectExperience] = Field(default_factory=list, description="项目经历")
     custom_sections: List[CustomSection] = Field(default_factory=list, description="其他原始栏目，禁止丢弃")
@@ -431,9 +432,9 @@ CONVERSATION_PROMPT = """
     "gpa": "3.72",
     "gpa_scale": "4.0",
     "ranking": "前10%",
-    "average_score": "88/100",
-    "theses": []
+    "average_score": "88/100"
   }],
+  "publications": ["论文标题（中科院一区 Top，IF 10），已接收"],
   "work_experience": [{
     "company_name": "公司",
     "job_title": "职位",
@@ -555,9 +556,9 @@ RESUME_FULL_EXTRACT_PROMPT = '''# Role
     "gpa": "3.72",
     "gpa_scale": "4.0",
     "ranking": "前10%",
-    "average_score": "88/100",
-    "theses": []
+    "average_score": "88/100"
   }],
+  "publications": ["论文标题（中科院一区 Top，IF 10），已接收"],
   "work_experience": [{
     "company_name": "公司",
     "job_title": "职位",
@@ -588,7 +589,7 @@ RESUME_FULL_EXTRACT_PROMPT = '''# Role
 5. 如果图片中没有某字段，设置为 "" 或 []，不要省略
 6. 绝对不要输出 ```json 或 ``` 标记
 7. 绝对不要输出其他任何文字
-8. “GPA/绩点/平均绩点”写入 gpa，绩点满分写入 gpa_scale；排名写入 ranking；平均分或加权平均分写入 average_score，绝对不要把这些信息写入 theses
+8. “GPA/绩点/平均绩点”写入 gpa，绩点满分写入 gpa_scale；排名写入 ranking；平均分或加权平均分写入 average_score；论文完整内容逐条写入顶层 publications
 
 # 示例
 输入：一张简历图片，包含姓名"张三"，手机"13800138000"，工作经历"2020.01 - 2022.12 在字节跳动担任产品经理"
@@ -622,7 +623,7 @@ def build_resume_extract_prompt() -> str:
         "原文中的（1）（2）或 (1)(2) 等编号只作为 items 的边界，items 内不要重复序号。"
         "原文没有项目角色时 role 必须为空，禁止输出‘角色’、‘项目成员’等占位词。\n"
         "【经历粒度】没有语义标题的普通工作描述才逐条进入 details，禁止合成一个长字符串；"
-        "论文标题与说明写入 theses；GPA、满分、排名和平均分分别进入对应字段。\n"
+        "论文完整内容逐条写入顶层 publications；GPA、满分、排名和平均分分别进入对应字段。\n"
         "【兜底保留】任何不能可靠映射到固定字段的原栏目，都必须按原栏目标题和阅读顺序写入 custom_sections，"
         "绝对不能因为 Schema 没有同名字段而省略。不要重复写入已经映射的内容。\n"
         "【输出】文件中不存在的字段使用空字符串或空数组；basics.photo 留空。"
@@ -877,7 +878,7 @@ _RESUME_DATA_FIELD_RE = re.compile(
     r"公司|职位|研究方向|研究兴趣|荣誉|奖项|技能|证书|语言|自定义栏目|自我评价|简历内容)"
 )
 _STYLE_ONLY_RE = re.compile(
-    r"(?:字体|字号|颜色|填充|背景|边距|行距|间距|模板|排版|页眉|页脚|标签样式)"
+    r"(?:字体|字号|颜色|填充|背景|边距|行距|间距|排版|页眉|页脚|标签样式)"
 )
 _INLINE_FORMAT_ACTION_RE = re.compile(
     r"(?:加粗|设为粗体|设置为粗体|取消加粗|取消粗体|去掉加粗|移除加粗|不再加粗|不加粗|"
@@ -985,7 +986,7 @@ def build_inline_format_candidate(state: AgentState) -> tuple[dict, str, bool]:
 
 _LAYOUT_ACTION_RE = re.compile(
     r"(?:布局|排版|样式|位置|对齐|居中|左对齐|右边|同一行|分行|紧凑|舒展|"
-    r"标签|黑底|描边|普通文字|隐藏|显示|顺序|放到|移到|标题|圆点|段落|模板|恢复默认|重置)"
+    r"标签|黑底|描边|普通文字|隐藏|显示|顺序|放到|移到|标题|圆点|段落|恢复默认|重置)"
 )
 _LAYOUT_SECTION_NAMES = {
     "教育经历": "education", "教育背景": "education",
@@ -1014,14 +1015,12 @@ def build_local_layout_candidate(state: AgentState) -> dict | None:
     current = normalize_layout_config(state.layout_data)
     candidate = deepcopy(current)
 
-    for template_label, template_id in (
-        ("经典专业", "classic-professional"),
-        ("简洁现代", "modern-clean"),
-        ("紧凑技术", "compact-tech"),
+    if re.search(
+        r"(?:(?:使用|应用|切换到|改成|换成).{0,4}默认(?:排版|布局|样式|风格)|"
+        r"(?:恢复|重置)(?:整份简历|全局)?(?:为)?默认(?:排版|布局|样式|风格)?(?:[。！!]|$))",
+        text,
     ):
-        if re.search(rf"(?:使用|应用|切换到|改成|换成)?.{{0,4}}{template_label}(?:模板|排版|风格)?", text):
-            candidate = apply_layout_template(candidate, template_id)
-            break
+        candidate = default_layout_config()
 
     reset_match = re.search(r"(?:恢复|重置)(?:(教育经历|工作经历|实习经历|项目经历|其他信息|自我评价|基本信息))?(?:布局|排版|样式)?(?:为)?默认", text)
     if reset_match:
@@ -1331,7 +1330,7 @@ def build_local_edit_candidate(state: AgentState) -> dict | None:
 def _preview_summary(changes: list[dict]) -> str:
     has_layout_change = any(change.get("kind") == "layout" for change in changes)
     lines = [
-        "已根据你的要求匹配排版预设并生成临时预览："
+        "已根据你的要求生成排版修改预览："
         if has_layout_change else "已根据你的要求生成修改预览：",
         "",
     ]
@@ -1403,7 +1402,7 @@ async def direct_edit_node(state: AgentState) -> dict:
         return {
             "messages": list(state.messages) + [AIMessage(content=(
                 "字号不会通过对话命令直接修改。请打开简历预览上方的“排版”，进入“设置各部分字号”，"
-                "按半磅选择姓名、模块标题、条目标题、元信息、正文和标签字号；弹窗会先实时预览，点击“应用”后才保存。"
+                "按半磅选择姓名、用户信息、模块标题、条目标题、字段标签和正文字号；弹窗会先实时预览，点击“应用”后才保存。"
             ))],
             "resume_data": current,
             "jd_data": state.jd_data or {},
@@ -1478,7 +1477,7 @@ async def proposal_generator_node(state: AgentState) -> dict:
 严格规则：
 1. 只输出一个完整 JSON 对象，不要输出解释、Markdown 或代码块；格式必须是 {{"resume_data": 完整简历, "layout_config": 完整布局配置}}。
 2. 未被用户要求修改的内容必须原样保留，不得编造经历或事实。
-3. GPA 数值写入 gpa，满分写入 gpa_scale，排名写入 ranking，绝对不能写入 theses。
+3. GPA 数值写入 gpa，满分写入 gpa_scale，排名写入 ranking；论文写入顶层 publications。
 4. 如果用户同时提出多项修改，必须一次性体现在同一份完整简历中。
 5. 排版只能修改给定 layout_config 已存在的键和值；禁止输出 CSS、HTML、坐标或新增字段。
 6. 可选值：density=compact/standard/comfortable；titleStyle=underline/plain；basics.preset=centered/left-aligned；contactLayout=inline/stacked；education.preset=classic/compact/three-column；schoolTagStyle=filled/outline/text/hidden；metricsPlacement=below/with-degree/info-column；work/project preset=classic/compact；detailsStyle=bullets/paragraph；datePosition=right/inline；others.preset=inline/tags/stacked；self_evaluation.preset=paragraphs/bullets/compact。
@@ -1943,7 +1942,7 @@ async def tool_node(state: AgentState) -> dict:
                                     if saved_resume:
                                         try:
                                             if any(str(change_id).startswith("layout-") for change_id in ids_to_apply):
-                                                from .database import SessionLocal, save_task_layout_config
+                                                from .database import SessionLocal, get_resume_task, save_task_layout_config
                                                 layout_db = SessionLocal()
                                                 try:
                                                     saved_layout = save_task_layout_config(

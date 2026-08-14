@@ -47,7 +47,7 @@ class ResumeRevisionTests(unittest.TestCase):
         status, restored, restored_layout = undo_latest_resume_revision(self.db, 1, "task-1")
         self.assertEqual(status, "undone")
         self.assertEqual(restored["basics"]["name"], "原姓名")
-        self.assertEqual(restored_layout["education"]["preset"], "classic")
+        self.assertEqual(restored_layout["education"]["preset"], "compact")
         self.db.refresh(self.task)
         self.db.refresh(self.project)
         self.assertEqual(self.task.resume_data["basics"]["name"], "原姓名")

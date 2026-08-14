@@ -14,7 +14,7 @@ from backend.layout import (
 )
 from backend.docx_generator import generate_docx
 from backend.pdf_generator import render_resume_to_html
-from backend.layout_config import LAYOUT_TEMPLATES, apply_layout_template, default_layout_config, normalize_layout_config, resolve_layout_tokens
+from backend.layout_config import default_layout_config, normalize_layout_config, resolve_layout_tokens
 
 
 def resume_with_two_jobs():
@@ -32,6 +32,106 @@ def resume_with_two_jobs():
 
 
 class LayoutRuleTests(unittest.TestCase):
+    def test_education_merge_falls_back_to_standalone_when_education_is_empty(self):
+        data = resume_with_two_jobs()
+        data["publications"] = ["Paper title"]
+        layout = default_layout_config()
+        layout["global"]["sectionPlacements"] = {"publications": "education"}
+
+        html = render_resume_to_html(data, layout_config=layout)
+        self.assertIn('class="section-title title-underline" style="text-align:left">', html)
+        self.assertIn("Paper title", html)
+
+        document = Document(BytesIO(generate_docx(data, layout_config=layout)))
+        text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+        self.assertIn("Paper title", text)
+
+    def test_column_settings_and_education_merges_match_html_and_word(self):
+        data = resume_with_two_jobs()
+        data.update({
+            "formatting_version": 1,
+            "education": [{
+                "school_name": "示例大学", "school_tags": ["211", "双一流"],
+                "degree": "硕士", "major": "电子信息", "date_range": ["2024", "2027"],
+                "theses": [],
+            }],
+            "research_interests": ["人机协作"],
+            "honors": ["一等奖学金"],
+            "publications": ["论文标题（中科院一区 Top，IF 10），已接收"],
+            "others": {"skills": ["Python", "Linux"], "certificates": ["软件设计师"], "languages": ["英语 CET-6"]},
+        })
+        layout = default_layout_config()
+        layout["global"]["titleOverrides"] = {"skills": {"zh": "技术栈"}}
+        layout["global"]["sectionPlacements"] = {
+            "research_interests": "education", "honors": "education",
+            "publications": "education", "others": "education",
+        }
+        layout["global"]["sectionOrder"] = [
+            "education", "publications", "research_interests", "honors", "skills",
+            "work_experience", "project_experience", "custom_sections", "others", "self_evaluation",
+        ]
+        layout["skills"]["listStyle"] = "numbered"
+
+        html = render_resume_to_html(data, layout_config=layout)
+        self.assertIn("技术栈", html)
+        self.assertIn('list-style-numbered', html)
+        self.assertIn('component-school_tags">211 · 双一流</span>', html)
+        self.assertIn('education-merged-title">论文</h4>', html)
+        self.assertNotIn('class="section-title title-underline" style="text-align:left">论文</h2>', html)
+        self.assertIn("论文标题（中科院一区 Top，IF 10），已接收", html)
+        self.assertLess(html.index('education-merged-title">论文</h4>'), html.index('education-merged-title">研究方向</h4>'))
+        self.assertLess(html.index('education-merged-title">研究方向</h4>'), html.index('education-merged-title">主要荣誉</h4>'))
+        self.assertIn("margin: var(--item-spacing) 0 var(--paragraph-spacing);", html)
+        self.assertIn("color: #111111;", html)
+
+        document = Document(BytesIO(generate_docx(data, layout_config=layout)))
+        text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+        table_text = "\n".join(cell.text for table in document.tables for row in table.rows for cell in row.cells)
+        self.assertIn("示例大学 · 211 · 双一流", table_text)
+        self.assertIn("技术栈", text)
+        self.assertIn("论文标题（中科院一区 Top，IF 10），已接收", text)
+        publication_heading = next(paragraph for paragraph in document.paragraphs if paragraph.text == "论文")
+        self.assertFalse(bool(publication_heading._p.xpath("./w:pPr/w:pBdr")))
+        merged_headings = [paragraph.text for paragraph in document.paragraphs if paragraph.text in {"论文", "研究方向", "主要荣誉", "证书与语言"}]
+        self.assertEqual(merged_headings, ["论文", "研究方向", "主要荣誉", "证书与语言"])
+
+    def test_certificates_and_languages_render_as_a_standalone_ordered_section(self):
+        data = resume_with_two_jobs()
+        data["others"] = {
+            "skills": [],
+            "certificates": ["软件设计师"],
+            "languages": ["英语 CET-6"],
+        }
+        layout = default_layout_config()
+
+        html = render_resume_to_html(data, layout_config=layout)
+        self.assertIn("证书与语言", html)
+        self.assertIn("证书：软件设计师", html)
+        self.assertIn("语言：英语 CET-6", html)
+
+        document = Document(BytesIO(generate_docx(data, layout_config=layout)))
+        text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+        table_text = "\n".join(cell.text for table in document.tables for row in table.rows for cell in row.cells)
+        self.assertIn("证书与语言", text)
+        self.assertIn("证书：软件设计师", table_text)
+        self.assertIn("语言：英语 CET-6", table_text)
+
+    def test_explicit_title_formatting_can_cancel_legacy_default_bold_in_all_exports(self):
+        data = resume_with_two_jobs()
+        data["education"] = [{"school_name": "示例大学", "date_range": [], "school_tags": [], "theses": []}]
+        legacy_html = render_resume_to_html(data, layout_config=default_layout_config())
+        self.assertIn("--manual-title-font-weight: 700", legacy_html)
+        legacy_doc = Document(BytesIO(generate_docx(data, layout_config=default_layout_config())))
+        legacy_school = next(cell for table in legacy_doc.tables for row in table.rows for cell in row.cells if "示例大学" in cell.text)
+        self.assertTrue(bool(legacy_school.paragraphs[0].runs[0].bold))
+
+        data["formatting_version"] = 1
+        explicit_html = render_resume_to_html(data, layout_config=default_layout_config())
+        self.assertIn("--manual-title-font-weight: 400", explicit_html)
+        explicit_doc = Document(BytesIO(generate_docx(data, layout_config=default_layout_config())))
+        explicit_school = next(cell for table in explicit_doc.tables for row in table.rows for cell in row.cells if "示例大学" in cell.text)
+        self.assertFalse(bool(explicit_school.paragraphs[0].runs[0].bold))
+
     def test_v1_default_layout_migrates_to_compact_high_density_defaults(self):
         layout = normalize_layout_config({
             "version": 1,
@@ -41,7 +141,7 @@ class LayoutRuleTests(unittest.TestCase):
                 "sectionOrder": ["education", "project_experience", "others"],
             },
         })
-        self.assertEqual(layout["version"], 6)
+        self.assertEqual(layout["version"], 8)
         self.assertEqual(layout["global"]["fontSize"], 9)
         self.assertEqual(layout["global"]["lineHeight"], 1.28)
         self.assertIn("skills", layout["global"]["sectionOrder"])
@@ -80,7 +180,7 @@ class LayoutRuleTests(unittest.TestCase):
         style = {"pageBreakBefore": "work_experience:1"}
         html = render_resume_to_html(resume_with_two_jobs(), style)
         self.assertIn(
-            'class="work-item preset-classic date-right page-break-before"',
+            'class="work-item preset-compact date-right page-break-before"',
             html,
         )
 
@@ -105,12 +205,13 @@ class LayoutRuleTests(unittest.TestCase):
         html = render_resume_to_html(data, layout_config=layout)
         self.assertIn("basics-left-aligned", html)
         self.assertIn("preset-three-column", html)
-        header_start = html.index('<div class="education-header">')
-        header_end = html.index('</div>', html.index('<div class="graduation-date">', header_start))
-        self.assertIn('<div class="education-degree-column">', html[header_start:header_end])
-        self.assertIn('education-metrics-column academic-metrics', html[header_start:header_end])
-        self.assertIn('GPA：3.8/4.0', html[header_start:header_end])
-        self.assertIn("tag-text", html)
+        header_start = html.index('<div class="module-component-rows">', html.index('class="education-item'))
+        header_end = html.index('</div></div></div>', header_start)
+        header = html[header_start:header_end]
+        self.assertIn('component-degree', header)
+        self.assertIn('component-metrics', header)
+        self.assertIn('GPA：3.8/4.0', header)
+        self.assertIn('component-school_tags', header)
         self.assertIn("details-paragraph", html)
         self.assertIn("title-plain", html)
         self.assertIn("border-bottom: 1px solid #333333", html)
@@ -119,7 +220,25 @@ class LayoutRuleTests(unittest.TestCase):
             document_xml = archive.read("word/document.xml").decode("utf-8")
         self.assertIn('w:color="333333"', document_xml)
 
-    def test_all_templates_keep_dates_right_aligned_and_work_heading_on_one_row(self):
+    def test_default_compact_education_restores_symmetric_columns_and_unlabeled_metrics(self):
+        data = resume_with_two_jobs()
+        data["education"] = [{
+            "school_name": "示例大学", "degree": "硕士", "major": "电子信息",
+            "date_range": ["2022", "2025"], "gpa": "3.8", "gpa_scale": "5.0",
+            "ranking": "前10%", "theses": [],
+        }]
+        html = render_resume_to_html(data, layout_config=default_layout_config())
+        self.assertIn(
+            "grid-template-columns:var(--education-compact-side-column) "
+            "var(--education-middle-column) var(--education-compact-side-column)",
+            html,
+        )
+        self.assertIn('style="text-align:left;justify-content:flex-start"><span class="module-component component-degree">硕士</span>', html)
+        self.assertIn('component-metrics">3.8/5.0 (前10%)</span>', html)
+        self.assertNotIn('component-metrics">GPA', html)
+        self.assertIn('text-align:right;justify-content:flex-end', html)
+
+    def test_default_layout_keeps_dates_right_aligned_and_work_heading_on_one_row(self):
         data = resume_with_two_jobs()
         data["work_experience"][0].update({"company_name": "示例科技", "job_title": "机器人算法工程师", "job_type": "实习"})
         data["project_experience"] = [{
@@ -129,50 +248,46 @@ class LayoutRuleTests(unittest.TestCase):
             "details": [],
         }]
 
-        for template_id in LAYOUT_TEMPLATES:
-            layout = apply_layout_template({}, template_id)
-            tokens = resolve_layout_tokens(layout)
-            html = render_resume_to_html(data, layout_config=layout)
-            self.assertIn('class="work-item preset-', html, template_id)
-            self.assertIn('date-right', html, template_id)
-            self.assertIn('.project-item.date-right .project-header', html, template_id)
-            self.assertIn('grid-template-columns: minmax(0, 1fr) auto', html, template_id)
-            self.assertIn('page-break-inside: avoid', html, template_id)
-            work_start = html.index('<div class="work-main">')
-            work_end = html.index('</div>', html.index('class="work-period"', work_start))
-            work_fragment = html[work_start:work_end]
-            self.assertIn('示例科技', work_fragment, template_id)
-            self.assertIn('机器人算法工程师', work_fragment, template_id)
-            self.assertIn('(实习)', work_fragment, template_id)
-            self.assertIn('--meta-font-weight: 400;', html, template_id)
-            self.assertIn('--entry-title-font-weight: 700;', html, template_id)
-            self.assertIn('font-weight: var(--entry-title-font-weight)', html, template_id)
-            self.assertIn('font-weight: var(--meta-font-weight)', html, template_id)
+        layout = default_layout_config()
+        tokens = resolve_layout_tokens(layout)
+        html = render_resume_to_html(data, layout_config=layout)
+        self.assertIn('class="work-item preset-', html)
+        self.assertIn('date-right', html)
+        self.assertIn('.project-item.date-right .project-header', html)
+        self.assertIn('grid-template-columns: minmax(0, 1fr) auto', html)
+        self.assertIn('page-break-inside: avoid', html)
+        work_start = html.index('<div class="module-component-rows">', html.index('class="work-item'))
+        work_end = html.index('</div></div></div>', work_start)
+        work_fragment = html[work_start:work_end]
+        self.assertIn('示例科技', work_fragment)
+        self.assertIn('机器人算法工程师', work_fragment)
+        self.assertIn('(实习)', work_fragment)
+        self.assertIn('--meta-font-weight: 400;', html)
+        self.assertIn('--entry-title-font-weight: 700;', html)
+        self.assertIn('font-weight: var(--entry-title-font-weight)', html)
+        self.assertIn('font-weight: var(--meta-font-weight)', html)
 
-            document = Document(BytesIO(generate_docx(data, layout_config=layout)))
-            heading_table = next(
-                table for table in document.tables
-                if any("示例科技" in cell.text for row in table.rows for cell in row.cells)
-            )
-            heading_cell, date_cell = heading_table.rows[0].cells
-            self.assertIn("示例科技 · 机器人算法工程师 (实习)", heading_cell.text, template_id)
-            self.assertEqual(heading_cell.paragraphs[0].runs[0].text, "示例科技", template_id)
-            self.assertTrue(heading_cell.paragraphs[0].runs[0].bold, template_id)
-            self.assertAlmostEqual(heading_cell.paragraphs[0].runs[0].font.size.pt, tokens["entryTitleFontSizePt"], places=1)
-            self.assertEqual(heading_cell.paragraphs[0].runs[1].text, " · 机器人算法工程师 (实习)", template_id)
-            self.assertFalse(bool(heading_cell.paragraphs[0].runs[1].bold), template_id)
-            self.assertAlmostEqual(heading_cell.paragraphs[0].runs[1].font.size.pt, tokens["metaFontSizePt"], places=1)
-            self.assertFalse(bool(date_cell.paragraphs[0].runs[0].bold), template_id)
-            self.assertAlmostEqual(date_cell.paragraphs[0].runs[0].font.size.pt, tokens["metaFontSizePt"], places=1)
+        document = Document(BytesIO(generate_docx(data, layout_config=layout)))
+        heading_table = next(
+            table for table in document.tables
+            if any("示例科技" in cell.text for row in table.rows for cell in row.cells)
+        )
+        heading_cell, date_cell = heading_table.rows[0].cells
+        self.assertIn("示例科技 · 机器人算法工程师 (实习)", heading_cell.text)
+        self.assertEqual(heading_cell.paragraphs[0].runs[0].text, "示例科技")
+        self.assertTrue(heading_cell.paragraphs[0].runs[0].bold)
+        self.assertAlmostEqual(heading_cell.paragraphs[0].runs[0].font.size.pt, tokens["entryTitleFontSizePt"], places=1)
+        self.assertEqual("".join(run.text for run in heading_cell.paragraphs[0].runs[1:]), " · 机器人算法工程师 (实习)")
+        self.assertTrue(all(bool(run.bold) for run in heading_cell.paragraphs[0].runs[1:]))
+        self.assertTrue(all(abs(run.font.size.pt - tokens["labelFontSizePt"]) < 0.1 for run in heading_cell.paragraphs[0].runs[1:]))
+        self.assertTrue(bool(date_cell.paragraphs[0].runs[0].bold))
+        self.assertAlmostEqual(date_cell.paragraphs[0].runs[0].font.size.pt, tokens["labelFontSizePt"], places=1)
 
-    def test_empty_self_evaluation_is_hidden_for_every_template(self):
-        from backend.layout_config import LAYOUT_TEMPLATES, apply_layout_template
-
+    def test_empty_self_evaluation_is_hidden_in_default_layout(self):
         data = resume_with_two_jobs()
         data["self_evaluation"] = ["", "   "]
-        for template_id in LAYOUT_TEMPLATES:
-            html = render_resume_to_html(data, layout_config=apply_layout_template({}, template_id))
-            self.assertNotIn('<section class="section self-evaluation', html, template_id)
+        html = render_resume_to_html(data, layout_config=default_layout_config())
+        self.assertNotIn('<section class="section self-evaluation', html)
 
     def test_word_applies_section_order_and_hidden_sections(self):
         data = resume_with_two_jobs()
@@ -210,7 +325,7 @@ class LayoutRuleTests(unittest.TestCase):
         self.assertIn("研究生二等奖学金", html)
         self.assertIn("校园经历", html)
         self.assertIn("display: block", html)
-        self.assertLess(html.index("协作臂模型预测阻抗控制"), html.index("研究生二等奖学金"))
+        self.assertLess(html.index("研究生二等奖学金"), html.index("协作臂模型预测阻抗控制"))
 
         document = Document(BytesIO(generate_docx(data)))
         combined = "\n".join(
@@ -244,6 +359,32 @@ class LayoutRuleTests(unittest.TestCase):
         self.assertLess(html.index("专业技能"), html.index("项目经历"))
         self.assertIn("body, .degree-major", html)
 
+    def test_semantic_content_blocks_support_paragraph_bullets_and_numbers(self):
+        data = resume_with_two_jobs()
+        data["project_experience"] = [{
+            "project_name": "机器人控制",
+            "content_blocks": [
+                {"type": "paragraph", "semantic_role": "introduction", "label": "项目简介", "text": "段落内容", "items": []},
+                {"type": "bullet_list", "semantic_role": "responsibilities", "label": "项目职责", "text": "", "items": ["分点内容"]},
+                {"type": "numbered_list", "semantic_role": "responsibilities", "label": "实施步骤", "text": "", "items": ["编号内容"]},
+            ],
+        }]
+
+        html = render_resume_to_html(data)
+        self.assertIn("block-paragraph", html)
+        self.assertIn("block-bullet_list", html)
+        self.assertIn("block-numbered_list", html)
+        self.assertIn("段落内容", html)
+        self.assertIn("分点内容", html)
+        self.assertIn("编号内容", html)
+        self.assertIn(".project-inline-label", html)
+        self.assertIn("font-size: var(--body-font-size)", html)
+
+        document = Document(BytesIO(generate_docx(data)))
+        combined = "\n".join(paragraph.text for paragraph in document.paragraphs)
+        for expected in ("段落内容", "分点内容", "编号内容"):
+            self.assertIn(expected, combined)
+
     def test_forced_item_break_preserves_template_and_date_classes(self):
         data = resume_with_two_jobs()
         data["project_experience"] = [
@@ -253,7 +394,7 @@ class LayoutRuleTests(unittest.TestCase):
         html = render_resume_to_html(
             data,
             {"pageBreakBefore": "project_experience:1"},
-            layout_config=apply_layout_template({}, "compact-tech"),
+            layout_config=default_layout_config(),
         )
         self.assertIn(
             'class="project-item preset-compact date-right page-break-before"',
@@ -310,38 +451,36 @@ class LayoutRuleTests(unittest.TestCase):
         self.assertFalse(label_run.bold)
         self.assertEqual(paragraph.alignment, WD_ALIGN_PARAGRAPH.JUSTIFY)
 
-    def test_numbered_skill_keeps_its_number_and_uses_hanging_indent(self):
+    def test_skill_list_style_replaces_imported_markers_and_marker_weight_follows_content(self):
         data = resume_with_two_jobs()
-        data["others"]["skills"] = ["1. Python 与 FastAPI", "沟通协作"]
+        data["others"]["skills"] = ["1. Python 与 FastAPI", "**沟通协作**"]
+        layout = default_layout_config()
+        layout["skills"]["listStyle"] = "numbered"
 
-        html = render_resume_to_html(data)
+        html = render_resume_to_html(data, layout_config=layout)
 
-        self.assertIn(
-            '<li class="list-item skill-list-item native-marker"><span class="native-list-marker">1.</span><span class="native-list-content">Python 与 FastAPI</span></li>',
-            html,
-        )
-        self.assertIn('<li class="list-item skill-list-item">沟通协作</li>', html)
-        self.assertIn('.list-item.native-marker::before { content: none; }', html)
-        self.assertIn('.list-item.skill-list-item.native-marker {', html)
-        self.assertIn('grid-template-columns: var(--list-text-indent) minmax(0, 1fr);', html)
+        self.assertIn('<ul class="list-items module-list list-style-numbered">', html)
+        self.assertIn('<li class="list-item skill-list-item">Python 与 FastAPI</li>', html)
+        self.assertIn('<li class="list-item skill-list-item marker-bold"><strong>沟通协作</strong></li>', html)
+        self.assertNotIn('native-marker', html)
+        self.assertIn('.list-item::before', html)
+        self.assertIn('font-weight: 400', html)
+        self.assertIn('.list-item.marker-bold::before', html)
 
-        document = Document(BytesIO(generate_docx(data)))
-        numbered = next(
-            paragraph for paragraph in document.paragraphs
-            if "1." in paragraph.text and "Python" in paragraph.text
-        )
-        plain = next(paragraph for paragraph in document.paragraphs if "沟通协作" in paragraph.text)
-        self.assertNotEqual(numbered.style.name, "List Bullet")
-        self.assertEqual(plain.style.name, "List Bullet")
+        document = Document(BytesIO(generate_docx(data, layout_config=layout)))
+        numbered = next(paragraph for paragraph in document.paragraphs if "Python" in paragraph.text)
+        bold_numbered = next(paragraph for paragraph in document.paragraphs if "沟通协作" in paragraph.text)
+        self.assertTrue(numbered.text.startswith("\t(1)\tPython"))
+        self.assertTrue(bold_numbered.text.startswith("\t(2)\t沟通协作"))
+        self.assertFalse(next(run for run in numbered.runs if run.text == "(1)").bold)
+        self.assertTrue(next(run for run in bold_numbered.runs if run.text == "(2)").bold)
         self.assertGreater(numbered.paragraph_format.left_indent.mm, 0)
         self.assertAlmostEqual(
             numbered.paragraph_format.first_line_indent.mm,
             -numbered.paragraph_format.left_indent.mm,
             places=1,
         )
-        self.assertTrue(numbered.text.startswith("\t1.\tPython"))
-        self.assertGreater(plain.paragraph_format.left_indent.mm, 0)
-        self.assertLess(plain.paragraph_format.first_line_indent.mm, 0)
+        self.assertAlmostEqual(numbered.paragraph_format.left_indent.mm, 4.9, places=1)
 
     def test_word_numbered_semantic_blocks_use_real_hanging_indent(self):
         data = resume_with_two_jobs()
@@ -474,8 +613,8 @@ class LayoutRuleTests(unittest.TestCase):
         self.assertAlmostEqual(name_run.font.size.pt, 18.5, places=1)
         self.assertAlmostEqual(section_run.font.size.pt, 13.5, places=1)
         self.assertAlmostEqual(company_run.font.size.pt, 12.5, places=1)
-        self.assertAlmostEqual(date_run.font.size.pt, 10.5, places=1)
-        self.assertAlmostEqual(label_run.font.size.pt, 11.5, places=1)
+        self.assertAlmostEqual(date_run.font.size.pt, 11.5, places=1)
+        self.assertAlmostEqual(label_run.font.size.pt, 10, places=1)
         self.assertAlmostEqual(bold_body_run.font.size.pt, 10, places=1)
         self.assertTrue(bold_body_run.bold)
 
@@ -499,7 +638,7 @@ class LayoutRuleTests(unittest.TestCase):
         with ZipFile(BytesIO(generate_docx(data, layout_config=layout))) as archive:
             document_xml = archive.read("word/document.xml").decode("utf-8")
 
-        self.assertIn('<w:gridSpan w:val="3"', document_xml)
+        self.assertIn('<w:tblGrid><w:gridCol w:w="10885"', document_xml)
         self.assertNotIn("<w:docGrid", document_xml)
 
     def test_one_line_education_layout_allows_long_columns_to_wrap_in_bounds(self):
@@ -564,7 +703,7 @@ class LayoutRuleTests(unittest.TestCase):
         self.assertEqual(education_table.cell(0, 1).paragraphs[0].alignment, WD_ALIGN_PARAGRAPH.LEFT)
         self.assertEqual(education_table.cell(0, 2).paragraphs[0].alignment, WD_ALIGN_PARAGRAPH.RIGHT)
 
-    def test_compact_education_keeps_degree_gpa_and_rank_in_centered_middle_frame(self):
+    def test_compact_education_keeps_unlabeled_metrics_in_centered_middle_frame(self):
         data = resume_with_two_jobs()
         data["education"] = [{
             "school_name": "中山大学",
@@ -575,12 +714,12 @@ class LayoutRuleTests(unittest.TestCase):
             "ranking": "前5%",
             "date_range": ["2024.09", "2027.06"],
         }]
-        layout = apply_layout_template({}, "compact-tech")
+        layout = default_layout_config()
 
         html = render_resume_to_html(data, layout_config=layout)
-        self.assertIn("硕士 · 电子信息", html)
-        self.assertIn("硕士 · 电子信息 · 4.0/5.0 (前5%)", html)
-        self.assertNotIn("硕士 · 电子信息 |", html)
+        self.assertIn('component-degree">硕士</span>', html)
+        self.assertIn('component-major">电子信息</span>', html)
+        self.assertIn('component-metrics">4.0/5.0 (前5%)</span>', html)
         self.assertIn("--education-compact-side-column:", html)
         self.assertIn("--education-middle-column:", html)
 
@@ -595,12 +734,12 @@ class LayoutRuleTests(unittest.TestCase):
             education_table.cell(0, 1).text,
             "硕士 · 电子信息 · 4.0/5.0 (前5%)",
         )
+        self.assertEqual(education_table.cell(0, 1).paragraphs[0].alignment, WD_ALIGN_PARAGRAPH.LEFT)
         self.assertAlmostEqual(
             education_table.columns[0].width.mm,
             education_table.columns[2].width.mm,
             places=1,
         )
-        self.assertEqual(education_table.cell(0, 1).paragraphs[0].alignment, WD_ALIGN_PARAGRAPH.LEFT)
 
         with ZipFile(BytesIO(content)) as archive:
             settings_xml = archive.read("word/settings.xml").decode("utf-8")
@@ -613,7 +752,7 @@ class LayoutRuleTests(unittest.TestCase):
         data = resume_with_two_jobs()
         mixed_text = "混排正文与 ASCII token 保留普通空格和自然换行"
         data["work_experience"][0]["details"] = [mixed_text]
-        layout = apply_layout_template({}, "compact-tech")
+        layout = default_layout_config()
 
         html = render_resume_to_html(data, layout_config=layout)
         self.assertIn(mixed_text, html)

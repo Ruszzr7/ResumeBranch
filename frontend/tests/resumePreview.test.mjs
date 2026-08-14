@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 const previewSource = readFileSync(new URL('../src/components/ResumePreview.vue', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
-const templateManagerSource = readFileSync(new URL('../src/components/TemplateManager.vue', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
+const layoutConfigSource = readFileSync(new URL('../src/utils/layoutConfig.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 const appSource = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 
 test('desktop workspace heading and resume toolbar share the compact row height', () => {
@@ -35,7 +35,7 @@ test('preview resolves the same font and physical spacing tokens as exports', ()
   assert.ok(previewSource.includes("'--entry-title-font-weight': layoutTokens.value.entryTitleFontWeight"))
   assert.ok(previewSource.includes('font-size: var(--name-font-size)'))
   assert.ok(previewSource.includes('font-weight: var(--name-font-weight)'))
-  assert.ok(previewSource.includes('font-weight: var(--entry-title-font-weight)'))
+  assert.ok(previewSource.includes('.module-component.component-school { font-size: var(--entry-title-font-size); font-weight: var(--manual-title-font-weight); }'))
   assert.ok(previewSource.includes('font-weight: var(--meta-font-weight)'))
   assert.ok(previewSource.includes('font-size: var(--section-title-font-size)'))
   assert.ok(previewSource.includes('font-size: var(--body-font-size)'))
@@ -52,9 +52,9 @@ test('preview resolves the same font and physical spacing tokens as exports', ()
 })
 
 test('semantic font sizes use a half-point modal with live preview and page-limit guard', () => {
-  assert.ok(previewSource.includes('设置各部分字号'))
+  assert.ok(previewSource.includes('<h3 id="font-size-title">文字大小</h3>'))
   assert.ok(previewSource.includes('class="layout-guide-btn font-size-open-btn"'))
-  assert.ok(previewSource.includes('调整文字大小'))
+  assert.ok(previewSource.includes("const fontSizeRoles = ['name', 'meta', 'sectionTitle', 'entryTitle', 'label', 'body']"))
   assert.equal(previewSource.includes('font-size-slider-track'), false)
   assert.ok(previewSource.includes('FONT_SIZE_LIMITS'))
   assert.equal(previewSource.includes('bodyFontSizeProgress'), false)
@@ -63,6 +63,11 @@ test('semantic font sizes use a half-point modal with live preview and page-limi
   assert.ok(previewSource.includes('activeFontSizes'))
   assert.ok(previewSource.includes('isSavingFontSizes || overflowBeyondPageLimit'))
   assert.ok(previewSource.includes('点击应用后才保存'))
+  assert.equal(previewSource.includes('class="settings-dialog-action" :disabled="isSavingFontSizes" @click="closeFontSizeDialog">取消</button>'), false)
+  assert.ok(previewSource.includes('height: 144px'))
+  assert.ok(previewSource.includes('overflow-y: auto'))
+  assert.ok(layoutConfigSource.includes("meta: '用户信息'"))
+  assert.ok(layoutConfigSource.includes("label: '字段标签'"))
 })
 
 test('resume fields render the escaped bold-only protocol', () => {
@@ -96,10 +101,10 @@ test('legacy work details remain body content regardless of their wording', () =
 })
 
 test('layout menu opens a dedicated bidirectional manual ordering dialog', () => {
-  assert.ok(previewSource.includes('调整模块顺序'))
+  assert.ok(previewSource.includes('<h3 id="section-order-title">模块顺序</h3>'))
   assert.ok(previewSource.includes('showSectionOrderDialog'))
   assert.ok(previewSource.includes('dragOverSection($event, section)'))
-  assert.ok(previewSource.includes('拖动和箭头均支持双向调整'))
+  assert.ok(previewSource.includes('@click="resetSectionOrder">恢复默认</button>'))
   assert.equal(previewSource.includes('根据 JD 推荐排序'), false)
 })
 
@@ -108,6 +113,8 @@ test('section ordering uses a compact left-side dialog so the PDF stays visible'
   assert.ok(previewSource.includes('justify-content: flex-end'))
   assert.ok(previewSource.includes('width: min(340px, calc(100vw - 40px))'))
   assert.ok(previewSource.includes('background: rgba(7, 8, 11, 0.16)'))
+  assert.ok(previewSource.includes('.font-size-overlay {\n  right: auto;\n  left: 156px;'))
+  assert.ok(previewSource.includes('.settings-dialog-action {\n  width: 76px;\n  min-width: 76px;\n  height: 34px;'))
 })
 
 test('section names are larger without enlarging the drag and arrow controls', () => {
@@ -122,15 +129,13 @@ test('empty resume action remains visible on the dark preview background', () =>
   assert.ok(previewSource.includes('background: rgba(95, 143, 242, 0.2)'))
 })
 
-test('numbered generic items suppress the redundant outer bullet', () => {
-  assert.ok(previewSource.includes('hasNativeListMarker'))
-  assert.ok(previewSource.includes("'has-native-marker': hasNativeListMarker(item)"))
-  assert.ok(previewSource.includes('.generic-list-item.has-native-marker::before'))
-  assert.ok(previewSource.includes("'skill-list-item', { 'has-native-marker': hasNativeListMarker(item) }"))
-  assert.ok(previewSource.includes('.generic-list-item.skill-list-item.has-native-marker {'))
-  assert.ok(previewSource.includes('grid-template-columns: var(--list-text-indent) minmax(0, 1fr);'))
-  assert.ok(previewSource.includes('class="native-list-marker"'))
-  assert.ok(previewSource.includes('class="native-list-content"'))
+test('selected list style replaces imported markers and marker weight follows content', () => {
+  assert.ok(previewSource.includes('function moduleListContent(value)'))
+  assert.ok(previewSource.includes("{ 'marker-bold': isFullyBoldText(value) }"))
+  assert.ok(previewSource.includes('.generic-list-item.marker-bold::before'))
+  assert.ok(previewSource.includes('v-html="formatText(moduleListContent(item))"'))
+  assert.equal(previewSource.includes('has-native-marker'), false)
+  assert.equal(previewSource.includes('native-list-marker'), false)
 })
 
 test('imported source can be viewed read-only without replacing the structured resume', () => {
@@ -149,16 +154,58 @@ test('empty compact self evaluation never creates a heading-only section', () =>
   assert.ok(previewSource.includes('values.length && moduleLayout(\'self_evaluation\').preset === \'compact\''))
 })
 
-test('template manager keeps custom templates before default and the create card last', () => {
-  assert.ok(previewSource.includes('class="compact-toolbar-btn template-toolbar-btn"'))
-  assert.equal(previewSource.includes('查看可用排版预设'), false)
-  assert.ok(templateManagerSource.includes('const displayedTemplates = computed(() => [...templates.value, defaultTemplate])'))
-  assert.ok(templateManagerSource.indexOf('v-for="template in displayedTemplates"') < templateManagerSource.indexOf('class="template-card create-card"'))
-  assert.ok(templateManagerSource.includes("template.id === activeTemplateId ? '当前模板' : '应用模板'"))
-  assert.ok(templateManagerSource.includes(": '模板管理'"))
-  assert.ok(templateManagerSource.includes('class="template-action-row"'))
-  assert.ok(templateManagerSource.includes('overflow-x: auto'))
-  assert.equal(templateManagerSource.includes('李靖华'), false)
+test('retired custom-template entry is absent and current-resume column settings are available', () => {
+  assert.equal(previewSource.includes('aria-label="打开模板管理"'), false)
+  assert.equal(previewSource.includes('/layout-templates'), false)
+  assert.ok(previewSource.includes('>栏目设置</button>'))
+  assert.ok(previewSource.includes('并入教育经历'))
+  assert.ok(previewSource.includes('LIST_STYLE_LABELS'))
+  assert.ok(previewSource.includes('showSectionSettingsDialog.value ? sectionSettingsDraft.value : props.layoutConfig'))
+  assert.equal(previewSource.includes('修改当前简历的栏目名称、段落标记，或将相关栏目并入教育经历。'), false)
+})
+
+test('column settings are compact, explicit, and preview every draft selection', () => {
+  assert.ok(previewSource.includes('<h4>分点形式</h4>'))
+  assert.equal(previewSource.includes('<h4>段落开头</h4>'), false)
+  assert.ok(previewSource.includes('function editableSectionPlacement(section)'))
+  assert.ok(previewSource.includes('<option value="standalone">独立栏目</option>'))
+  assert.ok(previewSource.includes(':value="editableSectionPlacement(section)"'))
+  assert.ok(previewSource.includes('v-model="sectionSettingsDraft[section].listStyle"'))
+  assert.ok(previewSource.includes('height: min(600px, calc(100vh - 96px))'))
+  assert.ok(previewSource.includes('box-sizing: border-box'))
+})
+
+test('merged education children use their saved order and cannot leave education', () => {
+  assert.ok(previewSource.includes('.sort((left, right) => sectionOrder(layout.value, left.id) - sectionOrder(layout.value, right.id))'))
+  assert.ok(previewSource.includes('const reorderableEducationChildren = computed'))
+  assert.ok(previewSource.includes("section === 'education' ? [section, ...reorderableEducationChildren.value] : [section]"))
+  assert.ok(previewSource.includes('isEducationChildSection(source) !== isEducationChildSection(targetSection)'))
+  assert.ok(previewSource.includes(':disabled="!canMoveSection(section, -1)"'))
+  assert.ok(previewSource.includes('section-order-dialog-row.education-child-row'))
+  assert.ok(previewSource.includes('margin-left: 24px'))
+})
+
+test('edit content follows the default module order and saves live-editable titles and pending tags', () => {
+  const markers = [
+    '>基本信息</h4>',
+    'v-model="resumeModuleTitles.education"',
+    'v-model="resumeModuleTitles.honors"',
+    'v-model="resumeModuleTitles.publications"',
+    'v-model="resumeModuleTitles.research_interests"',
+    'v-model="resumeModuleTitles.skills"',
+    'v-model="resumeModuleTitles.work_experience"',
+    'v-model="resumeModuleTitles.project_experience"',
+    '>自定义项目</h4>',
+    'v-model="resumeModuleTitles.others"',
+    'v-model="resumeModuleTitles.self_evaluation"'
+  ]
+  const positions = markers.map(marker => appSource.indexOf(marker))
+  assert.ok(positions.every(position => position >= 0))
+  assert.deepEqual(positions, [...positions].sort((left, right) => left - right))
+  assert.ok(appSource.includes('@update:modelValue="previewResumeModuleTitles"'))
+  assert.ok(appSource.includes('candidate.global.titleOverrides[section]'))
+  assert.ok(appSource.includes('addResumeSkill()\n    addResumeCert()\n    addResumeLang()'))
+  assert.ok(appSource.includes('dataToSave.publications = multilineToArray(publicationsText.value)'))
 })
 
 test('source document header stays compact and relies on the toolbar for returning', () => {
@@ -171,17 +218,19 @@ test('single-page preview does not render a redundant 1 / 1 footer', () => {
   assert.ok(previewSource.includes('v-if="pageCount > 1" class="page-footer"'))
 })
 
-test('one-line education uses symmetric outer columns and a left-aligned middle frame', () => {
+test('education uses normalized component rows with configurable alignment and widths', () => {
   assert.ok(previewSource.includes("'--education-side-column': `${layoutTokens.value.educationSideColumnMm}mm`"))
   assert.ok(previewSource.includes("'--education-compact-side-column': `${educationColumnWidths.value.sideMm}mm`"))
   assert.ok(previewSource.includes("'--education-middle-column': `${educationColumnWidths.value.middleMm}mm`"))
   assert.ok(previewSource.includes('grid-template-columns: var(--education-compact-side-column) var(--education-middle-column) var(--education-compact-side-column)'))
   assert.ok(previewSource.includes('grid-template-columns: var(--education-side-column) minmax(0, 1fr) var(--education-side-column)'))
-  assert.ok(previewSource.includes('class="education-middle-column"'))
-  assert.ok(previewSource.includes('compactAcademicMetric(item)'))
-  assert.ok(previewSource.includes('compactEducationMiddle(item)'))
+  assert.ok(previewSource.includes("visibleComponentRows('education', ['theses'])"))
+  assert.ok(previewSource.includes('componentRowStyle(row, \'education\')'))
+  assert.ok(previewSource.includes('componentCellStyle(cell)'))
+  assert.ok(previewSource.includes('educationComponentText(item, component)'))
   assert.ok(previewSource.includes('formatCompactAcademicMetric(item, hidden, t.value.averageScore)'))
   assert.ok(previewSource.includes("filter(Boolean).join(' · ')"))
+  assert.ok(previewSource.includes("(item?.school_tags || []).join(' · ')"))
   assert.ok(previewSource.includes('text-align: left'))
   assert.ok(previewSource.includes('margin-right: 0'))
   assert.ok(previewSource.includes('position: static'))
@@ -194,14 +243,26 @@ test('semantic labels and their numbered responsibilities preserve nested indent
   assert.ok(previewSource.includes('padding-left: var(--list-text-indent)'))
   assert.ok(previewSource.includes('width: calc(var(--list-text-indent) - var(--list-marker-gap))'))
   assert.ok(previewSource.includes('.project-content-block.has-semantic-label > .project-numbered-list'))
-  assert.ok(previewSource.includes('margin-left: var(--list-text-indent)'))
+  assert.ok(previewSource.includes('margin-left: calc(var(--module-indent) + var(--list-text-indent))'))
   assert.ok(previewSource.includes(".list-item::before {\n  content: '•';\n  position: absolute;\n  left: 0;\n  width: calc(var(--list-text-indent) - var(--list-marker-gap));\n  text-align: center;"))
+})
+
+test('field labels and semantic content labels use their requested typography roles', () => {
+  assert.ok(previewSource.includes('.module-component.component-school_tags,'))
+  assert.ok(previewSource.includes('.module-component.component-job_type { font-size: var(--label-font-size); font-weight: var(--label-font-weight); }'))
+  assert.ok(previewSource.includes('.project-block-label { margin-bottom: var(--content-label-spacing); font-size: var(--body-font-size);'))
 })
 
 test('preview applies shared module spacing before every section title', () => {
   assert.ok(previewSource.includes('margin-top: var(--module-margin)'))
   assert.ok(previewSource.includes('margin-bottom: var(--section-title-after)'))
   assert.ok(previewSource.includes('padding-bottom: var(--section-title-border-gap)'))
+})
+
+test('zero module indent does not fall back to the global list indent', () => {
+  assert.match(previewSource, /'--module-indent': `\$\{moduleTokens\.indentPt \?\? 0\}pt`/)
+  assert.match(previewSource, /margin-left: calc\(var\(--module-indent\) \+ var\(--list-text-indent\)\)/)
+  assert.doesNotMatch(previewSource, /'--list-text-indent': `\$\{moduleTokens\.indentPt/)
 })
 
 test('narrow resume toolbar uses the dark workspace palette', () => {
@@ -235,7 +296,6 @@ test('resume toolbar actions follow the requested visual and keyboard order', ()
   const toolbarMarkup = previewSource.slice(toolbarStart, toolbarEnd)
   const orderedMarkers = [
     'aria-label="打开页面缩放"',
-    'aria-label="打开模板管理"',
     'aria-label="打开内容编辑菜单"',
     'aria-label="打开排版设置"',
     'class="compact-toolbar-btn language-btn"',
@@ -257,21 +317,12 @@ test('every toolbar popover is centered under its trigger button', () => {
   assert.ok(popoverCss.includes('transform: translateX(-50%)'))
 })
 
-test('work headings stay inline and right-positioned dates use a two-column grid', () => {
-  assert.ok(previewSource.includes('class="work-main"'))
-  assert.ok(previewSource.includes('workPosition(entry.item)'))
-  assert.ok(previewSource.includes('.work-main .position::before'))
-  assert.ok(previewSource.includes('.project-item.date-right .project-header'))
-  assert.ok(previewSource.includes('grid-template-columns: minmax(0, 1fr) auto'))
+test('work headings use configurable component rows and right-aligned date cells', () => {
+  assert.ok(previewSource.includes("visibleComponentRows(section.id, ['content'])"))
+  assert.ok(previewSource.includes('workComponentText(entry.item, component, section.id)'))
+  assert.ok(previewSource.includes("cell.alignment === 'right' ? 'flex-end'"))
+  assert.ok(previewSource.includes("cell.width === 'content' ? 'max-content' : 'minmax(0, 1fr)'"))
   assert.ok(previewSource.includes('text-align: right'))
-})
-
-test('custom templates use compact sample content and explicit naming workflows', () => {
-  assert.ok(templateManagerSource.includes('示例大学'))
-  assert.ok(templateManagerSource.includes('智能简历助手'))
-  assert.ok(templateManagerSource.includes("openNameDialog('copy', template)"))
-  assert.ok(templateManagerSource.includes('新模板名称'))
-  assert.ok(templateManagerSource.includes('localStorage.setItem(STORAGE_KEY'))
 })
 
 test('zoom stepper reports the live percentage instead of a fixed label', () => {
@@ -279,13 +330,19 @@ test('zoom stepper reports the live percentage instead of a fixed label', () => 
   assert.ok(previewSource.includes('manualZoom.value = Math.min(1, Math.max(0.4, currentRatio + delta))'))
 })
 
-test('restoring default layout requires explicit confirmation', () => {
-  assert.ok(previewSource.includes('@click="requestResetStyleSettings"'))
-  assert.ok(previewSource.includes('恢复默认排版？'))
-  assert.ok(previewSource.includes('确认恢复'))
-  assert.ok(previewSource.includes('@click="resetStyleSettings"'))
-  assert.ok(previewSource.includes('.compact-reset-btn {\n  width: 100%;\n  margin-top: 0.8rem;\n  font-size: 0.72rem;'))
-  const requestStart = previewSource.indexOf('function requestResetStyleSettings')
-  const requestEnd = previewSource.indexOf('function resetStyleSettings', requestStart)
-  assert.equal(previewSource.slice(requestStart, requestEnd).includes('marginVertical.value ='), false)
+test('spacing settings preview as a draft and only reset the four spacing values', () => {
+  assert.ok(previewSource.includes('class="layout-settings-section layout-spacing-section"'))
+  assert.ok(previewSource.includes('@click="resetSpacingDraft">恢复默认</button>'))
+  assert.ok(previewSource.includes('@click="confirmSpacingSettings">确认</button>'))
+  assert.ok(previewSource.includes("activeToolbarMenu.value === 'layout'"))
+  const resetStart = previewSource.indexOf('function resetSpacingDraft')
+  const confirmStart = previewSource.indexOf('function confirmSpacingSettings', resetStart)
+  const resetBody = previewSource.slice(resetStart, confirmStart)
+  for (const field of ['marginVertical', 'marginHorizontal', 'moduleMargin', 'lineHeight']) assert.ok(resetBody.includes(`${field}.value =`))
+  assert.equal(resetBody.includes('fontSizes.value ='), false)
+  assert.equal(previewSource.includes('恢复默认排版'), false)
+  assert.ok(previewSource.includes('v-model.number="moduleMargin" min="0.1" max="1" step="0.1"'))
+  assert.ok(previewSource.includes('v-model.number="lineHeight" min="1" max="1.8" step="0.05"'))
+  assert.equal(previewSource.includes('<div class="layout-settings-heading">文字大小</div>'), false)
+  assert.equal(previewSource.includes('<div class="layout-settings-heading">模块顺序</div>'), false)
 })

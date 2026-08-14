@@ -104,7 +104,7 @@ from .harness.interview import (
     workflow_public_state,
 )
 from .harness.observability import harness_metrics
-from .layout_config import LAYOUT_SCHEMA_VERSION, resolve_layout_tokens
+from .layout_config import LAYOUT_SCHEMA_VERSION, default_layout_config, resolve_layout_tokens
 from .pdf_generator import generate_pdf as _pdf_generator
 from .docx_generator import generate_docx as _docx_generator
 
@@ -833,6 +833,9 @@ async def reset_task_layout(
     current = get_task_layout_config(db, current_user.id, task_id)
     if current is None:
         raise HTTPException(status_code=404, detail="岗位版本不存在")
+    if request.section in {"", "all", None}:
+        config = save_task_layout_config(db, current_user.id, task_id, default_layout_config())
+        return {"success": True, "layout_config": config}
     config = save_task_layout_config(
         db, current_user.id, task_id, reset_layout_section(current, request.section)
     )

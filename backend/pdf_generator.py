@@ -29,6 +29,15 @@ def _split_native_list_marker(value: object) -> tuple[str, str] | None:
     return (match.group(1), match.group(2)) if match else None
 
 
+def _module_list_content(value: object) -> str:
+    parts = _split_native_list_marker(value)
+    return parts[1] if parts else str(value or "")
+
+
+def _is_fully_bold(value: object) -> bool:
+    return bool(re.fullmatch(r"\*\*[^*][\s\S]*\*\*", _module_list_content(value).strip()))
+
+
 def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = None, lang: str = 'zh', layout_config: dict = None) -> str:
     """将简历数据渲染为HTML
 
@@ -45,6 +54,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         resolve_content_block_flow,
         resolve_education_column_widths,
         resolve_layout_tokens,
+        resolve_module_layout,
     )
     layout_config = normalize_layout_config(layout_config)
     global_layout = layout_config["global"]
@@ -99,10 +109,68 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
             order = global_layout["sectionOrder"].index(section) + 1
         except ValueError:
             order = 99
-        return f' style="order:{order}"'
+        module_tokens = tokens["modules"].get(section, tokens["modules"]["custom_sections"])
+        return (
+            f' style="order:{order};'
+            f'--item-spacing:{module_tokens["itemSpacingPt"]:g}pt;'
+            f'--paragraph-spacing:{module_tokens["paragraphSpacingPt"]:g}pt;'
+            f'--content-block-spacing:{module_tokens["contentBlockSpacingPt"]:g}pt;'
+            f'--module-indent:{module_tokens["indentPt"]:g}pt"'
+        )
 
     def section_title(section: str, fallback: str) -> str:
         return global_layout.get("titleOverrides", {}).get(section, {}).get(lang, fallback)
+
+    def merged_into_education(section: str) -> bool:
+        return bool(resume_data.get("education")) and global_layout.get("sectionPlacements", {}).get(section) == "education"
+
+    def title_markup(section: str, text: str) -> str:
+        module = resolve_module_layout(layout_config, section)
+        return (
+            f'<h2 class="section-title title-{module["resolvedTitleStyle"]}" '
+            f'style="text-align:{module["resolvedTitleAlignment"]}">'
+            f'{format_markdown(text)}</h2>'
+        )
+
+    def component_rows_markup(module_id: str, values: dict[str, str], excluded: set[str] | None = None) -> str:
+        module = resolve_module_layout(layout_config, module_id)
+        hidden_components = set(module["hiddenComponents"]) | set(excluded or set())
+        parts = ['<div class="module-component-rows">']
+        for row in module["componentRows"]:
+            active_cells = []
+            for cell in row["cells"]:
+                components = [item for item in cell["components"] if item not in hidden_components and values.get(item)]
+                if components:
+                    active_cells.append((cell, components))
+            if not active_cells:
+                continue
+            is_compact_education_header = (
+                module_id == "education"
+                and module["preset"] == "compact"
+                and len(active_cells) == 3
+                and "school" in active_cells[0][1]
+                and any(item in active_cells[1][1] for item in ("degree", "major", "metrics"))
+                and "date" in active_cells[2][1]
+            )
+            columns = (
+                "var(--education-compact-side-column) var(--education-middle-column) var(--education-compact-side-column)"
+                if is_compact_education_header
+                else " ".join("max-content" if cell["width"] == "content" else "minmax(0, 1fr)" for cell, _ in active_cells)
+            )
+            spacing = tokens["modules"][module_id]["rowSpacingPt"]
+            parts.append(f'<div class="module-component-row" style="grid-template-columns:{columns};margin-bottom:{spacing:g}pt">')
+            for cell, components in active_cells:
+                justify = "flex-end" if cell["alignment"] == "right" else ("center" if cell["alignment"] == "center" else "flex-start")
+                parts.append(
+                    f'<div class="module-component-cell flow-{cell["flow"]}" '
+                    f'style="text-align:{cell["alignment"]};justify-content:{justify}">'
+                )
+                for component in components:
+                    parts.append(f'<span class="module-component component-{component}">{values[component]}</span>')
+                parts.append('</div>')
+            parts.append('</div>')
+        parts.append('</div>')
+        return "".join(parts)
 
     html_parts = []
     section_chunks = []
@@ -124,43 +192,28 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         basics = resume_data["basics"]
         basics_layout = layout_config["basics"]
         hidden_basics = set(basics_layout["hiddenFields"])
-        photo_class = " has-photo" if display_photo and "photo" not in hidden_basics else ""
-        html_parts.append(f'<div class="personal-info basics-{basics_layout["preset"]} contact-{basics_layout["contactLayout"]}{photo_class}" style="order:0">')
-        
-        # 证件照使用绝对定位（不参与居中计算）
-        if display_photo and "photo" not in hidden_basics:
-            html_parts.append(f'<img src="{escape(display_photo, quote=True)}" class="profile-photo" alt="证件照" />')
-        
-        # 姓名
-        html_parts.append(f'<h1 class="name">{format_markdown(basics.get("name", "姓名未填写"))}</h1>')
-        
-        # 联系信息
-        html_parts.append('<div class="contact-info">')
-        contact_values = []
-        if basics.get("gender") and "gender" not in hidden_basics:
-            contact_values.append(str(basics["gender"]))
-        if basics.get("birth_date") and "birth_date" not in hidden_basics:
-            contact_values.append(f'{labels["birthDate"]}：{basics["birth_date"]}')
-        if basics.get("phone") and "phone" not in hidden_basics:
-            contact_values.append(str(basics["phone"]))
-        if basics.get("email") and "email" not in hidden_basics:
-            contact_values.append(str(basics["email"]))
-        if "additional_fields" not in hidden_basics:
-            contact_values.extend(
-                f'{item.get("label", "")}：{item.get("value", "")}'
-                for item in basics.get("additional_fields", [])
-                if item.get("label") and item.get("value")
-            )
-        for index, value in enumerate(contact_values):
-            if index:
-                html_parts.append('<span class="separator">|</span>')
-            html_parts.append(f'<span>{format_markdown(value)}</span>')
-        html_parts.append('</div>')  # contact-info
-        
-        # 目标岗位
-        if basics.get("target_position") and "target_position" not in hidden_basics:
-            html_parts.append(f'<div class="target-position"><span class="inline-label">{labels["targetPosition"]}：</span>{format_markdown(basics["target_position"])}</div>')
-        
+        html_parts.append(f'<div class="personal-info basics-{basics_layout["preset"]} contact-{basics_layout["contactLayout"]}" style="order:0">')
+        personal_meta = " | ".join(filter(None, [
+            str(basics.get("gender", "")) if "gender" not in hidden_basics else "",
+            f'{labels["birthDate"]}：{basics["birth_date"]}' if basics.get("birth_date") and "birth_date" not in hidden_basics else "",
+        ]))
+        contact = " | ".join(filter(None, [
+            str(basics.get("phone", "")) if "phone" not in hidden_basics else "",
+            str(basics.get("email", "")) if "email" not in hidden_basics else "",
+        ]))
+        additional = " | ".join(
+            f'{item.get("label", "")}：{item.get("value", "")}'
+            for item in basics.get("additional_fields", [])
+            if item.get("label") and item.get("value") and "additional_fields" not in hidden_basics
+        )
+        html_parts.append(component_rows_markup("basics", {
+            "name": format_markdown(basics.get("name", labels["nameNotSet"])),
+            "target_position": format_markdown(f'{labels["targetPosition"]}：{basics["target_position"]}') if basics.get("target_position") and "target_position" not in hidden_basics else "",
+            "personal_meta": format_markdown(personal_meta),
+            "contact": format_markdown(contact),
+            "additional_fields": format_markdown(additional),
+            "photo": f'<img src="{escape(display_photo, quote=True)}" class="profile-photo component-photo" alt="证件照" />' if display_photo and "photo" not in hidden_basics else "",
+        }))
         html_parts.append('</div>')  # personal-info
         commit_section("basics", chunk_start)
 
@@ -168,9 +221,10 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     if resume_data.get("education") and len(resume_data["education"]) > 0 and not hidden("education"):
         chunk_start = len(html_parts)
         education_layout = layout_config["education"]
+        education_module = resolve_module_layout(layout_config, "education")
         hidden_metrics = set(education_layout["hiddenMetrics"])
         html_parts.append(f'<section class="section education-section preset-{education_layout["preset"]}{break_class("education:0")}"{order_style("education")}>')
-        html_parts.append(f'<h2 class="section-title title-{global_layout["titleStyle"]}">{format_markdown(section_title("education", labels["education"]))}</h2>')
+        html_parts.append(title_markup("education", section_title("education", labels["education"])))
 
         for edu_index, edu in enumerate(resume_data["education"]):
             item_break = break_class(f"education:{edu_index}") if edu_index > 0 else ''
@@ -187,47 +241,62 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
             if edu.get("average_score") and "average_score" not in hidden_metrics:
                 academic_metrics.append(f'{labels["averageScore"]}：{edu["average_score"]}')
 
-            html_parts.append('<div class="education-header">')
-            html_parts.append('<div class="school-info">')
-            html_parts.append(f'<span class="school">{format_markdown(edu.get("school_name", "学校未填写"))}</span>')
-
-            if edu.get("school_tags") and education_layout["schoolTagStyle"] != "hidden":
-                html_parts.append('<div class="school-tags">')
-                for tag in edu["school_tags"]:
-                    html_parts.append(f'<span class="school-tag tag-{education_layout["schoolTagStyle"]}">{format_markdown(tag)}</span>')
-                html_parts.append('</div>')
-
-            html_parts.append('</div>')
-            html_parts.append('<div class="education-middle-column">')
-            html_parts.append('<div class="education-degree-column">')
-            degree_major = []
-            if edu.get("degree"):
-                degree_major.append(edu["degree"])
-            if edu.get("major"):
-                degree_major.append(edu["major"])
-            if education_layout["preset"] == "compact" and compact_metric:
-                degree_major.append(compact_metric)
-            if degree_major:
-                html_parts.append(f'<div class="degree-major">{format_markdown(" · ".join(degree_major))}</div>')
-            html_parts.append('</div>')
-            if education_layout["preset"] != "compact" and academic_metrics:
-                html_parts.append('<div class="education-metrics-column academic-metrics">')
-                for metric in academic_metrics:
-                    html_parts.append(f'<span>{format_markdown(metric)}</span>')
-                html_parts.append('</div>')
-            html_parts.append('</div>')
-
             date_range = edu.get("date_range", [])
             date_str = ""
             if len(date_range) > 0:
                 date_str = date_range[0]
                 if len(date_range) > 1:
                     date_str += f" - {date_range[1]}"
-            html_parts.append(f'<div class="graduation-date">{format_markdown(date_str)}</div>')
+            component_values = {
+                "school": format_markdown(edu.get("school_name", labels["schoolNotSet"])),
+                "school_tags": " · ".join(format_markdown(tag) for tag in (edu.get("school_tags") or [])) if education_layout["schoolTagStyle"] != "hidden" else "",
+                "degree": format_markdown(edu.get("degree", "")),
+                "major": format_markdown(edu.get("major", "")),
+                "metrics": format_markdown(
+                    compact_education_metric(edu)
+                    if education_layout["preset"] == "compact"
+                    else " · ".join(academic_metrics)
+                ),
+                "date": format_markdown(date_str),
+            }
+            hidden_components = set(education_module["hiddenComponents"]) | {"theses"}
+            html_parts.append('<div class="module-component-rows">')
+            for row in education_module["componentRows"]:
+                cells = []
+                for cell in row["cells"]:
+                    components = [item for item in cell["components"] if item not in hidden_components and component_values.get(item)]
+                    if components:
+                        cells.append((cell, components))
+                if not cells:
+                    continue
+                is_compact_header = (
+                    education_layout["preset"] == "compact"
+                    and len(cells) == 3
+                    and "school" in cells[0][1]
+                    and any(component in cells[1][1] for component in ("degree", "major", "metrics"))
+                    and "date" in cells[2][1]
+                )
+                columns = (
+                    "var(--education-compact-side-column) var(--education-middle-column) var(--education-compact-side-column)"
+                    if is_compact_header
+                    else " ".join("max-content" if cell["width"] == "content" else "minmax(0, 1fr)" for cell, _ in cells)
+                )
+                row_spacing = tokens["modules"]["education"]["rowSpacingPt"]
+                html_parts.append(f'<div class="module-component-row" style="grid-template-columns:{columns};margin-bottom:{row_spacing:g}pt">')
+                for cell, components in cells:
+                    justify = "flex-end" if cell["alignment"] == "right" else ("center" if cell["alignment"] == "center" else "flex-start")
+                    html_parts.append(
+                        f'<div class="module-component-cell flow-{cell["flow"]}" '
+                        f'style="text-align:{cell["alignment"]};justify-content:{justify}">'
+                    )
+                    for component in components:
+                        html_parts.append(f'<span class="module-component component-{component}">{component_values[component]}</span>')
+                    html_parts.append('</div>')
+                html_parts.append('</div>')
             html_parts.append('</div>')
 
             # 论文
-            if edu.get("theses") and len(edu["theses"]) > 0 and education_layout["thesisDisplay"] != "hidden":
+            if edu.get("theses") and len(edu["theses"]) > 0 and education_layout["thesisDisplay"] != "hidden" and "theses" not in education_module["hiddenComponents"]:
                 html_parts.append('<div class="theses">')
                 html_parts.append(f'<h4 class="subfield-title">{labels["thesis"]}</h4>')
                 for thesis in edu["theses"]:
@@ -245,11 +314,38 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
 
             html_parts.append('</div>')
 
+        merged_sections = [
+            ("research_interests", labels["researchInterests"], resume_data.get("research_interests") or []),
+            ("honors", labels["honors"], resume_data.get("honors") or []),
+            ("publications", "Publications" if lang == "en" else "论文", resume_data.get("publications") or []),
+        ]
+        other_values = resume_data.get("others") or {}
+        other_layout = layout_config["others"]
+        other_hidden = set(other_layout["hiddenFields"]) | set(other_layout["hiddenComponents"])
+        other_labels = {"certificates": labels["certificates"], "languages": labels["language"]}
+        other_separator = " · " if other_layout["separator"] == "dot" else " | "
+        merged_other_values = [
+            f'{other_labels[field]}：{other_separator.join(str(value) for value in other_values[field])}'
+            for field in other_layout["fieldOrder"]
+            if field in other_labels and field not in other_hidden and other_values.get(field)
+        ]
+        merged_sections.append(("others", "Certificates & Languages" if lang == "en" else "证书与语言", merged_other_values))
+        merged_sections.sort(key=lambda item: global_layout["sectionOrder"].index(item[0]))
+        for section_id, fallback, values in merged_sections:
+            if not merged_into_education(section_id) or hidden(section_id) or not values:
+                continue
+            html_parts.append(f'<h4 class="subfield-title education-merged-title">{format_markdown(section_title(section_id, fallback))}</h4>')
+            list_style = layout_config.get(section_id, {}).get("listStyle", "bullet")
+            html_parts.append(f'<ul class="list-items module-list list-style-{list_style}">')
+            for value in values:
+                marker_class = " marker-bold" if _is_fully_bold(value) else ""
+                html_parts.append(f'<li class="list-item{marker_class}">{format_markdown(_module_list_content(value))}</li>')
+            html_parts.append('</ul>')
+
         html_parts.append('</section>')
         commit_section("education", chunk_start)
 
     # 工作/实习经历（拆分时仍共用同一视觉预设）
-    work_layout = layout_config["work_experience"]
     work_items = list(enumerate(resume_data.get("work_experience") or []))
     if global_layout["splitWorkExperience"]:
         work_sections = [
@@ -262,10 +358,11 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     for section_id, fallback_title, section_items in work_sections:
         if not section_items or hidden(section_id):
             continue
+        work_layout = layout_config[section_id]
         chunk_start = len(html_parts)
         first_index = section_items[0][0]
         html_parts.append(f'<section class="section work-section preset-{work_layout["preset"]}{break_class(f"{section_id}:{first_index}")}"{order_style(section_id)}>')
-        html_parts.append(f'<h2 class="section-title title-{global_layout["titleStyle"]}">{format_markdown(section_title(section_id, fallback_title))}</h2>')
+        html_parts.append(title_markup(section_id, section_title(section_id, fallback_title)))
 
         for item_position, (work_index, work) in enumerate(section_items):
             item_break = break_class(f"{section_id}:{work_index}") if item_position > 0 else ''
@@ -274,28 +371,18 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
                 f'date-{work_layout["datePosition"]}{item_break}'
             )
             html_parts.append(f'<div class="{work_classes}">')
-            html_parts.append('<div class="work-header">')
-            html_parts.append('<div class="work-main">')
-            html_parts.append(f'<div class="company">{format_markdown(work.get("company_name", "公司未填写"))}</div>')
-
-            job_info = []
-            if work.get("job_title"):
-                job_info.append(work["job_title"])
-            if work.get("job_type") and work_layout["showJobType"]:
-                job_info.append(f"({work['job_type']})")
-            if job_info:
-                html_parts.append(f'<div class="position-department">{format_markdown(" ".join(job_info))}</div>')
-
-            html_parts.append('</div>')
-
             date_range = work.get("date_range", [])
             date_str = ""
             if len(date_range) > 0:
                 date_str = date_range[0]
                 if len(date_range) > 1:
                     date_str += f" - {date_range[1]}"
-            html_parts.append(f'<div class="work-period">{format_markdown(date_str)}</div>')
-            html_parts.append('</div>')
+            html_parts.append(component_rows_markup(section_id, {
+                "organization": format_markdown(work.get("company_name", labels["companyNotSet"])),
+                "position": format_markdown(work.get("job_title", "")),
+                "job_type": format_markdown(f'({work["job_type"]})') if work.get("job_type") and work_layout["showJobType"] else "",
+                "date": format_markdown(date_str),
+            }, {"content"}))
 
             # 工作详情沿用与项目经历一致的语义块，避免标题和已编号内容被重复加圆点。
             for block in work.get("content_blocks") or []:
@@ -317,7 +404,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
                     tag = "ol" if block_type == "numbered_list" else "ul"
                     html_parts.append(f'<{tag} class="{list_class}">')
                     for detail in block.get("items") or []:
-                        item_class = "" if block_type == "numbered_list" else ' class="list-item"'
+                        item_class = (' class="marker-bold"' if _is_fully_bold(detail) else "") if block_type == "numbered_list" else ' class="list-item"'
                         html_parts.append(f'<li{item_class}>{format_markdown(detail)}</li>')
                     html_parts.append(f'</{tag}>')
                 html_parts.append('</div>')
@@ -332,7 +419,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         chunk_start = len(html_parts)
         project_layout = layout_config["project_experience"]
         html_parts.append(f'<section class="section project-section preset-{project_layout["preset"]}{break_class("project_experience:0")}"{order_style("project_experience")}>')
-        html_parts.append(f'<h2 class="section-title title-{global_layout["titleStyle"]}">{format_markdown(section_title("project_experience", labels["projectExperience"]))}</h2>')
+        html_parts.append(title_markup("project_experience", section_title("project_experience", labels["projectExperience"])))
 
         for project_index, project in enumerate(resume_data["project_experience"]):
             item_break = break_class(f"project_experience:{project_index}") if project_index > 0 else ''
@@ -341,30 +428,22 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
                 f'date-{project_layout["datePosition"]}{item_break}'
             )
             html_parts.append(f'<div class="{project_classes}">')
-            html_parts.append('<div class="project-header">')
-            html_parts.append(f'<div class="project-name">{format_markdown(project.get("project_name", project.get("name", "项目未填写")))}</div>')
-
-            role_parts = []
-            if project.get("role") and project_layout["showRole"]:
-                role_parts.append(project["role"])
+            role_value = project.get("role", "") if project_layout["showRole"] else ""
             date_range = project.get("date_range", [])
+            date_value = ""
             if len(date_range) > 0 and project_layout["showDate"]:
-                if role_parts:
-                    role_parts.append("|")
-                role_parts.append(date_range[0])
+                date_value = date_range[0]
                 if len(date_range) > 1:
-                    role_parts.append(f"- {date_range[1]}")
+                    date_value += f" - {date_range[1]}"
             elif project.get("start_date") and project_layout["showDate"]:
-                if role_parts:
-                    role_parts.append("|")
-                role_parts.append(project["start_date"])
+                date_value = project["start_date"]
                 if project.get("end_date"):
-                    role_parts.append(f"- {project['end_date']}")
-
-            if role_parts:
-                html_parts.append(f'<div class="project-role">{format_markdown(" ".join(role_parts))}</div>')
-
-            html_parts.append('</div>')
+                    date_value += f" - {project['end_date']}"
+            html_parts.append(component_rows_markup("project_experience", {
+                "project_name": format_markdown(project.get("project_name") or project.get("name") or labels["projectNotSet"]),
+                "role": format_markdown(role_value),
+                "date": format_markdown(date_value),
+            }, {"content"}))
 
             # 项目详情使用语义块：标题不带圆点，职责内部保留编号。
             for block in project.get("content_blocks") or []:
@@ -386,7 +465,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
                     tag = "ol" if block_type == "numbered_list" else "ul"
                     html_parts.append(f'<{tag} class="{list_class}">')
                     for detail in block.get("items") or []:
-                        item_class = "" if block_type == "numbered_list" else ' class="list-item"'
+                        item_class = (' class="marker-bold"' if _is_fully_bold(detail) else "") if block_type == "numbered_list" else ' class="list-item"'
                         html_parts.append(f'<li{item_class}>{format_markdown(detail)}</li>')
                     html_parts.append(f'</{tag}>')
                 html_parts.append('</div>')
@@ -403,8 +482,8 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
             if not custom.get("title") or not custom.get("items"):
                 continue
             html_parts.append(f'<section class="section custom-section{break_class(f"custom_sections:{custom_index}")}"{order_style("custom_sections")}>')
-            html_parts.append(f'<h2 class="section-title title-{global_layout["titleStyle"]}">{format_markdown(custom["title"])}</h2>')
-            html_parts.append('<ul class="list-items">')
+            html_parts.append(title_markup("custom_sections", custom["title"]))
+            html_parts.append(f'<ul class="list-items module-list list-style-{layout_config["custom_sections"]["listStyle"]}">')
             for value in custom["items"]:
                 html_parts.append(f'<li class="list-item">{format_markdown(value)}</li>')
             html_parts.append('</ul></section>')
@@ -413,47 +492,38 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     # 其他信息
     others = resume_data.get("others") or {}
     others_layout = layout_config["others"]
+    hidden_other_fields = set(others_layout["hiddenFields"]) | set(others_layout["hiddenComponents"])
     visible_other_fields = [
         field for field in others_layout["fieldOrder"]
-        if field != "skills" and field not in others_layout["hiddenFields"] and others.get(field)
+        if field != "skills" and field not in hidden_other_fields and others.get(field)
     ]
-    if visible_other_fields and not hidden("others"):
+    if visible_other_fields and not hidden("others") and not merged_into_education("others"):
         chunk_start = len(html_parts)
         html_parts.append(f'<section class="section others others-{others_layout["preset"]}{break_class("others")}"{order_style("others")}>')
         other_title = "Certificates & Languages" if lang == "en" else "证书与语言"
-        html_parts.append(f'<h2 class="section-title title-{global_layout["titleStyle"]}">{format_markdown(section_title("others", other_title))}</h2>')
+        html_parts.append(title_markup("others", section_title("others", other_title)))
         field_labels = {"skills": labels["skills"], "certificates": labels["certificates"], "languages": labels["language"]}
         separator = " · " if others_layout["separator"] == "dot" else " | "
-        for field in visible_other_fields:
-            html_parts.append('<div class="others-item cert-lang-line">')
-            html_parts.append(f'<span class="cert-lang-label">{field_labels[field]}：</span>')
-            for idx, value in enumerate(others[field]):
-                html_parts.append(f'<span class="inline-list-item">{format_markdown(value)}</span>')
-                if others_layout["preset"] != "tags" and idx < len(others[field]) - 1:
-                    html_parts.append(f'<span class="cert-lang-separator">{separator}</span>')
-            html_parts.append('</div>')
+        values = {
+            field: format_markdown(f'{field_labels[field]}：{separator.join(str(value) for value in others[field])}')
+            for field in visible_other_fields
+        }
+        html_parts.append(component_rows_markup("others", values))
         html_parts.append('</section>')
         commit_section("others", chunk_start)
 
     def render_plain_list_section(section_id: str, title: str, values: list[str]) -> None:
-        if not values or hidden(section_id):
+        if not values or hidden(section_id) or merged_into_education(section_id):
             return
         chunk_start = len(html_parts)
         html_parts.append(f'<section class="section generic-section{break_class(section_id)}"{order_style(section_id)}>')
-        html_parts.append(f'<h2 class="section-title title-{global_layout["titleStyle"]}">{format_markdown(section_title(section_id, title))}</h2>')
-        html_parts.append('<ul class="list-items">')
+        html_parts.append(title_markup(section_id, section_title(section_id, title)))
+        list_style = layout_config[section_id]["listStyle"]
+        html_parts.append(f'<ul class="list-items module-list list-style-{list_style}">')
         for value in values:
-            marker_parts = _split_native_list_marker(value)
-            marker_class = " native-marker" if marker_parts else ""
+            marker_class = " marker-bold" if _is_fully_bold(value) else ""
             section_item_class = " skill-list-item" if section_id == "skills" else ""
-            if section_id == "skills" and marker_parts:
-                marker, content = marker_parts
-                item_html = (
-                    f'<span class="native-list-marker">{escape(marker)}</span>'
-                    f'<span class="native-list-content">{format_markdown(content)}</span>'
-                )
-            else:
-                item_html = format_markdown(value)
+            item_html = format_markdown(_module_list_content(value))
             html_parts.append(f'<li class="list-item{section_item_class}{marker_class}">{item_html}</li>')
         html_parts.append('</ul></section>')
         commit_section(section_id, chunk_start)
@@ -461,18 +531,22 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     render_plain_list_section("skills", labels["skills"], others.get("skills") or [])
     render_plain_list_section("research_interests", labels["researchInterests"], resume_data.get("research_interests") or [])
     render_plain_list_section("honors", labels["honors"], resume_data.get("honors") or [])
+    render_plain_list_section("publications", "Publications" if lang == "en" else "论文", resume_data.get("publications") or [])
 
     # 自我评价
     if resume_data.get("self_evaluation") and len(resume_data["self_evaluation"]) > 0 and not hidden("self_evaluation"):
         chunk_start = len(html_parts)
         self_layout = layout_config["self_evaluation"]
         html_parts.append(f'<section class="section self-evaluation self-{self_layout["preset"]}{break_class("self_evaluation")}"{order_style("self_evaluation")}>')
-        html_parts.append(f'<h2 class="section-title title-{global_layout["titleStyle"]}">{format_markdown(section_title("self_evaluation", labels["selfEvaluation"]))}</h2>')
+        html_parts.append(title_markup("self_evaluation", section_title("self_evaluation", labels["selfEvaluation"])))
         evaluations = resume_data["self_evaluation"]
         if self_layout["preset"] == "compact":
             evaluations = [" ".join(str(item) for item in evaluations)]
+        list_style = self_layout["listStyle"]
+        html_parts.append(f'<div class="module-list list-style-{list_style}">')
         for eval_item in evaluations:
-            html_parts.append(f'<div class="self-eval-item">{format_markdown(eval_item)}</div>')
+            html_parts.append(f'<div class="self-eval-item list-item">{format_markdown(eval_item)}</div>')
+        html_parts.append('</div>')
         html_parts.append('</section>')
         commit_section("self_evaluation", chunk_start)
 
@@ -509,6 +583,8 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         --body-font-weight: {tokens['bodyFontWeight']};
         --meta-font-weight: {tokens['metaFontWeight']};
         --entry-title-font-weight: {tokens['entryTitleFontWeight']};
+        --manual-title-font-weight: {400 if int(resume_data.get('formatting_version') or 0) >= 1 else tokens['entryTitleFontWeight']};
+        --manual-name-font-weight: {400 if int(resume_data.get('formatting_version') or 0) >= 1 else tokens['nameFontWeight']};
         --section-title-font-weight: {tokens['sectionTitleFontWeight']};
         --name-font-weight: {tokens['nameFontWeight']};
         --label-font-weight: {tokens['labelFontWeight']};
@@ -523,6 +599,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         --content-label-spacing: {tokens['contentLabelSpacingPt']:g}pt;
         --numbered-item-spacing: {tokens['numberedItemSpacingPt']:g}pt;
         --list-text-indent: {tokens['listTextIndentPt']:g}pt;
+        --module-indent: 0pt;
         --list-marker-gap: {tokens['listMarkerGapPt']:g}pt;
         --education-side-column: {tokens['educationSideColumnMm']:g}mm;
         --education-compact-side-column: {education_column_widths['sideMm']:g}mm;
@@ -594,8 +671,8 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     }}
 
     .profile-photo {{
-        width: 2.1cm;
-        height: 2.6cm;
+        width: {tokens['photoWidthMm']:g}mm;
+        height: {tokens['photoHeightMm']:g}mm;
         object-fit: cover;
         border: 1px solid #ddd;
         border-radius: 2px;
@@ -701,7 +778,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
 
     .school {{
         font-size: var(--entry-title-font-size);
-        font-weight: var(--entry-title-font-weight);
+        font-weight: var(--manual-title-font-weight);
         color: #212529;
     }}
 
@@ -760,6 +837,30 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         column-gap: 0;
         align-items: baseline;
     }}
+    .module-component-rows {{ display: grid; width: 100%; }}
+    .module-component-row {{ display: grid; width: 100%; align-items: baseline; gap: 0.3em; }}
+    .module-component-cell {{ display: flex; min-width: 0; flex-wrap: wrap; gap: 0.3em; overflow-wrap: anywhere; }}
+    .module-component-cell.flow-stacked {{ flex-direction: column; }}
+    .module-component-cell.flow-inline .module-component + .module-component::before {{ content: ' · '; white-space: pre; }}
+    .module-component-cell.flow-inline .component-position + .component-job_type::before {{ content: ' '; }}
+    .module-component.component-school {{ font-size: var(--entry-title-font-size); font-weight: var(--manual-title-font-weight); }}
+    .module-component.component-organization,
+    .module-component.component-project_name {{ font-size: var(--entry-title-font-size); font-weight: var(--manual-title-font-weight); }}
+    .module-component.component-name {{ font-size: var(--name-font-size); font-weight: var(--manual-name-font-weight); }}
+    .module-component.component-target_position,
+    .module-component.component-personal_meta,
+    .module-component.component-contact,
+    .module-component.component-additional_fields {{ font-size: var(--meta-font-size); font-weight: var(--meta-font-weight); color: #333333; }}
+    .module-component.component-target_position {{ font-weight: var(--manual-title-font-weight); }}
+    .component-photo {{ position: static; flex: none; width: {tokens['photoWidthMm']:g}mm; height: {tokens['photoHeightMm']:g}mm; object-fit: cover; }}
+    .module-component.component-school_tags,
+    .module-component.component-degree,
+    .module-component.component-major,
+    .module-component.component-metrics,
+    .module-component.component-date,
+    .module-component.component-position,
+    .module-component.component-job_type {{ font-size: var(--label-font-size); font-weight: var(--label-font-weight); }}
+    .module-component.component-role {{ font-size: var(--meta-font-size); font-weight: var(--meta-font-weight); }}
     .education-item.preset-three-column .education-header {{
         display: grid;
         width: 100%;
@@ -842,11 +943,15 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     }}
 
     .subfield-title {{
-        font-size: var(--label-font-size);
+        font-size: var(--body-font-size);
         font-weight: var(--label-font-weight);
         color: #6c757d;
         margin-bottom: 0.25em;
         display: block;
+    }}
+    .education-merged-title {{
+        margin: var(--item-spacing) 0 var(--paragraph-spacing);
+        color: #111111;
     }}
 
     .company {{
@@ -897,22 +1002,26 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         width: calc(var(--list-text-indent) - var(--list-marker-gap));
         text-align: center;
         color: #333333;
-        font-weight: bold;
+        font-weight: 400;
     }}
+    .list-item.marker-bold::before {{ font-weight: var(--label-font-weight); }}
 
-    .list-item.native-marker {{ padding-left: 0; }}
-    .list-item.skill-list-item.native-marker {{
-        display: grid;
-        grid-template-columns: var(--list-text-indent) minmax(0, 1fr);
-        padding-left: 0;
-        text-indent: 0;
+    .module-list.list-style-paragraph > .list-item {{ padding-left: var(--module-indent); }}
+    .module-list > .list-item {{ margin-bottom: var(--item-spacing); }}
+    .module-list.list-style-paragraph > .list-item::before {{ content: none; }}
+    .module-list.list-style-bullet > .list-item {{ padding-left: calc(var(--module-indent) + 1.1em); }}
+    .module-list.list-style-bullet > .list-item::before {{ left: var(--module-indent); width: 0.9em; }}
+    .module-list.list-style-numbered {{ counter-reset: module-list-item; }}
+    .module-list.list-style-numbered > .list-item {{
+        padding-left: calc(var(--module-indent) + 2em);
+        counter-increment: module-list-item;
     }}
-    .skill-list-item .native-list-marker {{
-        padding-right: var(--list-marker-gap);
+    .module-list.list-style-numbered > .list-item::before {{
+        content: "(" counter(module-list-item) ")";
+        left: var(--module-indent);
+        width: 1.75em;
         text-align: right;
     }}
-    .skill-list-item .native-list-content {{ min-width: 0; }}
-    .list-item.native-marker::before {{ content: none; }}
 
     .details-paragraph .list-item {{ padding-left: 0; }}
     .details-paragraph .list-item::before {{ content: none; }}
@@ -982,7 +1091,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     .project-block-label,
     .project-inline-label,
     .cert-lang-label {{
-        font-size: var(--label-font-size);
+        font-size: var(--body-font-size);
     }}
 
     .project-block-label,
@@ -1069,8 +1178,10 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     }}
     .project-content-block.has-semantic-label > .project-numbered-list,
     .project-content-block.has-semantic-label > .list-items {{
-        margin-left: var(--list-text-indent);
+        margin-left: calc(var(--module-indent) + var(--list-text-indent));
     }}
+    .project-content-block:not(.has-semantic-label) > .project-numbered-list,
+    .project-content-block:not(.has-semantic-label) > .list-items {{ margin-left: var(--module-indent); }}
     .project-numbered-list > li {{
         position: relative;
         margin-bottom: var(--numbered-item-spacing);
@@ -1084,17 +1195,19 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         width: calc(var(--list-text-indent) - var(--list-marker-gap));
         text-align: right;
         white-space: nowrap;
+        font-weight: 400;
     }}
+    .project-numbered-list > li.marker-bold::before {{ font-weight: var(--label-font-weight); }}
     .project-content-block.has-semantic-label > .project-paragraph,
     .project-content-block.has-semantic-label > .project-block-label {{
         position: relative;
-        padding-left: var(--list-text-indent);
+        padding-left: calc(var(--module-indent) + var(--list-text-indent));
     }}
     .project-content-block.has-semantic-label > .project-paragraph::before,
     .project-content-block.has-semantic-label > .project-block-label::before {{
         content: "•";
         position: absolute;
-        left: 0;
+        left: var(--module-indent);
         width: calc(var(--list-text-indent) - var(--list-marker-gap));
         text-align: center;
         font-weight: 700;

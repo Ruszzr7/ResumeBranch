@@ -95,10 +95,12 @@ def _migrate_gpa_thesis(education: dict) -> None:
 
 
 _KNOWN_TOP_LEVEL = {
+    "formatting_version",
     "basics",
     "education",
     "research_interests",
     "honors",
+    "publications",
     "work_experience",
     "project_experience",
     "custom_sections",
@@ -333,6 +335,7 @@ def normalize_resume_data(data: dict) -> dict:
         ]
     normalized["basics"] = basics
 
+
     education_items = normalized.get("education") or []
     if not isinstance(education_items, list):
         raise TypeError("education must be a list")
@@ -357,7 +360,7 @@ def normalize_resume_data(data: dict) -> dict:
         education.setdefault("school_tags", [])
         education.setdefault("theses", [])
 
-    for key in ("research_interests", "honors", "self_evaluation"):
+    for key in ("research_interests", "honors", "publications", "self_evaluation"):
         if key in normalized:
             normalized[key] = _string_list(normalized.get(key))
 

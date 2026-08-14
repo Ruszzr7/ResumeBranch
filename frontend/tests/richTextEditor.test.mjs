@@ -32,7 +32,7 @@ test('bold guidance appears once at the top of the resume dialog', () => {
   assert.equal(appSource.includes('支持换行和 Ctrl+B 加粗'), false)
   assert.ok(appSource.includes('.resume-format-hint {'))
   assert.ok(appSource.includes('background: transparent;\n  border: 0;'))
-  assert.ok(appSource.includes('内容框右下方显示按当前正文设置预计在简历中所占行数'))
+  assert.ok(appSource.includes('填写内容可按 Ctrl+B 加粗；内容框右下角显示当前设置下内容的预计占据行数'))
 })
 
 test('multiline editors estimate resume visual lines from shared layout metrics', () => {
@@ -56,7 +56,7 @@ test('project introduction line measurement includes its rendered semantic prefi
   assert.ok(appSource.includes(':resume-flow="projectIntroFlow(proj)"'))
 })
 
-test('work and project semantic labels are editable, weighted separately, and hide when blank', () => {
+test('work and project semantic labels use the same inline bold editor and hide when blank', () => {
   assert.equal(editorSource.includes('semanticLabelStates'), false)
   assert.equal(editorSource.includes('data-semantic-label="true"'), false)
   assert.equal(editorSource.includes('semantic-label-weight-change'), false)
@@ -65,11 +65,19 @@ test('work and project semantic labels are editable, weighted separately, and hi
   assert.ok(appSource.includes('v-model="work._introLabel"'))
   assert.ok(appSource.includes('v-model="work._dutiesLabel"'))
   assert.ok(appSource.includes('v-model="proj._introLabel"'))
+  assert.ok(appSource.includes("_introLabel: '**项目简介**'"))
+  assert.equal(appSource.includes('简介标签</label>'), false)
+  assert.equal(appSource.includes('_introLabelBold = !'), false)
   assert.ok(appSource.includes('标签为空，该职责内容已保留但不会显示或导出'))
   assert.equal(appSource.includes("'项目简介', '项目背景', '项目概述', '项目说明'"), false)
   assert.ok(appSource.includes("semantic_role: 'introduction'"))
   assert.ok(appSource.includes('work.content_blocks = editableExperienceToContentBlocks(work)'))
   assert.equal(appSource.includes('work.content_blocks = []'), false)
+  assert.ok(appSource.includes('CONTENT_BLOCK_TYPE_OPTIONS'))
+  assert.ok(appSource.includes('v-model="proj._introType"'))
+  assert.ok(appSource.includes('v-model="proj._dutiesType"'))
+  assert.ok(appSource.includes("type: project?._introType || 'paragraph'"))
+  assert.ok(appSource.includes("type: project?._dutiesType || 'numbered_list'"))
 })
 
 test('resume tag chips use escaped inline formatting instead of exposing markers', () => {

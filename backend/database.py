@@ -5,7 +5,6 @@ SQLAlchemy 模型定义和数据库连接
 
 import os
 import uuid
-from copy import deepcopy
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, JSON, Text, inspect, text
 from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.engine import make_url
@@ -402,6 +401,7 @@ def get_or_create_legacy_project(db, user_id: int):
                 session_id=task_id,
                 resume_data=project.base_resume_data or {},
                 photo=project.photo or "",
+                layout_config=default_layout_config(),
             ))
             db.commit()
         return project
@@ -439,6 +439,7 @@ def get_or_create_legacy_project(db, user_id: int):
         resume_data=(resume.resume_data if resume else {}),
         photo=(resume.photo if resume else ""),
         parsing_status=(resume.parsing_status if resume else "none"),
+        layout_config=default_layout_config(),
     )
     db.add_all([project, base_task, WorkspaceState(user_id=user_id, legacy_migrated=True)])
     if jd or conv:
@@ -457,6 +458,7 @@ def get_or_create_legacy_project(db, user_id: int):
             messages=(conv.messages if conv else []),
             compressed_context=(conv.compressed_context if conv else []),
             pending_confirmation=(conv.pending_confirmation if conv else None),
+            layout_config=default_layout_config(),
         ))
     db.commit()
     db.refresh(project)
@@ -485,6 +487,7 @@ def create_resume_project(db, user_id: int, title: str = "未命名简历"):
         title="基础简历",
         is_base=True,
         session_id=task_id,
+        layout_config=default_layout_config(),
     )
     db.add_all([project, task])
     if not db.query(WorkspaceState).filter(WorkspaceState.user_id == user_id).first():

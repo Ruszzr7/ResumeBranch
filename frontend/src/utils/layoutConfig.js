@@ -1,5 +1,69 @@
+export const MODULE_COMPONENTS = Object.freeze({
+  basics: ['name', 'target_position', 'personal_meta', 'contact', 'additional_fields', 'photo'],
+  education: ['school', 'school_tags', 'degree', 'major', 'metrics', 'date', 'theses'],
+  skills: ['items'], research_interests: ['items'], honors: ['items'], publications: ['items'],
+  work_experience: ['organization', 'position', 'job_type', 'date', 'content'],
+  internship_experience: ['organization', 'position', 'job_type', 'date', 'content'],
+  project_experience: ['project_name', 'role', 'date', 'content'],
+  custom_sections: ['items'], others: ['certificates', 'languages'], self_evaluation: ['items']
+})
+
+const REQUIRED_COMPONENTS = Object.freeze({
+  basics: ['name'], education: ['school'], skills: ['items'], research_interests: ['items'], honors: ['items'], publications: ['items'],
+  work_experience: ['organization', 'content'], internship_experience: ['organization', 'content'],
+  project_experience: ['project_name', 'content'], custom_sections: ['items'], others: [], self_evaluation: ['items']
+})
+
+const LONG_TEXT_COMPONENTS = new Set([
+  'education.theses', 'work_experience.content', 'internship_experience.content', 'project_experience.content',
+  'skills.items', 'research_interests.items', 'honors.items', 'publications.items', 'custom_sections.items', 'self_evaluation.items'
+])
+
+export const DEFAULT_COMPONENT_ROWS = Object.freeze({
+  basics: [
+    { cells: [{ components: ['name'], flow: 'stacked', width: 'fill', alignment: 'left' }, { components: ['photo'], flow: 'stacked', width: 'content', alignment: 'right' }] },
+    { cells: [{ components: ['target_position'], flow: 'stacked', width: 'fill', alignment: 'left' }] },
+    { cells: [{ components: ['personal_meta', 'contact', 'additional_fields'], flow: 'inline', width: 'fill', alignment: 'left' }] }
+  ],
+  education: [
+    { cells: [{ components: ['school', 'school_tags'], flow: 'inline', width: 'content', alignment: 'left' }, { components: ['degree', 'major', 'metrics'], flow: 'inline', width: 'fill', alignment: 'left' }, { components: ['date'], flow: 'inline', width: 'content', alignment: 'right' }] },
+    { cells: [{ components: ['theses'], flow: 'stacked', width: 'fill', alignment: 'justify' }] }
+  ],
+  work_experience: [
+    { cells: [{ components: ['organization', 'position', 'job_type'], flow: 'inline', width: 'fill', alignment: 'left' }, { components: ['date'], flow: 'inline', width: 'content', alignment: 'right' }] },
+    { cells: [{ components: ['content'], flow: 'stacked', width: 'fill', alignment: 'justify' }] }
+  ],
+  internship_experience: [
+    { cells: [{ components: ['organization', 'position', 'job_type'], flow: 'inline', width: 'fill', alignment: 'left' }, { components: ['date'], flow: 'inline', width: 'content', alignment: 'right' }] },
+    { cells: [{ components: ['content'], flow: 'stacked', width: 'fill', alignment: 'justify' }] }
+  ],
+  project_experience: [
+    { cells: [{ components: ['project_name', 'role'], flow: 'inline', width: 'fill', alignment: 'left' }, { components: ['date'], flow: 'inline', width: 'content', alignment: 'right' }] },
+    { cells: [{ components: ['content'], flow: 'stacked', width: 'fill', alignment: 'justify' }] }
+  ],
+  skills: [{ cells: [{ components: ['items'], flow: 'stacked', width: 'fill', alignment: 'justify' }] }],
+  research_interests: [{ cells: [{ components: ['items'], flow: 'stacked', width: 'fill', alignment: 'justify' }] }],
+  honors: [{ cells: [{ components: ['items'], flow: 'stacked', width: 'fill', alignment: 'justify' }] }],
+  publications: [{ cells: [{ components: ['items'], flow: 'stacked', width: 'fill', alignment: 'justify' }] }],
+  custom_sections: [{ cells: [{ components: ['items'], flow: 'stacked', width: 'fill', alignment: 'justify' }] }],
+  others: [{ cells: [{ components: ['certificates', 'languages'], flow: 'inline', width: 'fill', alignment: 'left' }] }],
+  self_evaluation: [{ cells: [{ components: ['items'], flow: 'stacked', width: 'fill', alignment: 'justify' }] }]
+})
+
+const moduleContract = (moduleId, values = {}) => ({
+  titleStyle: null, titleAlignment: null,
+  paragraphSpacing: 0.09, itemSpacing: 0.22, contentBlockSpacing: 0.14, rowSpacing: 0,
+  indentLevel: 0,
+  hiddenComponents: [], componentRows: JSON.parse(JSON.stringify(DEFAULT_COMPONENT_ROWS[moduleId])), ...values
+})
+
+const LEGACY_V7_DEFAULT_SECTION_ORDER = [
+  'education', 'skills', 'research_interests', 'honors', 'publications',
+  'work_experience', 'project_experience', 'custom_sections', 'others', 'self_evaluation'
+]
+
 export const DEFAULT_LAYOUT_CONFIG = Object.freeze({
-  version: 6,
+  version: 8,
   typography: {
     preset: 'microsoft-office',
     latinFont: 'Arial',
@@ -8,20 +72,27 @@ export const DEFAULT_LAYOUT_CONFIG = Object.freeze({
     fontSizes: { name: 14, sectionTitle: 11, entryTitle: 10, meta: 9, body: 9, label: 9 }
   },
   global: {
-    density: 'compact', fontSize: 9, lineHeight: 1.28, moduleMargin: 0.55,
-    marginVertical: 8, marginHorizontal: 9, titleStyle: 'underline',
-    sectionOrder: ['education', 'skills', 'research_interests', 'honors', 'work_experience', 'project_experience', 'custom_sections', 'others', 'self_evaluation'],
-    hiddenSections: [], splitWorkExperience: false, titleOverrides: {}
+    density: 'compact', fontSize: 9, lineHeight: 1.25, moduleMargin: 0.5,
+    marginVertical: 8.5, marginHorizontal: 9, titleStyle: 'underline',
+    sectionOrder: ['education', 'honors', 'publications', 'research_interests', 'skills', 'work_experience', 'project_experience', 'custom_sections', 'others', 'self_evaluation'],
+    hiddenSections: [], splitWorkExperience: false, titleOverrides: {}, sectionPlacements: {}
   },
-  basics: { preset: 'centered', contactLayout: 'inline', photoPosition: 'right', hiddenFields: [] },
-  education: { preset: 'classic', schoolTagStyle: 'filled', metricsPlacement: 'below', hiddenMetrics: [], thesisDisplay: 'expanded' },
-  work_experience: { preset: 'classic', detailsStyle: 'bullets', datePosition: 'right', showJobType: true },
-  project_experience: { preset: 'classic', detailsStyle: 'bullets', datePosition: 'right', showRole: true, showDate: true },
-  others: { preset: 'inline', fieldOrder: ['certificates', 'languages'], hiddenFields: [], separator: 'pipe' },
-  self_evaluation: { preset: 'paragraphs' }
+  basics: moduleContract('basics', { preset: 'left-aligned', contactLayout: 'inline', photoPosition: 'right', photoWidthMm: 21, hiddenFields: [] }),
+  education: moduleContract('education', { preset: 'compact', schoolTagStyle: 'text', metricsPlacement: 'with-degree', hiddenMetrics: [], thesisDisplay: 'expanded' }),
+  skills: moduleContract('skills', { listStyle: 'bullet' }),
+  research_interests: moduleContract('research_interests', { listStyle: 'bullet' }),
+  honors: moduleContract('honors', { listStyle: 'bullet' }),
+  publications: moduleContract('publications', { listStyle: 'bullet' }),
+  work_experience: moduleContract('work_experience', { preset: 'compact', detailsStyle: 'bullets', datePosition: 'right', showJobType: true }),
+  internship_experience: moduleContract('internship_experience', { preset: 'compact', detailsStyle: 'bullets', datePosition: 'right', showJobType: true }),
+  project_experience: moduleContract('project_experience', { preset: 'compact', detailsStyle: 'bullets', datePosition: 'right', showRole: true, showDate: true }),
+  custom_sections: moduleContract('custom_sections', { listStyle: 'bullet' }),
+  others: moduleContract('others', { preset: 'tags', fieldOrder: ['skills', 'certificates', 'languages'], hiddenFields: [], separator: 'dot' }),
+  self_evaluation: moduleContract('self_evaluation', { preset: 'compact', listStyle: 'paragraph' })
 })
 
 const clone = value => JSON.parse(JSON.stringify(value))
+
 export const FONT_SIZE_LIMITS = Object.freeze({
   name: [12, 20],
   sectionTitle: [9, 16],
@@ -32,14 +103,14 @@ export const FONT_SIZE_LIMITS = Object.freeze({
 })
 export const FONT_SIZE_LABELS = Object.freeze({
   name: '姓名', sectionTitle: '模块标题', entryTitle: '条目标题',
-  meta: '元信息', body: '正文内容', label: '标签与字段标签'
+  meta: '用户信息', body: '正文内容', label: '字段标签'
 })
 const semanticFontSizes = body => ({
   name: 14, sectionTitle: body + 2, entryTitle: body + 1,
   meta: body, body, label: body
 })
 const SECTION_IDS = new Set([
-  'education', 'skills', 'research_interests', 'honors', 'work_experience',
+  'education', 'honors', 'publications', 'research_interests', 'skills', 'work_experience',
   'internship_experience', 'project_experience', 'custom_sections', 'others', 'self_evaluation'
 ])
 const ENUMS = Object.freeze({
@@ -53,9 +124,12 @@ const ENUMS = Object.freeze({
   'education.schoolTagStyle': ['filled', 'outline', 'text', 'hidden'],
   'education.metricsPlacement': ['below', 'with-degree', 'info-column'],
   'education.thesisDisplay': ['expanded', 'compact', 'hidden'],
-  'work_experience.preset': ['classic', 'compact'],
+  'work_experience.preset': ['compact'],
   'work_experience.detailsStyle': ['bullets', 'paragraph'],
   'work_experience.datePosition': ['right', 'inline'],
+  'internship_experience.preset': ['compact'],
+  'internship_experience.detailsStyle': ['bullets', 'paragraph'],
+  'internship_experience.datePosition': ['right', 'inline'],
   'project_experience.preset': ['classic', 'compact'],
   'project_experience.detailsStyle': ['bullets', 'paragraph'],
   'project_experience.datePosition': ['right', 'inline'],
@@ -81,11 +155,105 @@ function mergeKnown(target, source, template) {
   }
 }
 
+function legacyComponentRows(moduleId, config) {
+  const rows = clone(DEFAULT_COMPONENT_ROWS[moduleId])
+  if (moduleId === 'basics' && config.preset === 'centered') {
+    return [
+      { cells: [{ components: ['name', 'target_position'], flow: 'stacked', width: 'fill', alignment: 'center' }, { components: ['photo'], flow: 'stacked', width: 'content', alignment: 'right' }] },
+      { cells: [{ components: ['personal_meta', 'contact', 'additional_fields'], flow: config.contactLayout || 'inline', width: 'fill', alignment: 'center' }] }
+    ]
+  }
+  if (moduleId === 'education' && config.preset === 'classic') {
+    return [
+      { cells: [{ components: ['school', 'school_tags'], flow: 'inline', width: 'fill', alignment: 'left' }, { components: ['date'], flow: 'inline', width: 'content', alignment: 'right' }] },
+      { cells: [{ components: ['degree', 'major'], flow: 'inline', width: 'fill', alignment: 'left' }] },
+      { cells: [{ components: ['metrics'], flow: 'inline', width: 'fill', alignment: 'left' }] },
+      { cells: [{ components: ['theses'], flow: 'stacked', width: 'fill', alignment: 'justify' }] }
+    ]
+  }
+  if (['work_experience', 'internship_experience'].includes(moduleId) && config.datePosition === 'inline') {
+    rows[0] = { cells: [{ components: ['organization', 'position', 'job_type', 'date'], flow: 'inline', width: 'fill', alignment: 'left' }] }
+  }
+  if (moduleId === 'project_experience' && config.datePosition === 'inline') {
+    rows[0] = { cells: [{ components: ['project_name', 'role', 'date'], flow: 'inline', width: 'fill', alignment: 'left' }] }
+  }
+  return rows
+}
+
+function normalizeComponentRows(moduleId, supplied, fallback, hidden) {
+  const allowed = new Set(MODULE_COMPONENTS[moduleId])
+  const seen = new Set()
+  const rows = []
+  const candidates = Array.isArray(supplied) ? supplied : []
+  for (const rawRow of candidates.slice(0, 12)) {
+    if (!rawRow || !Array.isArray(rawRow.cells)) continue
+    const cells = []
+    for (const rawCell of rawRow.cells.slice(0, 3)) {
+      if (!rawCell || typeof rawCell !== 'object') continue
+      let components = (Array.isArray(rawCell.components) ? rawCell.components : [])
+        .filter(component => allowed.has(component) && !hidden.has(component) && !seen.has(component))
+      if (!components.length) continue
+      const containsLongText = components.some(component => LONG_TEXT_COMPONENTS.has(`${moduleId}.${component}`))
+      let alignment
+      let width
+      let flow
+      if (containsLongText) {
+        components = components.filter(component => LONG_TEXT_COMPONENTS.has(`${moduleId}.${component}`))
+        alignment = ['left', 'justify'].includes(rawCell.alignment) ? rawCell.alignment : 'justify'
+        width = 'fill'
+        flow = 'stacked'
+      } else {
+        alignment = ['left', 'center', 'right'].includes(rawCell.alignment) ? rawCell.alignment : 'left'
+        width = ['content', 'fill', 'equal'].includes(rawCell.width) ? rawCell.width : 'fill'
+        flow = ['inline', 'stacked'].includes(rawCell.flow) ? rawCell.flow : 'inline'
+      }
+      if (components.includes('photo')) {
+        components = ['photo']; width = 'content'; flow = 'stacked'; alignment = 'right'
+      }
+      components.forEach(component => seen.add(component))
+      cells.push({ components, flow, width, alignment })
+    }
+    if (cells.length) {
+      const longCell = cells.find(cell => cell.components.some(component => LONG_TEXT_COMPONENTS.has(`${moduleId}.${component}`)))
+      rows.push({ cells: longCell ? [longCell] : cells })
+    }
+  }
+  const missing = MODULE_COMPONENTS[moduleId].filter(component => !seen.has(component) && !hidden.has(component))
+  if (missing.length) {
+    for (const fallbackRow of fallback) {
+      const cells = fallbackRow.cells.map(cell => ({ ...clone(cell), components: cell.components.filter(component => missing.includes(component)) }))
+        .filter(cell => cell.components.length)
+      if (cells.length) rows.push({ cells })
+    }
+  }
+  return rows.length ? rows : clone(fallback)
+}
+
+function normalizeModuleContracts(result, source, suppliedVersion, bounded) {
+  for (const moduleId of Object.keys(MODULE_COMPONENTS)) {
+    const module = result[moduleId]
+    module.titleStyle = null
+    module.titleAlignment = null
+    module.paragraphSpacing = bounded(module.paragraphSpacing, 0, 1.5, 0.09)
+    module.itemSpacing = bounded(module.itemSpacing, 0, 2, 0.22)
+    module.contentBlockSpacing = bounded(module.contentBlockSpacing, 0, 2, 0.14)
+    module.rowSpacing = bounded(module.rowSpacing, 0, 2, 0)
+    module.indentLevel = Math.min(3, Math.max(0, Math.trunc(Number(module.indentLevel) || 0)))
+    const required = new Set(REQUIRED_COMPONENTS[moduleId])
+    const hidden = new Set((Array.isArray(module.hiddenComponents) ? module.hiddenComponents : [])
+      .filter(component => MODULE_COMPONENTS[moduleId].includes(component) && !required.has(component)))
+    module.hiddenComponents = MODULE_COMPONENTS[moduleId].filter(component => hidden.has(component))
+    const fallback = suppliedVersion < 7 ? legacyComponentRows(moduleId, module) : clone(DEFAULT_COMPONENT_ROWS[moduleId])
+    const rawModule = source?.[moduleId] && typeof source[moduleId] === 'object' ? source[moduleId] : {}
+    module.componentRows = normalizeComponentRows(moduleId, suppliedVersion >= 7 ? rawModule.componentRows : fallback, fallback, hidden)
+  }
+}
+
 export function normalizeLayoutConfig(value = {}) {
   const suppliedVersion = Number(value?.version || 1)
   const result = clone(DEFAULT_LAYOUT_CONFIG)
   mergeKnown(result, value, DEFAULT_LAYOUT_CONFIG)
-  result.version = 6
+  result.version = DEFAULT_LAYOUT_CONFIG.version
   const suppliedGlobal = value?.global || {}
   if (suppliedVersion < 2 && ['fontSize', 'lineHeight', 'moduleMargin', 'marginVertical']
     .every((field, index) => Number(suppliedGlobal[field] ?? [11, 1.6, 1, 9][index]) === [11, 1.6, 1, 9][index])) {
@@ -117,11 +285,15 @@ export function normalizeLayoutConfig(value = {}) {
   if (suppliedVersion < 6 && result.global.density === 'standard' && Number(result.global.lineHeight) === 1.35) {
     result.global.lineHeight = 1.28
   }
-  result.global.lineHeight = boundedConfigNumber(result.global.lineHeight, 1.1, 2.2, 1.28)
-  result.global.moduleMargin = boundedConfigNumber(result.global.moduleMargin, 0.25, 2, 0.55)
+  result.global.lineHeight = boundedConfigNumber(result.global.lineHeight, 1, 1.8, 1.25)
+  result.global.moduleMargin = boundedConfigNumber(result.global.moduleMargin, 0.1, 1, 0.5)
   result.global.marginVertical = boundedConfigNumber(result.global.marginVertical, 3, 12, 9)
   result.global.marginHorizontal = boundedConfigNumber(result.global.marginHorizontal, 3, 12, 9)
   result.global.splitWorkExperience = Boolean(result.global.splitWorkExperience)
+  if (suppliedVersion < 8 && Array.isArray(result.global.sectionOrder)
+      && result.global.sectionOrder.join('|') === LEGACY_V7_DEFAULT_SECTION_ORDER.join('|')) {
+    result.global.sectionOrder = [...DEFAULT_LAYOUT_CONFIG.global.sectionOrder]
+  }
   result.global.sectionOrder = [...new Set((Array.isArray(result.global.sectionOrder) ? result.global.sectionOrder : [])
     .filter(item => SECTION_IDS.has(item)))]
   if (result.global.splitWorkExperience && !result.global.sectionOrder.includes('internship_experience')) {
@@ -136,9 +308,10 @@ export function normalizeLayoutConfig(value = {}) {
     const index = result.global.sectionOrder.indexOf(anchor)
     result.global.sectionOrder.splice(index >= 0 ? index + 1 : result.global.sectionOrder.length, 0, item)
   }
-  insertAfter('skills', 'education')
-  insertAfter('research_interests', 'skills')
-  insertAfter('honors', 'research_interests')
+  insertAfter('honors', 'education')
+  insertAfter('publications', 'honors')
+  insertAfter('research_interests', 'publications')
+  insertAfter('skills', 'research_interests')
   insertAfter('custom_sections', 'project_experience')
   for (const item of SECTION_IDS) {
     if (item !== 'internship_experience' || result.global.splitWorkExperience) insertAfter(item)
@@ -147,8 +320,9 @@ export function normalizeLayoutConfig(value = {}) {
     (Array.isArray(result.global.hiddenSections) ? result.global.hiddenSections : []).filter(item => SECTION_IDS.has(item))
   )]
   const cleanTitles = {}
-  if (result.global.titleOverrides && typeof result.global.titleOverrides === 'object' && !Array.isArray(result.global.titleOverrides)) {
-    for (const [section, translations] of Object.entries(result.global.titleOverrides)) {
+  const suppliedTitles = suppliedGlobal.titleOverrides ?? result.global.titleOverrides
+  if (suppliedTitles && typeof suppliedTitles === 'object' && !Array.isArray(suppliedTitles)) {
+    for (const [section, translations] of Object.entries(suppliedTitles)) {
       if (!SECTION_IDS.has(section) || !translations || typeof translations !== 'object' || Array.isArray(translations)) continue
       const clean = {}
       for (const language of ['zh', 'en']) {
@@ -165,6 +339,7 @@ export function normalizeLayoutConfig(value = {}) {
       (Array.isArray(result[section][key]) ? result[section][key] : []).filter(item => allowed.has(item))
     )]
   }
+  result.basics.photoWidthMm = boundedConfigNumber(result.basics.photoWidthMm, 15, 30, 21)
   if (result.basics.photoPosition === 'hidden' && !result.basics.hiddenFields.includes('photo')) result.basics.hiddenFields.push('photo')
   if (result.basics.hiddenFields.includes('photo')) result.basics.photoPosition = 'hidden'
   if (result.education.preset === 'three-column') {
@@ -178,6 +353,7 @@ export function normalizeLayoutConfig(value = {}) {
     if (!result.others.fieldOrder.includes(item)) result.others.fieldOrder.push(item)
   }
   result.work_experience.showJobType = Boolean(result.work_experience.showJobType)
+  result.internship_experience.showJobType = Boolean(result.internship_experience.showJobType)
   result.project_experience.showRole = Boolean(result.project_experience.showRole)
   result.project_experience.showDate = Boolean(result.project_experience.showDate)
   const suppliedFontSizes = value?.typography?.fontSizes
@@ -197,6 +373,21 @@ export function normalizeLayoutConfig(value = {}) {
   const fontSizes = clone(result.typography.fontSizes)
   result.typography = clone(DEFAULT_LAYOUT_CONFIG.typography)
   result.typography.fontSizes = fontSizes
+  const suppliedPlacements = suppliedGlobal.sectionPlacements ?? result.global.sectionPlacements
+  const placements = suppliedPlacements && typeof suppliedPlacements === 'object' && !Array.isArray(suppliedPlacements)
+    ? suppliedPlacements : {}
+  result.global.sectionPlacements = Object.fromEntries(
+    ['research_interests', 'honors', 'publications', 'others']
+      .filter(section => placements[section] === 'education')
+      .map(section => [section, 'education'])
+  )
+
+  for (const section of ['skills', 'research_interests', 'honors', 'publications', 'custom_sections', 'self_evaluation']) {
+    if (!['paragraph', 'bullet', 'numbered'].includes(result[section].listStyle)) {
+      result[section].listStyle = DEFAULT_LAYOUT_CONFIG[section].listStyle
+    }
+  }
+  normalizeModuleContracts(result, value, suppliedVersion, boundedConfigNumber)
   return result
 }
 
@@ -211,8 +402,8 @@ export function resolveLayoutTokens(value = {}, style = {}) {
     return Number.isFinite(number) ? Math.min(Math.max(number, min), max) : fallback
   }
   const fontSizePt = bounded(style.fontSize ?? global.fontSize, 8, 11.5, global.fontSize)
-  const lineHeight = bounded(style.lineHeight ?? global.lineHeight, 1.1, 2.2, global.lineHeight)
-  const moduleMargin = bounded(style.moduleMargin ?? global.moduleMargin, 0.25, 2, global.moduleMargin)
+  const lineHeight = bounded(style.lineHeight ?? global.lineHeight, 1, 1.8, global.lineHeight)
+  const moduleMargin = bounded(style.moduleMargin ?? global.moduleMargin, 0.1, 1, global.moduleMargin)
   const fontSizes = typography.fontSizes
   const bodyFontSizePt = fontSizePt
   const metaFontSizePt = fontSizes.meta
@@ -263,11 +454,42 @@ export function resolveLayoutTokens(value = {}, style = {}) {
     educationMiddleMinMm: 30,
     educationColumnBreathingMm: 4,
     educationSideColumnMm: 42,
+    photoWidthMm: config.basics.photoWidthMm,
+    photoHeightMm: config.basics.photoWidthMm * 26 / 21,
     marginTopMm: bounded(style.marginTop ?? global.marginVertical, 3, 12, global.marginVertical),
     marginBottomMm: bounded(style.marginBottom ?? global.marginVertical, 3, 12, global.marginVertical),
     marginLeftMm: bounded(style.marginLeft ?? global.marginHorizontal, 3, 12, global.marginHorizontal),
-    marginRightMm: bounded(style.marginRight ?? global.marginHorizontal, 3, 12, global.marginHorizontal)
+    marginRightMm: bounded(style.marginRight ?? global.marginHorizontal, 3, 12, global.marginHorizontal),
+    modules: Object.fromEntries(Object.keys(MODULE_COMPONENTS).map(moduleId => [moduleId, {
+      paragraphSpacingPt: bodyFontSizePt * config[moduleId].paragraphSpacing,
+      itemSpacingPt: bodyFontSizePt * config[moduleId].itemSpacing,
+      contentBlockSpacingPt: bodyFontSizePt * config[moduleId].contentBlockSpacing,
+      rowSpacingPt: bodyFontSizePt * config[moduleId].rowSpacing,
+      indentPt: bodyFontSizePt * 1.55 * config[moduleId].indentLevel
+    }]))
   }
+}
+
+export function resolveModuleLayout(value = {}, moduleId) {
+  const config = normalizeLayoutConfig(value)
+  if (!MODULE_COMPONENTS[moduleId]) throw new Error(`Unknown layout module: ${moduleId}`)
+  return {
+    ...clone(config[moduleId]),
+    resolvedTitleStyle: config[moduleId].titleStyle || config.global.titleStyle,
+    resolvedTitleAlignment: config[moduleId].titleAlignment || 'left',
+    resolvedLineHeight: config.global.lineHeight
+  }
+}
+
+export function componentPosition(value = {}, moduleId, componentId) {
+  const module = resolveModuleLayout(value, moduleId)
+  if (module.hiddenComponents.includes(componentId)) return null
+  for (let rowIndex = 0; rowIndex < module.componentRows.length; rowIndex += 1) {
+    for (let cellIndex = 0; cellIndex < module.componentRows[rowIndex].cells.length; cellIndex += 1) {
+      if (module.componentRows[rowIndex].cells[cellIndex].components.includes(componentId)) return [rowIndex, cellIndex]
+    }
+  }
+  return null
 }
 
 export function estimateTextWidthPt(value = '', fontSizePt = 9) {

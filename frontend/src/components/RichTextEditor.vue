@@ -11,6 +11,7 @@
       @keydown.meta.b="handleCtrlB"
       @keydown.enter="handleEnter"
       @paste="handlePaste"
+      @focus="onFocus"
       @blur="onBlur"
     ></div>
     <!-- 行数 -->
@@ -33,6 +34,10 @@ const props = defineProps({
     default: '请输入内容'
   },
   compact: {
+    type: Boolean,
+    default: false
+  },
+  defaultBold: {
     type: Boolean,
     default: false
   },
@@ -162,6 +167,13 @@ function parseToText(html) {
 
 function onBlur() {
   syncValue()
+}
+
+function onFocus() {
+  if (!props.defaultBold || parseToText(editorRef.value?.innerHTML || '')) return
+  // New title-like values start bold, while existing values remain entirely
+  // user-controlled and can be toggled with Ctrl+B.
+  document.execCommand('bold', false, null)
 }
 
 function handleEnter(event) {

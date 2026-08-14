@@ -35,6 +35,7 @@ class DocxGeneratorTests(unittest.TestCase):
                 "gpa": "3.72",
                 "gpa_scale": "4.0",
                 "ranking": "前 10%",
+                "date_range": ["2022", "2025"],
             }],
             "work_experience": [],
             "project_experience": [],
@@ -48,7 +49,8 @@ class DocxGeneratorTests(unittest.TestCase):
         combined = text + "\n" + table_text
         self.assertIn("测试用户", combined)
         self.assertIn("示例大学", combined)
-        self.assertIn("GPA：3.72/4.0", combined)
+        self.assertIn("3.72/4.0 (前 10%)", combined)
+        self.assertNotIn("GPA：3.72/4.0", combined)
         self.assertAlmostEqual(document.sections[0].page_width.mm, 210.0, places=1)
         normal_fonts = document.styles["Normal"]._element.rPr.rFonts
         self.assertEqual(normal_fonts.get(qn("w:ascii")), "Arial")
@@ -98,8 +100,11 @@ class DocxGeneratorTests(unittest.TestCase):
             if any("示例大学" in cell.text for row in table.rows for cell in row.cells)
         )
         education_header = " ".join(cell.text for row in education_table.rows for cell in row.cells)
-        self.assertNotIn("本科", education_header)
-        self.assertTrue(any(paragraph.text == "本科 · 计算机科学" for paragraph in document.paragraphs))
+        self.assertIn("本科", education_header)
+        self.assertIn("本科 · 计算机科学", education_header)
+        education_widths = [cell.width.mm for cell in education_table.rows[0].cells]
+        self.assertAlmostEqual(education_widths[0], education_widths[2], places=1)
+        self.assertLess(education_widths[1], education_widths[0])
 
 
 class ProviderRulesTests(unittest.TestCase):

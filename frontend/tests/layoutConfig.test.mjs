@@ -1,7 +1,54 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { formatCompactAcademicMetric, normalizeLayoutConfig, resolveContentBlockFlow, resolveEducationColumnWidths, resolveLayoutTokens } from '../src/utils/layoutConfig.js'
+import { DEFAULT_LAYOUT_CONFIG, componentPosition, formatCompactAcademicMetric, normalizeLayoutConfig, resolveContentBlockFlow, resolveEducationColumnWidths, resolveLayoutTokens, resolveModuleLayout } from '../src/utils/layoutConfig.js'
+
+test('current defaults use the compact practical spacing range', () => {
+  const result = normalizeLayoutConfig(DEFAULT_LAYOUT_CONFIG)
+  assert.equal(result.global.lineHeight, 1.25)
+  assert.equal(result.global.moduleMargin, 0.5)
+  assert.equal(result.global.titleStyle, 'underline')
+  assert.equal(result.basics.photoWidthMm, 21)
+  assert.equal(normalizeLayoutConfig({ global: { lineHeight: 9, moduleMargin: 9 } }).global.lineHeight, 1.8)
+  assert.equal(normalizeLayoutConfig({ global: { lineHeight: 9, moduleMargin: 9 } }).global.moduleMargin, 1)
+  assert.deepEqual(result.global.sectionPlacements, {})
+  assert.deepEqual(result.global.sectionOrder, [
+    'education', 'honors', 'publications', 'research_interests', 'skills',
+    'work_experience', 'project_experience', 'custom_sections', 'others', 'self_evaluation'
+  ])
+})
+
+test('v7 default section order migrates without overwriting a user order', () => {
+  const oldDefault = [
+    'education', 'skills', 'research_interests', 'honors', 'publications',
+    'work_experience', 'project_experience', 'custom_sections', 'others', 'self_evaluation'
+  ]
+  assert.deepEqual(normalizeLayoutConfig({ version: 7, global: { sectionOrder: oldDefault } }).global.sectionOrder, DEFAULT_LAYOUT_CONFIG.global.sectionOrder)
+
+  const custom = [
+    'education', 'publications', 'honors', 'research_interests', 'skills',
+    'work_experience', 'project_experience', 'custom_sections', 'others', 'self_evaluation'
+  ]
+  assert.deepEqual(normalizeLayoutConfig({ version: 7, global: { sectionOrder: custom } }).global.sectionOrder, custom)
+})
+
+test('module headings stay global and retired work layouts normalize to compact', () => {
+  const result = normalizeLayoutConfig({
+    basics: { photoWidthMm: 99, titleAlignment: 'center' },
+    education: { titleStyle: 'plain', titleAlignment: 'right' },
+    work_experience: { preset: 'classic' },
+    internship_experience: { preset: 'classic' }
+  })
+  assert.equal(result.basics.photoWidthMm, 30)
+  assert.equal(result.basics.titleAlignment, null)
+  assert.equal(result.education.titleStyle, null)
+  assert.equal(result.education.titleAlignment, null)
+  assert.equal(result.work_experience.preset, 'compact')
+  assert.equal(result.internship_experience.preset, 'compact')
+  const tokens = resolveLayoutTokens(result)
+  assert.equal(tokens.photoWidthMm, 30)
+  assert.equal(tokens.photoHeightMm, 30 * 26 / 21)
+})
 
 test('content block flow keeps inline and separate labels explicit', () => {
   assert.deepEqual(resolveContentBlockFlow({ type: 'paragraph', label: '项目简介' }), {
@@ -17,7 +64,7 @@ test('content block flow keeps inline and separate labels explicit', () => {
   assert.equal(resolveContentBlockFlow({ type: 'numbered_list', semantic_role: 'responsibilities', label: '主要贡献' }).contentIndentLevels, 2)
 })
 
-test('legacy default layout migrates to compact v5 and exposes skills order', () => {
+test('legacy default layout migrates to schema v8 and exposes every module in the new default order', () => {
   const result = normalizeLayoutConfig({
     version: 1,
     global: {
@@ -29,11 +76,12 @@ test('legacy default layout migrates to compact v5 and exposes skills order', ()
     }
   })
 
-  assert.equal(result.version, 6)
+  assert.equal(result.version, 8)
   assert.equal(result.global.fontSize, 9)
   assert.equal(result.global.lineHeight, 1.28)
   assert.ok(result.global.sectionOrder.indexOf('skills') > result.global.sectionOrder.indexOf('education'))
   assert.ok(result.global.sectionOrder.indexOf('skills') < result.global.sectionOrder.indexOf('project_experience'))
+  assert.ok(result.global.sectionOrder.includes('publications'))
 })
 
 test('all renderers receive the recorded Microsoft and Arial typography contract', () => {
@@ -83,13 +131,13 @@ test('compact metric preserves the ranking wording entered by the user', () => {
   assert.equal(formatCompactAcademicMetric({ ...base, ranking: '前10%' }), '3.8/5.0 (前10%)')
 })
 
-test('saved v3 defaults migrate through v4 scale to explicit v5 semantic sizes', () => {
+test('saved v3 defaults migrate through the semantic scale to schema v8', () => {
   const result = normalizeLayoutConfig({
     version: 3,
     global: { fontSize: 10.5, lineHeight: 1.32, moduleMargin: 0.45 }
   })
 
-  assert.equal(result.version, 6)
+  assert.equal(result.version, 8)
   assert.equal(result.global.fontSize, 9)
   assert.equal(result.global.lineHeight, 1.28)
   assert.equal(result.global.moduleMargin, 0.55)
@@ -125,7 +173,7 @@ test('semantic font sizes use half-point bounds and discard unknown roles', () =
 
 test('v5 standard default line height migrates to the compact export rhythm', () => {
   const result = normalizeLayoutConfig({ version: 5, global: { density: 'standard', lineHeight: 1.35 } })
-  assert.equal(result.version, 6)
+  assert.equal(result.version, 8)
   assert.equal(result.global.lineHeight, 1.28)
 
   const custom = normalizeLayoutConfig({ version: 5, global: { density: 'standard', lineHeight: 1.4 } })
@@ -171,4 +219,35 @@ test('invalid enums unknown fields and duplicate sections normalize deterministi
   assert.deepEqual(config.global.hiddenSections, ['honors'])
   assert.equal(config.project_experience.detailsStyle, 'bullets')
   assert.deepEqual(config.basics.hiddenFields, ['phone'])
+})
+
+test('module contracts inherit one global line height and normalize constrained component rows', () => {
+  const config = normalizeLayoutConfig({
+    version: 7,
+    global: { lineHeight: 1.45 },
+    work_experience: {
+      indentLevel: 99,
+      hiddenComponents: ['position', 'content', 'unknown'],
+      componentRows: [{ cells: [{
+        components: ['organization', 'content', 'unknown'],
+        flow: 'inline', width: 'content', alignment: 'right'
+      }] }]
+    }
+  })
+  const module = resolveModuleLayout(config, 'work_experience')
+  assert.equal(module.resolvedLineHeight, 1.45)
+  assert.equal('lineHeight' in config.work_experience, false)
+  assert.equal(config.work_experience.indentLevel, 3)
+  assert.deepEqual(config.work_experience.hiddenComponents, ['position'])
+  assert.deepEqual(componentPosition(config, 'work_experience', 'organization'), [1, 0])
+  const contentRow = config.work_experience.componentRows.find(row => row.cells.some(cell => cell.components.includes('content')))
+  assert.deepEqual(contentRow.cells, [{ components: ['content'], flow: 'stacked', width: 'fill', alignment: 'justify' }])
+})
+
+test('default compact education and list indents preserve the stable template geometry', () => {
+  const config = normalizeLayoutConfig()
+  assert.equal(config.education.componentRows[0].cells[1].alignment, 'left')
+  assert.equal(config.skills.indentLevel, 0)
+  assert.equal(config.research_interests.indentLevel, 0)
+  assert.equal(config.honors.indentLevel, 0)
 })

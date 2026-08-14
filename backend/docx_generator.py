@@ -29,6 +29,15 @@ _NATIVE_LIST_MARKER_RE = re.compile(
 )
 
 
+def _module_list_content(value: object) -> str:
+    match = _NATIVE_LIST_MARKER_RE.match(str(value or ""))
+    return match.group(2) if match else str(value or "")
+
+
+def _is_fully_bold(value: object) -> bool:
+    return bool(re.fullmatch(r"\*\*[^*][\s\S]*\*\*", _module_list_content(value).strip()))
+
+
 def _set_cell_borderless(cell) -> None:
     tc_pr = cell._tc.get_or_add_tcPr()
     borders = tc_pr.first_child_found_in("w:tcBorders")
@@ -326,6 +335,8 @@ def generate_docx(
     colon = "：" if lang == "zh" else ": "
     layout = normalize_layout_config(layout_config)
     global_layout = layout["global"]
+    def merged_into_education(section_id: str) -> bool:
+        return bool(data.get("education")) and global_layout.get("sectionPlacements", {}).get(section_id) == "education"
     style = apply_page_mode_defaults(style)
     tokens = resolve_layout_tokens(layout, style)
     font_spec = {
@@ -347,6 +358,7 @@ def generate_docx(
     section_title_bold = tokens["sectionTitleFontWeight"] >= 600
     name_bold = tokens["nameFontWeight"] >= 600
     label_bold = tokens["labelFontWeight"] >= 600
+    legacy_default_bold = int(data.get("formatting_version") or 0) < 1
 
     def entry_heading_runs(primary: str, secondary: str = "") -> list[tuple[str, float, bool]]:
         """Map one entry heading to the shared title/meta typography roles."""
@@ -389,7 +401,13 @@ def generate_docx(
 
     def title(section_id: str, fallback: str) -> None:
         text = global_layout.get("titleOverrides", {}).get(section_id, {}).get(lang, fallback)
+        module_layout = layout.get(section_id, layout["custom_sections"])
         paragraph = document.add_paragraph()
+        paragraph.alignment = {
+            "left": WD_ALIGN_PARAGRAPH.LEFT,
+            "center": WD_ALIGN_PARAGRAPH.CENTER,
+            "right": WD_ALIGN_PARAGRAPH.RIGHT,
+        }[module_layout.get("titleAlignment") or "left"]
         _paragraph_spacing(
             paragraph,
             before=module_spacing,
@@ -397,18 +415,19 @@ def generate_docx(
             line=Pt(tokens["sectionTitleLineHeightPt"]),
         )
         _add_markdown_runs(paragraph, text, section_title_font_size, fonts=font_spec, base_bold=section_title_bold)
-        p_pr = paragraph._p.get_or_add_pPr()
-        borders = OxmlElement("w:pBdr")
-        bottom = OxmlElement("w:bottom")
-        for key, value in (
-            ("val", "single"),
-            ("sz", "6"),
-            ("space", str(round(tokens["sectionTitleBorderGapPt"]))),
-            ("color", "333333"),
-        ):
-            bottom.set(qn(f"w:{key}"), value)
-        borders.append(bottom)
-        p_pr.append(borders)
+        if (module_layout.get("titleStyle") or global_layout["titleStyle"]) in {"plain", "underline"}:
+            p_pr = paragraph._p.get_or_add_pPr()
+            borders = OxmlElement("w:pBdr")
+            bottom = OxmlElement("w:bottom")
+            for key, value in (
+                ("val", "single"),
+                ("sz", "6"),
+                ("space", str(round(tokens["sectionTitleBorderGapPt"]))),
+                ("color", "333333"),
+            ):
+                bottom.set(qn(f"w:{key}"), value)
+            borders.append(bottom)
+            p_pr.append(borders)
 
     def maybe_break(key: str) -> None:
         if page_break_before == key:
@@ -435,69 +454,89 @@ def generate_docx(
     basics = data.get("basics") or {}
     basics_layout = layout["basics"]
     hidden_basics = set(basics_layout["hiddenFields"])
-    show_photo = (photo or basics.get("photo")) and "photo" not in hidden_basics
-    header = document.add_table(rows=1, cols=3)
-    header.autofit = False
-    header.columns[0].width, header.columns[1].width, header.columns[2].width = Mm(25), Mm(135), Mm(25)
-    for cell in header.rows[0].cells:
-        _set_cell_borderless(cell)
-        _set_cell_margins(cell)
-    if basics_layout["preset"] == "left-aligned":
-        # A left-aligned heading must not be placed in the 25 mm spacer cell.
-        # Use the full available row when there is no photo, otherwise reserve
-        # only the right-hand photo column.
-        content_cell = header.cell(0, 0).merge(header.cell(0, 1))
-        if not show_photo:
-            content_cell = content_cell.merge(header.cell(0, 2))
-    else:
-        content_cell = header.cell(0, 1) if show_photo else header.cell(0, 0).merge(header.cell(0, 2))
-    alignment = WD_ALIGN_PARAGRAPH.LEFT if basics_layout["preset"] == "left-aligned" else WD_ALIGN_PARAGRAPH.CENTER
-    name_p = content_cell.paragraphs[0]
-    name_p.alignment = alignment
-    _paragraph_spacing(name_p, after=tokens["headerNameAfterPt"], line=Pt(tokens["nameLineHeightPt"]))
-    _add_markdown_runs(name_p, basics.get("name") or labels["nameNotSet"], name_font_size, fonts=font_spec, base_bold=name_bold)
     contact_values = [str(basics.get(key)) for key in ("gender",) if basics.get(key) and key not in hidden_basics]
     if basics.get("birth_date") and "birth_date" not in hidden_basics:
         contact_values.append(f'{labels["birthDate"]}{colon}{basics["birth_date"]}')
-    contact_values.extend(str(basics.get(key)) for key in ("phone", "email") if basics.get(key) and key not in hidden_basics)
-    if "additional_fields" not in hidden_basics:
-        contact_values.extend(
-            f'{item.get("label")}{colon}{item.get("value")}'
-            for item in basics.get("additional_fields", [])
-            if item.get("label") and item.get("value")
-        )
-    if contact_values:
-        if basics_layout["contactLayout"] == "stacked":
-            for value in contact_values:
-                p = content_cell.add_paragraph()
-                p.alignment = alignment
-                _add_markdown_runs(p, value, meta_font_size, color="333333", fonts=font_spec)
-        else:
-            p = content_cell.add_paragraph()
-            p.alignment = alignment
-            _add_markdown_runs(p, " | ".join(contact_values), meta_font_size, color="333333", fonts=font_spec)
-    if basics.get("target_position") and "target_position" not in hidden_basics:
-        p = content_cell.add_paragraph()
-        p.alignment = alignment
-        if label_font_size == meta_font_size:
-            _add_markdown_runs(
-                p,
-                f'{labels["targetPosition"]}{colon}{basics["target_position"]}',
-                meta_font_size,
-                fonts=font_spec,
-                base_bold=label_bold,
-            )
-        else:
-            _set_font(p.add_run(f'{labels["targetPosition"]}{colon}'), label_font_size, bold=label_bold, fonts=font_spec)
-            _add_markdown_runs(p, basics["target_position"], meta_font_size, fonts=font_spec, base_bold=label_bold)
-    if show_photo:
+    direct_contact = [str(basics.get(key)) for key in ("phone", "email") if basics.get(key) and key not in hidden_basics]
+    additional_values = [
+        f'{item.get("label")}{colon}{item.get("value")}'
+        for item in basics.get("additional_fields", [])
+        if item.get("label") and item.get("value") and "additional_fields" not in hidden_basics
+    ]
+    photo_bytes = None
+    if (photo or basics.get("photo")) and "photo" not in hidden_basics:
         try:
             encoded = (photo or basics.get("photo")).split(",", 1)[-1]
-            p = header.cell(0, 2).paragraphs[0]
-            p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-            p.add_run().add_picture(BytesIO(base64.b64decode(encoded)), width=Mm(21), height=Mm(26))
+            photo_bytes = base64.b64decode(encoded)
         except (ValueError, TypeError):
-            pass
+            photo_bytes = None
+    basics_values = {
+        "name": basics.get("name") or labels["nameNotSet"],
+        "target_position": (
+            f'{labels["targetPosition"]}{colon}{basics["target_position"]}'
+            if basics.get("target_position") and "target_position" not in hidden_basics else ""
+        ),
+        "personal_meta": " | ".join(contact_values),
+        "contact": " | ".join(direct_contact),
+        "additional_fields": " | ".join(additional_values),
+        "photo": photo_bytes,
+    }
+    hidden_basic_components = set(basics_layout["hiddenComponents"])
+    alignment_map = {
+        "left": WD_ALIGN_PARAGRAPH.LEFT,
+        "center": WD_ALIGN_PARAGRAPH.CENTER,
+        "right": WD_ALIGN_PARAGRAPH.RIGHT,
+        "justify": WD_ALIGN_PARAGRAPH.JUSTIFY,
+    }
+    for component_row in basics_layout["componentRows"]:
+        active_cells = []
+        for cell_config in component_row["cells"]:
+            components = [
+                component for component in cell_config["components"]
+                if component not in hidden_basic_components and basics_values.get(component)
+            ]
+            if components:
+                active_cells.append((cell_config, components))
+        if not active_cells:
+            continue
+        content_width = min(28.0, printable_width_mm / max(1, len(active_cells)))
+        fixed_width = sum(content_width for cell, _ in active_cells if cell["width"] == "content")
+        flexible_count = max(1, sum(1 for cell, _ in active_cells if cell["width"] != "content"))
+        flexible_width = max(10.0, (printable_width_mm - fixed_width) / flexible_count)
+        widths = tuple(content_width if cell["width"] == "content" else flexible_width for cell, _ in active_cells)
+        table = document.add_table(rows=1, cols=len(active_cells))
+        _set_fixed_table_widths(table, widths)
+        for (cell_config, components), cell in zip(active_cells, table.rows[0].cells):
+            _set_cell_borderless(cell)
+            _set_cell_margins(cell)
+            for component_index, component in enumerate(components):
+                paragraph = cell.paragraphs[0] if component_index == 0 or cell_config["flow"] == "inline" else cell.add_paragraph()
+                paragraph.alignment = alignment_map[cell_config["alignment"]]
+                line_height = tokens["nameLineHeightPt"] if component == "name" else tokens["metaLineHeightPt"]
+                _paragraph_spacing(
+                    paragraph,
+                    after=tokens["modules"]["basics"]["rowSpacingPt"],
+                    line=Pt(line_height),
+                )
+                if component == "photo":
+                    paragraph.add_run().add_picture(
+                        BytesIO(photo_bytes),
+                        width=Mm(tokens["photoWidthMm"]),
+                        height=Mm(tokens["photoHeightMm"]),
+                    )
+                    continue
+                prefix = " · " if cell_config["flow"] == "inline" and component_index else ""
+                if component == "name":
+                    _add_markdown_runs(paragraph, prefix + basics_values[component], name_font_size, fonts=font_spec, base_bold=name_bold if legacy_default_bold else False)
+                else:
+                    _add_markdown_runs(
+                        paragraph,
+                        prefix + basics_values[component],
+                        meta_font_size,
+                        color="333333",
+                        fonts=font_spec,
+                        base_bold=component == "target_position" and legacy_default_bold,
+                    )
 
     def render_education() -> None:
         items = data.get("education") or []
@@ -536,7 +575,7 @@ def generate_docx(
                 maybe_break(f"education:{index}")
             school = item.get("school_name") or labels["schoolNotSet"]
             tags = item.get("school_tags") or []
-            tag_text = " ".join(f"[{tag}]" if cfg["schoolTagStyle"] == "outline" else str(tag) for tag in tags)
+            tag_text = " · ".join(str(tag) for tag in tags)
             if cfg["schoolTagStyle"] == "hidden":
                 tag_text = ""
             degree = " · ".join(value for value in (item.get("degree", ""), item.get("major", "")) if value)
@@ -550,69 +589,72 @@ def generate_docx(
                 metrics.append(f'{labels["ranking"]}{colon}{item["ranking"]}')
             if item.get("average_score") and "average_score" not in hidden_metrics:
                 metrics.append(f'{labels["averageScore"]}{colon}{item["average_score"]}')
-            if cfg["preset"] in {"three-column", "compact"}:
-                table = document.add_table(rows=1, cols=3)
-                if cfg["preset"] == "compact":
-                    education_widths = (
-                        compact_widths["sideMm"],
-                        compact_widths["middleMm"],
-                        compact_widths["sideMm"],
-                    )
+            component_values = {
+                "school": school,
+                "school_tags": tag_text,
+                "degree": item.get("degree", ""),
+                "major": item.get("major", ""),
+                "metrics": compact_metrics[index] if cfg["preset"] == "compact" else " · ".join(metrics),
+                "date": date,
+            }
+            hidden_components = set(cfg["hiddenComponents"]) | {"theses"}
+            alignment_map = {
+                "left": WD_ALIGN_PARAGRAPH.LEFT,
+                "center": WD_ALIGN_PARAGRAPH.CENTER,
+                "right": WD_ALIGN_PARAGRAPH.RIGHT,
+                "justify": WD_ALIGN_PARAGRAPH.JUSTIFY,
+            }
+            for component_row in cfg["componentRows"]:
+                active_cells = []
+                for cell_config in component_row["cells"]:
+                    components = [
+                        component for component in cell_config["components"]
+                        if component not in hidden_components and component_values.get(component)
+                    ]
+                    if components:
+                        active_cells.append((cell_config, components))
+                if not active_cells:
+                    continue
+                is_compact_header = (
+                    cfg["preset"] == "compact"
+                    and len(active_cells) == 3
+                    and "school" in active_cells[0][1]
+                    and any(component in active_cells[1][1] for component in ("degree", "major", "metrics"))
+                    and "date" in active_cells[2][1]
+                )
+                if is_compact_header:
+                    widths = (compact_widths["sideMm"], compact_widths["middleMm"], compact_widths["sideMm"])
                 else:
-                    education_side_width_mm = tokens["educationSideColumnMm"]
-                    education_widths = (
-                        education_side_width_mm,
-                        max(0.0, printable_width_mm - education_side_width_mm * 2),
-                        education_side_width_mm,
-                    )
-                _set_fixed_table_widths(table, education_widths)
-                for cell in table.rows[0].cells:
+                    content_width = min(42.0, printable_width_mm / max(1, len(active_cells)))
+                    fixed_width = sum(content_width for cell, _ in active_cells if cell["width"] == "content")
+                    flexible_count = max(1, sum(1 for cell, _ in active_cells if cell["width"] != "content"))
+                    flexible_width = max(10.0, (printable_width_mm - fixed_width) / flexible_count)
+                    widths = tuple(content_width if cell["width"] == "content" else flexible_width for cell, _ in active_cells)
+                table = document.add_table(rows=1, cols=len(active_cells))
+                _set_fixed_table_widths(table, widths)
+                for cell_index, ((cell_config, components), cell) in enumerate(zip(active_cells, table.rows[0].cells)):
                     _set_cell_borderless(cell)
                     _set_cell_margins(cell)
-                compact_value = compact_metrics[index]
-                middle_parts = [value for value in (degree, " | ".join(metrics)) if value]
-                middle_value = degree if cfg["preset"] == "compact" else " | ".join(middle_parts)
-                values = [school, middle_value, date]
-                cell_sizes = (entry_title_font_size, meta_font_size, meta_font_size)
-                for cell_index, (cell, value, cell_size) in enumerate(zip(table.rows[0].cells, values, cell_sizes)):
-                    p = cell.paragraphs[0]
-                    _paragraph_spacing(p, after=0, line=Pt(tokens["entryTitleLineHeightPt"]))
-                    if cell_index == 0:
-                        _add_markdown_runs(p, school, entry_title_font_size, fonts=font_spec, base_bold=entry_title_bold)
-                        if tag_text:
-                            _add_markdown_runs(p, f" · {tag_text}", label_font_size, fonts=font_spec, base_bold=meta_bold)
-                    elif cell_index == 1 and cfg["preset"] == "compact" and compact_value:
-                        _add_markdown_runs(
-                            p,
-                            " · ".join(value for value in (degree, compact_value) if value),
-                            cell_size,
-                            fonts=font_spec,
-                            base_bold=meta_bold,
+                    for paragraph_index, component in enumerate(components):
+                        paragraph = (
+                            cell.paragraphs[0]
+                            if paragraph_index == 0 or cell_config["flow"] == "inline"
+                            else cell.add_paragraph()
                         )
-                    else:
-                        _add_markdown_runs(p, value, cell_size, fonts=font_spec, base_bold=meta_bold)
-                table.cell(0, 1).paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.LEFT
-                table.cell(0, 2).paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
-            else:
-                _two_column_line(
-                    document, school, date, entry_title_font_size,
-                    right_font_size=meta_font_size, right_color="111111", fonts=font_spec,
-                    left_runs=[
-                        (school, entry_title_font_size, entry_title_bold),
-                        (f" · {tag_text}" if tag_text else "", label_font_size, meta_bold),
-                    ],
-                    total_width_mm=printable_width_mm,
-                    line_height_pt=tokens["entryTitleLineHeightPt"],
-                )
-                if degree:
-                    p = document.add_paragraph()
-                    _paragraph_spacing(p, after=0, line=Pt(body_line_height))
-                    _add_markdown_runs(p, degree, meta_font_size, fonts=font_spec)
-                if metrics:
-                    p = document.add_paragraph()
-                    _paragraph_spacing(p, after=0, line=Pt(body_line_height))
-                    _add_markdown_runs(p, " | ".join(metrics), meta_font_size, color="111111", fonts=font_spec)
-            if cfg["thesisDisplay"] != "hidden":
+                        paragraph.alignment = alignment_map[cell_config["alignment"]]
+                        _paragraph_spacing(
+                            paragraph,
+                            after=(tokens["modules"]["education"]["rowSpacingPt"] if paragraph_index == len(components) - 1 else 0),
+                            line=Pt(tokens["entryTitleLineHeightPt"]),
+                        )
+                        prefix = " · " if cell_config["flow"] == "inline" and paragraph_index > 0 else ""
+                        if component == "school":
+                            _add_markdown_runs(paragraph, prefix + component_values[component], entry_title_font_size, fonts=font_spec, base_bold=entry_title_bold if legacy_default_bold else False)
+                        elif component in {"school_tags", "degree", "major", "metrics", "date"}:
+                            _add_markdown_runs(paragraph, prefix + component_values[component], label_font_size, fonts=font_spec, base_bold=label_bold)
+                        else:
+                            _add_markdown_runs(paragraph, prefix + component_values[component], meta_font_size, fonts=font_spec, base_bold=meta_bold)
+            if cfg["thesisDisplay"] != "hidden" and "theses" not in cfg["hiddenComponents"]:
                 for thesis in item.get("theses") or []:
                     if not isinstance(thesis, dict):
                         continue
@@ -632,10 +674,121 @@ def generate_docx(
                     if cfg["thesisDisplay"] == "expanded":
                         add_details(thesis.get("details"), "bullets")
             if len(document.paragraphs) > item_paragraph_start:
-                _increase_paragraph_after(document.paragraphs[-1], tokens["itemSpacingPt"])
+                _increase_paragraph_after(document.paragraphs[-1], tokens["modules"]["education"]["itemSpacingPt"])
             elif len(document.tables) > item_table_start:
                 for cell in document.tables[-1].rows[-1].cells:
-                    _increase_paragraph_after(cell.paragraphs[-1], tokens["itemSpacingPt"])
+                    _increase_paragraph_after(cell.paragraphs[-1], tokens["modules"]["education"]["itemSpacingPt"])
+
+        merged_sections = [
+            ("research_interests", labels["researchInterests"], data.get("research_interests") or []),
+            ("honors", labels["honors"], data.get("honors") or []),
+            ("publications", "Publications" if lang == "en" else "论文", data.get("publications") or []),
+        ]
+        other_values = data.get("others") or {}
+        other_cfg = layout["others"]
+        other_hidden = set(other_cfg["hiddenFields"]) | set(other_cfg["hiddenComponents"])
+        other_labels = {"certificates": labels["certificates"], "languages": labels["language"]}
+        separator = " · " if other_cfg["separator"] == "dot" else " | "
+        merged_other = [
+            f'{other_labels[field]}{colon}{separator.join(str(value) for value in other_values[field])}'
+            for field in other_cfg["fieldOrder"]
+            if field in other_labels and field not in other_hidden and other_values.get(field)
+        ]
+        merged_sections.append(("others", "Certificates & Languages" if lang == "en" else "证书与语言", merged_other))
+        merged_sections.sort(key=lambda item: global_layout["sectionOrder"].index(item[0]))
+        for section_id, fallback, values in merged_sections:
+            if not merged_into_education(section_id) or section_id in hidden_sections or not values:
+                continue
+            heading = document.add_paragraph()
+            _paragraph_spacing(heading, after=tokens["paragraphSpacingPt"], line=Pt(body_line_height))
+            heading_text = global_layout.get("titleOverrides", {}).get(section_id, {}).get(lang, fallback)
+            _add_markdown_runs(heading, heading_text, label_font_size, fonts=font_spec, base_bold=True)
+            for value_index, value in enumerate(values):
+                module_id = section_id if section_id in tokens["modules"] and "listStyle" in layout.get(section_id, {}) else "publications"
+                add_module_list_item(module_id, value, value_index)
+
+    def add_component_rows(module_id: str, values: dict[str, str], excluded: set[str]) -> None:
+        cfg = layout[module_id]
+        hidden = set(cfg["hiddenComponents"]) | set(excluded)
+        alignment_map = {
+            "left": WD_ALIGN_PARAGRAPH.LEFT,
+            "center": WD_ALIGN_PARAGRAPH.CENTER,
+            "right": WD_ALIGN_PARAGRAPH.RIGHT,
+            "justify": WD_ALIGN_PARAGRAPH.JUSTIFY,
+        }
+        title_components = {"organization", "project_name", "school"}
+        label_components = {"school_tags", "degree", "major", "metrics", "date", "position", "job_type"}
+        for component_row in cfg["componentRows"]:
+            active_cells = []
+            for cell_cfg in component_row["cells"]:
+                components = [item for item in cell_cfg["components"] if item not in hidden and values.get(item)]
+                if components:
+                    active_cells.append((cell_cfg, components))
+            if not active_cells:
+                continue
+            content_width = min(42.0, printable_width_mm / max(1, len(active_cells)))
+            fixed = sum(content_width for cell_cfg, _ in active_cells if cell_cfg["width"] == "content")
+            flexible_count = max(1, sum(1 for cell_cfg, _ in active_cells if cell_cfg["width"] != "content"))
+            flexible = max(10.0, (printable_width_mm - fixed) / flexible_count)
+            widths = tuple(content_width if cell_cfg["width"] == "content" else flexible for cell_cfg, _ in active_cells)
+            table = document.add_table(rows=1, cols=len(active_cells))
+            _set_fixed_table_widths(table, widths)
+            for (cell_cfg, components), cell in zip(active_cells, table.rows[0].cells):
+                _set_cell_borderless(cell)
+                _set_cell_margins(cell)
+                for component_index, component in enumerate(components):
+                    paragraph = cell.paragraphs[0] if component_index == 0 or cell_cfg["flow"] == "inline" else cell.add_paragraph()
+                    paragraph.alignment = alignment_map[cell_cfg["alignment"]]
+                    _paragraph_spacing(paragraph, after=tokens["modules"][module_id]["rowSpacingPt"], line=Pt(tokens["entryTitleLineHeightPt"]))
+                    prefix = (
+                        " " if cell_cfg["flow"] == "inline" and component_index and component == "job_type"
+                        else (" · " if cell_cfg["flow"] == "inline" and component_index else "")
+                    )
+                    size = entry_title_font_size if component in title_components else (label_font_size if component in label_components else meta_font_size)
+                    bold = (entry_title_bold if legacy_default_bold else False) if component in title_components else (label_bold if component in label_components else meta_bold)
+                    _add_markdown_runs(paragraph, prefix + values[component], size, fonts=font_spec, base_bold=bold)
+
+    def add_module_list_item(module_id: str, value: object, index: int) -> None:
+        cfg = layout[module_id]
+        module_tokens = tokens["modules"][module_id]
+        base_indent_mm = module_tokens["indentPt"] * 25.4 / 72.0
+        after = module_tokens["itemSpacingPt"]
+        list_style = cfg.get("listStyle", "bullet")
+        content = _module_list_content(value)
+        marker_bold = _is_fully_bold(value)
+        if list_style == "paragraph":
+            paragraph = document.add_paragraph()
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+            paragraph.paragraph_format.left_indent = Mm(base_indent_mm)
+            _paragraph_spacing(paragraph, after=after, line=Pt(body_line_height))
+            _add_markdown_runs(paragraph, content, body_font_size, fonts=font_spec)
+            return
+        text_indent_mm = base_indent_mm + list_text_indent_mm
+        if list_style == "bullet":
+            _bullet(
+                document,
+                content,
+                body_font_size,
+                exact_line_height=body_line_height,
+                after=after,
+                fonts=font_spec,
+                text_indent_mm=text_indent_mm,
+                native_hanging=True,
+                native_marker_gap_mm=list_marker_gap_mm,
+            )
+            return
+        paragraph = document.add_paragraph()
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        _paragraph_spacing(paragraph, after=after, line=Pt(body_line_height))
+        _set_numbered_indent(
+            paragraph,
+            text_indent_mm=text_indent_mm,
+            marker_gap_mm=list_marker_gap_mm,
+        )
+        _set_font(paragraph.add_run("\t"), body_font_size, fonts=font_spec)
+        _set_font(paragraph.add_run(f"({index + 1})"), body_font_size, bold=marker_bold, fonts=font_spec)
+        _set_font(paragraph.add_run("\t"), body_font_size, fonts=font_spec)
+        _add_markdown_runs(paragraph, content, body_font_size, fonts=font_spec)
 
     def work_groups():
         items = list(data.get("work_experience") or [])
@@ -648,33 +801,31 @@ def generate_docx(
     def render_work(section_id: str, fallback: str, items: list) -> None:
         if not items or section_id in hidden_sections:
             return
-        cfg = layout["work_experience"]
+        cfg = layout[section_id]
         maybe_break(f"{section_id}:0")
         title(section_id, fallback)
         for index, item in enumerate(items):
             if index:
                 maybe_break(f"{section_id}:{index}")
             company = item.get("company_name", "")
-            position_parts = [item.get("job_title", "")]
-            if cfg["showJobType"] and item.get("job_type"):
-                position_parts.append(f'({item["job_type"]})')
-            position = " ".join(v for v in position_parts if v)
-            _two_column_line(
-                document, company, _date_range(item), entry_title_font_size,
-                right_font_size=meta_font_size, right_color="111111", fonts=font_spec,
-                left_runs=entry_heading_runs(company, position),
-                total_width_mm=printable_width_mm,
-                line_height_pt=tokens["entryTitleLineHeightPt"],
-            )
+            add_component_rows(section_id, {
+                "organization": company,
+                "position": item.get("job_title", ""),
+                "job_type": f'({item["job_type"]})' if cfg["showJobType"] and item.get("job_type") else "",
+                "date": _date_range(item),
+            }, {"content"})
             detail_start = len(document.paragraphs)
-            add_content_blocks(item)
+            add_content_blocks(item, section_id)
             if len(document.paragraphs) > detail_start:
-                _increase_paragraph_after(document.paragraphs[-1], tokens["itemSpacingPt"])
+                _increase_paragraph_after(document.paragraphs[-1], tokens["modules"][section_id]["itemSpacingPt"])
             else:
                 for cell in document.tables[-1].rows[-1].cells:
-                    _increase_paragraph_after(cell.paragraphs[-1], tokens["itemSpacingPt"])
+                    _increase_paragraph_after(cell.paragraphs[-1], tokens["modules"][section_id]["itemSpacingPt"])
 
-    def add_content_blocks(item: dict) -> None:
+    def add_content_blocks(item: dict, module_id: str) -> None:
+        module_tokens = tokens["modules"][module_id]
+        module_indent_mm = module_tokens["indentPt"] * 25.4 / 72.0
+        semantic_indent_mm = module_indent_mm + list_text_indent_mm
         blocks = item.get("content_blocks") or []
         if not blocks:
             add_details(item.get("details"), "bullets")
@@ -688,22 +839,24 @@ def generate_docx(
             if block_type == "paragraph":
                 paragraph = document.add_paragraph(style="List Bullet") if flow["labelMarker"] == "bullet" else document.add_paragraph()
                 paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-                _paragraph_spacing(paragraph, after=tokens["contentBlockSpacingPt"], line=Pt(body_line_height))
+                _paragraph_spacing(paragraph, after=module_tokens["contentBlockSpacingPt"], line=Pt(body_line_height))
                 if flow["labelMarker"] == "bullet":
-                    _set_hanging_indent(paragraph, left=list_text_indent_mm, hanging=min(3.0, list_text_indent_mm))
+                    _set_hanging_indent(paragraph, left=semantic_indent_mm, hanging=min(3.0, list_text_indent_mm))
+                else:
+                    paragraph.paragraph_format.left_indent = Mm(module_indent_mm)
                 if label:
-                    _add_markdown_runs(paragraph, f"{label}{colon}", label_font_size, fonts=font_spec, base_bold=label_bold and flow["labelBold"])
+                    _add_markdown_runs(paragraph, f"{label}{colon}", body_font_size, fonts=font_spec, base_bold=label_bold and flow["labelBold"])
                 _add_markdown_runs(paragraph, block.get("text", ""), body_font_size, fonts=font_spec)
                 continue
             if flow["labelPlacement"] == "separate":
                 paragraph = document.add_paragraph(style="List Bullet") if flow["labelMarker"] == "bullet" else document.add_paragraph()
                 _paragraph_spacing(paragraph, after=tokens["contentLabelSpacingPt"], line=Pt(body_line_height))
                 if flow["labelMarker"] == "bullet":
-                    _set_hanging_indent(paragraph, left=list_text_indent_mm, hanging=min(3.0, list_text_indent_mm))
-                _add_markdown_runs(paragraph, f"{label}{colon}", label_font_size, fonts=font_spec, base_bold=label_bold and flow["labelBold"])
+                    _set_hanging_indent(paragraph, left=semantic_indent_mm, hanging=min(3.0, list_text_indent_mm))
+                _add_markdown_runs(paragraph, f"{label}{colon}", body_font_size, fonts=font_spec, base_bold=label_bold and flow["labelBold"])
             details = block.get("items") or []
             for detail_index, detail in enumerate(details, 1):
-                trailing_block_spacing = tokens["contentBlockSpacingPt"] if detail_index == len(details) else 0
+                trailing_block_spacing = module_tokens["contentBlockSpacingPt"] if detail_index == len(details) else 0
                 if block_type == "numbered_list":
                     paragraph = document.add_paragraph()
                     paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
@@ -714,11 +867,11 @@ def generate_docx(
                     )
                     _set_numbered_indent(
                         paragraph,
-                        text_indent_mm=list_text_indent_mm * flow["contentIndentLevels"],
+                        text_indent_mm=module_indent_mm + list_text_indent_mm * max(1, flow["contentIndentLevels"]),
                         marker_gap_mm=list_marker_gap_mm,
                     )
                     _set_font(paragraph.add_run("\t"), body_font_size, fonts=font_spec)
-                    _set_font(paragraph.add_run(f"({detail_index})"), body_font_size, fonts=font_spec)
+                    _set_font(paragraph.add_run(f"({detail_index})"), body_font_size, bold=_is_fully_bold(detail), fonts=font_spec)
                     _set_font(paragraph.add_run("\t"), body_font_size, fonts=font_spec)
                     _add_markdown_runs(paragraph, detail, body_font_size, fonts=font_spec)
                 else:
@@ -727,9 +880,9 @@ def generate_docx(
                         detail,
                         body_font_size,
                         exact_line_height=body_line_height,
-                        after=tokens["paragraphSpacingPt"] + trailing_block_spacing,
+                        after=module_tokens["paragraphSpacingPt"] + trailing_block_spacing,
                         fonts=font_spec,
-                        text_indent_mm=list_text_indent_mm * flow["contentIndentLevels"],
+                        text_indent_mm=module_indent_mm + list_text_indent_mm * max(1, flow["contentIndentLevels"]),
                     )
 
     def render_projects() -> None:
@@ -745,58 +898,43 @@ def generate_docx(
             project_name = item.get("project_name") or item.get("name") or labels["projectNotSet"]
             role = item.get("role") if cfg["showRole"] else ""
             date = _date_range(item) if cfg["showDate"] else ""
-            _two_column_line(
-                document, project_name, date, entry_title_font_size,
-                right_font_size=meta_font_size, right_color="111111", fonts=font_spec,
-                left_runs=entry_heading_runs(project_name, role if cfg["preset"] == "compact" else ""),
-                total_width_mm=printable_width_mm,
-                line_height_pt=tokens["entryTitleLineHeightPt"],
-            )
+            add_component_rows("project_experience", {
+                "project_name": project_name,
+                "role": role,
+                "date": date,
+            }, {"content"})
             detail_start = len(document.paragraphs)
-            if cfg["preset"] != "compact" and role:
-                p = document.add_paragraph()
-                _paragraph_spacing(p, after=0, line=Pt(body_line_height))
-                _add_markdown_runs(p, role, meta_font_size, fonts=font_spec)
-            add_content_blocks(item)
+            add_content_blocks(item, "project_experience")
             if len(document.paragraphs) > detail_start:
-                _increase_paragraph_after(document.paragraphs[-1], tokens["itemSpacingPt"])
+                _increase_paragraph_after(document.paragraphs[-1], tokens["modules"]["project_experience"]["itemSpacingPt"])
             else:
                 for cell in document.tables[-1].rows[-1].cells:
-                    _increase_paragraph_after(cell.paragraphs[-1], tokens["itemSpacingPt"])
+                    _increase_paragraph_after(cell.paragraphs[-1], tokens["modules"]["project_experience"]["itemSpacingPt"])
 
     def render_skills() -> None:
         skills = (data.get("others") or {}).get("skills") or []
         if not skills or "skills" in hidden_sections:
             return
         title("skills", labels["skills"])
-        for value in skills:
-            _bullet(
-                document, value, body_font_size,
-                exact_line_height=body_line_height,
-                after=tokens["paragraphSpacingPt"],
-                fonts=font_spec,
-                text_indent_mm=list_text_indent_mm,
-                native_hanging=True,
-                native_marker_gap_mm=list_marker_gap_mm,
-            )
+        for index, value in enumerate(skills):
+            add_module_list_item("skills", value, index)
 
     def render_others() -> None:
         values = data.get("others") or {}
         cfg = layout["others"]
-        fields = [key for key in cfg["fieldOrder"] if key != "skills" and key not in cfg["hiddenFields"] and values.get(key)]
-        if not fields or "others" in hidden_sections:
+        hidden_fields = set(cfg["hiddenFields"]) | set(cfg["hiddenComponents"])
+        fields = [key for key in cfg["fieldOrder"] if key != "skills" and key not in hidden_fields and values.get(key)]
+        if not fields or "others" in hidden_sections or merged_into_education("others"):
             return
         maybe_break("others")
         title("others", "Certificates & Languages" if lang == "en" else "证书与语言")
         field_labels = {"skills": labels["skills"], "certificates": labels["certificates"], "languages": labels["language"]}
         separator = " · " if cfg["separator"] == "dot" else " | "
-        for key in fields:
-            p = document.add_paragraph()
-            _set_font(p.add_run(f'{field_labels[key]}{colon}'), label_font_size, bold=label_bold, fonts=font_spec)
-            content = separator.join(str(value) for value in values[key])
-            if cfg["preset"] == "tags":
-                content = "  ".join(f"[{value}]" for value in values[key])
-            _add_markdown_runs(p, content, body_font_size, fonts=font_spec)
+        component_values = {
+            key: f'{field_labels[key]}{colon}{separator.join(str(value) for value in values[key])}'
+            for key in fields
+        }
+        add_component_rows("others", component_values, set())
 
     def render_self() -> None:
         values = data.get("self_evaluation") or []
@@ -807,27 +945,25 @@ def generate_docx(
         title("self_evaluation", labels["selfEvaluation"])
         if cfg["preset"] == "compact":
             values = [" ".join(str(value) for value in values)]
-        for value in values:
-            if cfg["preset"] == "bullets":
-                _bullet(document, value, body_font_size, exact_line_height=body_line_height, after=tokens["paragraphSpacingPt"], fonts=font_spec, text_indent_mm=list_text_indent_mm)
-            else:
-                p = document.add_paragraph()
-                p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-                _add_markdown_runs(p, value, body_font_size, fonts=font_spec)
+        for index, value in enumerate(values):
+            add_module_list_item("self_evaluation", value, index)
 
     def render_plain_section(section_id: str, fallback: str, values: list) -> None:
-        if not values or section_id in hidden_sections:
+        if not values or section_id in hidden_sections or merged_into_education(section_id):
             return
         maybe_break(section_id)
         title(section_id, fallback)
-        for value in values:
-            _bullet(document, value, body_font_size, exact_line_height=body_line_height, after=tokens["paragraphSpacingPt"], fonts=font_spec, text_indent_mm=list_text_indent_mm)
+        for index, value in enumerate(values):
+            add_module_list_item(section_id, value, index)
 
     def render_research() -> None:
         render_plain_section("research_interests", labels["researchInterests"], data.get("research_interests") or [])
 
     def render_honors() -> None:
         render_plain_section("honors", labels["honors"], data.get("honors") or [])
+
+    def render_publications() -> None:
+        render_plain_section("publications", "Publications" if lang == "en" else "论文", data.get("publications") or [])
 
     def render_custom_sections() -> None:
         if "custom_sections" in hidden_sections:
@@ -837,14 +973,15 @@ def generate_docx(
                 continue
             maybe_break(f"custom_sections:{index}")
             title("custom_sections", custom["title"])
-            for value in custom["items"]:
-                _bullet(document, value, body_font_size, exact_line_height=body_line_height, after=tokens["paragraphSpacingPt"], fonts=font_spec, text_indent_mm=list_text_indent_mm)
+            for item_index, value in enumerate(custom["items"]):
+                add_module_list_item("custom_sections", value, item_index)
 
     renderers = {
         "education": render_education,
         "skills": render_skills,
         "research_interests": render_research,
         "honors": render_honors,
+        "publications": render_publications,
         "project_experience": render_projects,
         "custom_sections": render_custom_sections,
         "others": render_others,

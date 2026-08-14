@@ -2,14 +2,14 @@ import unittest
 
 from backend.pdf_generator import render_resume_to_html
 from backend.layout_config import (
-    LAYOUT_TEMPLATES,
     apply_density,
-    apply_layout_template,
     apply_layout_change_groups,
     build_layout_changes,
     default_layout_config,
     format_compact_academic_metric,
     normalize_layout_config,
+    component_position,
+    resolve_module_layout,
     resolve_content_block_flow,
     resolve_education_column_widths,
     resolve_layout_tokens,
@@ -18,6 +18,27 @@ from backend.layout_config import (
 
 
 class LayoutConfigTests(unittest.TestCase):
+    def test_column_titles_list_styles_and_education_merges_are_normalized(self):
+        config = normalize_layout_config({
+            "global": {
+                "titleOverrides": {"skills": {"zh": "技术栈"}},
+                "sectionPlacements": {
+                    "research_interests": "education",
+                    "publications": "education",
+                    "skills": "education",
+                    "honors": "unknown",
+                },
+            },
+            "skills": {"listStyle": "numbered"},
+            "publications": {"listStyle": "paragraph"},
+        })
+        self.assertEqual(config["global"]["titleOverrides"]["skills"]["zh"], "技术栈")
+        self.assertEqual(config["global"]["sectionPlacements"], {
+            "research_interests": "education", "publications": "education",
+        })
+        self.assertEqual(config["skills"]["listStyle"], "numbered")
+        self.assertEqual(config["publications"]["listStyle"], "paragraph")
+
     def test_content_block_flow_distinguishes_inline_and_separate_labels(self):
         self.assertEqual(
             resolve_content_block_flow({"type": "paragraph", "label": "项目简介"})["labelPlacement"],
@@ -47,8 +68,34 @@ class LayoutConfigTests(unittest.TestCase):
     def test_defaults_are_complete_and_independent(self):
         first = default_layout_config()
         second = default_layout_config()
-        first["education"]["preset"] = "compact"
-        self.assertEqual(second["education"]["preset"], "classic")
+        first["education"]["preset"] = "classic"
+        first["education"]["componentRows"][0]["cells"][0]["alignment"] = "right"
+        self.assertEqual(second["education"]["preset"], "compact")
+        self.assertEqual(second["education"]["componentRows"][0]["cells"][0]["alignment"], "left")
+        self.assertEqual(second["education"]["componentRows"][0]["cells"][1]["alignment"], "left")
+        self.assertEqual(second["skills"]["indentLevel"], 0)
+        self.assertEqual(second["research_interests"]["indentLevel"], 0)
+        self.assertEqual(second["honors"]["indentLevel"], 0)
+        self.assertEqual(second["global"]["sectionPlacements"], {})
+        self.assertEqual(second["global"]["sectionOrder"], [
+            "education", "honors", "publications", "research_interests", "skills",
+            "work_experience", "project_experience", "custom_sections", "others", "self_evaluation",
+        ])
+
+    def test_v7_default_order_migrates_but_user_order_is_preserved(self):
+        old_default = [
+            "education", "skills", "research_interests", "honors", "publications",
+            "work_experience", "project_experience", "custom_sections", "others", "self_evaluation",
+        ]
+        migrated = normalize_layout_config({"version": 7, "global": {"sectionOrder": old_default}})
+        self.assertEqual(migrated["global"]["sectionOrder"], default_layout_config()["global"]["sectionOrder"])
+
+        custom = [
+            "education", "publications", "honors", "research_interests", "skills",
+            "work_experience", "project_experience", "custom_sections", "others", "self_evaluation",
+        ]
+        preserved = normalize_layout_config({"version": 7, "global": {"sectionOrder": custom}})
+        self.assertEqual(preserved["global"]["sectionOrder"], custom)
 
     def test_unknown_values_and_numbers_are_normalized(self):
         config = normalize_layout_config({
@@ -57,9 +104,28 @@ class LayoutConfigTests(unittest.TestCase):
         })
         self.assertEqual(config["global"]["density"], "compact")
         self.assertEqual(config["global"]["fontSize"], 11.5)
-        self.assertEqual(config["global"]["lineHeight"], 1.1)
-        self.assertEqual(config["education"]["preset"], "classic")
-        self.assertEqual(config["education"]["schoolTagStyle"], "filled")
+        self.assertEqual(config["global"]["lineHeight"], 1.0)
+        self.assertEqual(config["education"]["preset"], "compact")
+        self.assertEqual(config["education"]["schoolTagStyle"], "text")
+
+    def test_global_section_chrome_and_constrained_basic_photo_are_normalized(self):
+        config = normalize_layout_config({
+            "global": {"titleStyle": "underline"},
+            "basics": {"photoWidthMm": 99, "titleAlignment": "center"},
+            "education": {"titleStyle": "plain", "titleAlignment": "right"},
+            "work_experience": {"preset": "classic"},
+            "internship_experience": {"preset": "classic"},
+        })
+        self.assertEqual(config["global"]["titleStyle"], "underline")
+        self.assertIsNone(config["basics"]["titleAlignment"])
+        self.assertIsNone(config["education"]["titleStyle"])
+        self.assertIsNone(config["education"]["titleAlignment"])
+        self.assertEqual(config["work_experience"]["preset"], "compact")
+        self.assertEqual(config["internship_experience"]["preset"], "compact")
+        self.assertEqual(config["basics"]["photoWidthMm"], 30)
+        tokens = resolve_layout_tokens(config)
+        self.assertEqual(tokens["photoWidthMm"], 30)
+        self.assertAlmostEqual(tokens["photoHeightMm"], 30 * 26 / 21)
 
     def test_typography_is_recorded_and_unknown_fonts_cannot_split_renderers(self):
         config = normalize_layout_config({
@@ -70,7 +136,7 @@ class LayoutConfigTests(unittest.TestCase):
                 "eastAsiaFont": "Random CJK",
             },
         })
-        self.assertEqual(config["version"], 6)
+        self.assertEqual(config["version"], 8)
         self.assertEqual(config["typography"]["preset"], "microsoft-office")
         self.assertEqual(config["typography"]["latinFont"], "Arial")
         self.assertEqual(config["typography"]["eastAsiaFont"], "Microsoft YaHei")
@@ -80,7 +146,7 @@ class LayoutConfigTests(unittest.TestCase):
             "version": 3,
             "global": {"fontSize": 10.5, "lineHeight": 1.32, "moduleMargin": 0.45},
         })
-        self.assertEqual(config["version"], 6)
+        self.assertEqual(config["version"], 8)
         self.assertEqual(config["global"]["fontSize"], 9)
         self.assertEqual(config["global"]["lineHeight"], 1.28)
         self.assertEqual(config["global"]["moduleMargin"], 0.55)
@@ -112,7 +178,7 @@ class LayoutConfigTests(unittest.TestCase):
             "version": 4,
             "global": {"fontSize": 9.5},
         })
-        self.assertEqual(config["version"], 6)
+        self.assertEqual(config["version"], 8)
         self.assertEqual(config["typography"]["fontSizes"], {
             "name": 14, "sectionTitle": 11.5, "entryTitle": 10.5,
             "meta": 9.5, "body": 9.5, "label": 9.5,
@@ -143,7 +209,7 @@ class LayoutConfigTests(unittest.TestCase):
             "version": 5,
             "global": {"density": "standard", "lineHeight": 1.35},
         })
-        self.assertEqual(config["version"], 6)
+        self.assertEqual(config["version"], 8)
         self.assertEqual(config["global"]["lineHeight"], 1.28)
 
         custom = normalize_layout_config({
@@ -244,8 +310,8 @@ class LayoutConfigTests(unittest.TestCase):
     def test_density_applies_safe_numeric_bundle(self):
         config = apply_density({}, "compact")
         self.assertEqual(config["global"]["fontSize"], 9)
-        self.assertEqual(config["global"]["lineHeight"], 1.28)
-        self.assertEqual(config["global"]["moduleMargin"], 0.55)
+        self.assertEqual(config["global"]["lineHeight"], 1.25)
+        self.assertEqual(config["global"]["moduleMargin"], 0.5)
         self.assertEqual(config["typography"]["fontSizes"]["body"], 9)
         self.assertEqual(config["typography"]["fontSizes"]["sectionTitle"], 11)
 
@@ -259,36 +325,10 @@ class LayoutConfigTests(unittest.TestCase):
         selected = apply_layout_change_groups(before, after, ["layout-global"])
         self.assertEqual(selected["typography"]["fontSizes"]["name"], 16)
 
-    def test_curated_template_reuses_presets_and_preserves_content_visibility(self):
-        config = default_layout_config()
-        config["global"]["hiddenSections"] = ["self_evaluation"]
-        config["basics"]["hiddenFields"] = ["gender"]
-        result = apply_layout_template(config, "modern-clean")
-        self.assertEqual(result["basics"]["preset"], "left-aligned")
-        self.assertEqual(result["education"]["preset"], "three-column")
-        self.assertEqual(result["education"]["schoolTagStyle"], "text")
-        self.assertEqual(result["global"]["lineHeight"], 1.28)
-        self.assertEqual(result["global"]["hiddenSections"], ["self_evaluation"])
-        self.assertEqual(result["basics"]["hiddenFields"], ["gender"])
-
-    def test_all_curated_templates_resolve_to_supported_module_presets(self):
-        expected = {
-            "classic-professional": ("centered", "classic", "classic"),
-            "modern-clean": ("left-aligned", "three-column", "classic"),
-            "compact-tech": ("left-aligned", "compact", "compact"),
-        }
-        self.assertEqual(set(LAYOUT_TEMPLATES), set(expected))
-        for template_id, presets in expected.items():
-            result = apply_layout_template(default_layout_config(), template_id)
-            self.assertEqual(
-                (result["basics"]["preset"], result["education"]["preset"], result["work_experience"]["preset"]),
-                presets,
-            )
-
     def test_layout_changes_are_atomic_per_module(self):
         before = default_layout_config()
         after = default_layout_config()
-        after["education"].update({"preset": "three-column", "schoolTagStyle": "text"})
+        after["education"].update({"preset": "three-column", "schoolTagStyle": "outline"})
         after["self_evaluation"]["preset"] = "bullets"
         changes = build_layout_changes(before, after)
         self.assertEqual({change["id"] for change in changes}, {"layout-education", "layout-self_evaluation"})
@@ -297,15 +337,50 @@ class LayoutConfigTests(unittest.TestCase):
         self.assertEqual(labels, {"教育信息布局", "学校标签样式", "成绩信息位置"})
         selected = apply_layout_change_groups(before, after, ["layout-education"])
         self.assertEqual(selected["education"]["preset"], "three-column")
-        self.assertEqual(selected["self_evaluation"]["preset"], "paragraphs")
+        self.assertEqual(selected["self_evaluation"]["preset"], "compact")
 
     def test_reset_one_module_preserves_other_overrides(self):
         config = default_layout_config()
-        config["education"]["preset"] = "compact"
-        config["others"]["preset"] = "tags"
+        config["education"]["preset"] = "classic"
+        config["others"]["preset"] = "inline"
         reset = reset_layout_section(config, "education")
-        self.assertEqual(reset["education"]["preset"], "classic")
-        self.assertEqual(reset["others"]["preset"], "tags")
+        self.assertEqual(reset["education"]["preset"], "compact")
+        self.assertEqual(reset["others"]["preset"], "inline")
+
+    def test_v6_layout_migrates_to_module_contract_without_second_line_height(self):
+        config = normalize_layout_config({
+            "version": 6,
+            "global": {"lineHeight": 1.45},
+            "education": {"preset": "classic"},
+        })
+        module = resolve_module_layout(config, "education")
+        self.assertEqual(config["version"], 8)
+        self.assertEqual(module["resolvedLineHeight"], 1.45)
+        self.assertNotIn("lineHeight", config["education"])
+        self.assertEqual(component_position(config, "education", "school"), (0, 0))
+
+    def test_module_contract_cleans_unknown_components_and_constrains_long_text(self):
+        config = normalize_layout_config({
+            "version": 7,
+            "work_experience": {
+                "hiddenComponents": ["position", "unknown", "content"],
+                "indentLevel": 99,
+                "componentRows": [{"cells": [{
+                    "components": ["organization", "content", "unknown"],
+                    "flow": "inline", "width": "content", "alignment": "right",
+                }]}],
+            },
+        })
+        work = config["work_experience"]
+        self.assertEqual(work["hiddenComponents"], ["position"])
+        self.assertEqual(work["indentLevel"], 3)
+        content_row = next(
+            row for row in work["componentRows"]
+            if any("content" in cell["components"] for cell in row["cells"])
+        )
+        self.assertEqual(content_row["cells"], [{
+            "components": ["content"], "flow": "stacked", "width": "fill", "alignment": "justify",
+        }])
 
 
 if __name__ == "__main__":
