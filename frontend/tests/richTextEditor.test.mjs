@@ -106,3 +106,21 @@ test('resume tag chips use escaped inline formatting instead of exposing markers
   assert.ok(appSource.includes('v-model="resumeFormData.others.languages[i]"'))
   assert.ok(appSource.includes('startOtherItemDrag'))
 })
+
+test('resume editor cancel restores the photo snapshot and the save payload keeps an explicit empty photo', () => {
+  assert.ok(appSource.includes('resumeEditorPreviousResumeData = cloneResumeData(resumeData.value)'))
+  assert.ok(appSource.includes('resumeData.value = cloneResumeData(resumeEditorPreviousResumeData)'))
+  assert.ok(appSource.includes('resumeFormData.value.basics.photo'))
+  assert.ok(appSource.includes("fetch('/save_resume'"))
+})
+
+test('certificate and language sortable editors use the same full-width row contract as skills', () => {
+  assert.ok(appSource.includes('.resume-dialog .sortable-item .rich-editor {\n  flex: none;\n  width: 100%;\n  min-width: 0;'))
+  assert.ok(appSource.includes('class="sortable-item-editor" placeholder="例如 软件设计师" compact'))
+  assert.ok(appSource.includes('class="sortable-item-editor" placeholder="例如 英语 CET-6" compact'))
+  assert.ok(appSource.includes('white-space: pre-wrap !important;'))
+  assert.ok(appSource.includes('min-height: 44px;'))
+  assert.ok(appSource.includes('.resume-dialog .certificate-language-field > .field-label-editor.rich-editor'))
+  assert.ok(appSource.includes('v-model="resumeFormData.others.certificates[i]"'))
+  assert.ok(appSource.includes('v-model="resumeFormData.others.languages[i]"'))
+})

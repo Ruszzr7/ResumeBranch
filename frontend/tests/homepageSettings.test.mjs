@@ -30,3 +30,9 @@ test('modal inputs override browser autofill with the dark surface', () => {
   assert.ok(homepageSource.includes('.internal-modal .modal-body input:-webkit-autofill'))
   assert.ok(homepageSource.includes('box-shadow: 0 0 0 1000px #303138 inset'))
 })
+
+test('resume summaries strip storage-only bold markers before display', () => {
+  assert.ok(homepageSource.includes("import { plainInlineText } from '../utils/inlineFormatting.js'"))
+  assert.ok(homepageSource.includes('const plainSummaryText = value => plainInlineText'))
+  assert.ok(homepageSource.includes('{{ plainSummaryText(project.candidate_name || \'姓名尚未填写\') }}'))
+})

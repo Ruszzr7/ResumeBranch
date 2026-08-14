@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import math
 import re
 from io import BytesIO
 
@@ -57,6 +58,20 @@ def _photo_aspect_ratio(photo_bytes: bytes | None, resume_data: dict) -> float:
         except Exception:
             pass
     return 21.0 / 26.0
+
+
+def _other_field_labels(values: dict, labels: dict) -> dict[str, str]:
+    custom = values.get("field_labels") if isinstance(values, dict) else {}
+    custom = custom if isinstance(custom, dict) else {}
+    return {
+        "certificates": str(custom["certificates"] if "certificates" in custom else labels["certificates"]),
+        "languages": str(custom["languages"] if "languages" in custom else labels["language"]),
+    }
+
+
+def _other_field_value(label: str, values: list[object], separator: str, colon: str) -> str:
+    joined = separator.join(str(value) for value in values)
+    return f"{label}{colon}{joined}" if label else joined
 
 
 def _set_cell_borderless(cell) -> None:
@@ -126,6 +141,68 @@ def _set_fixed_table_widths(table, widths_mm: tuple[float, ...]) -> None:
     for row in table.rows:
         for cell, width in zip(row.cells, widths_mm):
             cell.width = Mm(width)
+
+
+def _add_floating_picture(
+    paragraph,
+    image_bytes: bytes,
+    *,
+    width_mm: float,
+    height_mm: float,
+    x_mm: float,
+    y_mm: float,
+) -> None:
+    """Insert a page-positioned picture without putting it in the basics table."""
+    inline_shape = paragraph.add_run().add_picture(
+        BytesIO(image_bytes),
+        width=Mm(width_mm),
+        height=Mm(height_mm),
+    )
+    inline = inline_shape._inline
+    extent = inline.find(qn("wp:extent"))
+    doc_pr = inline.find(qn("wp:docPr"))
+    frame_locks = inline.find(qn("wp:cNvGraphicFramePr"))
+    graphic = inline.find(qn("a:graphic"))
+    if extent is None or doc_pr is None or frame_locks is None or graphic is None:
+        return
+
+    inline.tag = qn("wp:anchor")
+    for key, value in (
+        ("distT", "0"),
+        ("distB", "0"),
+        ("distL", "0"),
+        ("distR", "0"),
+        ("simplePos", "0"),
+        ("relativeHeight", "251658240"),
+        ("behindDoc", "0"),
+        ("locked", "0"),
+        ("layoutInCell", "0"),
+        ("allowOverlap", "1"),
+    ):
+        inline.set(key, value)
+
+    for child in list(inline):
+        inline.remove(child)
+
+    simple_pos = OxmlElement("wp:simplePos")
+    simple_pos.set("x", "0")
+    simple_pos.set("y", "0")
+    position_h = OxmlElement("wp:positionH")
+    position_h.set("relativeFrom", "page")
+    horizontal_offset = OxmlElement("wp:posOffset")
+    horizontal_offset.text = str(round(max(0.0, x_mm) * 36000))
+    position_h.append(horizontal_offset)
+    position_v = OxmlElement("wp:positionV")
+    position_v.set("relativeFrom", "page")
+    vertical_offset = OxmlElement("wp:posOffset")
+    vertical_offset.text = str(round(max(0.0, y_mm) * 36000))
+    position_v.append(vertical_offset)
+    effect_extent = OxmlElement("wp:effectExtent")
+    for side in ("l", "t", "r", "b"):
+        effect_extent.set(side, "0")
+    wrap_none = OxmlElement("wp:wrapNone")
+
+    inline.extend((simple_pos, position_h, position_v, extent, effect_extent, wrap_none, doc_pr, frame_locks, graphic))
 
 
 def _disable_document_grid(section) -> None:
@@ -223,46 +300,106 @@ def _paragraph_spacing(paragraph, *, before=0, after=0, line=1.15) -> None:
     fmt.line_spacing = line
 
 
+WORD_PHOTO_BOTTOM_GAP_MM = 1.5
+
+
+def _word_estimated_line_count(value: object, font_size_pt: float, width_mm: float) -> int:
+    """Estimate Word's wrapped line count from the generated cell width.
+
+    The basics table uses exact paragraph line heights and zero cell margins.
+    Measuring the authored text against that same fixed cell width gives the
+    DOCX photo boundary a deterministic input without changing the text flow.
+    """
+    from .layout_config import estimate_text_width_pt
+
+    text = str(value or "").replace("**", "").strip()
+    if not text:
+        return 0
+    available_pt = max(1.0, float(width_mm) * 72.0 / 25.4)
+    return max(1, math.ceil(estimate_text_width_pt(text, font_size_pt) / available_pt))
+
+
+def _word_paragraph_line_height_pt(paragraph, fallback_pt: float) -> float:
+    spacing = paragraph._p.get_or_add_pPr().find(qn("w:spacing"))
+    if spacing is None:
+        return float(fallback_pt)
+    line = spacing.get(qn("w:line"))
+    if line is None:
+        return float(fallback_pt)
+    try:
+        return float(line) / 20.0
+    except (TypeError, ValueError):
+        return float(fallback_pt)
+
+
+def _word_paragraph_spacing_pt(paragraph, key: str) -> float:
+    spacing = paragraph._p.get_or_add_pPr().find(qn("w:spacing"))
+    if spacing is None:
+        return 0.0
+    try:
+        return float(spacing.get(qn(f"w:{key}")) or 0.0) / 20.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _word_bottom_border_extent_pt(paragraph) -> float:
+    """Return the Word paragraph's bottom-border gap plus border thickness."""
+    p_pr = paragraph._p.get_or_add_pPr()
+    borders = p_pr.find(qn("w:pBdr"))
+    if borders is None:
+        return 0.0
+    bottom = borders.find(qn("w:bottom"))
+    if bottom is None or bottom.get(qn("w:val")) in {None, "nil", "none"}:
+        return 0.0
+    try:
+        border_gap = float(bottom.get(qn("w:space")) or 0.0)
+    except (TypeError, ValueError):
+        border_gap = 0.0
+    try:
+        # Word border size is expressed in eighths of a point.
+        border_width = float(bottom.get(qn("w:sz")) or 0.0) / 8.0
+    except (TypeError, ValueError):
+        border_width = 0.0
+    return border_gap + border_width
+
+
+def _resolve_word_photo_height_mm(
+    desired_height_mm: float,
+    *,
+    basics_height_pt: float,
+    title_paragraph,
+) -> float:
+    """Cap a DOCX photo before Word's own section divider geometry.
+
+    The page and PDF renderers keep the shared photo height. DOCX has a
+    different paragraph/table line box, so use the exact spacing values that
+    were written to the Word XML and leave the same physical safety gap before
+    the title border. The photo remains page-positioned and cannot move the
+    following module.
+    """
+    title_before_pt = _word_paragraph_spacing_pt(title_paragraph, "before")
+    title_line_pt = _word_paragraph_line_height_pt(
+        title_paragraph,
+        fallback_pt=9.0 * 1.25,
+    )
+    divider_offset_pt = (
+        float(basics_height_pt)
+        + title_before_pt
+        + title_line_pt
+        + _word_bottom_border_extent_pt(title_paragraph)
+    )
+    max_height_mm = (
+        divider_offset_pt * 25.4 / 72.0
+        - WORD_PHOTO_BOTTOM_GAP_MM
+    )
+    return round(max(1.0, min(float(desired_height_mm), max_height_mm)), 2)
+
+
 def _increase_paragraph_after(paragraph, amount_pt: float) -> None:
     """Add an outer spacing token without discarding inner paragraph spacing."""
     current = paragraph.paragraph_format.space_after
     current_pt = current.pt if current is not None else 0.0
     paragraph.paragraph_format.space_after = Pt(current_pt + amount_pt)
-
-
-def _two_column_line(
-    document,
-    left: str,
-    right: str,
-    font_size: float,
-    *,
-    bold_left=True,
-    right_font_size: float | None = None,
-    right_color: str = "4B5563",
-    fonts: dict | None = None,
-    left_runs: list[tuple[str, float, bool]] | None = None,
-    total_width_mm: float = 185.0,
-    right_width_mm: float = 40.0,
-    line_height_pt: float | None = None,
-) -> None:
-    table = document.add_table(rows=1, cols=2)
-    _set_fixed_table_widths(table, (max(0.0, total_width_mm - right_width_mm), right_width_mm))
-    for cell in table.rows[0].cells:
-        _set_cell_borderless(cell)
-        _set_cell_margins(cell)
-        cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
-    left_p, right_p = table.cell(0, 0).paragraphs[0], table.cell(0, 1).paragraphs[0]
-    exact_line_height = Pt(line_height_pt or font_size * 1.28)
-    _paragraph_spacing(left_p, after=0, line=exact_line_height)
-    _paragraph_spacing(right_p, after=0, line=exact_line_height)
-    if left_runs:
-        for text, run_size, run_bold in left_runs:
-            if text:
-                _add_markdown_runs(left_p, text, run_size, fonts=fonts, base_bold=run_bold)
-    else:
-        _add_markdown_runs(left_p, left, font_size, fonts=fonts, base_bold=bold_left)
-    right_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    _add_markdown_runs(right_p, right, right_font_size or font_size, color=right_color, fonts=fonts)
 
 
 def _date_range(item: dict) -> str:
@@ -278,8 +415,18 @@ def _set_hanging_indent(paragraph, *, left: float = 5.5, hanging: float = 5.5) -
     paragraph.paragraph_format.first_line_indent = Mm(-hanging)
 
 
-def _set_numbered_indent(paragraph, *, text_indent_mm: float, marker_gap_mm: float) -> None:
+WORD_NUMBERED_EXTRA_INDENT_MM = 1.2
+
+
+def _set_numbered_indent(
+    paragraph,
+    *,
+    text_indent_mm: float,
+    marker_gap_mm: float,
+    extra_indent_mm: float = 0.0,
+) -> None:
     """Right-align the marker and start every wrapped line at one shared stop."""
+    text_indent_mm = max(0.0, text_indent_mm) + max(0.0, extra_indent_mm)
     fmt = paragraph.paragraph_format
     fmt.left_indent = Mm(text_indent_mm)
     fmt.first_line_indent = Mm(-text_indent_mm)
@@ -349,6 +496,7 @@ def generate_docx(
         resolve_content_block_flow,
         resolve_education_column_widths,
         resolve_layout_tokens,
+        resolve_photo_height_mm,
     )
 
     data = normalize_resume_data(resume_data)
@@ -360,6 +508,12 @@ def generate_docx(
         return bool(data.get("education")) and global_layout.get("sectionPlacements", {}).get(section_id) == "education"
     style = apply_page_mode_defaults(style)
     tokens = resolve_layout_tokens(layout, style)
+    tokens["photoHeightMm"] = resolve_photo_height_mm(
+        data,
+        layout,
+        tokens,
+        photo_present=bool(photo or (data.get("basics") or {}).get("photo")),
+    )
     font_spec = {
         "latinFont": tokens["latinFont"],
         "eastAsiaFont": tokens["eastAsiaFont"],
@@ -383,13 +537,6 @@ def generate_docx(
     legacy_default_bold = formatting_version < 1
     legacy_section_title_bold = formatting_version < 2
     legacy_manual_field_bold = formatting_version < 3
-
-    def entry_heading_runs(primary: str, secondary: str = "") -> list[tuple[str, float, bool]]:
-        """Map one entry heading to the shared title/meta typography roles."""
-        return [
-            (primary, entry_title_font_size, entry_title_bold),
-            (f" · {secondary}" if primary and secondary else secondary, meta_font_size, meta_bold),
-        ]
 
     body_line_height = body_font_size * tokens["lineHeight"]
     printable_width_mm = 210.0 - tokens["marginLeftMm"] - tokens["marginRightMm"]
@@ -423,7 +570,12 @@ def generate_docx(
     normal.paragraph_format.line_spacing = Pt(body_line_height)
     normal.paragraph_format.widow_control = False
 
+    photo_anchor_added = False
+    photo_height_mm = tokens["photoHeightMm"]
+    basics_height_pt = 0.0
+
     def title(section_id: str, fallback: str) -> None:
+        nonlocal photo_anchor_added, photo_height_mm, photo_width_mm
         text = global_layout.get("titleOverrides", {}).get(section_id, {}).get(lang)
         if text is None:
             text = f"**{fallback}**" if formatting_version >= 2 else fallback
@@ -460,6 +612,26 @@ def generate_docx(
                 bottom.set(qn(f"w:{key}"), value)
             borders.append(bottom)
             p_pr.append(borders)
+        if photo_bytes and not photo_anchor_added:
+            # The page/PDF height is the shared visual baseline. Word's own
+            # exact table/paragraph geometry can place its divider slightly
+            # higher, so cap only the DOCX anchor before that border. This
+            # does not participate in document flow and never moves the title.
+            photo_height_mm = _resolve_word_photo_height_mm(
+                photo_height_mm,
+                basics_height_pt=basics_height_pt,
+                title_paragraph=paragraph,
+            )
+            photo_width_mm = photo_height_mm * _photo_aspect_ratio(photo_bytes, data)
+            _add_floating_picture(
+                paragraph,
+                photo_bytes,
+                width_mm=photo_width_mm,
+                height_mm=photo_height_mm,
+                x_mm=tokens["marginLeftMm"] + printable_width_mm - photo_width_mm,
+                y_mm=tokens["marginTopMm"],
+            )
+            photo_anchor_added = True
 
     def maybe_break(key: str) -> None:
         if page_break_before == key:
@@ -528,55 +700,103 @@ def generate_docx(
         "right": WD_ALIGN_PARAGRAPH.RIGHT,
         "justify": WD_ALIGN_PARAGRAPH.JUSTIFY,
     }
+    # Word's basic-information table contains text only.  The photo is a
+    # page-positioned anchor added to the first section heading below, so it
+    # cannot distort the text table's row/column geometry.
+    top_components = []
+    meta_components = []
+    component_alignment = {}
     for component_row in basics_layout["componentRows"]:
-        active_cells = []
         for cell_config in component_row["cells"]:
-            components = [
-                component for component in cell_config["components"]
-                if component not in hidden_basic_components and basics_values.get(component)
-            ]
-            if components:
-                active_cells.append((cell_config, components))
-        if not active_cells:
-            continue
-        content_width = min(28.0, printable_width_mm / max(1, len(active_cells)))
-        fixed_width = sum(content_width for cell, _ in active_cells if cell["width"] == "content")
-        flexible_count = max(1, sum(1 for cell, _ in active_cells if cell["width"] != "content"))
-        flexible_width = max(10.0, (printable_width_mm - fixed_width) / flexible_count)
-        widths = tuple(content_width if cell["width"] == "content" else flexible_width for cell, _ in active_cells)
-        table = document.add_table(rows=1, cols=len(active_cells))
-        _set_fixed_table_widths(table, widths)
-        for (cell_config, components), cell in zip(active_cells, table.rows[0].cells):
+            for component in cell_config["components"]:
+                if (
+                    component == "photo"
+                    or component in hidden_basic_components
+                    or not basics_values.get(component)
+                ):
+                    continue
+                component_alignment.setdefault(component, alignment_map[cell_config["alignment"]])
+                target = meta_components if component in {"personal_meta", "contact", "additional_fields"} else top_components
+                if component not in target:
+                    target.append(component)
+
+    if top_components or meta_components:
+        table_width_mm = printable_width_mm
+        if photo_bytes:
+            # Keep the text block on the left and leave a deliberate visual
+            # gap before the top-right photo, matching the browser/PDF header.
+            table_width_mm = max(40.0, printable_width_mm - photo_width_mm - 40.0)
+        table = document.add_table(rows=0, cols=1)
+        _set_fixed_table_widths(table, (table_width_mm,))
+        # Keep each top-level basic-information component in its own row.
+        # This produces the same three-row, one-column structure as the
+        # browser/PDF header: name, target position, then contact metadata.
+        for component in top_components:
+            cell = table.add_row().cells[0]
             _set_cell_borderless(cell)
             _set_cell_margins(cell)
-            for component_index, component in enumerate(components):
-                paragraph = cell.paragraphs[0] if component_index == 0 or cell_config["flow"] == "inline" else cell.add_paragraph()
-                paragraph.alignment = alignment_map[cell_config["alignment"]]
-                line_height = tokens["nameLineHeightPt"] if component == "name" else tokens["metaLineHeightPt"]
-                _paragraph_spacing(
+            paragraph = cell.paragraphs[0]
+            paragraph.alignment = component_alignment.get(component, WD_ALIGN_PARAGRAPH.LEFT)
+            _paragraph_spacing(
+                paragraph,
+                after=tokens["modules"]["basics"]["rowSpacingPt"],
+                line=Pt(tokens["nameLineHeightPt"] if component == "name" else tokens["metaLineHeightPt"]),
+            )
+            if component == "name":
+                _add_markdown_runs(
                     paragraph,
-                    after=tokens["modules"]["basics"]["rowSpacingPt"],
-                    line=Pt(line_height),
+                    basics_values[component],
+                    name_font_size,
+                    fonts=font_spec,
+                    base_bold=name_bold if legacy_default_bold else False,
                 )
-                if component == "photo":
-                    paragraph.add_run().add_picture(
-                        BytesIO(photo_bytes),
-                        width=Mm(photo_width_mm),
-                        height=Mm(tokens["photoHeightMm"]),
-                    )
-                    continue
-                prefix = " | " if cell_config["flow"] == "inline" and component_index else ""
-                if component == "name":
-                    _add_markdown_runs(paragraph, prefix + basics_values[component], name_font_size, fonts=font_spec, base_bold=name_bold if legacy_default_bold else False)
-                else:
-                    _add_markdown_runs(
-                        paragraph,
-                        prefix + basics_values[component],
-                        meta_font_size,
-                        color="333333",
-                        fonts=font_spec,
-                        base_bold=component == "target_position" and legacy_default_bold,
-                    )
+            else:
+                _add_markdown_runs(
+                    paragraph,
+                    basics_values[component],
+                    meta_font_size,
+                    color="333333",
+                    fonts=font_spec,
+                    base_bold=component == "target_position" and legacy_default_bold,
+                )
+            line_height_pt = tokens["nameLineHeightPt"] if component == "name" else tokens["metaLineHeightPt"]
+            basics_height_pt += (
+                _word_estimated_line_count(
+                    basics_values[component],
+                    name_font_size if component == "name" else meta_font_size,
+                    table_width_mm,
+                )
+                * _word_paragraph_line_height_pt(paragraph, line_height_pt)
+                + _word_paragraph_spacing_pt(paragraph, "after")
+            )
+        if meta_components:
+            cell = table.add_row().cells[0]
+            _set_cell_borderless(cell)
+            _set_cell_margins(cell)
+            parts = [basics_values[component] for component in meta_components if basics_values.get(component)]
+            paragraph = cell.paragraphs[0]
+            paragraph.alignment = component_alignment.get(meta_components[0], WD_ALIGN_PARAGRAPH.LEFT)
+            _paragraph_spacing(
+                paragraph,
+                after=tokens["modules"]["basics"]["rowSpacingPt"],
+                line=Pt(tokens["metaLineHeightPt"]),
+            )
+            _add_markdown_runs(
+                paragraph,
+                " | ".join(parts),
+                meta_font_size,
+                color="333333",
+                fonts=font_spec,
+            )
+            basics_height_pt += (
+                _word_estimated_line_count(
+                    " | ".join(parts),
+                    meta_font_size,
+                    table_width_mm,
+                )
+                * _word_paragraph_line_height_pt(paragraph, tokens["metaLineHeightPt"])
+                + _word_paragraph_spacing_pt(paragraph, "after")
+            )
 
     def render_education() -> None:
         items = data.get("education") or []
@@ -726,10 +946,10 @@ def generate_docx(
         other_values = data.get("others") or {}
         other_cfg = layout["others"]
         other_hidden = set(other_cfg["hiddenFields"]) | set(other_cfg["hiddenComponents"])
-        other_labels = {"certificates": labels["certificates"], "languages": labels["language"]}
+        other_labels = _other_field_labels(other_values, labels)
         separator = " · " if other_cfg["separator"] == "dot" else " | "
         merged_other = [
-            f'{other_labels[field]}{colon}{separator.join(str(value) for value in other_values[field])}'
+            _other_field_value(other_labels[field], other_values[field], separator, colon)
             for field in other_cfg["fieldOrder"]
             if field in other_labels and field not in other_hidden and other_values.get(field)
         ]
@@ -825,6 +1045,7 @@ def generate_docx(
             paragraph,
             text_indent_mm=text_indent_mm,
             marker_gap_mm=list_marker_gap_mm,
+            extra_indent_mm=WORD_NUMBERED_EXTRA_INDENT_MM,
         )
         _set_font(paragraph.add_run("\t"), body_font_size, fonts=font_spec)
         _set_font(paragraph.add_run(f"({index + 1})"), body_font_size, bold=marker_bold, fonts=font_spec)
@@ -969,10 +1190,10 @@ def generate_docx(
             return
         maybe_break("others")
         title("others", "Certificates & Languages" if lang == "en" else "证书与语言")
-        field_labels = {"skills": labels["skills"], "certificates": labels["certificates"], "languages": labels["language"]}
+        field_labels = {"skills": labels["skills"], **_other_field_labels(values, labels)}
         separator = " · " if cfg["separator"] == "dot" else " | "
         component_values = {
-            key: f'{field_labels[key]}{colon}{separator.join(str(value) for value in values[key])}'
+            key: _other_field_value(field_labels[key], values[key], separator, colon)
             for key in fields
         }
         add_component_rows("others", component_values, set())
@@ -1035,6 +1256,18 @@ def generate_docx(
             render_work(section_id, fallback, items)
         elif section_id in renderers:
             renderers[section_id]()
+
+    if photo_bytes and not photo_anchor_added:
+        paragraph = document.add_paragraph()
+        _paragraph_spacing(paragraph, after=0, line=Pt(1))
+        _add_floating_picture(
+            paragraph,
+            photo_bytes,
+            width_mm=photo_width_mm,
+            height_mm=photo_height_mm,
+            x_mm=tokens["marginLeftMm"] + printable_width_mm - photo_width_mm,
+            y_mm=tokens["marginTopMm"],
+        )
 
     output = BytesIO()
     document.save(output)

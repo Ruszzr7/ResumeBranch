@@ -6,11 +6,65 @@ from docx import Document
 from docx.oxml.ns import qn
 
 from backend.docx_generator import generate_docx
+from backend.layout_config import default_layout_config, resolve_layout_tokens, resolve_photo_height_mm
 from backend.llm_providers import PROVIDERS, public_registry, role_temperature, temperature_supported, validate_profile
 from backend import resume_agent
 
 
 class DocxGeneratorTests(unittest.TestCase):
+    def test_photo_is_a_top_right_anchor_outside_the_basic_information_table(self):
+        photo = (
+            "data:image/png;base64,"
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+            "YAAAAAYAAjCB0C8AAAAASUVORK5CYII="
+        )
+        resume_data = {
+            "basics": {
+                "name": "测试用户",
+                "target_position": "软件工程师",
+                "gender": "男",
+                "birth_date": "2002.06",
+                "phone": "123",
+                "email": "test@example.com",
+                "photo": photo,
+            },
+            "education": [{"school_name": "示例大学", "date_range": ["2024", "2027"]}],
+            "work_experience": [],
+            "project_experience": [],
+            "others": {"skills": [], "certificates": [], "languages": []},
+            "self_evaluation": [],
+        }
+        content = generate_docx(resume_data)
+
+        document = Document(BytesIO(content))
+        basics_table = document.tables[0]
+        self.assertEqual((len(basics_table.rows), len(basics_table.columns)), (3, 1))
+        self.assertEqual(basics_table.cell(0, 0).text, "测试用户")
+        self.assertEqual(basics_table.cell(1, 0).text, "目标岗位：软件工程师")
+        self.assertIn("test@example.com", basics_table.cell(2, 0).text)
+        self.assertFalse(any(
+            paragraph._p.xpath(".//wp:anchor")
+            for row in basics_table.rows
+            for cell in row.cells
+            for paragraph in cell.paragraphs
+        ))
+        anchors = [
+            anchor
+            for paragraph in document.paragraphs
+            for anchor in paragraph._p.xpath(".//wp:anchor")
+        ]
+        self.assertEqual(len(anchors), 1)
+        extent = anchors[0].find(qn("wp:extent"))
+        word_height_mm = int(extent.get("cy")) / 36000
+        config = default_layout_config()
+        shared_height_mm = resolve_photo_height_mm(
+            resume_data,
+            config,
+            resolve_layout_tokens(config),
+        )
+        self.assertGreater(word_height_mm, 10)
+        self.assertLess(word_height_mm, shared_height_mm)
+
     def test_mixed_punctuation_keeps_codepoints_and_script_font_mapping(self):
         punctuation_sample = "中文，句号。分号；冒号：括号（）/ ASCII,.;:!?() RL部署经验"
         document = Document(BytesIO(generate_docx({

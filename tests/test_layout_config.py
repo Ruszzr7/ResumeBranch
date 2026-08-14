@@ -13,6 +13,7 @@ from backend.layout_config import (
     resolve_content_block_flow,
     resolve_education_column_widths,
     resolve_layout_tokens,
+    resolve_photo_height_mm,
     reset_layout_section,
 )
 
@@ -72,11 +73,15 @@ class LayoutConfigTests(unittest.TestCase):
         first["education"]["componentRows"][0]["cells"][0]["alignment"] = "right"
         self.assertEqual(second["education"]["preset"], "compact")
         self.assertEqual(second["education"]["componentRows"][0]["cells"][0]["alignment"], "left")
-        self.assertEqual(second["education"]["componentRows"][0]["cells"][1]["alignment"], "center")
+        self.assertEqual(second["education"]["componentRows"][0]["cells"][1]["alignment"], "left")
         self.assertEqual(second["skills"]["indentLevel"], 0)
         self.assertEqual(second["research_interests"]["indentLevel"], 0)
         self.assertEqual(second["honors"]["indentLevel"], 0)
         self.assertEqual(second["global"]["sectionPlacements"], {})
+        self.assertEqual(
+            [row["cells"][0]["components"] for row in second["others"]["componentRows"]],
+            [["certificates"], ["languages"]],
+        )
         self.assertEqual(second["global"]["sectionOrder"], [
             "education", "honors", "publications", "research_interests", "skills",
             "work_experience", "project_experience", "custom_sections", "others", "self_evaluation",
@@ -126,6 +131,24 @@ class LayoutConfigTests(unittest.TestCase):
         tokens = resolve_layout_tokens(config)
         self.assertEqual(tokens["photoWidthMm"], 30)
         self.assertAlmostEqual(tokens["photoHeightMm"], 30 * 26 / 21)
+
+    def test_photo_height_is_capped_to_the_header_frame_when_content_follows(self):
+        config = default_layout_config()
+        tokens = resolve_layout_tokens(config)
+        data = {
+            "basics": {
+                "name": "张三",
+                "photo": "data:image/png;base64,placeholder",
+                "photo_aspect_ratio": 0.75,
+            },
+            "education": [{"school_name": "示例大学"}],
+        }
+
+        resolved = resolve_photo_height_mm(data, config, tokens)
+
+        self.assertGreaterEqual(resolved, 10)
+        self.assertLess(resolved, tokens["photoHeightMm"])
+        self.assertEqual(resolve_photo_height_mm({"basics": {}}, config, tokens), tokens["photoHeightMm"])
 
     def test_typography_is_recorded_and_unknown_fonts_cannot_split_renderers(self):
         config = normalize_layout_config({

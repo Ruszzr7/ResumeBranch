@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import math
+import re
 from typing import Any
 
 
@@ -164,7 +165,7 @@ DEFAULT_COMPONENT_ROWS: dict[str, list[dict[str, Any]]] = {
         {"cells": [{"components": ["personal_meta", "contact", "additional_fields"], "flow": "inline", "width": "fill", "alignment": "left"}]},
     ],
     "education": [
-        {"cells": [{"components": ["school", "school_tags"], "flow": "inline", "width": "content", "alignment": "left"}, {"components": ["degree", "major", "metrics"], "flow": "inline", "width": "fill", "alignment": "center"}, {"components": ["date"], "flow": "inline", "width": "content", "alignment": "right"}]},
+        {"cells": [{"components": ["school", "school_tags"], "flow": "inline", "width": "content", "alignment": "left"}, {"components": ["degree", "major", "metrics"], "flow": "inline", "width": "fill", "alignment": "left"}, {"components": ["date"], "flow": "inline", "width": "content", "alignment": "right"}]},
         {"cells": [{"components": ["theses"], "flow": "stacked", "width": "fill", "alignment": "justify"}]},
     ],
     "work_experience": [
@@ -184,7 +185,12 @@ DEFAULT_COMPONENT_ROWS: dict[str, list[dict[str, Any]]] = {
     "honors": [{"cells": [{"components": ["items"], "flow": "stacked", "width": "fill", "alignment": "justify"}]}],
     "publications": [{"cells": [{"components": ["items"], "flow": "stacked", "width": "fill", "alignment": "justify"}]}],
     "custom_sections": [{"cells": [{"components": ["items"], "flow": "stacked", "width": "fill", "alignment": "justify"}]}],
-    "others": [{"cells": [{"components": ["certificates", "languages"], "flow": "inline", "width": "fill", "alignment": "left"}]}],
+    # Keep certificates and languages on separate semantic lines.  Entries
+    # within each field still use the configured separator.
+    "others": [
+        {"cells": [{"components": ["certificates"], "flow": "stacked", "width": "fill", "alignment": "left"}]},
+        {"cells": [{"components": ["languages"], "flow": "stacked", "width": "fill", "alignment": "left"}]},
+    ],
     "self_evaluation": [{"cells": [{"components": ["items"], "flow": "stacked", "width": "fill", "alignment": "justify"}]}],
 }
 
@@ -532,6 +538,29 @@ def _normalize_component_rows(module_id: str, supplied: Any, fallback: list[dict
     return rows or deepcopy(fallback)
 
 
+def _normalize_other_component_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep certificate and language values on two separate renderer rows."""
+    cell_by_component: dict[str, dict[str, Any]] = {}
+    for row in rows or []:
+        for cell in row.get("cells", []):
+            for component in cell.get("components", []):
+                cell_by_component.setdefault(component, cell)
+    defaults = DEFAULT_COMPONENT_ROWS["others"]
+    normalized = []
+    for index, component in enumerate(("certificates", "languages")):
+        source = cell_by_component.get(component, defaults[index]["cells"][0])
+        normalized.append({
+            "cells": [{
+                **deepcopy(source),
+                "components": [component],
+                "flow": "stacked",
+                "width": "fill",
+                "alignment": "left",
+            }]
+        })
+    return normalized
+
+
 def _normalize_module_contract(result: dict[str, Any], source: dict | None, supplied_version: int) -> None:
     source = source if isinstance(source, dict) else {}
     for module_id in MODULE_COMPONENTS:
@@ -558,10 +587,13 @@ def _normalize_module_contract(result: dict[str, Any], source: dict | None, supp
         raw_module = source.get(module_id) if isinstance(source.get(module_id), dict) else {}
         raw_rows = raw_module.get("componentRows") if supplied_version >= 7 else fallback
         module["componentRows"] = _normalize_component_rows(module_id, raw_rows, fallback, hidden)
-        # Compact education keeps a stable three-column geometry: the metadata
-        # column is centered while school/date remain left/right aligned. Migrate
-        # old persisted rows so all renderers use the same alignment contract.
-        if module_id == "education" and module.get("preset") == "compact":
+        if module_id == "others":
+            module["componentRows"] = _normalize_other_component_rows(module["componentRows"])
+        # Compact/three-column education keeps a stable three-column geometry:
+        # the middle column is centered by the equal side widths, while its
+        # content is left aligned. Migrate old persisted rows so all renderers
+        # use the same alignment contract.
+        if module_id == "education" and module.get("preset") in {"compact", "three-column"}:
             for row in module["componentRows"]:
                 if len(row["cells"]) != 3:
                     continue
@@ -572,7 +604,7 @@ def _normalize_module_contract(result: dict[str, Any], source: dict | None, supp
                 ):
                     continue
                 row["cells"][0]["alignment"] = "left"
-                row["cells"][1]["alignment"] = "center"
+                row["cells"][1]["alignment"] = "left"
                 row["cells"][2]["alignment"] = "right"
 
 
@@ -918,23 +950,33 @@ def resolve_education_column_widths(
     degree_majors: list[str],
     compact_metrics: list[str],
 ) -> dict[str, float]:
-    """Return symmetric education columns with a centered, single-line-first middle group."""
+    """Resolve the content-led middle column, then split remaining width equally."""
     printable_mm = 210.0 - tokens["marginLeftMm"] - tokens["marginRightMm"]
-    meta_size = tokens["metaFontSizePt"]
+    label_size = tokens["labelFontSizePt"]
     entry_size = tokens["entryTitleFontSizePt"]
     breathing_mm = tokens["educationColumnBreathingMm"]
+
+    # Determine the middle column from its own field-label content first. The
+    # side columns only constrain it when preserving their minimum readable
+    # width would otherwise be impossible. This keeps degree/major/metrics
+    # together as the dominant width decision, while always leaving equal
+    # widths on the left and right.
+    middle_needed_mm = tokens["educationMiddleMinMm"]
+    for degree_major, metric in zip(degree_majors, compact_metrics):
+        display_value = f"{degree_major} · {metric}" if metric else degree_major
+        width_pt = estimate_text_width_pt(display_value, label_size) * 1.08
+        middle_needed_mm = max(middle_needed_mm, width_pt * 25.4 / 72.0 + breathing_mm)
 
     side_needed_mm = max(
         36.0,
         max((estimate_text_width_pt(value, entry_size) for value in schools), default=0.0) * 25.4 / 72.0,
-        max((estimate_text_width_pt(value, meta_size) for value in dates), default=0.0) * 25.4 / 72.0,
+        max((estimate_text_width_pt(value, label_size) for value in dates), default=0.0) * 25.4 / 72.0,
     ) + breathing_mm
-    middle_needed_mm = tokens["educationMiddleMinMm"]
-    for degree_major, metric in zip(degree_majors, compact_metrics):
-        display_value = f"{degree_major} · {metric}" if metric else degree_major
-        width_pt = estimate_text_width_pt(display_value, meta_size)
-        middle_needed_mm = max(middle_needed_mm, width_pt * 25.4 / 72.0 + breathing_mm)
 
+    # Keep the middle content-led width whenever possible. If the requested
+    # middle width cannot coexist with both side minima, reduce it only to the
+    # remaining width after reserving those side minima; unavoidable extreme
+    # cases still retain the configured middle minimum.
     middle_max_mm = max(tokens["educationMiddleMinMm"], printable_mm - side_needed_mm * 2)
     middle_mm = min(middle_needed_mm, middle_max_mm)
     side_mm = max(0.0, (printable_mm - middle_mm) / 2.0)
@@ -942,6 +984,112 @@ def resolve_education_column_widths(
         "sideMm": side_mm,
         "middleMm": middle_mm,
     }
+
+
+def resolve_photo_height_mm(
+    resume_data: dict[str, Any] | None,
+    config: dict[str, Any] | None,
+    tokens: dict[str, Any],
+    *,
+    photo_present: bool | None = None,
+) -> float:
+    """Keep a top-right photo inside the first header-to-section frame.
+
+    The photo is absolutely positioned, so it must not create a blank header
+    simply because its configured height is larger than the basic-information
+    text. Estimate the same first-section frame used by the renderers and cap
+    only the height; width remains derived from the imported aspect ratio.
+    """
+    data = resume_data if isinstance(resume_data, dict) else {}
+    basics = data.get("basics") if isinstance(data.get("basics"), dict) else {}
+    if photo_present is None:
+        photo_present = bool(basics.get("photo"))
+    desired = float(tokens.get("photoHeightMm") or 26.0)
+    if not photo_present:
+        return desired
+
+    layout = normalize_layout_config(config)
+    global_config = layout["global"]
+    hidden = set(global_config.get("hiddenSections") or [])
+    others = data.get("others") if isinstance(data.get("others"), dict) else {}
+    has_values = lambda value: isinstance(value, list) and any(str(item or "").strip() for item in value)
+
+    def section_has_content(section: str) -> bool:
+        if section == "education":
+            return bool(data.get("education"))
+        if section == "skills":
+            return has_values(others.get("skills"))
+        if section in {"research_interests", "honors", "publications", "self_evaluation"}:
+            return has_values(data.get(section))
+        if section == "work_experience":
+            entries = data.get("work_experience") or []
+            if global_config.get("splitWorkExperience"):
+                return any(not re.search(r"实习|intern", str(item.get("job_type") or ""), re.I) for item in entries if isinstance(item, dict))
+            return bool(entries)
+        if section == "internship_experience":
+            return bool(global_config.get("splitWorkExperience")) and any(
+                re.search(r"实习|intern", str(item.get("job_type") or ""), re.I)
+                for item in (data.get("work_experience") or []) if isinstance(item, dict)
+            )
+        if section == "project_experience":
+            return bool(data.get("project_experience") or data.get("projects"))
+        if section == "custom_sections":
+            return any(
+                isinstance(item, dict)
+                and str(item.get("title") or "").strip()
+                and has_values(item.get("items"))
+                for item in (data.get("custom_sections") or [])
+            )
+        if section == "others":
+            return any(has_values(others.get(key)) for key in ("certificates", "languages"))
+        return False
+
+    if not any(
+        section_has_content(section) and section not in hidden
+        for section in global_config.get("sectionOrder") or []
+    ):
+        return desired
+
+    printable_width_pt = max(1.0, (210.0 - tokens["marginLeftMm"] - tokens["marginRightMm"]) * 72.0 / 25.4)
+    try:
+        ratio = float(basics.get("photo_aspect_ratio") or 21.0 / 26.0)
+    except (TypeError, ValueError):
+        ratio = 21.0 / 26.0
+    ratio = min(3.0, max(0.2, ratio))
+    photo_width_pt = desired * ratio * 72.0 / 25.4
+    text_width_pt = max(120.0, printable_width_pt - photo_width_pt)
+
+    def line_count(value: object, font_size: float) -> int:
+        text = str(value or "").replace("**", "").strip()
+        if not text:
+            return 0
+        return max(1, math.ceil(estimate_text_width_pt(text, font_size) / text_width_pt))
+
+    name_lines = line_count(basics.get("name"), tokens["nameFontSizePt"])
+    target_lines = line_count(basics.get("target_position"), tokens["metaFontSizePt"])
+    contact_values = [basics.get(key) for key in ("gender", "birth_date", "phone", "email")]
+    contact_values.extend(
+        item.get("label") or item.get("value")
+        for item in (basics.get("additional_fields") or [])
+        if isinstance(item, dict) and (item.get("label") or item.get("value"))
+    )
+    contact_lines = line_count(" | ".join(str(value) for value in contact_values if value), tokens["metaFontSizePt"])
+    header_pt = (
+        name_lines * tokens["nameLineHeightPt"]
+        + (tokens["headerNameAfterPt"] if name_lines else 0)
+        + target_lines * tokens["metaLineHeightPt"]
+        + contact_lines * tokens["metaLineHeightPt"]
+        # Include the next section title line so the photo reaches the divider
+        # instead of ending at the bottom of the text header.  A small fixed
+        # gap below the image keeps it visually clear of the rule.
+        + tokens["moduleSpacingPt"]
+        + tokens["bodyFontSizePt"] * 0.35
+        + tokens["sectionTitleLineHeightPt"]
+    )
+    # Keep a physical safety gap so renderer-specific font rasterization and
+    # Word table row boxes cannot let the image touch or overlap the divider.
+    available_mm = header_pt * 25.4 / 72.0 - 1.5
+    return round(max(10.0, min(desired, available_mm)), 2)
 
 
 def apply_density(config: dict, density: str) -> dict:
@@ -952,10 +1100,6 @@ def apply_density(config: dict, density: str) -> dict:
     result["global"].update(DENSITY_VALUES[density])
     result["typography"]["fontSizes"] = _semantic_font_sizes(DENSITY_VALUES[density]["fontSize"])
     return normalize_layout_config(result)
-
-
-def layout_digest_payload(config: dict | None) -> dict:
-    return normalize_layout_config(config)
 
 
 def build_layout_changes(before: dict | None, after: dict | None) -> list[dict]:

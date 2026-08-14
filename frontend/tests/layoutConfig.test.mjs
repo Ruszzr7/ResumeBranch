@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { DEFAULT_LAYOUT_CONFIG, componentPosition, formatCompactAcademicMetric, normalizeLayoutConfig, resolveContentBlockFlow, resolveEducationColumnWidths, resolveLayoutTokens, resolveModuleLayout } from '../src/utils/layoutConfig.js'
+import { DEFAULT_LAYOUT_CONFIG, componentPosition, formatCompactAcademicMetric, normalizeLayoutConfig, resolveContentBlockFlow, resolveEducationColumnWidths, resolveLayoutTokens, resolveModuleLayout, resolvePhotoHeightMm } from '../src/utils/layoutConfig.js'
 
 test('current defaults use the compact practical spacing range', () => {
   const result = normalizeLayoutConfig(DEFAULT_LAYOUT_CONFIG)
@@ -12,6 +12,7 @@ test('current defaults use the compact practical spacing range', () => {
   assert.equal(normalizeLayoutConfig({ global: { lineHeight: 9, moduleMargin: 9 } }).global.lineHeight, 1.8)
   assert.equal(normalizeLayoutConfig({ global: { lineHeight: 9, moduleMargin: 9 } }).global.moduleMargin, 1)
   assert.deepEqual(result.global.sectionPlacements, {})
+  assert.deepEqual(result.others.componentRows.map(row => row.cells[0].components), [['certificates'], ['languages']])
   assert.deepEqual(result.global.sectionOrder, [
     'education', 'honors', 'publications', 'research_interests', 'skills',
     'work_experience', 'project_experience', 'custom_sections', 'others', 'self_evaluation'
@@ -48,6 +49,21 @@ test('module headings stay global and retired work layouts normalize to compact'
   const tokens = resolveLayoutTokens(result)
   assert.equal(tokens.photoWidthMm, 30)
   assert.equal(tokens.photoHeightMm, 30 * 26 / 21)
+})
+
+test('photo height is capped before the next visible module while preserving the token fallback', () => {
+  const config = normalizeLayoutConfig(DEFAULT_LAYOUT_CONFIG)
+  const tokens = resolveLayoutTokens(config)
+  const data = {
+    basics: { name: '张三', photo: 'data:image/png;base64,placeholder', photo_aspect_ratio: 0.75 },
+    education: [{ school_name: '示例大学' }]
+  }
+
+  const resolved = resolvePhotoHeightMm(data, config, tokens)
+
+  assert.ok(resolved >= 10)
+  assert.ok(resolved < tokens.photoHeightMm)
+  assert.equal(resolvePhotoHeightMm({ basics: {} }, config, tokens), tokens.photoHeightMm)
 })
 
 test('content block flow keeps inline and separate labels explicit', () => {
@@ -246,7 +262,7 @@ test('module contracts inherit one global line height and normalize constrained 
 
 test('default compact education and list indents preserve the stable template geometry', () => {
   const config = normalizeLayoutConfig()
-  assert.equal(config.education.componentRows[0].cells[1].alignment, 'center')
+  assert.equal(config.education.componentRows[0].cells[1].alignment, 'left')
   assert.equal(config.skills.indentLevel, 0)
   assert.equal(config.research_interests.indentLevel, 0)
   assert.equal(config.honors.indentLevel, 0)

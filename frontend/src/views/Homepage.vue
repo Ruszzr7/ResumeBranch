@@ -51,11 +51,11 @@
                 <i v-if="index === 0" class="live-dot"></i>
                 {{ formatUpdatedAt(project.updated_at) }}
               </div>
-              <h3>{{ project.title }}</h3>
+              <h3>{{ plainSummaryText(project.title) }}</h3>
               <p>
-                {{ project.candidate_name || '姓名尚未填写' }}
+                {{ plainSummaryText(project.candidate_name || '姓名尚未填写') }}
                 <span>·</span>
-                {{ project.target_position || '目标岗位尚未填写' }}
+                {{ plainSummaryText(project.target_position || '目标岗位尚未填写') }}
               </p>
               <div class="project-stats">
                 <div>
@@ -70,7 +70,7 @@
             </div>
 
             <div v-if="index === 0" class="paper-thumbnail" aria-hidden="true">
-              <strong>{{ project.candidate_name || '主简历' }}</strong>
+              <strong>{{ plainSummaryText(project.candidate_name || '主简历') }}</strong>
               <i></i><i class="short"></i>
               <b></b>
               <i></i><i></i><i class="short"></i>
@@ -167,7 +167,7 @@
             </header>
             <div class="modal-body">
               <p>
-                “{{ projectToDelete.title }}”及其
+                “{{ plainSummaryText(projectToDelete.title) }}”及其
                 <strong>{{ Math.max((projectToDelete.task_count || 1) - 1, 0) }} 个岗位版本</strong>
                 的 JD、对话和简历内容都会被永久删除。
               </p>
@@ -264,6 +264,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import BrandLogo from '../components/BrandLogo.vue'
 import { buildAuthorizationHeaders, loadAppConfig } from '../config/appMode.js'
+import { plainInlineText } from '../utils/inlineFormatting.js'
 
 const router = useRouter()
 const projects = ref([])
@@ -296,6 +297,7 @@ const llmSettings = ref({
   configured: false
 })
 const adapterCatalog = ref([])
+const plainSummaryText = value => plainInlineText(String(value ?? ''))
 const canQueryModels = computed(() => !!llmSettings.value.base_url.trim())
 const settingsChecks = computed(() => {
   const checks = visibleSettingsChecks.value

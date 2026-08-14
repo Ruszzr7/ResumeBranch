@@ -10,7 +10,7 @@ import { labels } from './utils/labels.js'
 import { buildAuthorizationHeaders, loadAppConfig } from './config/appMode.js'
 import { normalizeLayoutConfig, resolveContentBlockFlow, resolveLayoutTokens } from './utils/layoutConfig.js'
 import { hasMeaningfulResumeContent } from './utils/resumePresence.js'
-import { formatInlineHtml } from './utils/inlineFormatting.js'
+import { formatInlineHtml, plainInlineText } from './utils/inlineFormatting.js'
 
 // 响应式布局状态
 const isMobileView = ref(false)
@@ -28,6 +28,7 @@ const TRANSLATION_SESSION_PREFIX = 'resumeTranslationSession:'
 const TRANSLATION_CACHE_PREFIX = 'resumeTranslationCache:'
 const WELCOME_MESSAGE = '你好！我是你的简历助手。你可以让我检查简历中的不足、进行深度打磨、结合 JD 分析匹配度，也可以直接修改简历内容和排版。告诉我你的目标岗位或具体需求，或者从下方选择一项开始。如原简历含头像，建议在“编辑简历”中自行上传清晰原图，避免自动裁剪造成模糊。'
 const conversationMessagesForSave = () => messages.value.filter(message => !message.localOnly)
+const plainDisplayText = value => plainInlineText(String(value ?? ''))
 const assistantActions = [
   {
     label: '修改简历',
@@ -558,7 +559,7 @@ const resumeFormData = ref({
   work_experience: [],
   project_experience: [],
   custom_sections: [],
-  others: { skills: [], certificates: [], languages: [] },
+  others: { skills: [], certificates: [], languages: [], field_labels: { certificates: '证书', languages: '语言' } },
   self_evaluation: []
 })
 // 简历照片错误信息
@@ -588,6 +589,7 @@ const EDITABLE_MODULE_TITLE_DEFAULTS = Object.freeze({
   self_evaluation: '自我评价'
 })
 const resumeModuleTitles = ref({ ...EDITABLE_MODULE_TITLE_DEFAULTS })
+let resumeEditorPreviousResumeData = null
 let resumeEditorPreviousPreviewLayout = null
 
 function wrapDefaultBold(value) {
@@ -632,7 +634,6 @@ const resumeImportDraft = ref(null)
 const resumeImportError = ref('')
 const resumeFileInput = ref(null) // 简历文件输入元素引用
 const startResumeFileInput = ref(null) // 开始创建弹窗中的直接文件选择
-const hasResumeFileSelected = ref(false) // 是否已选择简历文件（上传流程已开始，不可返回）
 const isLoadingInitialData = ref(false) // 防止 loadInitialData 重复调用
 let parsingStatusPollInterval = null // 解析状态轮询定时器
 
@@ -1132,7 +1133,6 @@ async function loadInitialData() {
     if (parsingStatus === 'parsing') {
       console.log('📋 检测到简历正在解析中，启动轮询...')
       showUploadDialog.value = true
-      hasResumeFileSelected.value = true
       isParsingResume.value = true
       resumeImagePreview.value = ''
       resumeImageFile.value = null
@@ -2190,6 +2190,7 @@ function migrateEditableDefaultBold(data) {
 
 // 打开简历编辑弹窗
 function openResumeEditDialog() {
+  resumeEditorPreviousResumeData = cloneResumeData(resumeData.value)
   resumeEditorPreviousPreviewLayout = previewLayoutConfig.value
     ? JSON.parse(JSON.stringify(previewLayoutConfig.value))
     : null
@@ -2210,7 +2211,7 @@ function openResumeEditDialog() {
       work_experience: [],
       project_experience: [],
       custom_sections: [],
-      others: { skills: [], certificates: [], languages: [] },
+      others: { skills: [], certificates: [], languages: [], field_labels: { certificates: '证书', languages: '语言' } },
       self_evaluation: []
     }
   }
@@ -2245,6 +2246,15 @@ function openResumeEditDialog() {
   resumeFormData.value.others.skills = resumeFormData.value.others.skills || []
   resumeFormData.value.others.certificates = resumeFormData.value.others.certificates || []
   resumeFormData.value.others.languages = resumeFormData.value.others.languages || []
+  const fieldLabels = resumeFormData.value.others.field_labels || {}
+  resumeFormData.value.others.field_labels = {
+    certificates: Object.prototype.hasOwnProperty.call(fieldLabels, 'certificates')
+      ? String(fieldLabels.certificates ?? '')
+      : '证书',
+    languages: Object.prototype.hasOwnProperty.call(fieldLabels, 'languages')
+      ? String(fieldLabels.languages ?? '')
+      : '语言'
+  }
   resumeFormData.value.self_evaluation = resumeFormData.value.self_evaluation || []
 
   // 为每项工作经历初始化可编辑内容
@@ -2294,6 +2304,10 @@ function convertDateRangeToSave(item) {
 function closeResumeEditDialog() {
   isResumeEditDialogOpen.value = false
   photoError.value = ''
+  if (resumeEditorPreviousResumeData) {
+    resumeData.value = cloneResumeData(resumeEditorPreviousResumeData)
+  }
+  resumeEditorPreviousResumeData = null
   previewLayoutConfig.value = resumeEditorPreviousPreviewLayout
   resumeEditorPreviousPreviewLayout = null
 }
@@ -2450,16 +2464,6 @@ function removeWork(index) {
   resumeFormData.value.work_experience.splice(index, 1)
 }
 
-// 添加工作内容
-function addWorkDetail(work) {
-  work.details.push('')
-}
-
-// 删除工作内容
-function removeWorkDetail(work, index) {
-  work.details.splice(index, 1)
-}
-
 // 添加项目经历
 function addProject() {
   resumeFormData.value.project_experience.push({
@@ -2524,7 +2528,10 @@ function dropOtherItem(field, index, event) {
   const values = resumeFormData.value.others?.[field]
   if (!Array.isArray(values)) return
   const [value] = values.splice(source.index, 1)
-  values.splice(source.index < index ? index - 1 : index, 0, value)
+  // The drop target is the item's final row. After removing a preceding
+  // source row, inserting at the original target index moves one row down;
+  // subtracting one here made a downward drop land one position too high.
+  values.splice(Math.min(index, values.length), 0, value)
 }
 
 function endOtherItemDrag() {
@@ -2644,6 +2651,7 @@ async function saveResume() {
         return
       }
       handleLayoutUpdated(layoutPayload.layout_config || layoutCandidate)
+      resumeEditorPreviousResumeData = null
       resumeEditorPreviousPreviewLayout = null
       closeResumeEditDialog()
       // 刷新简历渲染
@@ -2759,18 +2767,6 @@ function removeSkill(index) {
   jdFormData.value.requirements.skills.splice(index, 1)
 }
 
-// 处理图片上传
-function handleJDImageUpload(event) {
-  const file = event.target.files[0]
-  if (file) {
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      jdInputImage.value = e.target.result
-    }
-    reader.readAsDataURL(file)
-  }
-}
-
 // 处理粘贴事件（支持图片粘贴）
 function handleJDPaste(event) {
   const items = event.clipboardData?.items
@@ -2870,11 +2866,6 @@ function handleDialogKeydown(event) {
 }
 
 // ==================== 首次进入选择弹窗 ====================
-
-// 打开开始选择弹窗（首次进入且无简历时）
-function openStartDialog() {
-  showStartDialog.value = true
-}
 
 // 关闭开始弹窗
 function closeStartDialog() {
@@ -3089,7 +3080,6 @@ function showUploadResumeDialog() {
   resumeImagePreview.value = ''
   resumeImageFile.value = null
   isResumePdf.value = false
-  hasResumeFileSelected.value = false  // 重置，允许返回
   resumeImportDraft.value = null
   resumeImportError.value = ''
 }
@@ -3104,7 +3094,6 @@ function selectResumeFileFromStart() {
   resumeImagePreview.value = ''
   resumeImageFile.value = null
   isResumePdf.value = false
-  hasResumeFileSelected.value = false
   resumeImportDraft.value = null
   resumeImportError.value = ''
   startResumeFileInput.value?.click()
@@ -3130,20 +3119,8 @@ async function closeUploadDialog() {
   resumeImagePreview.value = ''
   resumeImageFile.value = null
   isResumePdf.value = false
-  hasResumeFileSelected.value = false
   resumeImportDraft.value = null
   resumeImportError.value = ''
-}
-
-// 返回上一步（回到开始选择弹窗）
-async function backToStartDialog() {
-  await discardPendingResumeSource()
-  showUploadDialog.value = false
-  resumeImagePreview.value = ''
-  resumeImageFile.value = null
-  isResumePdf.value = false
-  hasResumeFileSelected.value = false
-  showStartDialog.value = true
 }
 
 // 重新选择文件
@@ -3152,7 +3129,6 @@ async function reselectResumeFile() {
   resumeImagePreview.value = ''
   resumeImageFile.value = null
   isResumePdf.value = false
-  hasResumeFileSelected.value = false  // 重置，允许返回
   resumeImportDraft.value = null
   resumeImportError.value = ''
 }
@@ -3178,7 +3154,6 @@ function handleResumeImageSelect(event) {
   }
 
   resumeImageFile.value = file
-  hasResumeFileSelected.value = true  // 已选择文件，不可返回上一步
 
   // 检测是否是PDF文件
   isResumePdf.value = file.type === 'application/pdf'
@@ -3396,15 +3371,15 @@ watch(
               <strong class="source-group-title">当前主简历</strong>
               <label v-for="source in currentProjectSources" :key="source.id" class="resume-source-row">
                 <input v-model="taskSourceId" type="radio" :value="source.id" />
-                <span><b>{{ source.is_base ? '基础简历' : source.title }}</b><small>{{ source.target_position || source.candidate_name || '未填写目标岗位' }}</small></span>
+                <span><b>{{ plainDisplayText(source.is_base ? '基础简历' : source.title) }}</b><small>{{ plainDisplayText(source.target_position || source.candidate_name || '未填写目标岗位') }}</small></span>
               </label>
               <details v-if="otherProjectSourceGroups.length" class="other-resume-sources">
                 <summary>其他主简历</summary>
                 <div v-for="group in otherProjectSourceGroups" :key="group.id" class="source-project-group">
-                  <strong>{{ group.title }}</strong>
+                  <strong>{{ plainDisplayText(group.title) }}</strong>
                   <label v-for="source in group.sources" :key="source.id" class="resume-source-row">
                     <input v-model="taskSourceId" type="radio" :value="source.id" />
-                    <span><b>{{ source.is_base ? '基础简历' : source.title }}</b><small>{{ source.target_position || source.candidate_name || '未填写目标岗位' }}</small></span>
+                    <span><b>{{ plainDisplayText(source.is_base ? '基础简历' : source.title) }}</b><small>{{ plainDisplayText(source.target_position || source.candidate_name || '未填写目标岗位') }}</small></span>
                   </label>
                 </div>
               </details>
@@ -3480,7 +3455,7 @@ watch(
             <button type="button" class="modal-close-btn" aria-label="关闭" @click="closeTaskDeleteDialog">×</button>
           </div>
           <p class="workspace-modal-copy">
-            “{{ taskToDelete.title }}”及其 JD、对话记录会一并删除。主简历不受影响，此操作无法撤销。
+            “{{ plainDisplayText(taskToDelete.title) }}”及其 JD、对话记录会一并删除。主简历不受影响，此操作无法撤销。
           </p>
           <p v-if="taskDeleteError" class="workspace-modal-error">{{ taskDeleteError }}</p>
           <div class="workspace-modal-footer">
@@ -3690,16 +3665,7 @@ watch(
               </svg>
             </div>
             <h2>导入简历</h2>
-            <div class="modal-actions">
-              <!-- 未选择文件且不在解析中时显示返回按钮 -->
-              <button v-if="!hasResumeFileSelected && !isParsingResume" @click="backToStartDialog" class="modal-back">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <line x1="19" y1="12" x2="5" y2="12"></line>
-                  <polyline points="12 19 5 12 12 5"></polyline>
-                </svg>
-                返回
-              </button>
-            </div>
+            <button type="button" class="modal-close-btn light" aria-label="关闭导入简历" @click="closeUploadDialog">×</button>
           </div>
           <div class="modal-body">
             <!-- 未选择文件且不在解析中时显示上传框 -->
@@ -3724,7 +3690,7 @@ watch(
             </div>
             <div v-else-if="resumeImportDraft" class="import-draft-review">
               <h3>请确认解析结果</h3>
-              <p>姓名：{{ resumeImportDraft.resume_data?.basics?.name || '未识别' }}</p>
+              <p>姓名：{{ plainDisplayText(resumeImportDraft.resume_data?.basics?.name || '未识别') }}</p>
               <p>教育 {{ resumeImportDraft.resume_data?.education?.length || 0 }} 段 · 工作 {{ resumeImportDraft.resume_data?.work_experience?.length || 0 }} 段 · 项目 {{ resumeImportDraft.resume_data?.project_experience?.length || 0 }} 段</p>
               <small>为避免裁剪后模糊或误识别，系统不自动提取头像。导入后可在“编辑简历”中上传清晰原图。</small>
             </div>
@@ -3778,7 +3744,7 @@ watch(
         </router-link>
       </h1>
       <div class="header-info">
-        <span class="workspace-project-title">{{ currentProject?.title || '主简历' }}</span>
+        <span class="workspace-project-title">{{ plainDisplayText(currentProject?.title || '主简历') }}</span>
       </div>
     </div>
   </header>
@@ -3796,9 +3762,9 @@ watch(
           <router-link
             :to="`/projects/${task.project_id}/tasks/${task.id}`"
             :class="['task-link', { active: task.id === currentTaskId }]"
-            :title="task.is_base ? '基础简历' : task.title"
+            :title="plainDisplayText(task.is_base ? '基础简历' : task.title)"
           >
-            <span>{{ task.is_base ? '基础简历' : task.title }}</span>
+            <span>{{ plainDisplayText(task.is_base ? '基础简历' : task.title) }}</span>
           </router-link>
           <button
             v-if="!task.is_base"
@@ -3818,7 +3784,7 @@ watch(
           <div class="assistant-orb" aria-hidden="true"></div>
           <div class="chat-panel-title">
             <strong>简历助手</strong>
-            <span>{{ currentTask?.is_base ? '基础简历' : (currentTask?.title || '岗位版本') }}</span>
+            <span>{{ plainDisplayText(currentTask?.is_base ? '基础简历' : (currentTask?.title || '岗位版本')) }}</span>
           </div>
         </div>
         <div class="chat-container">
@@ -4521,10 +4487,10 @@ watch(
                     @dragend="endOtherItemDrag"
                   >
                     <span class="sortable-handle" aria-hidden="true">⋮⋮</span>
-                    <RichTextEditor v-model="resumeFormData.others.skills[i]" placeholder="例如 Python、Vue、FastAPI" compact />
+                    <RichTextEditor v-model="resumeFormData.others.skills[i]" class="sortable-item-editor" placeholder="例如 Python、Vue、FastAPI" compact />
                     <button @click="resumeFormData.others.skills.splice(i, 1)" class="tag-remove">×</button>
                   </div>
-                  <RichTextEditor v-model="newResumeSkill" placeholder="例如 Python、Vue、FastAPI" compact />
+                  <RichTextEditor v-model="newResumeSkill" class="sortable-item-editor" placeholder="例如 Python、Vue、FastAPI" compact />
                   <button type="button" class="tag-add-btn" @click="addResumeSkill">添加</button>
                 </div>
               </div>
@@ -4711,8 +4677,8 @@ watch(
             <!-- 补充信息 -->
             <RichTextEditor v-model="resumeModuleTitles.others" class="module-title-editor" compact default-bold @update:modelValue="previewResumeModuleTitles" />
             <div class="others-section">
-              <div class="field-group full-width">
-                <label>证书</label>
+              <div class="field-group full-width certificate-language-field">
+                <RichTextEditor v-model="resumeFormData.others.field_labels.certificates" class="field-label-editor" placeholder="例如 证书" compact />
                 <div class="tags-input sortable-list">
                   <div
                     v-for="(cert, i) in resumeFormData.others.certificates"
@@ -4725,15 +4691,15 @@ watch(
                     @dragend="endOtherItemDrag"
                   >
                     <span class="sortable-handle" aria-hidden="true">⋮⋮</span>
-                    <RichTextEditor v-model="resumeFormData.others.certificates[i]" placeholder="例如 软件设计师" compact />
+                    <RichTextEditor v-model="resumeFormData.others.certificates[i]" class="sortable-item-editor" placeholder="例如 软件设计师" compact />
                     <button @click="resumeFormData.others.certificates.splice(i, 1)" class="tag-remove">×</button>
                   </div>
-                  <RichTextEditor v-model="newResumeCert" placeholder="例如 软件设计师" compact />
+                  <RichTextEditor v-model="newResumeCert" class="sortable-item-editor" placeholder="例如 软件设计师" compact />
                   <button type="button" class="tag-add-btn" @click="addResumeCert">添加</button>
                 </div>
               </div>
-              <div class="field-group full-width">
-                <label>语言</label>
+              <div class="field-group full-width certificate-language-field">
+                <RichTextEditor v-model="resumeFormData.others.field_labels.languages" class="field-label-editor" placeholder="例如 语言" compact />
                 <div class="tags-input sortable-list">
                   <div
                     v-for="(lang, i) in resumeFormData.others.languages"
@@ -4746,10 +4712,10 @@ watch(
                     @dragend="endOtherItemDrag"
                   >
                     <span class="sortable-handle" aria-hidden="true">⋮⋮</span>
-                    <RichTextEditor v-model="resumeFormData.others.languages[i]" placeholder="例如 英语 CET-6" compact />
+                    <RichTextEditor v-model="resumeFormData.others.languages[i]" class="sortable-item-editor" placeholder="例如 英语 CET-6" compact />
                     <button @click="resumeFormData.others.languages.splice(i, 1)" class="tag-remove">×</button>
                   </div>
-                  <RichTextEditor v-model="newResumeLang" placeholder="例如 英语 CET-6" compact />
+                  <RichTextEditor v-model="newResumeLang" class="sortable-item-editor" placeholder="例如 英语 CET-6" compact />
                   <button type="button" class="tag-add-btn" @click="addResumeLang">添加</button>
                 </div>
               </div>
@@ -7785,6 +7751,21 @@ watch(
   border-color: rgba(255, 255, 255, 0.16);
 }
 
+/* 编辑简历底部操作按钮与排版设置弹窗保持同一尺寸。 */
+.resume-dialog .dialog-actions .cancel-btn,
+.resume-dialog .dialog-actions .save-btn {
+  width: 76px;
+  min-width: 76px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  font-size: 0.78rem;
+  text-transform: none;
+  letter-spacing: normal;
+  box-shadow: none;
+}
+
 .resume-dialog .photo-upload-area,
 .resume-dialog .array-item,
 .resume-dialog .tags-input {
@@ -7847,6 +7828,7 @@ watch(
 .resume-dialog .sortable-item .rich-editor {
   flex: none;
   width: 100%;
+  min-width: 0;
 }
 
 .resume-dialog .tags-input .tag {
@@ -7896,6 +7878,37 @@ watch(
 .resume-dialog .tags-input .rich-editor {
   flex: 1 1 160px;
   min-width: 120px;
+}
+
+/* 技能、证书、语言条目使用两行高度且可换行的编辑框。内容变长时
+   允许自然增高，避免横向溢出或被截断。 */
+.resume-dialog .tags-input.sortable-list .sortable-item-editor.rich-editor,
+.resume-dialog .tags-input.sortable-list > .sortable-item-editor.rich-editor {
+  width: 100%;
+  flex: 0 1 auto;
+  min-width: 0;
+  min-height: 44px;
+  height: auto;
+  box-sizing: border-box;
+}
+
+.resume-dialog .tags-input.sortable-list .sortable-item-editor.rich-editor :deep(.editor-content) {
+  min-height: 42px;
+  max-height: none;
+  height: auto;
+  box-sizing: border-box;
+  padding: 0.2rem 0.55rem;
+  line-height: 1.25;
+  white-space: pre-wrap !important;
+  overflow-x: hidden !important;
+  overflow-y: visible !important;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.resume-dialog .certificate-language-field > .field-label-editor.rich-editor {
+  width: 100%;
+  min-width: 0;
 }
 .resume-dialog .tags-input .tag-add-btn {
   height: 34px;

@@ -61,6 +61,20 @@ def _photo_aspect_ratio(photo: str | None, resume_data: dict) -> float:
     return 21.0 / 26.0
 
 
+def _other_field_labels(values: dict, labels: dict) -> dict[str, str]:
+    custom = values.get("field_labels") if isinstance(values, dict) else {}
+    custom = custom if isinstance(custom, dict) else {}
+    return {
+        "certificates": str(custom["certificates"] if "certificates" in custom else labels["certificates"]),
+        "languages": str(custom["languages"] if "languages" in custom else labels["language"]),
+    }
+
+
+def _other_field_value(label: str, values: list[object], separator: str) -> str:
+    joined = separator.join(str(value) for value in values)
+    return f"{label}：{joined}" if label else joined
+
+
 def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = None, lang: str = 'zh', layout_config: dict = None) -> str:
     """将简历数据渲染为HTML
 
@@ -78,6 +92,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         resolve_education_column_widths,
         resolve_layout_tokens,
         resolve_module_layout,
+        resolve_photo_height_mm,
     )
     layout_config = normalize_layout_config(layout_config)
     global_layout = layout_config["global"]
@@ -89,6 +104,12 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     from .layout import apply_page_mode_defaults
     style = apply_page_mode_defaults(style)
     tokens = resolve_layout_tokens(layout_config, style)
+    tokens["photoHeightMm"] = resolve_photo_height_mm(
+        resume_data,
+        layout_config,
+        tokens,
+        photo_present=bool(photo or (resume_data.get("basics") or {}).get("photo")),
+    )
     margin_top = tokens['marginTopMm']
     margin_bottom = tokens['marginBottomMm']
     margin_left = tokens['marginLeftMm']
@@ -354,10 +375,10 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         other_values = resume_data.get("others") or {}
         other_layout = layout_config["others"]
         other_hidden = set(other_layout["hiddenFields"]) | set(other_layout["hiddenComponents"])
-        other_labels = {"certificates": labels["certificates"], "languages": labels["language"]}
+        other_labels = _other_field_labels(other_values, labels)
         other_separator = " · " if other_layout["separator"] == "dot" else " | "
         merged_other_values = [
-            f'{other_labels[field]}：{other_separator.join(str(value) for value in other_values[field])}'
+            _other_field_value(other_labels[field], other_values[field], other_separator)
             for field in other_layout["fieldOrder"]
             if field in other_labels and field not in other_hidden and other_values.get(field)
         ]
@@ -534,10 +555,10 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         html_parts.append(f'<section class="section others others-{others_layout["preset"]}{break_class("others")}"{order_style("others")}>')
         other_title = "Certificates & Languages" if lang == "en" else "证书与语言"
         html_parts.append(title_markup("others", section_title("others", other_title)))
-        field_labels = {"skills": labels["skills"], "certificates": labels["certificates"], "languages": labels["language"]}
+        field_labels = {"skills": labels["skills"], **_other_field_labels(others, labels)}
         separator = " · " if others_layout["separator"] == "dot" else " | "
         values = {
-            field: format_markdown(f'{field_labels[field]}：{separator.join(str(value) for value in others[field])}')
+            field: format_markdown(_other_field_value(field_labels[field], others[field], separator))
             for field in visible_other_fields
         }
         html_parts.append(component_rows_markup("others", values))
@@ -674,7 +695,6 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     }}
 
     .personal-info.basics-left-aligned {{ text-align: left; }}
-    .personal-info.has-photo {{ min-height: var(--photo-height); }}
     .personal-info.basics-left-aligned .contact-info {{ justify-content: flex-start; }}
     .personal-info.contact-stacked .contact-info {{
         flex-direction: column;
@@ -709,8 +729,8 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         width: var(--photo-width);
         height: var(--photo-height);
         object-fit: cover;
-        border: 1px solid #ddd;
-        border-radius: 2px;
+        border: 0;
+        border-radius: 0;
         position: absolute;
         top: 0;
         right: 0;

@@ -922,6 +922,16 @@ def save_user_resume(db, user_id: int, data: dict, name: str = "默认简历", p
         name: 简历名称
         photo: 证件照base64编码（可选，如果为None则从data中提取）
     """
+    # Keep track of whether the caller explicitly sent the photo field.  An
+    # empty value is a deliberate removal from the editor, while an omitted
+    # field remains backward-compatible with callers that only update resume
+    # text and expect the stored photo to be preserved.
+    raw_basics = data.get("basics") if isinstance(data, dict) else None
+    photo_field_supplied = (
+        (isinstance(raw_basics, dict) and "photo" in raw_basics)
+        or (isinstance(data, dict) and "photo" in data)
+    )
+    photo_argument_supplied = photo is not None
     data = normalize_resume_data(data)
     print(f"[save_user_resume] 开始保存，用户ID={user_id}")
     print(f"[save_user_resume] 传入 data keys: {list(data.keys()) if isinstance(data, dict) else 'not a dict'}")
@@ -931,7 +941,7 @@ def save_user_resume(db, user_id: int, data: dict, name: str = "默认简历", p
         existing_photo = task.photo or ""
         if photo is None:
             photo = data.get("basics", {}).get("photo", "")
-        if not photo and existing_photo:
+        if not photo and existing_photo and not photo_field_supplied and not photo_argument_supplied:
             photo = existing_photo
         if data and "basics" in data:
             data = {**data, "basics": {**data.get("basics", {})}}
@@ -959,7 +969,7 @@ def save_user_resume(db, user_id: int, data: dict, name: str = "默认简历", p
         photo = data.get('basics', {}).get('photo', '')
     
     # 如果新数据没有 photo但数据库已有 photo，保留原有证件照
-    if not photo and existing_photo:
+    if not photo and existing_photo and not photo_field_supplied and not photo_argument_supplied:
         photo = existing_photo
     
     # 从 data 中移除 photo 字段

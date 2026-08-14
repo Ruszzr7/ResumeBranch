@@ -116,6 +116,27 @@ class LayoutRuleTests(unittest.TestCase):
         self.assertIn("证书：软件设计师", table_text)
         self.assertIn("语言：英语 CET-6", table_text)
 
+    def test_custom_certificate_and_language_labels_are_shared_and_can_be_blank(self):
+        data = resume_with_two_jobs()
+        data["others"] = {
+            "skills": [],
+            "certificates": ["软件设计师"],
+            "languages": ["英语 CET-6"],
+            "field_labels": {"certificates": "资格证书", "languages": ""},
+        }
+
+        html = render_resume_to_html(data, layout_config=default_layout_config())
+        self.assertIn("资格证书：软件设计师", html)
+        self.assertIn("英语 CET-6", html)
+        self.assertNotIn("语言：英语 CET-6", html)
+        self.assertLess(html.index("证书与语言"), html.index("资格证书：软件设计师"))
+
+        document = Document(BytesIO(generate_docx(data, layout_config=default_layout_config())))
+        table_text = "\n".join(cell.text for table in document.tables for row in table.rows for cell in row.cells)
+        self.assertIn("资格证书：软件设计师", table_text)
+        self.assertIn("英语 CET-6", table_text)
+        self.assertNotIn("语言：英语 CET-6", table_text)
+
     def test_explicit_title_formatting_can_cancel_legacy_default_bold_in_all_exports(self):
         data = resume_with_two_jobs()
         data["education"] = [{"school_name": "示例大学", "date_range": [], "school_tags": [], "theses": []}]
@@ -252,7 +273,7 @@ class LayoutRuleTests(unittest.TestCase):
             "var(--education-middle-column) var(--education-compact-side-column)",
             html,
         )
-        self.assertIn('style="text-align:center;justify-content:center"><span class="module-component component-degree">硕士</span>', html)
+        self.assertIn('style="text-align:left;justify-content:flex-start"><span class="module-component component-degree">硕士</span>', html)
         self.assertIn('component-metrics">3.8/5.0 (前10%)</span>', html)
         self.assertNotIn('component-metrics">GPA', html)
         self.assertIn('text-align:right;justify-content:flex-end', html)
@@ -559,7 +580,7 @@ class LayoutRuleTests(unittest.TestCase):
             -numbered.paragraph_format.left_indent.mm,
             places=1,
         )
-        self.assertAlmostEqual(numbered.paragraph_format.left_indent.mm, 4.9, places=1)
+        self.assertAlmostEqual(numbered.paragraph_format.left_indent.mm, 6.1, places=1)
 
     def test_word_numbered_semantic_blocks_use_real_hanging_indent(self):
         data = resume_with_two_jobs()
@@ -779,10 +800,10 @@ class LayoutRuleTests(unittest.TestCase):
             192.0,
             places=1,
         )
-        self.assertEqual(education_table.cell(0, 1).paragraphs[0].alignment, WD_ALIGN_PARAGRAPH.CENTER)
+        self.assertEqual(education_table.cell(0, 1).paragraphs[0].alignment, WD_ALIGN_PARAGRAPH.LEFT)
         self.assertEqual(education_table.cell(0, 2).paragraphs[0].alignment, WD_ALIGN_PARAGRAPH.RIGHT)
 
-    def test_compact_education_keeps_unlabeled_metrics_in_centered_middle_frame(self):
+    def test_compact_education_keeps_unlabeled_metrics_in_left_aligned_middle_frame(self):
         data = resume_with_two_jobs()
         data["education"] = [{
             "school_name": "中山大学",
@@ -813,7 +834,7 @@ class LayoutRuleTests(unittest.TestCase):
             education_table.cell(0, 1).text,
             "硕士 · 电子信息 · 4.0/5.0 (前5%)",
         )
-        self.assertEqual(education_table.cell(0, 1).paragraphs[0].alignment, WD_ALIGN_PARAGRAPH.CENTER)
+        self.assertEqual(education_table.cell(0, 1).paragraphs[0].alignment, WD_ALIGN_PARAGRAPH.LEFT)
         self.assertAlmostEqual(
             education_table.columns[0].width.mm,
             education_table.columns[2].width.mm,

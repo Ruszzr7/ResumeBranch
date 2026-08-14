@@ -111,13 +111,13 @@ test('layout menu opens a dedicated bidirectional manual ordering dialog', () =>
   assert.equal(previewSource.includes('localSectionOrder.value = order\n  persistSectionOrder()'), false)
 })
 
-test('module ordering exposes every supported top-level module before content exists', () => {
-  assert.ok(previewSource.includes('Keep empty but supported modules in the ordering dialog as well'))
-  assert.ok(previewSource.includes(".filter(section => SECTION_LABELS[section] && !isEducationChildSection(section))"))
+test('module ordering only exposes visible modules with content', () => {
+  assert.ok(previewSource.includes('const sectionHasContent = section =>'))
+  assert.ok(previewSource.includes(".filter(section => SECTION_LABELS[section] && sectionHasContent(section) && !hiddenSection(section) && !isEducationChildSection(section))"))
   for (const section of ['honors', 'publications', 'research_interests', 'skills', 'work_experience', 'project_experience', 'custom_sections', 'others', 'self_evaluation']) {
     assert.ok(previewSource.includes(`${section}:`), `missing module label: ${section}`)
   }
-  assert.equal(previewSource.includes('sectionHasContent(section)'), false)
+  assert.ok(previewSource.includes(".filter(section => SECTION_LABELS[section] && sectionHasContent(section) && !hiddenSection(section) && isEducationChildSection(section))"))
 })
 
 test('font size order and section dialogs are mutually exclusive', () => {
@@ -152,9 +152,22 @@ test('selected list style replaces imported markers and marker weight follows co
   assert.ok(previewSource.includes('function moduleListContent(value)'))
   assert.ok(previewSource.includes("{ 'marker-bold': isFullyBoldText(value) }"))
   assert.ok(previewSource.includes('.generic-list-item.marker-bold::before'))
+  assert.ok(previewSource.includes('content: attr(data-marker);'))
+  assert.ok(previewSource.includes("content: '(' counter(project-duty) ')';"))
   assert.ok(previewSource.includes('v-html="formatText(moduleListContent(item))"'))
   assert.equal(previewSource.includes('has-native-marker'), false)
   assert.equal(previewSource.includes('native-list-marker'), false)
+})
+
+test('certificate and language values follow their section heading during pagination', () => {
+  assert.ok(previewSource.includes("<div v-if=\"isItemVisible({index: getItemIndex('others-title', 0)}, page - 1)\" class=\"cert-lang-line\""))
+})
+
+test('certificate and language component rows remain separate lines', () => {
+  assert.ok(previewSource.includes("function visibleOtherComponentRows()"))
+  assert.ok(previewSource.includes("component-${component}"))
+  assert.ok(layoutConfigSource.includes("components: ['certificates'], flow: 'stacked'"))
+  assert.ok(layoutConfigSource.includes("components: ['languages'], flow: 'stacked'"))
 })
 
 test('imported source can be viewed read-only without replacing the structured resume', () => {

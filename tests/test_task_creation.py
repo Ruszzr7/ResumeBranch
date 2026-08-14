@@ -3,7 +3,7 @@ import unittest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from backend.database import Base, ProjectTask, ResumeProject, create_resume_task
+from backend.database import Base, ProjectTask, ResumeProject, create_resume_task, save_user_resume
 
 
 class TaskCreationTests(unittest.TestCase):
@@ -66,6 +66,23 @@ class TaskCreationTests(unittest.TestCase):
         self.assertEqual(task.photo, "")
         self.assertEqual(task.source_page_count, 1)
         self.assertIsNone(task.source_document_id)
+
+    def test_explicit_empty_photo_removes_existing_photo_but_omitted_photo_is_preserved(self):
+        self.db.info["task_id"] = self.source_task.id
+
+        save_user_resume(
+            self.db,
+            1,
+            {"basics": {"name": "候选人", "photo": ""}},
+        )
+        self.db.refresh(self.source_task)
+        self.assertEqual(self.source_task.photo, "")
+
+        self.source_task.photo = "photo-data"
+        self.db.commit()
+        save_user_resume(self.db, 1, {"basics": {"name": "候选人"}})
+        self.db.refresh(self.source_task)
+        self.assertEqual(self.source_task.photo, "photo-data")
 
 
 if __name__ == "__main__":

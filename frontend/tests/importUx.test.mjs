@@ -105,6 +105,24 @@ test('start choices share a neutral default and blue hover state', () => {
   assert.ok(appSource.includes('.start-modal .modal-close-btn.light:hover'))
 })
 
+test('re-import dialog stays on the current workspace without a redundant back button', () => {
+  const start = appSource.indexOf('<!-- 简历上传弹窗 -->')
+  const end = appSource.indexOf('<!-- 顶部导航栏（全屏宽度） -->', start)
+  const uploadDialog = appSource.slice(start, end)
+  assert.ok(start >= 0 && end > start)
+  assert.ok(uploadDialog.includes('<h2>导入简历</h2>'))
+  assert.equal(uploadDialog.includes('backToStartDialog'), false)
+  assert.equal(uploadDialog.includes('class="modal-back"'), false)
+})
+
+test('re-import dialog can be closed without selecting a file', () => {
+  const start = appSource.indexOf('<!-- 简历上传弹窗 -->')
+  const end = appSource.indexOf('<!-- 顶部导航栏（全屏宽度） -->', start)
+  const uploadDialog = appSource.slice(start, end)
+  assert.ok(uploadDialog.includes('aria-label="关闭导入简历"'))
+  assert.ok(uploadDialog.includes('@click="closeUploadDialog"'))
+})
+
 test('task sidebar shows one aligned version name without a redundant JD subtitle', () => {
   const start = appSource.indexOf('<aside class="task-sidebar">')
   const end = appSource.indexOf('<div class="main-content">', start)

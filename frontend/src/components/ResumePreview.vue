@@ -12,6 +12,7 @@ import {
   resolveContentBlockFlow,
   resolveEducationColumnWidths,
   resolveLayoutTokens,
+  resolvePhotoHeightMm,
   sectionTitle,
   sectionOrder,
   isSectionHidden
@@ -117,7 +118,9 @@ const workSections = computed(() => {
       make('internship_experience', props.lang === 'en' ? 'Internship Experience' : '实习经历')
     ].filter(section => !hiddenSection(section) && section.entries.length)
   }
-  return hiddenSection('work_experience') ? [] : [make('work_experience', t.value.workExperience)]
+  return hiddenSection('work_experience')
+    ? []
+    : [make('work_experience', t.value.workExperience)].filter(section => section.entries.length)
 })
 const workTypePrefix = sectionId => sectionId === 'internship_experience' ? 'internship' : 'work'
 const visibleOtherFields = computed(() => (moduleLayout('others').fieldOrder || [])
@@ -125,7 +128,16 @@ const visibleOtherFields = computed(() => (moduleLayout('others').fieldOrder || 
     && !moduleLayout('others').hiddenFields?.includes(field)
     && !moduleLayout('others').hiddenComponents?.includes(field)
     && props.data?.others?.[field]?.length))
-const otherFieldLabel = field => ({ skills: t.value.skills, certificates: t.value.certificates, languages: t.value.language }[field] || field)
+const otherFieldLabel = field => {
+  const custom = props.data?.others?.field_labels
+  if (custom && Object.prototype.hasOwnProperty.call(custom, field)) return String(custom[field] ?? '').trim()
+  return ({ skills: t.value.skills, certificates: t.value.certificates, languages: t.value.language }[field] || field)
+}
+const otherFieldValue = (field, values) => {
+  const label = otherFieldLabel(field)
+  const joined = (values || []).join(otherSeparator.value)
+  return label ? `${label}：${joined}` : joined
+}
 const otherSeparator = computed(() => moduleLayout('others').separator === 'dot' ? ' · ' : ' | ')
 const sectionMergedIntoEducation = section => Boolean(props.data?.education?.length)
   && layout.value.global.sectionPlacements?.[section] === 'education'
@@ -137,7 +149,7 @@ const mergedEducationSections = computed(() => {
     {
       id: 'others',
       fallback: props.lang === 'en' ? 'Certificates & Languages' : '证书与语言',
-      values: visibleOtherFields.value.map(field => `${otherFieldLabel(field)}：${(props.data?.others?.[field] || []).join(otherSeparator.value)}`)
+      values: visibleOtherFields.value.map(field => otherFieldValue(field, props.data?.others?.[field]))
     }
   ]
   return sections
@@ -278,10 +290,6 @@ function compactAcademicMetric(item) {
   return formatCompactAcademicMetric(item, hidden)
 }
 
-function compactEducationMiddle(item) {
-  return [item?.degree, item?.major, compactAcademicMetric(item)].filter(Boolean).join(' · ')
-}
-
 function visibleComponentRows(moduleId, excluded = []) {
   const hidden = new Set([...(moduleLayout(moduleId).hiddenComponents || []), ...excluded])
   return (moduleLayout(moduleId).componentRows || []).map(row => ({
@@ -403,7 +411,7 @@ function moduleListClasses(moduleId, value, extra = '') {
 function othersComponentText(component) {
   const values = props.data?.others?.[component] || []
   if (!values.length) return ''
-  return `${otherFieldLabel(component)}：${values.join(otherSeparator.value)}`
+  return otherFieldValue(component, values)
 }
 
 function visibleOtherComponentRows() {
@@ -424,13 +432,36 @@ const SECTION_LABELS = {
   custom_sections: '自定义栏目', others: '证书与语言', self_evaluation: '自我评价'
 }
 const isEducationChildSection = section => section !== 'education' && sectionMergedIntoEducation(section)
+const hasResumeListContent = value => Array.isArray(value) && value.some(item => String(item || '').trim())
+const sectionHasContent = section => {
+  const data = props.data || {}
+  if (section === 'education') return Array.isArray(data.education) && data.education.length > 0
+  if (section === 'skills') return hasResumeListContent(data.others?.skills)
+  if (section === 'research_interests') return hasResumeListContent(data.research_interests)
+  if (section === 'honors') return hasResumeListContent(data.honors)
+  if (section === 'publications') return hasResumeListContent(data.publications)
+  if (section === 'work_experience') {
+    const entries = data.work_experience || []
+    return layout.value.global.splitWorkExperience
+      ? entries.some(item => !/实习|intern/i.test(String(item?.job_type || '')))
+      : entries.length > 0
+  }
+  if (section === 'internship_experience') {
+    return layout.value.global.splitWorkExperience
+      && (data.work_experience || []).some(item => /实习|intern/i.test(String(item?.job_type || '')))
+  }
+  if (section === 'project_experience') return hasResumeListContent(data.project_experience || data.projects)
+  if (section === 'custom_sections') {
+    return (data.custom_sections || []).some(item => String(item?.title || '').trim() && hasResumeListContent(item?.items))
+  }
+  if (section === 'others') return visibleOtherFields.value.length > 0
+  if (section === 'self_evaluation') return hasResumeListContent(data.self_evaluation)
+  return false
+}
 const reorderableTopSections = computed(() => localSectionOrder.value
-  // Keep empty but supported modules in the ordering dialog as well. This lets
-  // users establish the intended order before adding content (notably
-  // publications, certificates/languages, self-evaluation and custom sections).
-  .filter(section => SECTION_LABELS[section] && !isEducationChildSection(section)))
+  .filter(section => SECTION_LABELS[section] && sectionHasContent(section) && !hiddenSection(section) && !isEducationChildSection(section)))
 const reorderableEducationChildren = computed(() => localSectionOrder.value
-  .filter(section => SECTION_LABELS[section] && isEducationChildSection(section)))
+  .filter(section => SECTION_LABELS[section] && sectionHasContent(section) && !hiddenSection(section) && isEducationChildSection(section)))
 const reorderableSections = computed(() => reorderableTopSections.value.flatMap(section => (
   section === 'education' ? [section, ...reorderableEducationChildren.value] : [section]
 )))
@@ -631,15 +662,13 @@ const DEFAULT_STYLE = {
   marginHorizontal: DEFAULT_LAYOUT_CONFIG.global.marginHorizontal,
   moduleMargin: DEFAULT_LAYOUT_CONFIG.global.moduleMargin,
   lineHeight: DEFAULT_LAYOUT_CONFIG.global.lineHeight,
-  fontSize: DEFAULT_LAYOUT_CONFIG.global.fontSize,
-  photoHeightMm: DEFAULT_LAYOUT_CONFIG.basics.photoHeightMm
+  fontSize: DEFAULT_LAYOUT_CONFIG.global.fontSize
 }
 const marginVertical = ref(DEFAULT_STYLE.marginVertical)
 const marginHorizontal = ref(DEFAULT_STYLE.marginHorizontal)
 const moduleMargin = ref(DEFAULT_STYLE.moduleMargin)
 const lineHeight = ref(DEFAULT_STYLE.lineHeight)
 const fontSize = ref(DEFAULT_STYLE.fontSize)
-const photoHeightMm = ref(DEFAULT_STYLE.photoHeightMm)
 const fontSizes = ref({ ...DEFAULT_LAYOUT_CONFIG.typography.fontSizes })
 const fontSizeDraft = ref({ ...DEFAULT_LAYOUT_CONFIG.typography.fontSizes })
 const showFontSizeDialog = ref(false)
@@ -660,7 +689,6 @@ function loadLayoutSettings() {
   moduleMargin.value = Number(global.moduleMargin ?? DEFAULT_STYLE.moduleMargin)
   lineHeight.value = Number(global.lineHeight ?? DEFAULT_STYLE.lineHeight)
   fontSize.value = Number(global.fontSize ?? DEFAULT_STYLE.fontSize)
-  photoHeightMm.value = Number(layout.value.basics.photoHeightMm ?? DEFAULT_STYLE.photoHeightMm)
   fontSizes.value = { ...layout.value.typography.fontSizes }
 }
 
@@ -712,7 +740,6 @@ function saveLayoutSettings() {
       lineHeight: lineHeight.value,
       fontSize: fontSize.value
     })
-    candidate.basics.photoHeightMm = photoHeightMm.value
     candidate.typography.fontSizes = { ...fontSizes.value, body: fontSize.value }
     try {
       await fetch(`/tasks/${props.taskId}/layout`, {
@@ -815,7 +842,6 @@ function resetSpacingDraft() {
   marginHorizontal.value = DEFAULT_STYLE.marginHorizontal
   moduleMargin.value = DEFAULT_STYLE.moduleMargin
   lineHeight.value = DEFAULT_STYLE.lineHeight
-  photoHeightMm.value = DEFAULT_STYLE.photoHeightMm
 }
 
 function confirmSpacingSettings() {
@@ -837,8 +863,7 @@ function toggleToolbarMenu(menu, event) {
       marginVertical: marginVertical.value,
       marginHorizontal: marginHorizontal.value,
       moduleMargin: moduleMargin.value,
-      lineHeight: lineHeight.value,
-      photoHeightMm: photoHeightMm.value
+      lineHeight: lineHeight.value
     }
   }
   activeToolbarMenu.value = menu
@@ -850,7 +875,6 @@ function closeToolbarMenu() {
     marginHorizontal.value = spacingSnapshot.value.marginHorizontal
     moduleMargin.value = spacingSnapshot.value.moduleMargin
     lineHeight.value = spacingSnapshot.value.lineHeight
-    photoHeightMm.value = spacingSnapshot.value.photoHeightMm
   }
   spacingSnapshot.value = null
   activeToolbarMenu.value = null
@@ -937,6 +961,7 @@ function refreshPhotoAspectRatio() {
   }
   image.src = source
 }
+const photoRenderHeightMm = computed(() => resolvePhotoHeightMm(props.data || {}, renderLayout.value, layoutTokens.value))
 const pageStyles = computed(() => ({
   fontFamily: layoutTokens.value.fontFamilyCss,
   fontSize: `${layoutTokens.value.fontSizePt}pt`,
@@ -977,8 +1002,8 @@ const pageStyles = computed(() => ({
   '--education-side-column': `${layoutTokens.value.educationSideColumnMm}mm`,
   '--education-compact-side-column': `${educationColumnWidths.value.sideMm}mm`,
   '--education-middle-column': `${educationColumnWidths.value.middleMm}mm`,
-  '--photo-width': `${layoutTokens.value.photoHeightMm * photoAspectRatio.value}mm`,
-  '--photo-height': `${layoutTokens.value.photoHeightMm}mm`
+  '--photo-width': `${photoRenderHeightMm.value * photoAspectRatio.value}mm`,
+  '--photo-height': `${photoRenderHeightMm.value}mm`
 }))
 
 const pagePaddingStyle = computed(() => ({
@@ -1302,7 +1327,7 @@ const calculatePagination = async () => {
 }
 
 // ========== 监听变化 ==========
-watch([() => props.data, () => props.sourcePageCount, renderLayout, marginVertical, marginHorizontal, moduleMargin, lineHeight, fontSize, photoHeightMm, fontSizes, fontSizeDraft, showFontSizeDialog],
+watch([() => props.data, () => props.sourcePageCount, renderLayout, marginVertical, marginHorizontal, moduleMargin, lineHeight, fontSize, fontSizes, fontSizeDraft, showFontSizeDialog],
   () => {
     // 增加延迟时间，确保字体变化后浏览器有足够时间重新渲染
     if (window.requestAnimationFrame) {
@@ -1314,7 +1339,7 @@ watch([() => props.data, () => props.sourcePageCount, renderLayout, marginVertic
     }
   }, { deep: true })
 
-watch([marginVertical, marginHorizontal, moduleMargin, lineHeight, fontSize, photoHeightMm], saveLayoutSettings)
+watch([marginVertical, marginHorizontal, moduleMargin, lineHeight, fontSize], saveLayoutSettings)
 watch(() => props.layoutConfig, () => {
   syncingLayoutProps = true
   localSectionOrder.value = [...normalizeLayoutConfig(props.layoutConfig).global.sectionOrder]
@@ -1690,10 +1715,6 @@ const getItemIndex = (type, dataIndex) => {
                 <label class="compact-control">
                   <span>行间距 <strong>{{ lineHeight }}</strong></span>
                   <input type="range" v-model.number="lineHeight" min="1" max="1.8" step="0.05" class="slider">
-                </label>
-                <label v-if="data?.basics?.photo" class="compact-control">
-                  <span>照片高度 <strong>{{ photoHeightMm }}mm</strong></span>
-                  <input type="range" v-model.number="photoHeightMm" min="18" max="45" step="1" class="slider">
                 </label>
                 <div class="layout-spacing-actions">
                   <button type="button" @click="resetSpacingDraft">恢复默认</button>
@@ -2223,7 +2244,11 @@ const getItemIndex = (type, dataIndex) => {
             <!-- 其他 -->
       <template v-if="data.others && visibleOtherFields.length && !hiddenSection('others') && !sectionMergedIntoEducation('others')">
               <h2 v-if="isItemVisible({index: getItemIndex('others-title', 0)}, page - 1)" class="section-title" :class="[`title-${moduleTitleStyle('others')}`, { 'title-highlight': highlightedModule === 'others' }]" :style="moduleOrder('others')" data-module="others" v-html="formatText(displayTitle('others', props.lang === 'en' ? 'Certificates & Languages' : '证书与语言'))"></h2>
-              <div v-if="isItemVisible({index: getItemIndex('others-content', 0)}, page - 1)" class="cert-lang-line" :class="`others-${moduleLayout('others').preset}`" :style="moduleOrder('others')">
+              <!-- Keep the heading and its values on the same page.  The two
+                   elements share one semantic pagination unit, so the value
+                   visibility follows the heading index instead of being
+                   independently rounded into the adjacent page. -->
+              <div v-if="isItemVisible({index: getItemIndex('others-title', 0)}, page - 1)" class="cert-lang-line" :class="`others-${moduleLayout('others').preset}`" :style="moduleOrder('others')">
                 <div class="module-component-rows">
                   <div v-for="(row, rowIndex) in visibleOtherComponentRows()" :key="rowIndex" class="module-component-row" :style="componentRowStyle(row, 'others')">
                     <div v-for="(cell, cellIndex) in row.cells" :key="cellIndex" class="module-component-cell" :class="`flow-${cell.flow}`" :style="componentCellStyle(cell)">
@@ -2307,7 +2332,7 @@ const getItemIndex = (type, dataIndex) => {
       <div v-if="sectionOrderError" class="font-size-error" role="alert">{{ sectionOrderError }}</div>
       <div class="section-order-dialog-footer">
         <button type="button" class="settings-dialog-action" :disabled="isSavingSectionOrder" @click="resetSectionOrder">恢复默认</button>
-        <button type="button" class="settings-dialog-action primary" :disabled="isSavingSectionOrder" @click="applySectionOrder">{{ isSavingSectionOrder ? '保存中…' : '确定' }}</button>
+        <button type="button" class="settings-dialog-action primary" :disabled="isSavingSectionOrder" @click="applySectionOrder">{{ isSavingSectionOrder ? '保存中…' : '应用' }}</button>
       </div>
     </div>
   </div>
@@ -3049,7 +3074,6 @@ const getItemIndex = (type, dataIndex) => {
   min-height: 0;
   margin-bottom: 0.35em;
 }
-.personal-info.has-photo { min-height: var(--photo-height); }
 .personal-info.basics-left-aligned { text-align: left; }
 .personal-info.basics-left-aligned .contact-info { justify-content: flex-start; }
 .personal-info.contact-stacked .contact-info { flex-direction: column; gap: 0.1em; }
@@ -3086,8 +3110,8 @@ const getItemIndex = (type, dataIndex) => {
   width: 80px;
   height: 100px;
   object-fit: cover;
-  border-radius: 4px;
-  border: 1px solid #e0e0e0;
+  border-radius: 0;
+  border: 0;
 }
 .photo-container .profile-photo {
   width: var(--photo-width);

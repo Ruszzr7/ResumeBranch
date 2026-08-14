@@ -26,7 +26,7 @@ export const DEFAULT_COMPONENT_ROWS = Object.freeze({
     { cells: [{ components: ['personal_meta', 'contact', 'additional_fields'], flow: 'inline', width: 'fill', alignment: 'left' }] }
   ],
   education: [
-    { cells: [{ components: ['school', 'school_tags'], flow: 'inline', width: 'content', alignment: 'left' }, { components: ['degree', 'major', 'metrics'], flow: 'inline', width: 'fill', alignment: 'center' }, { components: ['date'], flow: 'inline', width: 'content', alignment: 'right' }] },
+    { cells: [{ components: ['school', 'school_tags'], flow: 'inline', width: 'content', alignment: 'left' }, { components: ['degree', 'major', 'metrics'], flow: 'inline', width: 'fill', alignment: 'left' }, { components: ['date'], flow: 'inline', width: 'content', alignment: 'right' }] },
     { cells: [{ components: ['theses'], flow: 'stacked', width: 'fill', alignment: 'justify' }] }
   ],
   work_experience: [
@@ -46,7 +46,13 @@ export const DEFAULT_COMPONENT_ROWS = Object.freeze({
   honors: [{ cells: [{ components: ['items'], flow: 'stacked', width: 'fill', alignment: 'justify' }] }],
   publications: [{ cells: [{ components: ['items'], flow: 'stacked', width: 'fill', alignment: 'justify' }] }],
   custom_sections: [{ cells: [{ components: ['items'], flow: 'stacked', width: 'fill', alignment: 'justify' }] }],
-  others: [{ cells: [{ components: ['certificates', 'languages'], flow: 'inline', width: 'fill', alignment: 'left' }] }],
+  // Certificates and languages are separate semantic lines.  Each field still
+  // joins its own entries with the configured separator, but the two labels
+  // must never be rendered on the same line.
+  others: [
+    { cells: [{ components: ['certificates'], flow: 'stacked', width: 'fill', alignment: 'left' }] },
+    { cells: [{ components: ['languages'], flow: 'stacked', width: 'fill', alignment: 'left' }] }
+  ],
   self_evaluation: [{ cells: [{ components: ['items'], flow: 'stacked', width: 'fill', alignment: 'justify' }] }]
 })
 
@@ -234,6 +240,29 @@ function normalizeComponentRows(moduleId, supplied, fallback, hidden) {
   return rows.length ? rows : clone(fallback)
 }
 
+function normalizeOtherComponentRows(rows) {
+  const cellByComponent = new Map()
+  for (const row of rows || []) {
+    for (const cell of row?.cells || []) {
+      for (const component of cell.components || []) {
+        if (!cellByComponent.has(component)) cellByComponent.set(component, cell)
+      }
+    }
+  }
+  return ['certificates', 'languages'].map(component => {
+    const source = cellByComponent.get(component) || DEFAULT_COMPONENT_ROWS.others[component === 'certificates' ? 0 : 1].cells[0]
+    return {
+      cells: [{
+        ...source,
+        components: [component],
+        flow: 'stacked',
+        width: 'fill',
+        alignment: 'left'
+      }]
+    }
+  })
+}
+
 function normalizeModuleContracts(result, source, suppliedVersion, bounded) {
   for (const moduleId of Object.keys(MODULE_COMPONENTS)) {
     const module = result[moduleId]
@@ -251,17 +280,19 @@ function normalizeModuleContracts(result, source, suppliedVersion, bounded) {
     const fallback = suppliedVersion < 7 ? legacyComponentRows(moduleId, module) : clone(DEFAULT_COMPONENT_ROWS[moduleId])
     const rawModule = source?.[moduleId] && typeof source[moduleId] === 'object' ? source[moduleId] : {}
     module.componentRows = normalizeComponentRows(moduleId, suppliedVersion >= 7 ? rawModule.componentRows : fallback, fallback, hidden)
-    // Compact education keeps a stable three-column geometry: the metadata
-    // column is centered while school/date remain left/right aligned. Migrate
-    // old persisted rows so all renderers use the same alignment contract.
-    if (moduleId === 'education' && module.preset === 'compact') {
+    if (moduleId === 'others') module.componentRows = normalizeOtherComponentRows(module.componentRows)
+    // Compact/three-column education keeps a stable three-column geometry:
+    // the middle column is centered by the equal side widths, while its
+    // content is left aligned. Migrate old persisted rows so all renderers
+    // use the same alignment contract.
+    if (moduleId === 'education' && ['compact', 'three-column'].includes(module.preset)) {
       for (const row of module.componentRows) {
         if (row.cells.length !== 3) continue
         if (!row.cells[0].components.includes('school')
           || !row.cells[1].components.some(component => ['degree', 'major', 'metrics'].includes(component))
           || !row.cells[2].components.includes('date')) continue
         row.cells[0].alignment = 'left'
-        row.cells[1].alignment = 'center'
+        row.cells[1].alignment = 'left'
         row.cells[2].alignment = 'right'
       }
     }
@@ -540,28 +571,95 @@ export function estimateTextWidthPt(value = '', fontSizePt = 9) {
 export function resolveEducationColumnWidths(tokens, { schools = [], dates = [], degreeMajors = [], compactMetrics = [] } = {}) {
   const printableMm = 210 - tokens.marginLeftMm - tokens.marginRightMm
   const breathingMm = tokens.educationColumnBreathingMm
-  const sideNeededMm = Math.max(
-    36,
-    ...schools.map(value => estimateTextWidthPt(String(value).replace(/\*\*/g, ''), tokens.entryTitleFontSizePt) * 25.4 / 72),
-    ...dates.map(value => estimateTextWidthPt(String(value).replace(/\*\*/g, ''), tokens.labelFontSizePt) * 25.4 / 72)
-  ) + breathingMm
+  // Determine the middle column from its own field-label content first. The
+  // side columns only constrain it when preserving their minimum readable
+  // width would otherwise be impossible; the remaining width is always split
+  // equally between the left and right columns.
   let middleNeededMm = tokens.educationMiddleMinMm
   degreeMajors.forEach((degreeMajor, index) => {
     const metric = compactMetrics[index] || ''
     const parts = [degreeMajor, metric].filter(Boolean).map(value => String(value).replace(/\*\*/g, ''))
     const displayValue = parts.join(' · ')
-    // Degree, major and compact metrics are field-label content. Measure them
-    // with the label size and a small safety factor so a larger field label
-    // gets the middle column before the side columns absorb the space.
     const widthPt = estimateTextWidthPt(displayValue, tokens.labelFontSizePt) * 1.08
     middleNeededMm = Math.max(middleNeededMm, widthPt * 25.4 / 72 + breathingMm)
   })
+
+  const sideNeededMm = Math.max(
+    36,
+    ...schools.map(value => estimateTextWidthPt(String(value).replace(/\*\*/g, ''), tokens.entryTitleFontSizePt) * 25.4 / 72),
+    ...dates.map(value => estimateTextWidthPt(String(value).replace(/\*\*/g, ''), tokens.labelFontSizePt) * 25.4 / 72)
+  ) + breathingMm
+
+  // Preserve the middle width unless reserving both side minima is necessary.
   const middleMaxMm = Math.max(tokens.educationMiddleMinMm, printableMm - sideNeededMm * 2)
   const middleMm = Math.min(middleNeededMm, middleMaxMm)
   return {
     sideMm: Math.max(0, (printableMm - middleMm) / 2),
     middleMm
   }
+}
+
+export function resolvePhotoHeightMm(resumeData = {}, config = {}, tokens = {}) {
+  const basics = resumeData?.basics && typeof resumeData.basics === 'object' ? resumeData.basics : {}
+  const desired = Number(tokens.photoHeightMm) || 26
+  if (!basics.photo) return desired
+  const global = config?.global || {}
+  const hidden = new Set(global.hiddenSections || [])
+  const others = resumeData?.others && typeof resumeData.others === 'object' ? resumeData.others : {}
+  const hasValues = value => Array.isArray(value) && value.some(item => String(item || '').trim())
+  const sectionHasContent = section => {
+    if (section === 'education') return Array.isArray(resumeData.education) && resumeData.education.length > 0
+    if (section === 'skills') return hasValues(others.skills)
+    if (['research_interests', 'honors', 'publications', 'self_evaluation'].includes(section)) return hasValues(resumeData[section])
+    if (section === 'work_experience') {
+      const entries = resumeData.work_experience || []
+      return global.splitWorkExperience
+        ? entries.some(item => !/实习|intern/i.test(String(item?.job_type || '')))
+        : entries.length > 0
+    }
+    if (section === 'internship_experience') {
+      return Boolean(global.splitWorkExperience) && (resumeData.work_experience || [])
+        .some(item => /实习|intern/i.test(String(item?.job_type || '')))
+    }
+    if (section === 'project_experience') return hasValues(resumeData.project_experience || resumeData.projects)
+    if (section === 'custom_sections') return (resumeData.custom_sections || [])
+      .some(item => String(item?.title || '').trim() && hasValues(item?.items))
+    if (section === 'others') return ['certificates', 'languages'].some(key => hasValues(others[key]))
+    return false
+  }
+  if (!(global.sectionOrder || []).some(section => sectionHasContent(section) && !hidden.has(section))) return desired
+
+  const printableWidthPt = Math.max(1, (210 - Number(tokens.marginLeftMm || 0) - Number(tokens.marginRightMm || 0)) * 72 / 25.4)
+  const ratio = Math.min(3, Math.max(0.2, Number(basics.photo_aspect_ratio) || 21 / 26))
+  const photoWidthPt = desired * ratio * 72 / 25.4
+  const textWidthPt = Math.max(120, printableWidthPt - photoWidthPt)
+  const lineCount = (value, fontSize) => {
+    const text = String(value || '').replace(/\*\*/g, '').trim()
+    if (!text) return 0
+    return Math.max(1, Math.ceil(estimateTextWidthPt(text, fontSize) / textWidthPt))
+  }
+  const nameLines = lineCount(basics.name, tokens.nameFontSizePt)
+  const targetLines = lineCount(basics.target_position, tokens.metaFontSizePt)
+  const contactValues = ['gender', 'birth_date', 'phone', 'email'].map(key => basics[key])
+  for (const field of basics.additional_fields || []) {
+    if (field?.label || field?.value) contactValues.push(field.label || field.value)
+  }
+  const contactLines = lineCount(contactValues.filter(Boolean).join(' | '), tokens.metaFontSizePt)
+  const headerPt = (
+    nameLines * tokens.nameLineHeightPt
+    + (nameLines ? tokens.headerNameAfterPt : 0)
+    + targetLines * tokens.metaLineHeightPt
+    + contactLines * tokens.metaLineHeightPt
+    // Cap the photo before the next title/divider. The title's own line box
+    // must not be included, otherwise the image overlaps that divider.
+    + tokens.moduleSpacingPt
+    + tokens.bodyFontSizePt * 0.35
+    + tokens.sectionTitleLineHeightPt
+  )
+  // Let the photo reach the next divider while preserving a physical safety
+  // gap for browser/PDF/Word font and table-box differences.
+  const availableMm = headerPt * 25.4 / 72 - 1.5
+  return Math.round(Math.max(10, Math.min(desired, availableMm)) * 100) / 100
 }
 
 export function formatCompactAcademicMetric(item = {}, hiddenMetrics = []) {

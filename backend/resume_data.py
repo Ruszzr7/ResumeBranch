@@ -411,6 +411,15 @@ def normalize_resume_data(data: dict) -> dict:
         others = {}
     for key in ("skills", "certificates", "languages"):
         others[key] = _string_list(others.get(key))
+    field_labels = others.get("field_labels")
+    if isinstance(field_labels, dict):
+        others["field_labels"] = {
+            key: _text(field_labels.get(key))
+            for key in ("certificates", "languages")
+            if key in field_labels
+        }
+    else:
+        others.pop("field_labels", None)
 
     # 解析器旧版本会仅凭内容语义，把原“专业技能”栏目中的 CET、语言或
     # 认证拆到新栏目。若技能原文自身明确包含对应标签，则把被拆出的内容
