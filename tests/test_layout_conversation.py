@@ -25,7 +25,7 @@ def resume_payload(name="测试用户"):
         "education": [{
             "school_name": "测试大学", "major": "计算机", "degree": "本科",
             "date_range": ["2020", "2024"], "school_tags": ["211"],
-            "gpa": "3.5", "gpa_scale": "4.0", "ranking": "", "average_score": "", "theses": [],
+            "gpa": "3.5", "gpa_scale": "4.0", "ranking": "", "theses": [],
         }],
         "work_experience": [], "project_experience": [],
         "others": {"skills": [], "certificates": [], "languages": []},

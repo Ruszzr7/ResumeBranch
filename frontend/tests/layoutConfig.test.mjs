@@ -246,7 +246,7 @@ test('module contracts inherit one global line height and normalize constrained 
 
 test('default compact education and list indents preserve the stable template geometry', () => {
   const config = normalizeLayoutConfig()
-  assert.equal(config.education.componentRows[0].cells[1].alignment, 'left')
+  assert.equal(config.education.componentRows[0].cells[1].alignment, 'center')
   assert.equal(config.skills.indentLevel, 0)
   assert.equal(config.research_interests.indentLevel, 0)
   assert.equal(config.honors.indentLevel, 0)

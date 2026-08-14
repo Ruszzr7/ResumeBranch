@@ -30,7 +30,6 @@ const FIELD_LABELS = Object.freeze({
   gpa: 'GPA',
   gpa_scale: 'GPA 满分',
   ranking: '排名',
-  average_score: '平均分',
   company_name: '公司',
   company: '公司',
   job_title: '职位',

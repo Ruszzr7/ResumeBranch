@@ -1,7 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { formatInlineHtml, parseInlineBold, plainInlineText } from '../src/utils/inlineFormatting.js'
+import {
+  formatInlineHtml,
+  isFullyBoldInlineText,
+  parseInlineBold,
+  plainInlineText,
+  toggleInlineBoldRange
+} from '../src/utils/inlineFormatting.js'
 
 test('rendering preserves source whitespace and natural break points', () => {
   for (const value of [
@@ -34,4 +40,24 @@ test('mixed Chinese and English text keeps exact content around bold runs', () =
     formatInlineHtml(value),
     '将 P95 latency <strong>降低 35%</strong>，并支持 10k QPS'
   )
+})
+
+test('selection formatting toggles deterministically without exposing storage markers', () => {
+  assert.equal(toggleInlineBoldRange('姓名', 0, 2), '**姓名**')
+  assert.equal(toggleInlineBoldRange('**姓名**', 0, 2), '姓名')
+  assert.equal(toggleInlineBoldRange('A **粗体** C', 2, 4), 'A 粗体 C')
+  assert.equal(toggleInlineBoldRange('A **粗体** C', 0, 6), '**A 粗体 C**')
+})
+
+test('number marker is bold only when all visible content is bold', () => {
+  assert.equal(isFullyBoldInlineText('**整段粗体**'), true)
+  assert.equal(isFullyBoldInlineText('**部分粗体**其余常规'), false)
+  assert.equal(isFullyBoldInlineText('**粗体一**常规**粗体二**'), false)
+})
+
+test('a bold selection spanning lines closes markers on every line', () => {
+  const bold = toggleInlineBoldRange('第一行\n第二行', 0, 7)
+  assert.equal(bold, '**第一行**\n**第二行**')
+  assert.equal(plainInlineText(bold), '第一行\n第二行')
+  assert.equal(toggleInlineBoldRange(bold, 0, 7), '第一行\n第二行')
 })

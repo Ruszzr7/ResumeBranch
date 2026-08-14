@@ -12,7 +12,7 @@ from backend.llm_gateway import GatewayConfig
 
 RESUME = {
     "basics": {"name": "张三", "gender": "", "phone": "13800138000", "email": "a@example.com", "target_position": "开发工程师"},
-    "education": [{"school_name": "测试大学", "major": "计算机", "degree": "本科", "date_range": ["2020.09", "2024.06"], "school_tags": [], "gpa": "", "gpa_scale": "", "ranking": "", "average_score": "", "theses": []}],
+    "education": [{"school_name": "测试大学", "major": "计算机", "degree": "本科", "date_range": ["2020.09", "2024.06"], "school_tags": [], "gpa": "", "gpa_scale": "", "ranking": "", "theses": []}],
     "work_experience": [], "project_experience": [],
     "others": {"skills": ["Python"], "certificates": [], "languages": []},
     "self_evaluation": [],

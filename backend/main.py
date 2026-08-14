@@ -19,6 +19,7 @@ import subprocess
 import os
 import sys
 import uuid
+import re
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -105,6 +106,7 @@ from .harness.interview import (
 )
 from .harness.observability import harness_metrics
 from .layout_config import LAYOUT_SCHEMA_VERSION, default_layout_config, resolve_layout_tokens
+from .inline_formatting import plain_inline_text
 from .pdf_generator import generate_pdf as _pdf_generator
 from .docx_generator import generate_docx as _docx_generator
 
@@ -112,6 +114,14 @@ from .docx_generator import generate_docx as _docx_generator
 # long-running backend from mixing an old layout module with newly loaded
 # PDF/DOCX modules after source files change on disk.
 resolve_layout_tokens()
+
+
+def _resume_export_filename(resume_data: dict, extension: str) -> str:
+    """Build the stable user-facing export name from the resume's display name."""
+    basics = resume_data.get("basics") if isinstance(resume_data, dict) else {}
+    display_name = plain_inline_text((basics or {}).get("name", "")).strip() or "简历"
+    display_name = re.sub(r'[\\/:*?"<>|\r\n]+', "_", display_name).strip(" .")[:80] or "简历"
+    return f"resume_{display_name}.{extension}"
 
 # PDF 生成器 - 懒加载（在 API 调用时才导入）
 # =============================================================================
@@ -1362,7 +1372,7 @@ async def export_pdf_endpoint(request: Request, db: Session = Depends(get_db), c
         return StreamingResponse(
             iter([pdf_bytes]),
             media_type="application/pdf",
-            headers={"Content-Disposition": f"attachment; filename=resume_{current_user.id}.pdf"}
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(_resume_export_filename(resume_data, 'pdf'))}"}
         )
     except Exception as e:
         print(f"PDF 导出错误: {str(e)}")
@@ -1393,7 +1403,7 @@ async def export_docx_endpoint(request: Request, db: Session = Depends(get_db), 
         return StreamingResponse(
             iter([docx_bytes]),
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            headers={"Content-Disposition": f"attachment; filename=resume_{current_user.id}.docx"},
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(_resume_export_filename(resume_data, 'docx'))}"},
         )
     except HTTPException:
         raise

@@ -21,7 +21,7 @@ _CHINESE_RE = re.compile(r"[\u3400-\u9fff]")
 _NON_TRANSLATABLE_FIELDS = {
     "photo", "phone", "email", "birth_date", "graduation_date",
     "date_range", "start_date", "end_date", "gpa", "gpa_scale",
-    "average_score", "type", "label_bold",
+    "type", "label_bold",
 }
 _BATCH_SIZE = 40
 

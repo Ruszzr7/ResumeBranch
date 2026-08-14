@@ -13,16 +13,34 @@ test('single-line resume fields hide storage markers behind the rich editor', ()
   assert.ok(editorSource.includes("if (props.compact) syncValue()"))
   assert.ok(editorSource.includes("if (props.compact) event.preventDefault()"))
   assert.ok(editorSource.includes("raw.replace(/[\\r\\n]+/g, ' ')"))
-  assert.ok(appSource.includes('v-model="work.company_name" placeholder="请输入" compact'))
-  assert.ok(appSource.includes('v-model="proj.project_name" placeholder="请输入" compact'))
+  assert.ok(appSource.includes('v-model="work.company_name" placeholder="例如 某某科技有限公司" compact'))
+  assert.ok(appSource.includes('v-model="proj.project_name" placeholder="例如 智能调度平台" compact'))
   assert.equal(/<RichTextEditor[^>]*class="element-input"[^>]*compact/.test(appSource), false)
+  assert.ok(appSource.includes('v-model="resumeFormData.basics.gender" placeholder="例如 男" compact'))
+  assert.ok(appSource.includes('v-model="resumeFormData.basics.birth_date" placeholder="例如 2002.06" compact'))
+  assert.equal(appSource.includes('<el-select v-model="resumeFormData.basics.gender"'), false)
+  assert.equal(appSource.includes('<input v-model="resumeFormData.basics.birth_date"'), false)
 })
 
-test('editor serializes both browser bold element forms into the bold-only protocol', () => {
-  assert.ok(editorSource.includes(".replace(/<(?:b|strong)\\b[^>]*>/gi, '**')"))
-  assert.ok(editorSource.includes(".replace(/<\\/(?:b|strong)>/gi, '**')"))
-  assert.ok(editorSource.includes("document.execCommand('bold', false, null)"))
-  assert.ok(editorSource.includes('selection.collapseToEnd()'))
+test('editor toggles selections through the deterministic bold-only protocol', () => {
+  assert.ok(editorSource.includes('toggleInlineBoldRange(current, start, end)'))
+  assert.ok(editorSource.includes("if (tag === 'B' || tag === 'STRONG') bold = true"))
+  assert.ok(editorSource.includes("if (fontWeight === 'normal' || fontWeight === '400') bold = false"))
+  assert.ok(editorSource.includes('placeCaretAtOffset(end)'))
+  assert.equal(editorSource.includes(".replace(/<(?:b|strong)\\b[^>]*>/gi, '**')"), false)
+})
+
+test('default-bold fields are explicit while module editors do not force all text bold', () => {
+  assert.ok(appSource.includes('v-model="resumeFormData.basics.target_position" placeholder="例如 后端开发工程师" compact default-bold'))
+  assert.ok(appSource.includes('data.formatting_version = 3'))
+  assert.equal(appSource.includes('.module-title-editor :deep(.editor-content) {\n  font-weight: 700'), false)
+})
+
+test('editable module headings use a one-third input and match the basic heading size', () => {
+  assert.ok(appSource.includes('width: 33.333%'))
+  assert.ok(appSource.includes('.module-title-editor :deep(.editor-content) {\n  font-size: 1rem;'))
+  assert.ok(appSource.includes('border: 1px solid rgba(255, 255, 255, 0.2) !important'))
+  assert.ok(appSource.includes('.module-title-editor::after'))
 })
 
 test('bold guidance appears once at the top of the resume dialog', () => {
@@ -82,7 +100,9 @@ test('work and project semantic labels use the same inline bold editor and hide 
 
 test('resume tag chips use escaped inline formatting instead of exposing markers', () => {
   assert.ok(appSource.includes("from './utils/inlineFormatting.js'"))
-  assert.ok(appSource.includes('v-html="formatInlineHtml(skill)"'))
-  assert.ok(appSource.includes('v-html="formatInlineHtml(cert)"'))
-  assert.ok(appSource.includes('v-html="formatInlineHtml(lang)"'))
+  assert.ok(appSource.includes('draggable="true"'))
+  assert.ok(appSource.includes('v-model="resumeFormData.others.skills[i]"'))
+  assert.ok(appSource.includes('v-model="resumeFormData.others.certificates[i]"'))
+  assert.ok(appSource.includes('v-model="resumeFormData.others.languages[i]"'))
+  assert.ok(appSource.includes('startOtherItemDrag'))
 })

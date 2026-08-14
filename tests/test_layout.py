@@ -132,6 +132,25 @@ class LayoutRuleTests(unittest.TestCase):
         explicit_school = next(cell for table in explicit_doc.tables for row in table.rows for cell in row.cells if "示例大学" in cell.text)
         self.assertFalse(bool(explicit_school.paragraphs[0].runs[0].bold))
 
+    def test_v2_module_titles_default_bold_but_allow_explicit_unbold(self):
+        data = resume_with_two_jobs()
+        data["formatting_version"] = 2
+        layout = default_layout_config()
+
+        default_html = render_resume_to_html(data, layout_config=layout)
+        self.assertIn("--section-title-font-weight: 400", default_html)
+        self.assertIn("<strong>工作经历</strong>", default_html)
+        default_doc = Document(BytesIO(generate_docx(data, layout_config=layout)))
+        default_title = next(paragraph for paragraph in default_doc.paragraphs if paragraph.text == "工作经历")
+        self.assertTrue(bool(default_title.runs[0].bold))
+
+        layout["global"]["titleOverrides"] = {"work_experience": {"zh": "工作经历"}}
+        plain_html = render_resume_to_html(data, layout_config=layout)
+        self.assertNotIn("<strong>工作经历</strong>", plain_html)
+        plain_doc = Document(BytesIO(generate_docx(data, layout_config=layout)))
+        plain_title = next(paragraph for paragraph in plain_doc.paragraphs if paragraph.text == "工作经历")
+        self.assertFalse(bool(plain_title.runs[0].bold))
+
     def test_v1_default_layout_migrates_to_compact_high_density_defaults(self):
         layout = normalize_layout_config({
             "version": 1,
@@ -233,7 +252,7 @@ class LayoutRuleTests(unittest.TestCase):
             "var(--education-middle-column) var(--education-compact-side-column)",
             html,
         )
-        self.assertIn('style="text-align:left;justify-content:flex-start"><span class="module-component component-degree">硕士</span>', html)
+        self.assertIn('style="text-align:center;justify-content:center"><span class="module-component component-degree">硕士</span>', html)
         self.assertIn('component-metrics">3.8/5.0 (前10%)</span>', html)
         self.assertNotIn('component-metrics">GPA', html)
         self.assertIn('text-align:right;justify-content:flex-end', html)
@@ -320,7 +339,8 @@ class LayoutRuleTests(unittest.TestCase):
 
         html = render_resume_to_html(data)
 
-        self.assertIn("出生年月：2002.06", html)
+        self.assertIn(">2002.06<", html)
+        self.assertNotIn("出生年月：", html)
         self.assertIn("协作臂模型预测阻抗控制", html)
         self.assertIn("研究生二等奖学金", html)
         self.assertIn("校园经历", html)
@@ -334,6 +354,65 @@ class LayoutRuleTests(unittest.TestCase):
         )
         for expected in ("2002.06", "协作臂模型预测阻抗控制", "研究生二等奖学金", "校园经历", "学生组织负责人"):
             self.assertIn(expected, combined)
+
+    def test_basic_information_uses_pipe_separators_in_all_exports(self):
+        data = resume_with_two_jobs()
+        data["basics"].update({
+            "gender": "男",
+            "birth_date": "2002.06",
+            "phone": "17622312238",
+            "email": "2776553477@qq.com",
+        })
+
+        html = render_resume_to_html(data)
+        self.assertIn("男 | 2002.06", html)
+        self.assertIn("17622312238 | 2776553477@qq.com", html)
+        self.assertIn("content: ' | '", html)
+        self.assertNotIn("出生年月：", html)
+
+        document = Document(BytesIO(generate_docx(data)))
+        combined = "\n".join(
+            [paragraph.text for paragraph in document.paragraphs]
+            + [cell.text for table in document.tables for row in table.rows for cell in row.cells]
+        )
+        self.assertIn("男 | 2002.06 | 17622312238 | 2776553477@qq.com", combined)
+
+    def test_basic_fields_and_target_label_preserve_manual_bold_in_all_exports(self):
+        data = resume_with_two_jobs()
+        data["formatting_version"] = 2
+        data["basics"].update({
+            "gender": "**男**",
+            "birth_date": "**2002.06**",
+            "target_position": "**软件工程师**",
+        })
+
+        html = render_resume_to_html(data)
+        self.assertIn("<strong>男</strong> | <strong>2002.06</strong>", html)
+        self.assertIn("<strong>目标岗位：软件工程师</strong>", html)
+        self.assertNotIn("component-target_position { font-weight: var(--manual-title-font-weight); }", html)
+
+        document = Document(BytesIO(generate_docx(data)))
+        target_paragraph = next(
+            paragraph
+            for table in document.tables
+            for row in table.rows
+            for cell in row.cells
+            for paragraph in cell.paragraphs
+            if "目标岗位：软件工程师" in paragraph.text
+        )
+        self.assertTrue(all(run.bold for run in target_paragraph.runs if run.text))
+
+        data["basics"]["target_position"] = "软件工程师"
+        plain_document = Document(BytesIO(generate_docx(data)))
+        plain_target = next(
+            paragraph
+            for table in plain_document.tables
+            for row in table.rows
+            for cell in row.cells
+            for paragraph in cell.paragraphs
+            if "目标岗位：软件工程师" in paragraph.text
+        )
+        self.assertTrue(all(not run.bold for run in plain_target.runs if run.text))
 
     def test_project_semantic_labels_use_outer_bullets_and_numbered_children(self):
         data = resume_with_two_jobs()
@@ -700,7 +779,7 @@ class LayoutRuleTests(unittest.TestCase):
             192.0,
             places=1,
         )
-        self.assertEqual(education_table.cell(0, 1).paragraphs[0].alignment, WD_ALIGN_PARAGRAPH.LEFT)
+        self.assertEqual(education_table.cell(0, 1).paragraphs[0].alignment, WD_ALIGN_PARAGRAPH.CENTER)
         self.assertEqual(education_table.cell(0, 2).paragraphs[0].alignment, WD_ALIGN_PARAGRAPH.RIGHT)
 
     def test_compact_education_keeps_unlabeled_metrics_in_centered_middle_frame(self):
@@ -734,7 +813,7 @@ class LayoutRuleTests(unittest.TestCase):
             education_table.cell(0, 1).text,
             "硕士 · 电子信息 · 4.0/5.0 (前5%)",
         )
-        self.assertEqual(education_table.cell(0, 1).paragraphs[0].alignment, WD_ALIGN_PARAGRAPH.LEFT)
+        self.assertEqual(education_table.cell(0, 1).paragraphs[0].alignment, WD_ALIGN_PARAGRAPH.CENTER)
         self.assertAlmostEqual(
             education_table.columns[0].width.mm,
             education_table.columns[2].width.mm,

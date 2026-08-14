@@ -82,7 +82,14 @@ def set_inline_bold(value: object, quote: str, *, bold: bool) -> str:
 
 
 def serialize_inline_bold(segments: list[InlineSegment]) -> str:
-    return "".join(f"**{segment.text}**" if segment.bold else segment.text for segment in _merge_segments(segments))
+    rendered: list[str] = []
+    for segment in _merge_segments(segments):
+        if not segment.bold:
+            rendered.append(segment.text)
+            continue
+        # 多行编辑字段最终会逐行保存；每行各自闭合，避免拆分后留下单侧标记。
+        rendered.append("\n".join(f"**{line}**" if line else "" for line in segment.text.split("\n")))
+    return "".join(rendered)
 
 
 def format_resume_text(
@@ -130,6 +137,7 @@ def format_resume_text(
 def iter_resume_text_references(data: dict, request_text: str = "") -> Iterator[ResumeTextReference]:
     """Yield allowlisted, user-visible free-text leaves, optionally scoped."""
     requested_sections = _requested_sections(request_text)
+    legacy_default_bold = int(data.get("formatting_version") or 0) < 1
 
     def allowed(section: str) -> bool:
         return not requested_sections or section in requested_sections
@@ -140,7 +148,7 @@ def iter_resume_text_references(data: dict, request_text: str = "") -> Iterator[
             if basics.get(key):
                 yield ResumeTextReference(
                     ("basics", key), "basics", f"基本信息·{key}", str(basics[key]),
-                    base_bold=key in {"name", "target_position"},
+                    base_bold=legacy_default_bold and key in {"name", "target_position"},
                 )
         for index, field in enumerate(basics.get("additional_fields") or []):
             for key in ("label", "value"):
@@ -152,11 +160,16 @@ def iter_resume_text_references(data: dict, request_text: str = "") -> Iterator[
             if not isinstance(item, dict):
                 continue
             context = f"教育经历{index + 1}·{item.get('school_name') or '未命名学校'}"
-            for key in ("school_name", "major", "gpa", "gpa_scale", "ranking", "average_score"):
+            for key in ("school_name", "degree", "major", "gpa", "gpa_scale", "ranking"):
                 if item.get(key):
                     yield ResumeTextReference(
                         ("education", index, key), "education", context, str(item[key]),
-                        base_bold=key == "school_name",
+                        base_bold=legacy_default_bold and key == "school_name",
+                    )
+            for date_index, date_value in enumerate(item.get("date_range") or []):
+                if date_value:
+                    yield ResumeTextReference(
+                        ("education", index, "date_range", date_index), "education", context, str(date_value)
                     )
             for tag_index, tag in enumerate(item.get("school_tags") or []):
                 if tag:
@@ -167,7 +180,7 @@ def iter_resume_text_references(data: dict, request_text: str = "") -> Iterator[
                 if thesis.get("title"):
                     yield ResumeTextReference(
                         ("education", index, "theses", thesis_index, "title"),
-                        "education", context, str(thesis["title"]), base_bold=True,
+                        "education", context, str(thesis["title"]), base_bold=legacy_default_bold,
                     )
                 for detail_index, detail in enumerate(thesis.get("details") or []):
                     if detail:
@@ -181,11 +194,16 @@ def iter_resume_text_references(data: dict, request_text: str = "") -> Iterator[
         if not allowed(section):
             continue
         context = f"{'实习' if is_internship else '工作'}经历{index + 1}·{item.get('company_name') or '未命名公司'}"
-        for key in ("company_name", "job_title"):
+        for key in ("company_name", "job_title", "job_type"):
             if item.get(key):
                 yield ResumeTextReference(
                     ("work_experience", index, key), section, context, str(item[key]),
-                    base_bold=key == "company_name",
+                    base_bold=legacy_default_bold and key == "company_name",
+                )
+        for date_index, date_value in enumerate(item.get("date_range") or []):
+            if date_value:
+                yield ResumeTextReference(
+                    ("work_experience", index, "date_range", date_index), section, context, str(date_value)
                 )
         yield from _content_block_references(item, ("work_experience", index), section, context)
 
@@ -198,7 +216,12 @@ def iter_resume_text_references(data: dict, request_text: str = "") -> Iterator[
                 if item.get(key):
                     yield ResumeTextReference(
                         ("project_experience", index, key), "project_experience", context, str(item[key]),
-                        base_bold=key == "project_name",
+                        base_bold=legacy_default_bold and key == "project_name",
+                    )
+            for date_index, date_value in enumerate(item.get("date_range") or []):
+                if date_value:
+                    yield ResumeTextReference(
+                        ("project_experience", index, "date_range", date_index), "project_experience", context, str(date_value)
                     )
             yield from _content_block_references(item, ("project_experience", index), "project_experience", context)
 
@@ -234,7 +257,7 @@ def iter_resume_text_references(data: dict, request_text: str = "") -> Iterator[
             if section.get("title"):
                 yield ResumeTextReference(
                     ("custom_sections", section_index, "title"),
-                    "custom_sections", context, str(section["title"]), base_bold=True,
+                    "custom_sections", context, str(section["title"]), base_bold=legacy_default_bold,
                 )
             for item_index, value in enumerate(section.get("items") or []):
                 if value:

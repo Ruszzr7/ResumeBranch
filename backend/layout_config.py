@@ -66,8 +66,6 @@ def resolve_content_block_flow(block: dict[str, Any] | None = None) -> dict[str,
 def format_compact_academic_metric(
     item: dict[str, Any] | None,
     hidden_metrics: set[str] | list[str] | tuple[str, ...] = (),
-    *,
-    average_score_label: str = "平均分",
 ) -> str:
     """Format compact education metrics once for both export renderers."""
     item = item or {}
@@ -77,8 +75,6 @@ def format_compact_academic_metric(
         metric = str(item["gpa"])
         if item.get("gpa_scale"):
             metric += f'/{item["gpa_scale"]}'
-    elif item.get("average_score") and "average_score" not in hidden:
-        metric = f'{average_score_label}：{item["average_score"]}'
     if item.get("ranking") and "ranking" not in hidden:
         ranking = str(item["ranking"]).strip().strip("()（）")
         metric = f"{metric} ({ranking})" if metric else f"({ranking})"
@@ -168,7 +164,7 @@ DEFAULT_COMPONENT_ROWS: dict[str, list[dict[str, Any]]] = {
         {"cells": [{"components": ["personal_meta", "contact", "additional_fields"], "flow": "inline", "width": "fill", "alignment": "left"}]},
     ],
     "education": [
-        {"cells": [{"components": ["school", "school_tags"], "flow": "inline", "width": "content", "alignment": "left"}, {"components": ["degree", "major", "metrics"], "flow": "inline", "width": "fill", "alignment": "left"}, {"components": ["date"], "flow": "inline", "width": "content", "alignment": "right"}]},
+        {"cells": [{"components": ["school", "school_tags"], "flow": "inline", "width": "content", "alignment": "left"}, {"components": ["degree", "major", "metrics"], "flow": "inline", "width": "fill", "alignment": "center"}, {"components": ["date"], "flow": "inline", "width": "content", "alignment": "right"}]},
         {"cells": [{"components": ["theses"], "flow": "stacked", "width": "fill", "alignment": "justify"}]},
     ],
     "work_experience": [
@@ -245,6 +241,7 @@ DEFAULT_LAYOUT_CONFIG: dict[str, Any] = {
         preset="left-aligned",
         contactLayout="inline",
         photoPosition="right",
+        photoHeightMm=26.0,
         photoWidthMm=21.0,
         hiddenFields=[],
     ),
@@ -318,7 +315,7 @@ ENUMS = {
 
 ALLOWED_HIDDEN_FIELDS = {
     "basics": {"gender", "birth_date", "phone", "email", "target_position", "photo", "additional_fields"},
-    "education": {"gpa", "ranking", "average_score"},
+    "education": {"gpa", "ranking"},
     "others": {"skills", "certificates", "languages"},
 }
 
@@ -403,7 +400,6 @@ ITEM_LABELS = {
     "photo": "照片",
     "gpa": "GPA",
     "ranking": "排名",
-    "average_score": "平均分",
 }
 
 
@@ -562,6 +558,22 @@ def _normalize_module_contract(result: dict[str, Any], source: dict | None, supp
         raw_module = source.get(module_id) if isinstance(source.get(module_id), dict) else {}
         raw_rows = raw_module.get("componentRows") if supplied_version >= 7 else fallback
         module["componentRows"] = _normalize_component_rows(module_id, raw_rows, fallback, hidden)
+        # Compact education keeps a stable three-column geometry: the metadata
+        # column is centered while school/date remain left/right aligned. Migrate
+        # old persisted rows so all renderers use the same alignment contract.
+        if module_id == "education" and module.get("preset") == "compact":
+            for row in module["componentRows"]:
+                if len(row["cells"]) != 3:
+                    continue
+                if (
+                    "school" not in row["cells"][0]["components"]
+                    or not any(component in row["cells"][1]["components"] for component in ("degree", "major", "metrics"))
+                    or "date" not in row["cells"][2]["components"]
+                ):
+                    continue
+                row["cells"][0]["alignment"] = "left"
+                row["cells"][1]["alignment"] = "center"
+                row["cells"][2]["alignment"] = "right"
 
 
 def normalize_layout_config(value: dict | None) -> dict:
@@ -708,7 +720,12 @@ def normalize_layout_config(value: dict | None) -> dict:
         ))
 
     basics = result["basics"]
+    supplied_basics = value.get("basics") if isinstance(value, dict) and isinstance(value.get("basics"), dict) else {}
     basics["photoWidthMm"] = _bounded_number(basics.get("photoWidthMm"), 15, 30, 21)
+    basics["photoHeightMm"] = _bounded_number(
+        basics.get("photoHeightMm") if "photoHeightMm" in supplied_basics else basics["photoWidthMm"] * 26 / 21,
+        18, 45, 26,
+    )
     if basics["photoPosition"] == "hidden" and "photo" not in basics["hiddenFields"]:
         basics["hiddenFields"].append("photo")
     if "photo" in basics["hiddenFields"]:
@@ -841,8 +858,11 @@ def resolve_layout_tokens(config: dict | None = None, style: dict | None = None)
         "educationMiddleMinMm": 30.0,
         "educationColumnBreathingMm": 4.0,
         "educationSideColumnMm": 42.0,
+        # photoWidthMm is retained for old layout clients. The actual width is
+        # derived by each renderer from photoHeightMm and the imported image
+        # aspect ratio.
         "photoWidthMm": normalized["basics"]["photoWidthMm"],
-        "photoHeightMm": normalized["basics"]["photoWidthMm"] * 26.0 / 21.0,
+        "photoHeightMm": normalized["basics"]["photoHeightMm"],
         "marginTopMm": _bounded_number(overrides.get("marginTop", global_config["marginVertical"]), 3, 12, global_config["marginVertical"]),
         "marginBottomMm": _bounded_number(overrides.get("marginBottom", global_config["marginVertical"]), 3, 12, global_config["marginVertical"]),
         "marginLeftMm": _bounded_number(overrides.get("marginLeft", global_config["marginHorizontal"]), 3, 12, global_config["marginHorizontal"]),

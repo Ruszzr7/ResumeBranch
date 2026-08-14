@@ -72,7 +72,7 @@ class LayoutConfigTests(unittest.TestCase):
         first["education"]["componentRows"][0]["cells"][0]["alignment"] = "right"
         self.assertEqual(second["education"]["preset"], "compact")
         self.assertEqual(second["education"]["componentRows"][0]["cells"][0]["alignment"], "left")
-        self.assertEqual(second["education"]["componentRows"][0]["cells"][1]["alignment"], "left")
+        self.assertEqual(second["education"]["componentRows"][0]["cells"][1]["alignment"], "center")
         self.assertEqual(second["skills"]["indentLevel"], 0)
         self.assertEqual(second["research_interests"]["indentLevel"], 0)
         self.assertEqual(second["honors"]["indentLevel"], 0)

@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, watch, nextTick, onUnmounted } from 'vue'
 import { labels } from '../utils/labels.js'
-import { formatInlineHtml } from '../utils/inlineFormatting.js'
+import { formatInlineHtml, isFullyBoldInlineText, plainInlineText } from '../utils/inlineFormatting.js'
 import { buildAuthorizationHeaders } from '../config/appMode.js'
 import {
   DEFAULT_LAYOUT_CONFIG,
@@ -89,7 +89,12 @@ const layout = computed(() => {
 })
 const moduleLayout = name => layout.value[name] || {}
 const hiddenSection = name => isSectionHidden(layout.value, name)
-const displayTitle = (name, fallback) => sectionTitle(layout.value, name, props.lang, fallback)
+const displayTitle = (name, fallback) => {
+  const override = layout.value.global?.titleOverrides?.[name]?.[props.lang]
+  if (override !== undefined) return override
+  return Number(props.data?.formatting_version || 0) >= 2 ? `**${fallback}**` : sectionTitle(layout.value, name, props.lang, fallback)
+}
+const displayTitleText = (name, fallback) => plainInlineText(displayTitle(name, fallback))
 const moduleTitleStyle = name => moduleLayout(name).titleStyle || layout.value.global.titleStyle
 const moduleOrder = name => {
   const moduleTokens = layoutTokens.value?.modules?.[name] || {}
@@ -214,9 +219,6 @@ function academicMetrics(item) {
   if (item?.ranking && !hidden.includes('ranking')) {
     metrics.push(`${t.value.ranking}：${item.ranking}`)
   }
-  if (item?.average_score && !hidden.includes('average_score')) {
-    metrics.push(`${t.value.averageScore}：${item.average_score}`)
-  }
   return metrics
 }
 
@@ -273,7 +275,7 @@ function nativeListMarkerParts(value) {
 
 function compactAcademicMetric(item) {
   const hidden = moduleLayout('education').hiddenMetrics || []
-  return formatCompactAcademicMetric(item, hidden, t.value.averageScore)
+  return formatCompactAcademicMetric(item, hidden)
 }
 
 function compactEducationMiddle(item) {
@@ -350,17 +352,23 @@ function projectComponentText(item, component) {
 function basicsComponentText(component) {
   const basics = props.data?.basics || {}
   if (component === 'name') return basics.name || '姓名未填写'
-  if (component === 'target_position') return !hiddenBasicField('target_position') && basics.target_position ? `${t.value.targetPosition}：${basics.target_position}` : ''
+  if (component === 'target_position' && !hiddenBasicField('target_position') && basics.target_position) {
+    const label = `${t.value.targetPosition}：`
+    return `${isFullyBoldInlineText(basics.target_position) ? `**${label}**` : label}${basics.target_position}`
+  }
   if (component === 'personal_meta') return [
     !hiddenBasicField('gender') ? basics.gender : '',
-    !hiddenBasicField('birth_date') && basics.birth_date ? `${t.value.birthDate}：${basics.birth_date}` : ''
+    !hiddenBasicField('birth_date') && basics.birth_date ? basics.birth_date : ''
   ].filter(Boolean).join(' | ')
   if (component === 'contact') return [
     !hiddenBasicField('phone') ? basics.phone : '',
     !hiddenBasicField('email') ? basics.email : ''
   ].filter(Boolean).join(' | ')
   if (component === 'additional_fields' && !hiddenBasicField('additional_fields')) {
-    return (basics.additional_fields || []).filter(field => field?.label && field?.value).map(field => `${field.label}：${field.value}`).join(' | ')
+    return (basics.additional_fields || [])
+      .filter(field => field?.label || field?.value)
+      .map(field => field?.label && field?.value ? `${field.label}：${field.value}` : (field?.label || field?.value))
+      .join(' | ')
   }
   return ''
 }
@@ -370,7 +378,7 @@ function moduleListContent(value) {
 }
 
 function isFullyBoldText(value) {
-  return /^\*\*[^*][\s\S]*\*\*$/.test(moduleListContent(value).trim())
+  return isFullyBoldInlineText(moduleListContent(value).trim())
 }
 
 function moduleListStyle(moduleId) {
@@ -415,24 +423,14 @@ const SECTION_LABELS = {
   work_experience: '工作经历', internship_experience: '实习经历', project_experience: '项目经历',
   custom_sections: '自定义栏目', others: '证书与语言', self_evaluation: '自我评价'
 }
-const sectionHasContent = section => ({
-  education: props.data?.education?.length,
-  skills: props.data?.others?.skills?.length,
-  research_interests: props.data?.research_interests?.length,
-  honors: props.data?.honors?.length,
-  publications: props.data?.publications?.length,
-  work_experience: props.data?.work_experience?.length,
-  internship_experience: props.data?.work_experience?.some(item => /实习/.test(`${item?.job_type || ''}${item?.job_title || ''}`)),
-  project_experience: (props.data?.project_experience || props.data?.projects)?.length,
-  custom_sections: props.data?.custom_sections?.some(section => section?.title && section?.items?.length),
-  others: visibleOtherFields.value.length,
-  self_evaluation: selfEvaluationValues.value.length,
-}[section] || false)
 const isEducationChildSection = section => section !== 'education' && sectionMergedIntoEducation(section)
 const reorderableTopSections = computed(() => localSectionOrder.value
-  .filter(section => SECTION_LABELS[section] && sectionHasContent(section) && !isEducationChildSection(section)))
+  // Keep empty but supported modules in the ordering dialog as well. This lets
+  // users establish the intended order before adding content (notably
+  // publications, certificates/languages, self-evaluation and custom sections).
+  .filter(section => SECTION_LABELS[section] && !isEducationChildSection(section)))
 const reorderableEducationChildren = computed(() => localSectionOrder.value
-  .filter(section => SECTION_LABELS[section] && sectionHasContent(section) && isEducationChildSection(section)))
+  .filter(section => SECTION_LABELS[section] && isEducationChildSection(section)))
 const reorderableSections = computed(() => reorderableTopSections.value.flatMap(section => (
   section === 'education' ? [section, ...reorderableEducationChildren.value] : [section]
 )))
@@ -440,23 +438,11 @@ const draggedSection = ref('')
 const isSavingSectionOrder = ref(false)
 const showSectionOrderDialog = ref(false)
 const sectionOrderChangedByDrag = ref(false)
-const titleSettingSections = ['skills', 'research_interests', 'honors', 'publications', 'others']
+const sectionOrderSnapshot = ref([])
+const sectionOrderError = ref('')
 const listSettingSections = ['skills', 'research_interests', 'honors', 'publications', 'custom_sections', 'self_evaluation']
 const mergeSettingSections = ['research_interests', 'honors', 'publications', 'others']
 const LIST_STYLE_LABELS = { paragraph: '无标记', bullet: '分点', numbered: '编号' }
-
-function editableSectionTitle(section) {
-  const translations = sectionSettingsDraft.value.global.titleOverrides[section] || {}
-  return translations[props.lang] || SECTION_LABELS[section]
-}
-
-function setEditableSectionTitle(section, value) {
-  const clean = String(value || '')
-  sectionSettingsDraft.value.global.titleOverrides[section] = {
-    ...(sectionSettingsDraft.value.global.titleOverrides[section] || {}),
-    [props.lang]: clean
-  }
-}
 
 function editableSectionPlacement(section) {
   return sectionSettingsDraft.value.global.sectionPlacements[section] === 'education'
@@ -470,6 +456,9 @@ function setEditableSectionPlacement(section, value) {
 }
 
 function openSectionSettingsDialog() {
+  if (isSavingSectionOrder.value || isSavingFontSizes.value) return
+  closeSectionOrderDialog()
+  closeFontSizeDialog()
   sectionSettingsDraft.value = normalizeLayoutConfig(layout.value)
   sectionSettingsError.value = ''
   closeToolbarMenu()
@@ -478,13 +467,13 @@ function openSectionSettingsDialog() {
 
 function closeSectionSettingsDialog() {
   if (isSavingSectionSettings.value) return
+  sectionSettingsDraft.value = normalizeLayoutConfig(props.layoutConfig)
   showSectionSettingsDialog.value = false
   sectionSettingsError.value = ''
 }
 
 function resetSectionSettings() {
   const defaults = normalizeLayoutConfig(DEFAULT_LAYOUT_CONFIG)
-  sectionSettingsDraft.value.global.titleOverrides = {}
   sectionSettingsDraft.value.global.sectionPlacements = {}
   for (const section of listSettingSections) {
     sectionSettingsDraft.value[section].listStyle = defaults[section].listStyle
@@ -514,8 +503,9 @@ async function applySectionSettings() {
 }
 
 async function persistSectionOrder() {
-  if (!props.taskId || isSavingSectionOrder.value) return
+  if (!props.taskId || isSavingSectionOrder.value) return false
   isSavingSectionOrder.value = true
+  sectionOrderError.value = ''
   const candidate = normalizeLayoutConfig(layout.value)
   candidate.global.sectionOrder = [...localSectionOrder.value]
   try {
@@ -528,9 +518,15 @@ async function persistSectionOrder() {
     if (!response.ok) throw new Error(data.detail || '保存模块顺序失败')
     localSectionOrder.value = [...normalizeLayoutConfig(data.layout_config).global.sectionOrder]
     emit('layout-updated', data.layout_config)
+    sectionOrderSnapshot.value = []
+    return true
   } catch (error) {
-    localSectionOrder.value = [...normalizeLayoutConfig(props.layoutConfig).global.sectionOrder]
+    localSectionOrder.value = sectionOrderSnapshot.value.length
+      ? [...sectionOrderSnapshot.value]
+      : [...normalizeLayoutConfig(props.layoutConfig).global.sectionOrder]
+    sectionOrderError.value = error.message || '保存模块顺序失败'
     console.error(error)
+    return false
   } finally {
     isSavingSectionOrder.value = false
   }
@@ -548,12 +544,31 @@ function moveSection(section, direction) {
   const insertionIndex = order.indexOf(targetSection) + (direction > 0 ? 1 : 0)
   order.splice(insertionIndex, 0, section)
   localSectionOrder.value = order
-  persistSectionOrder()
 }
 
 function openSectionOrderDialog() {
+  if (isSavingFontSizes.value || isSavingSectionSettings.value) return
+  closeFontSizeDialog()
+  closeSectionSettingsDialog()
   closeToolbarMenu()
+  sectionOrderSnapshot.value = [...normalizeLayoutConfig(props.layoutConfig).global.sectionOrder]
+  localSectionOrder.value = [...sectionOrderSnapshot.value]
+  sectionOrderError.value = ''
   showSectionOrderDialog.value = true
+}
+
+function closeSectionOrderDialog() {
+  if (isSavingSectionOrder.value) return
+  if (sectionOrderSnapshot.value.length) localSectionOrder.value = [...sectionOrderSnapshot.value]
+  sectionOrderSnapshot.value = []
+  sectionOrderError.value = ''
+  draggedSection.value = ''
+  sectionOrderChangedByDrag.value = false
+  showSectionOrderDialog.value = false
+}
+
+async function applySectionOrder() {
+  if (await persistSectionOrder()) showSectionOrderDialog.value = false
 }
 
 function startSectionDrag(section, event) {
@@ -590,9 +605,7 @@ function dragOverSection(event, targetSection) {
 
 function finishSectionDrag() {
   draggedSection.value = ''
-  if (!sectionOrderChangedByDrag.value) return
   sectionOrderChangedByDrag.value = false
-  persistSectionOrder()
 }
 
 function canMoveSection(section, direction) {
@@ -610,7 +623,6 @@ function resetSectionOrder() {
     ...defaultOrder.filter(section => currentOrder.includes(section)),
     ...currentOrder.filter(section => !defaultOrder.includes(section))
   ]
-  persistSectionOrder()
 }
 
 // ========== 样式控制变量 ==========
@@ -619,13 +631,15 @@ const DEFAULT_STYLE = {
   marginHorizontal: DEFAULT_LAYOUT_CONFIG.global.marginHorizontal,
   moduleMargin: DEFAULT_LAYOUT_CONFIG.global.moduleMargin,
   lineHeight: DEFAULT_LAYOUT_CONFIG.global.lineHeight,
-  fontSize: DEFAULT_LAYOUT_CONFIG.global.fontSize
+  fontSize: DEFAULT_LAYOUT_CONFIG.global.fontSize,
+  photoHeightMm: DEFAULT_LAYOUT_CONFIG.basics.photoHeightMm
 }
 const marginVertical = ref(DEFAULT_STYLE.marginVertical)
 const marginHorizontal = ref(DEFAULT_STYLE.marginHorizontal)
 const moduleMargin = ref(DEFAULT_STYLE.moduleMargin)
 const lineHeight = ref(DEFAULT_STYLE.lineHeight)
 const fontSize = ref(DEFAULT_STYLE.fontSize)
+const photoHeightMm = ref(DEFAULT_STYLE.photoHeightMm)
 const fontSizes = ref({ ...DEFAULT_LAYOUT_CONFIG.typography.fontSizes })
 const fontSizeDraft = ref({ ...DEFAULT_LAYOUT_CONFIG.typography.fontSizes })
 const showFontSizeDialog = ref(false)
@@ -646,6 +660,7 @@ function loadLayoutSettings() {
   moduleMargin.value = Number(global.moduleMargin ?? DEFAULT_STYLE.moduleMargin)
   lineHeight.value = Number(global.lineHeight ?? DEFAULT_STYLE.lineHeight)
   fontSize.value = Number(global.fontSize ?? DEFAULT_STYLE.fontSize)
+  photoHeightMm.value = Number(layout.value.basics.photoHeightMm ?? DEFAULT_STYLE.photoHeightMm)
   fontSizes.value = { ...layout.value.typography.fontSizes }
 }
 
@@ -697,6 +712,7 @@ function saveLayoutSettings() {
       lineHeight: lineHeight.value,
       fontSize: fontSize.value
     })
+    candidate.basics.photoHeightMm = photoHeightMm.value
     candidate.typography.fontSizes = { ...fontSizes.value, body: fontSize.value }
     try {
       await fetch(`/tasks/${props.taskId}/layout`, {
@@ -736,6 +752,9 @@ function contentBlockClasses(block) {
 }
 
 function openFontSizeDialog() {
+  if (isSavingSectionOrder.value || isSavingSectionSettings.value) return
+  closeSectionOrderDialog()
+  closeSectionSettingsDialog()
   fontSizeDraft.value = { ...fontSizes.value }
   fontSizeSaveError.value = ''
   closeToolbarMenu()
@@ -745,6 +764,7 @@ function openFontSizeDialog() {
 
 function closeFontSizeDialog() {
   if (isSavingFontSizes.value) return
+  fontSizeDraft.value = { ...fontSizes.value }
   showFontSizeDialog.value = false
   fontSizeSaveError.value = ''
   openFontSizeRole.value = ''
@@ -795,6 +815,7 @@ function resetSpacingDraft() {
   marginHorizontal.value = DEFAULT_STYLE.marginHorizontal
   moduleMargin.value = DEFAULT_STYLE.moduleMargin
   lineHeight.value = DEFAULT_STYLE.lineHeight
+  photoHeightMm.value = DEFAULT_STYLE.photoHeightMm
 }
 
 function confirmSpacingSettings() {
@@ -816,7 +837,8 @@ function toggleToolbarMenu(menu, event) {
       marginVertical: marginVertical.value,
       marginHorizontal: marginHorizontal.value,
       moduleMargin: moduleMargin.value,
-      lineHeight: lineHeight.value
+      lineHeight: lineHeight.value,
+      photoHeightMm: photoHeightMm.value
     }
   }
   activeToolbarMenu.value = menu
@@ -828,6 +850,7 @@ function closeToolbarMenu() {
     marginHorizontal.value = spacingSnapshot.value.marginHorizontal
     moduleMargin.value = spacingSnapshot.value.moduleMargin
     lineHeight.value = spacingSnapshot.value.lineHeight
+    photoHeightMm.value = spacingSnapshot.value.photoHeightMm
   }
   spacingSnapshot.value = null
   activeToolbarMenu.value = null
@@ -890,6 +913,30 @@ const educationColumnWidths = computed(() => {
     compactMetrics: items.map(compactAcademicMetric)
   })
 })
+const photoAspectRatio = ref(21 / 26)
+let photoAspectRequest = 0
+function refreshPhotoAspectRatio() {
+  const explicit = Number(props.data?.basics?.photo_aspect_ratio)
+  if (Number.isFinite(explicit) && explicit >= 0.2 && explicit <= 3) {
+    photoAspectRatio.value = explicit
+    return
+  }
+  const source = props.data?.basics?.photo
+  if (!source || typeof Image === 'undefined') {
+    photoAspectRatio.value = 21 / 26
+    return
+  }
+  const request = ++photoAspectRequest
+  const image = new Image()
+  image.onload = () => {
+    if (request !== photoAspectRequest || !image.naturalWidth || !image.naturalHeight) return
+    photoAspectRatio.value = Math.min(3, Math.max(0.2, image.naturalWidth / image.naturalHeight))
+  }
+  image.onerror = () => {
+    if (request === photoAspectRequest) photoAspectRatio.value = 21 / 26
+  }
+  image.src = source
+}
 const pageStyles = computed(() => ({
   fontFamily: layoutTokens.value.fontFamilyCss,
   fontSize: `${layoutTokens.value.fontSizePt}pt`,
@@ -910,9 +957,10 @@ const pageStyles = computed(() => ({
   '--entry-title-font-weight': layoutTokens.value.entryTitleFontWeight,
   '--manual-title-font-weight': Number(props.data?.formatting_version || 0) >= 1 ? 400 : layoutTokens.value.entryTitleFontWeight,
   '--manual-name-font-weight': Number(props.data?.formatting_version || 0) >= 1 ? 400 : layoutTokens.value.nameFontWeight,
-  '--section-title-font-weight': layoutTokens.value.sectionTitleFontWeight,
-  '--name-font-weight': layoutTokens.value.nameFontWeight,
+  '--section-title-font-weight': Number(props.data?.formatting_version || 0) >= 2 ? 400 : layoutTokens.value.sectionTitleFontWeight,
+  '--name-font-weight': Number(props.data?.formatting_version || 0) >= 1 ? 400 : layoutTokens.value.nameFontWeight,
   '--label-font-weight': layoutTokens.value.labelFontWeight,
+  '--manual-field-font-weight': Number(props.data?.formatting_version || 0) < 3 ? layoutTokens.value.labelFontWeight : layoutTokens.value.bodyFontWeight,
   '--line-height': layoutTokens.value.lineHeight,
   '--module-margin': `${layoutTokens.value.moduleSpacingPt}pt`,
   '--header-name-after': `${layoutTokens.value.headerNameAfterPt}pt`,
@@ -929,7 +977,7 @@ const pageStyles = computed(() => ({
   '--education-side-column': `${layoutTokens.value.educationSideColumnMm}mm`,
   '--education-compact-side-column': `${educationColumnWidths.value.sideMm}mm`,
   '--education-middle-column': `${educationColumnWidths.value.middleMm}mm`,
-  '--photo-width': `${layoutTokens.value.photoWidthMm}mm`,
+  '--photo-width': `${layoutTokens.value.photoHeightMm * photoAspectRatio.value}mm`,
   '--photo-height': `${layoutTokens.value.photoHeightMm}mm`
 }))
 
@@ -1254,7 +1302,7 @@ const calculatePagination = async () => {
 }
 
 // ========== 监听变化 ==========
-watch([() => props.data, () => props.sourcePageCount, renderLayout, marginVertical, marginHorizontal, moduleMargin, lineHeight, fontSize, fontSizes, fontSizeDraft, showFontSizeDialog],
+watch([() => props.data, () => props.sourcePageCount, renderLayout, marginVertical, marginHorizontal, moduleMargin, lineHeight, fontSize, photoHeightMm, fontSizes, fontSizeDraft, showFontSizeDialog],
   () => {
     // 增加延迟时间，确保字体变化后浏览器有足够时间重新渲染
     if (window.requestAnimationFrame) {
@@ -1266,7 +1314,7 @@ watch([() => props.data, () => props.sourcePageCount, renderLayout, marginVertic
     }
   }, { deep: true })
 
-watch([marginVertical, marginHorizontal, moduleMargin, lineHeight, fontSize], saveLayoutSettings)
+watch([marginVertical, marginHorizontal, moduleMargin, lineHeight, fontSize, photoHeightMm], saveLayoutSettings)
 watch(() => props.layoutConfig, () => {
   syncingLayoutProps = true
   localSectionOrder.value = [...normalizeLayoutConfig(props.layoutConfig).global.sectionOrder]
@@ -1281,6 +1329,7 @@ watch(() => props.taskId, () => {
 watch(() => props.hasSourceDocument, value => {
   if (!value) closeSourceDocument()
 })
+watch(() => [props.data?.basics?.photo, props.data?.basics?.photo_aspect_ratio], refreshPhotoAspectRatio, { immediate: true })
 
 // ========== 高亮模块滚动 ==========
 watch(() => props.highlightedModule, async (newModule) => {
@@ -1442,7 +1491,8 @@ const exportDocument = async (format) => {
     const url = window.URL.createObjectURL(documentBlob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `resume_${props.data.basics?.name || 'export'}.${isPDF ? 'pdf' : 'docx'}`
+    const rawName = plainInlineText(props.data.basics?.name || '').replace(/[\\/:*?"<>|\r\n]+/g, '_').trim()
+    a.download = `resume_${rawName || '简历'}.${isPDF ? 'pdf' : 'docx'}`
     document.body.appendChild(a)
     a.click()
     window.URL.revokeObjectURL(url)
@@ -1640,6 +1690,10 @@ const getItemIndex = (type, dataIndex) => {
                 <label class="compact-control">
                   <span>行间距 <strong>{{ lineHeight }}</strong></span>
                   <input type="range" v-model.number="lineHeight" min="1" max="1.8" step="0.05" class="slider">
+                </label>
+                <label v-if="data?.basics?.photo" class="compact-control">
+                  <span>照片高度 <strong>{{ photoHeightMm }}mm</strong></span>
+                  <input type="range" v-model.number="photoHeightMm" min="18" max="45" step="1" class="slider">
                 </label>
                 <div class="layout-spacing-actions">
                   <button type="button" @click="resetSpacingDraft">恢复默认</button>
@@ -1887,23 +1941,24 @@ const getItemIndex = (type, dataIndex) => {
         <div class="contact-info">
           <span v-if="data.basics?.gender" v-html="formatText(data.basics.gender)"></span>
           <span v-if="data.basics?.birth_date" class="separator">|</span>
-          <span v-if="data.basics?.birth_date" v-html="formatText(`${t.birthDate}：${data.basics.birth_date}`)"></span>
+          <span v-if="data.basics?.birth_date" v-html="formatText(data.basics.birth_date)"></span>
           <span v-if="data.basics?.gender || data.basics?.birth_date || data.basics?.phone" class="separator">|</span>
           <span v-if="data.basics?.phone" v-html="formatText(data.basics.phone)"></span>
           <span v-if="(data.basics?.gender || data.basics?.phone) && data.basics?.email" class="separator">|</span>
           <span v-if="data.basics?.email" v-html="formatText(data.basics.email)"></span>
           <template v-for="(field, fieldIndex) in (data.basics?.additional_fields || [])" :key="`print-basic-extra-${fieldIndex}`">
-            <span class="separator">|</span><span v-html="formatText(`${field.label}：${field.value}`)"></span>
+            <span v-if="field?.label || field?.value" class="separator">|</span>
+            <span v-if="field?.label || field?.value" v-html="formatText(field?.label && field?.value ? `${field.label}：${field.value}` : (field?.label || field?.value))"></span>
           </template>
         </div>
         <div v-if="data.basics?.target_position" class="target-position">
-          <span class="inline-label">{{ t.targetPosition }}：</span><span v-html="formatText(data.basics.target_position)"></span>
+          <span class="inline-label" :class="{ 'is-bold': isFullyBoldInlineText(data.basics.target_position) }">{{ t.targetPosition }}：</span><span v-html="formatText(data.basics.target_position)"></span>
         </div>
       </div>
 
       <!-- {{ t.education }} -->
       <template v-if="data.education && data.education.length">
-        <h2 class="section-title">{{ t.education }}</h2>
+        <h2 class="section-title" v-html="formatText(displayTitle('education', t.education))"></h2>
         <div v-for="(item, idx) in data.education" :key="idx" class="education-item">
           <div class="education-header">
             <div class="school-info">
@@ -1932,23 +1987,23 @@ const getItemIndex = (type, dataIndex) => {
       </template>
 
       <template v-if="data.others?.skills?.length">
-        <h2 class="section-title">{{ t.skillsSection }}</h2>
+        <h2 class="section-title" v-html="formatText(displayTitle('skills', t.skillsSection))"></h2>
         <div v-for="(item, idx) in data.others.skills" :key="`print-skill-${idx}`" :class="moduleListClasses('skills', item, 'skill-list-item')" :data-marker="moduleListMarker('skills', item, idx)" v-html="formatText(moduleListContent(item))"></div>
       </template>
 
       <template v-if="data.research_interests?.length">
-        <h2 class="section-title">{{ t.researchInterests }}</h2>
+        <h2 class="section-title" v-html="formatText(displayTitle('research_interests', t.researchInterests))"></h2>
         <div v-for="(item, idx) in data.research_interests" :key="`print-research-${idx}`" :class="moduleListClasses('research_interests', item)" :data-marker="moduleListMarker('research_interests', item, idx)" v-html="formatText(moduleListContent(item))"></div>
       </template>
 
       <template v-if="data.honors?.length">
-        <h2 class="section-title">{{ t.honors }}</h2>
+        <h2 class="section-title" v-html="formatText(displayTitle('honors', t.honors))"></h2>
         <div v-for="(item, idx) in data.honors" :key="`print-honor-${idx}`" :class="moduleListClasses('honors', item)" :data-marker="moduleListMarker('honors', item, idx)" v-html="formatText(moduleListContent(item))"></div>
       </template>
 
       <!-- {{ t.workExperience }} -->
       <template v-if="data.work_experience && data.work_experience.length">
-        <h2 class="section-title">{{ t.workExperience }}</h2>
+        <h2 class="section-title" v-html="formatText(displayTitle('work_experience', t.workExperience))"></h2>
         <div v-for="(item, idx) in data.work_experience" :key="idx" class="work-item">
           <div class="work-header">
             <div class="work-main">
@@ -1974,7 +2029,7 @@ const getItemIndex = (type, dataIndex) => {
 
       <!-- {{ t.projectExperience }} -->
       <template v-if="(data.project_experience || data.projects) && (data.project_experience || data.projects).length">
-        <h2 class="section-title">{{ t.projectExperience }}</h2>
+        <h2 class="section-title" v-html="formatText(displayTitle('project_experience', t.projectExperience))"></h2>
         <div v-for="(item, idx) in (data.project_experience || data.projects)" :key="idx" class="project-item">
           <div class="project-header">
             <div class="project-name" v-html="formatText(item.project_name || item.name || '项目未填写')"></div>
@@ -2004,7 +2059,7 @@ const getItemIndex = (type, dataIndex) => {
 
       <!-- 其他 -->
       <template v-if="data.others && (data.others.certificates?.length || data.others.languages?.length)">
-        <h2 class="section-title">{{ props.lang === 'en' ? 'Certificates & Languages' : '证书与语言' }}</h2>
+        <h2 class="section-title" v-html="formatText(displayTitle('others', props.lang === 'en' ? 'Certificates & Languages' : '证书与语言'))"></h2>
         <div v-if="data.others.certificates?.length" class="cert-lang-line">
           <span class="cert-lang-label">{{ t.certificates }}：</span>
           <template v-for="(cert, cIdx) in data.others.certificates" :key="'cert-'+cIdx">
@@ -2021,7 +2076,7 @@ const getItemIndex = (type, dataIndex) => {
 
       <!-- {{ t.selfEvaluation }} -->
       <template v-if="data.self_evaluation && data.self_evaluation.length">
-        <h2 class="section-title">{{ t.selfEvaluation }}</h2>
+        <h2 class="section-title" v-html="formatText(displayTitle('self_evaluation', t.selfEvaluation))"></h2>
         <template v-for="(item, idx) in data.self_evaluation">
           <div v-if="item" :key="'self-eval-'+idx" class="self-eval-item" v-html="formatText(item)"></div>
         </template>
@@ -2220,14 +2275,14 @@ const getItemIndex = (type, dataIndex) => {
     </div>
   </div>
 
-  <div v-if="showSectionOrderDialog" class="success-dialog-overlay section-order-overlay">
+  <div v-if="showSectionOrderDialog" class="success-dialog-overlay section-order-overlay" @click.self="closeSectionOrderDialog">
     <div class="section-order-dialog" role="dialog" aria-modal="true" aria-labelledby="section-order-title">
       <div class="layout-guide-header">
         <div>
           <h3 id="section-order-title">模块顺序</h3>
-          <p>按住任意模块上下拖动，或使用箭头微调；更改会保存到当前简历版本。</p>
+          <p>按住任意模块上下拖动，或使用箭头微调；点击确定后才保存。</p>
         </div>
-        <button class="layout-guide-close" aria-label="关闭模块排序" @click="showSectionOrderDialog = false">×</button>
+        <button class="layout-guide-close" aria-label="关闭模块排序" :disabled="isSavingSectionOrder" @click="closeSectionOrderDialog">×</button>
       </div>
       <div class="section-order-list">
         <div
@@ -2242,16 +2297,17 @@ const getItemIndex = (type, dataIndex) => {
           @dragend="finishSectionDrag"
         >
           <span class="drag-handle" aria-hidden="true">⋮⋮</span>
-          <span class="section-order-name">{{ displayTitle(section, SECTION_LABELS[section]) }}</span>
+          <span class="section-order-name">{{ displayTitleText(section, SECTION_LABELS[section]) }}</span>
           <span class="section-order-actions">
             <button type="button" :disabled="!canMoveSection(section, -1)" :aria-label="`上移${SECTION_LABELS[section]}`" @click="moveSection(section, -1)">↑</button>
             <button type="button" :disabled="!canMoveSection(section, 1)" :aria-label="`下移${SECTION_LABELS[section]}`" @click="moveSection(section, 1)">↓</button>
           </span>
         </div>
       </div>
+      <div v-if="sectionOrderError" class="font-size-error" role="alert">{{ sectionOrderError }}</div>
       <div class="section-order-dialog-footer">
         <button type="button" class="settings-dialog-action" :disabled="isSavingSectionOrder" @click="resetSectionOrder">恢复默认</button>
-        <button type="button" class="settings-dialog-action primary" @click="showSectionOrderDialog = false">完成</button>
+        <button type="button" class="settings-dialog-action primary" :disabled="isSavingSectionOrder" @click="applySectionOrder">{{ isSavingSectionOrder ? '保存中…' : '确定' }}</button>
       </div>
     </div>
   </div>
@@ -2297,13 +2353,6 @@ const getItemIndex = (type, dataIndex) => {
         <button class="layout-guide-close" aria-label="关闭栏目设置" :disabled="isSavingSectionSettings" @click="closeSectionSettingsDialog">×</button>
       </div>
       <div class="section-settings-body">
-        <section>
-          <h4>栏目名称</h4>
-          <label v-for="section in titleSettingSections" :key="`title-${section}`" class="section-setting-row">
-            <span>{{ SECTION_LABELS[section] }}</span>
-            <input :value="editableSectionTitle(section)" @input="setEditableSectionTitle(section, $event.target.value)" />
-          </label>
-        </section>
         <section>
           <h4>分点形式</h4>
           <label v-for="section in listSettingSections" :key="`list-${section}`" class="section-setting-row">
@@ -3000,7 +3049,7 @@ const getItemIndex = (type, dataIndex) => {
   min-height: 0;
   margin-bottom: 0.35em;
 }
-.personal-info.has-photo { min-height: 110px; }
+.personal-info.has-photo { min-height: var(--photo-height); }
 .personal-info.basics-left-aligned { text-align: left; }
 .personal-info.basics-left-aligned .contact-info { justify-content: flex-start; }
 .personal-info.contact-stacked .contact-info { flex-direction: column; gap: 0.1em; }
@@ -3040,13 +3089,18 @@ const getItemIndex = (type, dataIndex) => {
   border-radius: 4px;
   border: 1px solid #e0e0e0;
 }
+.photo-container .profile-photo {
+  width: var(--photo-width);
+  height: var(--photo-height);
+}
 
 .target-position {
   font-size: var(--meta-font-size);
   color: #212529;
-  font-weight: var(--label-font-weight);
+  font-weight: var(--meta-font-weight);
   margin-top: 0.25em;
 }
+.target-position .inline-label.is-bold { font-weight: var(--label-font-weight); }
 
 .section-title {
   font-size: var(--section-title-font-size);
@@ -3173,6 +3227,7 @@ const getItemIndex = (type, dataIndex) => {
 .module-component-row { display: grid; width: 100%; align-items: baseline; }
 .module-component-cell { gap: 0.3em; overflow-wrap: anywhere; }
 .module-component-cell.flow-inline .module-component + .module-component::before { content: ' · '; white-space: pre; }
+.personal-info .module-component-cell.flow-inline .module-component + .module-component::before { content: ' | '; }
 .module-component-cell.flow-inline .component-position + .component-job_type::before { content: ' '; }
 .module-component.component-school { font-size: var(--entry-title-font-size); font-weight: var(--manual-title-font-weight); }
 .module-component.component-organization,
@@ -3182,15 +3237,14 @@ const getItemIndex = (type, dataIndex) => {
 .module-component.component-personal_meta,
 .module-component.component-contact,
 .module-component.component-additional_fields { font-size: var(--meta-font-size); font-weight: var(--meta-font-weight); color: #333; }
-.module-component.component-target_position { font-weight: var(--manual-title-font-weight); }
-.component-photo { position: static; flex: none; width: var(--photo-width); height: var(--photo-height); object-fit: cover; }
+.personal-info .component-photo { position: absolute; top: 0; right: 0; flex: none; width: var(--photo-width); height: var(--photo-height); object-fit: cover; }
 .module-component.component-school_tags,
 .module-component.component-degree,
 .module-component.component-major,
 .module-component.component-metrics,
 .module-component.component-date,
 .module-component.component-position,
-.module-component.component-job_type { font-size: var(--label-font-size); font-weight: var(--label-font-weight); }
+.module-component.component-job_type { font-size: var(--label-font-size); font-weight: var(--manual-field-font-weight); }
 .module-component.component-role { font-size: var(--meta-font-size); font-weight: var(--meta-font-weight); }
 .education-item.preset-three-column .education-header {
   display: grid;
@@ -3459,6 +3513,8 @@ const getItemIndex = (type, dataIndex) => {
 .education-merged-title {
   margin: var(--item-spacing) 0 var(--paragraph-spacing);
   color: #111;
+  font-size: var(--body-font-size);
+  font-weight: var(--body-font-weight);
 }
 .inline-list {
   display: inline;
@@ -3736,7 +3792,7 @@ const getItemIndex = (type, dataIndex) => {
 }
 .section-settings-dialog {
   width: min(390px, calc(100vw - 40px));
-  height: min(600px, calc(100vh - 96px));
+  height: min(480px, calc(100vh - 96px));
   max-height: calc(100vh - 96px);
   box-sizing: border-box;
   padding: 18px;
@@ -3750,7 +3806,7 @@ const getItemIndex = (type, dataIndex) => {
   flex-direction: column;
 }
 .section-settings-dialog .layout-guide-header h3 { margin-bottom: 0; }
-.section-settings-body { margin-top: 12px; overflow-y: auto; }
+.section-settings-body { margin-top: 12px; min-height: 0; overflow-y: auto; }
 .section-settings-body section + section { margin-top: 16px; }
 .section-settings-body h4 { margin: 0 0 8px; color: #dfe2e9; font-size: 0.82rem; }
 .section-setting-row {
@@ -3764,7 +3820,7 @@ const getItemIndex = (type, dataIndex) => {
 }
 .section-setting-row input,
 .section-setting-row select {
-  width: 100%;
+  width: 85%;
   height: 34px;
   box-sizing: border-box;
   border: 0;
@@ -3798,12 +3854,18 @@ const getItemIndex = (type, dataIndex) => {
     width: min(340px, calc(100vw - 32px));
     max-height: calc(100vh - 32px);
   }
-  .section-settings-dialog { width: min(390px, calc(100vw - 32px)); height: min(560px, calc(100vh - 48px)); max-height: calc(100vh - 48px); }
+  .section-settings-dialog { width: min(390px, calc(100vw - 32px)); height: min(440px, calc(100vh - 48px)); max-height: calc(100vh - 48px); }
 }
-.layout-guide-header { display: flex; justify-content: space-between; gap: 24px; }
+.font-size-dialog,
+.section-order-dialog,
+.section-settings-dialog { position: relative; }
+.layout-guide-header { display: flex; justify-content: space-between; gap: 24px; padding-right: 38px; }
 .layout-guide-header h3 { margin: 0 0 8px; font-size: 18px; }
 .layout-guide-header p { margin: 0; color: #aeb3c0; font-size: 13px; line-height: 1.6; }
 .layout-guide-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
   flex: 0 0 auto;
   width: 34px;
   height: 34px;

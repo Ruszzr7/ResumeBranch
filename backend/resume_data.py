@@ -11,14 +11,11 @@ ACADEMIC_FIELD_ALIASES = {
     "gpa": ("GPA", "绩点", "平均绩点", "grade_point_average"),
     "gpa_scale": ("gpaScale", "gpa_max", "绩点满分", "满绩"),
     "ranking": ("rank", "class_rank", "专业排名", "排名"),
-    "average_score": (
-        "average",
-        "averageScore",
-        "weighted_average",
-        "平均分",
-        "加权平均分",
-    ),
 }
+
+_RETIRED_ACADEMIC_ALIASES = (
+    "average_score", "average", "averageScore", "weighted_average", "平均分", "加权平均分",
+)
 
 _GPA_LABEL = r"(?:GPA|平均绩点|绩点)"
 _GPA_VALUE_RE = re.compile(
@@ -324,6 +321,14 @@ def normalize_resume_data(data: dict) -> dict:
         basics["birth_date"] = _text(basics.pop("date_of_birth"))
     else:
         basics.pop("date_of_birth", None)
+    try:
+        photo_ratio = float(basics.get("photo_aspect_ratio"))
+    except (TypeError, ValueError):
+        photo_ratio = None
+    if photo_ratio is None:
+        basics.pop("photo_aspect_ratio", None)
+    else:
+        basics["photo_aspect_ratio"] = min(3.0, max(0.2, photo_ratio))
     if "additional_fields" in basics:
         additional_fields = basics.get("additional_fields")
         if not isinstance(additional_fields, list):
@@ -331,7 +336,7 @@ def normalize_resume_data(data: dict) -> dict:
         basics["additional_fields"] = [
             {"label": _text(item.get("label")), "value": _text(item.get("value"))}
             for item in additional_fields
-            if isinstance(item, dict) and _text(item.get("label")) and _text(item.get("value"))
+            if isinstance(item, dict) and (_text(item.get("label")) or _text(item.get("value")))
         ]
     normalized["basics"] = basics
 
@@ -346,6 +351,11 @@ def normalize_resume_data(data: dict) -> dict:
 
         for field in ACADEMIC_FIELD_ALIASES:
             education[field] = _take_alias(education, field)
+        # Average score was removed from the product model. Drop both its
+        # canonical key and historical aliases instead of persisting a dead
+        # field that cannot be edited or rendered anymore.
+        for retired in _RETIRED_ACADEMIC_ALIASES:
+            education.pop(retired, None)
 
         # Accept a combined value such as "3.72/4.0" in the canonical gpa field.
         combined_value, combined_scale = _extract_gpa(f"GPA {education['gpa']}")
@@ -357,7 +367,10 @@ def normalize_resume_data(data: dict) -> dict:
         _migrate_gpa_thesis(education)
 
         education["date_range"] = _date_range(education)
-        education.setdefault("school_tags", [])
+        raw_school_tags = education.get("school_tags", [])
+        if isinstance(raw_school_tags, str):
+            raw_school_tags = re.split(r"[/·]", raw_school_tags)
+        education["school_tags"] = _string_list(raw_school_tags)
         education.setdefault("theses", [])
 
     for key in ("research_interests", "honors", "publications", "self_evaluation"):
@@ -402,13 +415,16 @@ def normalize_resume_data(data: dict) -> dict:
     # 解析器旧版本会仅凭内容语义，把原“专业技能”栏目中的 CET、语言或
     # 认证拆到新栏目。若技能原文自身明确包含对应标签，则把被拆出的内容
     # 归回专业技能，优先保持上传文件的栏目边界。
-    skill_text = "\n".join(others["skills"])
-    for field, hint in (("languages", _LANGUAGE_SKILL_HINT_RE), ("certificates", _CERTIFICATE_SKILL_HINT_RE)):
-        if others[field] and hint.search(skill_text):
-            for value in others[field]:
-                if not any(value in skill or skill in value for skill in others["skills"]):
-                    others["skills"].append(value)
-            others[field] = []
+    # 仅对旧解析数据执行历史归类修复。新版编辑器会显式写入 formatting_version=3，
+    # 其中 languages/certificates 是用户确认过的栏目，保存时不得再次挪到 skills。
+    if int(normalized.get("formatting_version") or 0) < 2:
+        skill_text = "\n".join(others["skills"])
+        for field, hint in (("languages", _LANGUAGE_SKILL_HINT_RE), ("certificates", _CERTIFICATE_SKILL_HINT_RE)):
+            if others[field] and hint.search(skill_text):
+                for value in others[field]:
+                    if not any(value in skill or skill in value for skill in others["skills"]):
+                        others["skills"].append(value)
+                others[field] = []
     normalized["others"] = others
 
     had_custom_sections = "custom_sections" in normalized

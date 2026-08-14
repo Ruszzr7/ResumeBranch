@@ -26,7 +26,7 @@ export const DEFAULT_COMPONENT_ROWS = Object.freeze({
     { cells: [{ components: ['personal_meta', 'contact', 'additional_fields'], flow: 'inline', width: 'fill', alignment: 'left' }] }
   ],
   education: [
-    { cells: [{ components: ['school', 'school_tags'], flow: 'inline', width: 'content', alignment: 'left' }, { components: ['degree', 'major', 'metrics'], flow: 'inline', width: 'fill', alignment: 'left' }, { components: ['date'], flow: 'inline', width: 'content', alignment: 'right' }] },
+    { cells: [{ components: ['school', 'school_tags'], flow: 'inline', width: 'content', alignment: 'left' }, { components: ['degree', 'major', 'metrics'], flow: 'inline', width: 'fill', alignment: 'center' }, { components: ['date'], flow: 'inline', width: 'content', alignment: 'right' }] },
     { cells: [{ components: ['theses'], flow: 'stacked', width: 'fill', alignment: 'justify' }] }
   ],
   work_experience: [
@@ -77,7 +77,12 @@ export const DEFAULT_LAYOUT_CONFIG = Object.freeze({
     sectionOrder: ['education', 'honors', 'publications', 'research_interests', 'skills', 'work_experience', 'project_experience', 'custom_sections', 'others', 'self_evaluation'],
     hiddenSections: [], splitWorkExperience: false, titleOverrides: {}, sectionPlacements: {}
   },
-  basics: moduleContract('basics', { preset: 'left-aligned', contactLayout: 'inline', photoPosition: 'right', photoWidthMm: 21, hiddenFields: [] }),
+  basics: moduleContract('basics', {
+    preset: 'left-aligned', contactLayout: 'inline', photoPosition: 'right',
+    // Photo height is the only user-facing size control. Width is derived from
+    // the imported image's aspect ratio at render time.
+    photoHeightMm: 26, photoWidthMm: 21, hiddenFields: []
+  }),
   education: moduleContract('education', { preset: 'compact', schoolTagStyle: 'text', metricsPlacement: 'with-degree', hiddenMetrics: [], thesisDisplay: 'expanded' }),
   skills: moduleContract('skills', { listStyle: 'bullet' }),
   research_interests: moduleContract('research_interests', { listStyle: 'bullet' }),
@@ -139,7 +144,7 @@ const ENUMS = Object.freeze({
 })
 const ALLOWED_HIDDEN_FIELDS = Object.freeze({
   basics: new Set(['gender', 'birth_date', 'phone', 'email', 'target_position', 'photo', 'additional_fields']),
-  education: new Set(['gpa', 'ranking', 'average_score']),
+  education: new Set(['gpa', 'ranking']),
   others: new Set(['skills', 'certificates', 'languages'])
 })
 
@@ -246,6 +251,20 @@ function normalizeModuleContracts(result, source, suppliedVersion, bounded) {
     const fallback = suppliedVersion < 7 ? legacyComponentRows(moduleId, module) : clone(DEFAULT_COMPONENT_ROWS[moduleId])
     const rawModule = source?.[moduleId] && typeof source[moduleId] === 'object' ? source[moduleId] : {}
     module.componentRows = normalizeComponentRows(moduleId, suppliedVersion >= 7 ? rawModule.componentRows : fallback, fallback, hidden)
+    // Compact education keeps a stable three-column geometry: the metadata
+    // column is centered while school/date remain left/right aligned. Migrate
+    // old persisted rows so all renderers use the same alignment contract.
+    if (moduleId === 'education' && module.preset === 'compact') {
+      for (const row of module.componentRows) {
+        if (row.cells.length !== 3) continue
+        if (!row.cells[0].components.includes('school')
+          || !row.cells[1].components.some(component => ['degree', 'major', 'metrics'].includes(component))
+          || !row.cells[2].components.includes('date')) continue
+        row.cells[0].alignment = 'left'
+        row.cells[1].alignment = 'center'
+        row.cells[2].alignment = 'right'
+      }
+    }
   }
 }
 
@@ -339,7 +358,14 @@ export function normalizeLayoutConfig(value = {}) {
       (Array.isArray(result[section][key]) ? result[section][key] : []).filter(item => allowed.has(item))
     )]
   }
+  const suppliedBasics = value?.basics && typeof value.basics === 'object' ? value.basics : {}
   result.basics.photoWidthMm = boundedConfigNumber(result.basics.photoWidthMm, 15, 30, 21)
+  result.basics.photoHeightMm = boundedConfigNumber(
+    Object.prototype.hasOwnProperty.call(suppliedBasics, 'photoHeightMm')
+      ? result.basics.photoHeightMm
+      : result.basics.photoWidthMm * 26 / 21,
+    18, 45, 26
+  )
   if (result.basics.photoPosition === 'hidden' && !result.basics.hiddenFields.includes('photo')) result.basics.hiddenFields.push('photo')
   if (result.basics.hiddenFields.includes('photo')) result.basics.photoPosition = 'hidden'
   if (result.education.preset === 'three-column') {
@@ -454,8 +480,10 @@ export function resolveLayoutTokens(value = {}, style = {}) {
     educationMiddleMinMm: 30,
     educationColumnBreathingMm: 4,
     educationSideColumnMm: 42,
+    // Keep photoWidthMm in the token contract for old callers. Renderers use
+    // photoHeightMm plus the stored image ratio for the actual width.
     photoWidthMm: config.basics.photoWidthMm,
-    photoHeightMm: config.basics.photoWidthMm * 26 / 21,
+    photoHeightMm: config.basics.photoHeightMm,
     marginTopMm: bounded(style.marginTop ?? global.marginVertical, 3, 12, global.marginVertical),
     marginBottomMm: bounded(style.marginBottom ?? global.marginVertical, 3, 12, global.marginVertical),
     marginLeftMm: bounded(style.marginLeft ?? global.marginHorizontal, 3, 12, global.marginHorizontal),
@@ -514,14 +542,18 @@ export function resolveEducationColumnWidths(tokens, { schools = [], dates = [],
   const breathingMm = tokens.educationColumnBreathingMm
   const sideNeededMm = Math.max(
     36,
-    ...schools.map(value => estimateTextWidthPt(value, tokens.entryTitleFontSizePt) * 25.4 / 72),
-    ...dates.map(value => estimateTextWidthPt(value, tokens.metaFontSizePt) * 25.4 / 72)
+    ...schools.map(value => estimateTextWidthPt(String(value).replace(/\*\*/g, ''), tokens.entryTitleFontSizePt) * 25.4 / 72),
+    ...dates.map(value => estimateTextWidthPt(String(value).replace(/\*\*/g, ''), tokens.labelFontSizePt) * 25.4 / 72)
   ) + breathingMm
   let middleNeededMm = tokens.educationMiddleMinMm
   degreeMajors.forEach((degreeMajor, index) => {
     const metric = compactMetrics[index] || ''
-    const displayValue = metric ? `${degreeMajor} · ${metric}` : degreeMajor
-    const widthPt = estimateTextWidthPt(displayValue, tokens.metaFontSizePt)
+    const parts = [degreeMajor, metric].filter(Boolean).map(value => String(value).replace(/\*\*/g, ''))
+    const displayValue = parts.join(' · ')
+    // Degree, major and compact metrics are field-label content. Measure them
+    // with the label size and a small safety factor so a larger field label
+    // gets the middle column before the side columns absorb the space.
+    const widthPt = estimateTextWidthPt(displayValue, tokens.labelFontSizePt) * 1.08
     middleNeededMm = Math.max(middleNeededMm, widthPt * 25.4 / 72 + breathingMm)
   })
   const middleMaxMm = Math.max(tokens.educationMiddleMinMm, printableMm - sideNeededMm * 2)
@@ -532,13 +564,11 @@ export function resolveEducationColumnWidths(tokens, { schools = [], dates = [],
   }
 }
 
-export function formatCompactAcademicMetric(item = {}, hiddenMetrics = [], averageScoreLabel = '平均分') {
+export function formatCompactAcademicMetric(item = {}, hiddenMetrics = []) {
   const hidden = new Set(hiddenMetrics)
   let metric = ''
   if (item?.gpa && !hidden.has('gpa')) {
     metric = `${item.gpa}${item.gpa_scale ? `/${item.gpa_scale}` : ''}`
-  } else if (item?.average_score && !hidden.has('average_score')) {
-    metric = `${averageScoreLabel}：${item.average_score}`
   }
   if (item?.ranking && !hidden.has('ranking')) {
     const ranking = String(item.ranking).trim().replace(/^[（(]|[）)]$/g, '')

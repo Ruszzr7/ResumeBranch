@@ -421,8 +421,8 @@ const projectDutiesFlow = project => resolveContentBlockFlow({
   type: project?._dutiesType || 'numbered_list', semantic_role: 'responsibilities', label: project?._dutiesLabel,
   label_bold: false
 })
-const genericDetailsFlow = () => resolveContentBlockFlow({
-  type: 'bullet_list', semantic_role: 'generic', label: ''
+const genericDetailsFlow = item => resolveContentBlockFlow({
+  type: item?._detailsType || 'bullet_list', semantic_role: 'generic', label: ''
 })
 const CONTENT_BLOCK_TYPE_OPTIONS = {
   paragraph: '段落',
@@ -550,7 +550,7 @@ const newSkill = ref('') // 用于添加技能标签
 // 简历编辑弹窗状态（新增）
 const isResumeEditDialogOpen = ref(false)
 const resumeFormData = ref({
-  basics: { name: '', gender: '', birth_date: '', phone: '', email: '', target_position: '', photo: '', additional_fields: [] },
+  basics: { name: '', gender: '', birth_date: '', phone: '', email: '', target_position: '', photo: '', photo_aspect_ratio: 21 / 26, additional_fields: [] },
   education: [],
   research_interests: [],
   honors: [],
@@ -567,6 +567,7 @@ const photoError = ref('')
 const newResumeSkill = ref('')
 const newResumeCert = ref('')
 const newResumeLang = ref('')
+const draggedOtherItem = ref(null)
 
 // 多行文本编辑（临时存储）
 const workDetailsText = ref('')
@@ -589,11 +590,18 @@ const EDITABLE_MODULE_TITLE_DEFAULTS = Object.freeze({
 const resumeModuleTitles = ref({ ...EDITABLE_MODULE_TITLE_DEFAULTS })
 let resumeEditorPreviousPreviewLayout = null
 
-function initializeResumeModuleTitles() {
+function wrapDefaultBold(value) {
+  const text = String(value || '').trim()
+  return !text || (text.startsWith('**') && text.endsWith('**')) ? text : `**${text}**`
+}
+
+function initializeResumeModuleTitles(migrateDefaultBold = false) {
   const overrides = activeLayoutConfig.value.global?.titleOverrides || {}
   resumeModuleTitles.value = Object.fromEntries(Object.entries(EDITABLE_MODULE_TITLE_DEFAULTS).map(([section, fallback]) => [
     section,
-    overrides[section]?.[currentLang.value] || fallback
+    migrateDefaultBold
+      ? wrapDefaultBold(overrides[section]?.[currentLang.value] || fallback)
+      : (overrides[section]?.[currentLang.value] || fallback)
   ]))
 }
 
@@ -2041,7 +2049,7 @@ function closeJDDialog() {
 
 // ==================== 简历编辑功能（新增） ====================
 
-function initializeExperienceContentEditor(proj) {
+function initializeExperienceContentEditor(proj, migrateDefaultBold = false) {
   const blocks = Array.isArray(proj.content_blocks) ? proj.content_blocks : []
   const intro = blocks.find(block => resolveContentBlockFlow(block).semanticRole === 'introduction')
   const duties = blocks.find(block => resolveContentBlockFlow(block).semanticRole === 'responsibilities')
@@ -2050,6 +2058,7 @@ function initializeExperienceContentEditor(proj) {
   proj._dutiesLabel = duties ? String(duties.label ?? '') : '**项目职责**'
   proj._introType = intro?.type || 'paragraph'
   proj._dutiesType = duties?.type || 'numbered_list'
+  proj._detailsType = extraBlocks.find(block => ['paragraph', 'bullet_list', 'numbered_list'].includes(block?.type))?.type || 'bullet_list'
   proj._introText = intro?.type === 'paragraph' ? (intro?.text || '') : arrayToMultiline(intro?.items || [])
   proj._dutiesText = duties?.type === 'paragraph' ? (duties?.text || '') : arrayToMultiline(duties?.items || [])
   proj._extraDetailsText = arrayToMultiline(extraBlocks.flatMap(block => block?.items?.length ? block.items : (block?.text ? [block.text] : [])))
@@ -2079,14 +2088,18 @@ function initializeExperienceContentEditor(proj) {
     proj._dutiesText = arrayToMultiline(dutiesFromLegacy)
     proj._extraDetailsText = arrayToMultiline(extras)
   }
+  if (migrateDefaultBold) {
+    proj._introLabel = wrapDefaultBold(proj._introLabel)
+    proj._dutiesLabel = wrapDefaultBold(proj._dutiesLabel)
+  }
 }
 
-function initializeProjectContentEditor(proj) {
-  initializeExperienceContentEditor(proj)
+function initializeProjectContentEditor(proj, migrateDefaultBold = false) {
+  initializeExperienceContentEditor(proj, migrateDefaultBold)
 }
 
-function initializeWorkContentEditor(work) {
-  initializeExperienceContentEditor(work)
+function initializeWorkContentEditor(work, migrateDefaultBold = false) {
+  initializeExperienceContentEditor(work, migrateDefaultBold)
   work._detailsText = work._extraDetailsText
 }
 
@@ -2110,42 +2123,69 @@ function editableExperienceToContentBlocks(work) {
   const duties = contentBlock('responsibilities', work?._dutiesLabel, work?._dutiesType || 'numbered_list', work?._dutiesText)
   if (intro) blocks.push(intro)
   if (duties) blocks.push(duties)
-  if (lines.length) blocks.push({
-    type: 'bullet_list', semantic_role: 'generic', label: '', label_bold: true, text: '', items: lines
-  })
+  if (lines.length) {
+    const type = CONTENT_BLOCK_TYPE_OPTIONS[work?._detailsType] ? work._detailsType : 'bullet_list'
+    blocks.push({
+      type,
+      semantic_role: 'generic',
+      label: '',
+      label_bold: false,
+      text: type === 'paragraph' ? lines.join(' ') : '',
+      items: type === 'paragraph' ? [] : lines,
+    })
+  }
   return blocks
 }
 
 function migrateEditableDefaultBold(data) {
-  if (!data || Number(data.formatting_version || 0) >= 1) return
-  const wrap = value => {
-    const text = String(value || '').trim()
-    return !text || (text.startsWith('**') && text.endsWith('**')) ? text : `**${text}**`
-  }
-  if (data.basics) {
-    data.basics.name = wrap(data.basics.name)
-    data.basics.target_position = wrap(data.basics.target_position)
-  }
-  for (const education of data.education || []) education.school_name = wrap(education.school_name)
-  for (const work of data.work_experience || []) {
-    work.company_name = wrap(work.company_name)
-    for (const block of work.content_blocks || []) {
-      if (block?.label) {
-        block.label = wrap(block.label)
-        block.label_bold = false
+  if (!data || Number(data.formatting_version || 0) >= 3) return
+  const formattingVersion = Number(data.formatting_version || 0)
+  if (formattingVersion < 1) {
+    if (data.basics) {
+      data.basics.name = wrapDefaultBold(data.basics.name)
+      data.basics.target_position = wrapDefaultBold(data.basics.target_position)
+    }
+    for (const education of data.education || []) education.school_name = wrapDefaultBold(education.school_name)
+    for (const work of data.work_experience || []) {
+      work.company_name = wrapDefaultBold(work.company_name)
+      for (const block of work.content_blocks || []) {
+        if (block?.label) {
+          block.label = wrapDefaultBold(block.label)
+          block.label_bold = false
+        }
       }
     }
-  }
-  for (const project of data.project_experience || []) {
-    project.project_name = wrap(project.project_name)
-    for (const block of project.content_blocks || []) {
-      if (block?.label) {
-        block.label = wrap(block.label)
-        block.label_bold = false
+    for (const project of data.project_experience || []) {
+      project.project_name = wrapDefaultBold(project.project_name)
+      for (const block of project.content_blocks || []) {
+        if (block?.label) {
+          block.label = wrapDefaultBold(block.label)
+          block.label_bold = false
+        }
       }
     }
+    for (const section of data.custom_sections || []) section.title = wrapDefaultBold(section.title)
   }
-  data.formatting_version = 1
+  if (formattingVersion < 3) {
+    for (const education of data.education || []) {
+      for (const key of ['degree', 'major', 'gpa', 'gpa_scale', 'ranking']) {
+        education[key] = wrapDefaultBold(education[key])
+      }
+      education.date_range = Array.isArray(education.date_range)
+        ? education.date_range.map(value => wrapDefaultBold(value))
+        : education.date_range
+      education.school_tags = (education.school_tags || []).map(tag => wrapDefaultBold(tag))
+    }
+    for (const work of data.work_experience || []) {
+      work.job_title = wrapDefaultBold(work.job_title)
+      work.job_type = wrapDefaultBold(work.job_type)
+      work.date_range = Array.isArray(work.date_range) ? work.date_range.map(value => wrapDefaultBold(value)) : work.date_range
+    }
+    for (const project of data.project_experience || []) {
+      project.date_range = Array.isArray(project.date_range) ? project.date_range.map(value => wrapDefaultBold(value)) : project.date_range
+    }
+  }
+  data.formatting_version = 3
 }
 
 // 打开简历编辑弹窗
@@ -2153,7 +2193,6 @@ function openResumeEditDialog() {
   resumeEditorPreviousPreviewLayout = previewLayoutConfig.value
     ? JSON.parse(JSON.stringify(previewLayoutConfig.value))
     : null
-  initializeResumeModuleTitles()
   newResumeSkill.value = ''
   newResumeCert.value = ''
   newResumeLang.value = ''
@@ -2163,7 +2202,7 @@ function openResumeEditDialog() {
   } else {
     // 使用空结构
     resumeFormData.value = {
-      basics: { name: '', gender: '', birth_date: '', phone: '', email: '', target_position: '', photo: '', additional_fields: [] },
+      basics: { name: '', gender: '', birth_date: '', phone: '', email: '', target_position: '', photo: '', photo_aspect_ratio: 21 / 26, additional_fields: [] },
       education: [],
       research_interests: [],
       honors: [],
@@ -2179,7 +2218,18 @@ function openResumeEditDialog() {
   // 确保所有必要字段都存在（防御性编程）
   resumeFormData.value.basics = resumeFormData.value.basics || {}
   resumeFormData.value.basics.birth_date = resumeFormData.value.basics.birth_date || ''
+  const storedPhotoRatio = Number(resumeFormData.value.basics.photo_aspect_ratio)
+  resumeFormData.value.basics.photo_aspect_ratio = storedPhotoRatio || 21 / 26
   resumeFormData.value.basics.additional_fields = resumeFormData.value.basics.additional_fields || []
+  if (resumeFormData.value.basics.photo && !storedPhotoRatio) {
+    const image = new Image()
+    image.onload = () => {
+      if (image.naturalWidth && image.naturalHeight) {
+        resumeFormData.value.basics.photo_aspect_ratio = Math.min(3, Math.max(0.2, image.naturalWidth / image.naturalHeight))
+      }
+    }
+    image.src = resumeFormData.value.basics.photo
+  }
   resumeFormData.value.education = resumeFormData.value.education || []
   resumeFormData.value.research_interests = resumeFormData.value.research_interests || []
   resumeFormData.value.honors = resumeFormData.value.honors || []
@@ -2187,43 +2237,34 @@ function openResumeEditDialog() {
   resumeFormData.value.work_experience = resumeFormData.value.work_experience || []
   resumeFormData.value.project_experience = resumeFormData.value.project_experience || []
   resumeFormData.value.custom_sections = resumeFormData.value.custom_sections || []
+  const formattingVersion = Number(resumeFormData.value.formatting_version || 0)
+  const migrateDefaultBold = formattingVersion < 3
   migrateEditableDefaultBold(resumeFormData.value)
-  resumeFormData.value.others = resumeFormData.value.others || { skills: [], certificates: [], languages: [] }
+  initializeResumeModuleTitles(formattingVersion < 3)
+  resumeFormData.value.others = resumeFormData.value.others || {}
+  resumeFormData.value.others.skills = resumeFormData.value.others.skills || []
+  resumeFormData.value.others.certificates = resumeFormData.value.others.certificates || []
+  resumeFormData.value.others.languages = resumeFormData.value.others.languages || []
   resumeFormData.value.self_evaluation = resumeFormData.value.self_evaluation || []
 
-  // 初始化日期范围和"至今"标志
-  const initDateRange = (item) => {
-    if (!item.date_range) {
-      item.date_range = ['', '']
-    }
-    // 设置临时日期范围数组（用于 el-date-picker）
-    const start = item.date_range[0] ? item.date_range[0].replace('.', '-') : null
-    const end = item.date_range[1] && item.date_range[1] !== '至今'
-      ? item.date_range[1].replace('.', '-')
-      : null
-    item._dateRange = start && end ? [start, end] : (start ? [start, null] : null)
-    item._isPresent = item.date_range[1] === '至今'
-  }
-
-  // 为每项工作经历初始化日期
+  // 为每项工作经历初始化可编辑内容
   resumeFormData.value.work_experience.forEach(work => {
-    initDateRange(work)
-    initializeWorkContentEditor(work)
+    work.date_range = Array.isArray(work.date_range) ? work.date_range : ['', '']
+    initializeWorkContentEditor(work, migrateDefaultBold)
   })
 
-  // 为每项项目经历初始化日期
+  // 为每项项目经历初始化可编辑内容
   resumeFormData.value.project_experience.forEach(proj => {
-    initDateRange(proj)
-    initializeProjectContentEditor(proj)
+    proj.date_range = Array.isArray(proj.date_range) ? proj.date_range : ['', '']
+    initializeProjectContentEditor(proj, migrateDefaultBold)
   })
 
   // 为每项教育经历初始化日期
   resumeFormData.value.education.forEach(edu => {
-    initDateRange(edu)
+    edu.date_range = Array.isArray(edu.date_range) ? edu.date_range : ['', '']
     edu.gpa = edu.gpa || ''
     edu.gpa_scale = edu.gpa_scale || ''
     edu.ranking = edu.ranking || ''
-    edu.average_score = edu.average_score || ''
   })
 
   resumeFormData.value.custom_sections.forEach(section => {
@@ -2239,40 +2280,12 @@ function openResumeEditDialog() {
   isResumeEditDialogOpen.value = true
 }
 
-// 处理"至今"复选框变化
-function onPresentChange(item) {
-  if (item._isPresent) {
-    // 如果选中"至今"，保留开始日期，清空结束日期
-    if (item._dateRange && item._dateRange.length === 2) {
-      item._dateRange[1] = null
-    }
-  } else {
-    // 如果取消"至今"，需要恢复结束日期选择
-    if (item._dateRange && item._dateRange.length === 2) {
-      // 如果原来有结束日期，恢复它
-      if (item.date_range && item.date_range[1] && item.date_range[1] !== '至今') {
-        item._dateRange[1] = item.date_range[1].replace('.', '-')
-      } else {
-        // 没有结束日期时，设置一个默认值（当前月）
-        const now = new Date()
-        item._dateRange[1] = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
-      }
-    }
-  }
-}
-
 // 将日期范围转换为保存格式
 function convertDateRangeToSave(item) {
-  if (item._dateRange && item._dateRange.length === 2) {
-    const start = item._dateRange[0] ? item._dateRange[0].replace('-', '.') : ''
-    const end = item._isPresent ? '至今' : (item._dateRange[1] ? item._dateRange[1].replace('-', '.') : '')
-    item.date_range = [start, end]
-  } else if (item._dateRange && item._dateRange.length === 1) {
-    item.date_range = [item._dateRange[0].replace('-', '.'), item._isPresent ? '至今' : '']
-  } else {
-    item.date_range = ['', item._isPresent ? '至今' : '']
-  }
-  // 清理临时字段
+  item.date_range = Array.isArray(item.date_range)
+    ? item.date_range.slice(0, 2).map(value => String(value || '').trim())
+    : ['', '']
+  // 清理旧日期选择器临时字段（旧草稿可能仍携带它们）。
   delete item._dateRange
   delete item._isPresent
 }
@@ -2368,11 +2381,13 @@ function compressAndSave(img) {
   
   // 转换为 Base64（质量 0.8）
   resumeFormData.value.basics.photo = canvas.toDataURL('image/jpeg', 0.8)
+  resumeFormData.value.basics.photo_aspect_ratio = Math.min(3, Math.max(0.2, width / height))
 }
 
 // 删除证件照
 function removePhoto() {
   resumeFormData.value.basics.photo = ''
+  resumeFormData.value.basics.photo_aspect_ratio = 21 / 26
   photoError.value = ''
   // 清空文件输入
   const input = document.querySelector('.photo-input')
@@ -2390,7 +2405,6 @@ function addEducation() {
     gpa: '',
     gpa_scale: '',
     ranking: '',
-    average_score: '',
     theses: []
   })
 }
@@ -2417,11 +2431,14 @@ function addWork() {
     company_name: '',
     job_title: '',
     date_range: ['', ''],
-    job_type: '全职',
+    job_type: '',
     content_blocks: [],
     details: [],
     _introLabel: '**项目简介**',
     _dutiesLabel: '**项目职责**',
+    _introType: 'paragraph',
+    _dutiesType: 'numbered_list',
+    _detailsType: 'bullet_list',
     _introText: '',
     _dutiesText: '',
     _detailsText: ''
@@ -2453,6 +2470,9 @@ function addProject() {
     details: [],
     _introLabel: '**项目简介**',
     _dutiesLabel: '**项目职责**',
+    _introType: 'paragraph',
+    _dutiesType: 'numbered_list',
+    _detailsType: 'bullet_list',
     _introText: '',
     _dutiesText: '',
     _extraDetailsText: ''
@@ -2480,10 +2500,35 @@ function addResumeCert() {
 }
 
 function addResumeLang() {
-  if (newResumeLang.value.trim()) {
-    resumeFormData.value.others.languages.push(newResumeLang.value.trim())
+  const language = newResumeLang.value.trim()
+  if (language) {
+    // 用户在“语言”输入框添加的内容必须留在 languages，不能再走导入兼容归类。
+    resumeFormData.value.others.languages.push(language)
     newResumeLang.value = ''
   }
+}
+
+function startOtherItemDrag(field, index, event) {
+  draggedOtherItem.value = { field, index }
+  if (event?.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', `${field}:${index}`)
+  }
+}
+
+function dropOtherItem(field, index, event) {
+  event?.preventDefault()
+  const source = draggedOtherItem.value
+  draggedOtherItem.value = null
+  if (!source || source.field !== field || source.index === index) return
+  const values = resumeFormData.value.others?.[field]
+  if (!Array.isArray(values)) return
+  const [value] = values.splice(source.index, 1)
+  values.splice(source.index < index ? index - 1 : index, 0, value)
+}
+
+function endOtherItemDrag() {
+  draggedOtherItem.value = null
 }
 
 // 加载简历数据
@@ -2499,15 +2544,6 @@ async function loadResume() {
   } catch (error) {
     console.error('加载简历失败:', error)
   }
-}
-
-// 辅助函数：日期格式转换 YYYY-MM -> YYYY.MM
-function formatDateForSave(dateStr) {
-  if (!dateStr) return ''
-  // 如果已经是 YYYY.MM 格式，直接返回
-  if (dateStr.includes('.')) return dateStr
-  // YYYY-MM 转换为 YYYY.MM
-  return dateStr.replace('-', '.')
 }
 
 // 将数组转换为多行文本（用于编辑）
@@ -2548,11 +2584,6 @@ async function saveResume() {
     // 复制数据进行处理
     const dataToSave = JSON.parse(JSON.stringify(resumeFormData.value))
 
-    // 处理性别：保密 -> 空字符串
-    if (dataToSave.basics.gender === '保密') {
-      dataToSave.basics.gender = ''
-    }
-
     // 处理日期格式：确保是 YYYY.MM 格式
     dataToSave.education?.forEach(edu => {
       convertDateRangeToSave(edu)
@@ -2562,7 +2593,7 @@ async function saveResume() {
       if (work._detailsText !== undefined) {
         work.content_blocks = editableExperienceToContentBlocks(work)
         work.details = []
-        for (const key of ['_introLabel', '_dutiesLabel', '_introLabelBold', '_dutiesLabelBold', '_introType', '_dutiesType', '_introText', '_dutiesText', '_detailsText', '_extraDetailsText']) delete work[key]
+        for (const key of ['_introLabel', '_dutiesLabel', '_introLabelBold', '_dutiesLabelBold', '_introType', '_dutiesType', '_detailsType', '_introText', '_dutiesText', '_detailsText', '_extraDetailsText']) delete work[key]
       }
     })
     dataToSave.project_experience?.forEach(proj => {
@@ -2575,6 +2606,7 @@ async function saveResume() {
       delete proj._dutiesLabelBold
       delete proj._introType
       delete proj._dutiesType
+      delete proj._detailsType
       delete proj._introText
       delete proj._dutiesText
       delete proj._extraDetailsText
@@ -4209,19 +4241,19 @@ watch(
             <div class="form-grid">
               <div class="field-group">
                 <label>公司名称</label>
-                <input v-model="jdFormData.company" placeholder="请输入" />
+                <input v-model="jdFormData.company" placeholder="例如 某某科技有限公司" />
               </div>
               <div class="field-group">
                 <label>职位名称</label>
-                <input v-model="jdFormData.position" placeholder="请输入" />
+                <input v-model="jdFormData.position" placeholder="例如 后端工程师" />
               </div>
               <div class="field-group">
                 <label>部门/团队</label>
-                <input v-model="jdFormData.department" placeholder="请输入" />
+                <input v-model="jdFormData.department" placeholder="例如 技术部" />
               </div>
               <div class="field-group">
                 <label>工作地点</label>
-                <input v-model="jdFormData.location" placeholder="请输入" />
+                <input v-model="jdFormData.location" placeholder="例如 广州" />
               </div>
               <div class="field-group">
                 <label>工作类型</label>
@@ -4233,7 +4265,7 @@ watch(
               </div>
               <div class="field-group">
                 <label>薪资范围</label>
-                <input v-model="jdFormData.salary" placeholder="如：30k-50k" />
+                <input v-model="jdFormData.salary" placeholder="例如 30k-50k" />
               </div>
             </div>
 
@@ -4241,7 +4273,7 @@ watch(
             <h4 class="section-title">职位描述</h4>
             <div class="form-grid">
               <div class="field-group full-width">
-                <textarea v-model="jdFormData.description" rows="3" placeholder="请输入"></textarea>
+                <textarea v-model="jdFormData.description" rows="3" placeholder="例如 负责后端服务开发与维护"></textarea>
               </div>
             </div>
 
@@ -4250,15 +4282,15 @@ watch(
             <div class="form-grid">
               <div class="field-group">
                 <label>学历要求</label>
-                <input v-model="jdFormData.requirements.education" placeholder="如：本科及以上" />
+                <input v-model="jdFormData.requirements.education" placeholder="例如 本科及以上" />
               </div>
               <div class="field-group">
                 <label>经验要求</label>
-                <input v-model="jdFormData.requirements.experience" placeholder="如：3年以上" />
+                <input v-model="jdFormData.requirements.experience" placeholder="例如 3年以上" />
               </div>
               <div class="field-group">
                 <label>语言要求</label>
-                <input v-model="jdFormData.requirements.language" placeholder="如：普通话流利" />
+                <input v-model="jdFormData.requirements.language" placeholder="例如 普通话流利" />
               </div>
             </div>
 
@@ -4282,11 +4314,11 @@ watch(
               </div>
               <div class="field-group full-width">
                 <label>优先条件</label>
-                <textarea v-model="jdFormData.preferred_qualifications_text" rows="2" placeholder="请输入（用逗号分隔）" @blur="updatePreferredQualifications"></textarea>
+                <textarea v-model="jdFormData.preferred_qualifications_text" rows="2" placeholder="例如 熟悉 Docker、Kubernetes，用逗号分隔" @blur="updatePreferredQualifications"></textarea>
               </div>
               <div class="field-group full-width">
                 <label>亮点/核心关键词</label>
-                <textarea v-model="jdFormData.highlights_text" rows="2" placeholder="请输入（用逗号分隔）" @blur="updateHighlights"></textarea>
+                <textarea v-model="jdFormData.highlights_text" rows="2" placeholder="例如 五险一金、弹性工作，用逗号分隔" @blur="updateHighlights"></textarea>
               </div>
             </div>
           </div>
@@ -4360,37 +4392,33 @@ watch(
             <div class="form-grid">
               <div class="field-group">
                 <label>姓名</label>
-                <RichTextEditor v-model="resumeFormData.basics.name" placeholder="请输入" compact default-bold />
+                <RichTextEditor v-model="resumeFormData.basics.name" placeholder="例如 张三" compact default-bold />
               </div>
               <div class="field-group">
                 <label>性别</label>
-                <el-select v-model="resumeFormData.basics.gender" placeholder="请选择" class="element-select" popper-class="resume-dark-select-popper">
-                  <el-option label="男" value="男" />
-                  <el-option label="女" value="女" />
-                  <el-option label="保密" value="保密" />
-                </el-select>
+                <RichTextEditor v-model="resumeFormData.basics.gender" placeholder="例如 男" compact />
               </div>
               <div class="field-group">
                 <label>出生年月</label>
-                <input v-model="resumeFormData.basics.birth_date" placeholder="例如 2002.06" class="element-input" />
+                <RichTextEditor v-model="resumeFormData.basics.birth_date" placeholder="例如 2002.06" compact />
               </div>
               <div class="field-group">
                 <label>手机</label>
-                <RichTextEditor v-model="resumeFormData.basics.phone" placeholder="请输入" compact />
+                <RichTextEditor v-model="resumeFormData.basics.phone" placeholder="例如 13800000000" compact />
               </div>
               <div class="field-group">
                 <label>邮箱</label>
-                <RichTextEditor v-model="resumeFormData.basics.email" placeholder="请输入" compact />
+                <RichTextEditor v-model="resumeFormData.basics.email" placeholder="例如 name@example.com" compact />
               </div>
               <div class="field-group full-width">
                 <label>期望岗位</label>
-                <RichTextEditor v-model="resumeFormData.basics.target_position" placeholder="请输入" compact />
+                <RichTextEditor v-model="resumeFormData.basics.target_position" placeholder="例如 后端开发工程师" compact default-bold />
               </div>
               <div class="field-group full-width">
                 <label>其他基本信息</label>
                 <div v-for="(field, fieldIndex) in resumeFormData.basics.additional_fields" :key="`basic-extra-${fieldIndex}`" class="inline-edit-row">
-                  <RichTextEditor v-model="field.label" placeholder="字段名，如籍贯" compact />
-                  <RichTextEditor v-model="field.value" placeholder="字段内容" compact />
+                  <RichTextEditor v-model="field.label" placeholder="例如 籍贯" compact />
+                  <RichTextEditor v-model="field.value" placeholder="例如 广州" compact />
                   <button type="button" class="remove-btn" @click="removeBasicAdditionalField(fieldIndex)">删除</button>
                 </div>
                 <button type="button" class="add-btn" @click="addBasicAdditionalField">+ 添加基本信息</button>
@@ -4407,77 +4435,44 @@ watch(
               <div class="form-grid">
                 <div class="field-group">
                   <label>学校</label>
-                  <RichTextEditor v-model="edu.school_name" placeholder="请输入" compact default-bold />
+                  <RichTextEditor v-model="edu.school_name" placeholder="例如 清华大学" compact default-bold />
                 </div>
                 <div class="field-group">
                   <label>专业</label>
-                  <RichTextEditor v-model="edu.major" placeholder="请输入" compact />
+                  <RichTextEditor v-model="edu.major" placeholder="例如 电子信息工程" compact default-bold />
                 </div>
                 <div class="field-group">
                   <label>学历</label>
-                  <el-select v-model="edu.degree" placeholder="请选择" class="element-select" popper-class="resume-dark-select-popper">
-                    <el-option label="博士" value="博士" />
-                    <el-option label="硕士" value="硕士" />
-                    <el-option label="本科" value="本科" />
-                    <el-option label="大专" value="大专" />
-                    <el-option label="中专" value="中专" />
-                    <el-option label="高中" value="高中" />
-                    <el-option label="初中及以下" value="初中及以下" />
-                  </el-select>
+                  <RichTextEditor v-model="edu.degree" placeholder="例如 硕士" compact default-bold />
                 </div>
                 <div class="field-group">
                   <label>GPA / 绩点</label>
-                  <RichTextEditor v-model="edu.gpa" placeholder="例如 3.72" compact />
+                  <RichTextEditor v-model="edu.gpa" placeholder="例如 3.72" compact default-bold />
                 </div>
                 <div class="field-group">
                   <label>绩点满分</label>
-                  <RichTextEditor v-model="edu.gpa_scale" placeholder="例如 4.0" compact />
+                  <RichTextEditor v-model="edu.gpa_scale" placeholder="例如 4.0" compact default-bold />
                 </div>
                 <div class="field-group">
                   <label>专业 / 年级排名</label>
-                  <RichTextEditor v-model="edu.ranking" placeholder="例如 前 10%" compact />
-                </div>
-                <div class="field-group">
-                  <label>平均分 / 加权平均分</label>
-                  <RichTextEditor v-model="edu.average_score" placeholder="例如 88/100" compact />
+                  <RichTextEditor v-model="edu.ranking" placeholder="例如 前 10%" compact default-bold />
                 </div>
                 <div class="field-group full-width">
                   <label>时间范围</label>
-                  <div class="date-range-wrapper">
-                    <template v-if="!edu._isPresent">
-                      <el-date-picker
-                        v-model="edu._dateRange"
-                        type="monthrange"
-                        range-separator="至"
-                        start-placeholder="开始时间"
-                        end-placeholder="结束时间"
-                        format="YYYY.MM"
-                        value-format="YYYY-MM"
-                        class="element-date-picker"
-                        popper-class="resume-dark-date-popper"
-                      />
-                    </template>
-                    <template v-else>
-                      <div class="present-date-display">
-                        <span class="present-start-date">{{ edu._dateRange?.[0]?.replace('-', '.') || '' }}</span>
-                        <span class="present-separator">至</span>
-                        <span class="present-end-text">至今</span>
-                      </div>
-                    </template>
-                    <label class="present-label">
-                      <input type="checkbox" v-model="edu._isPresent" @change="onPresentChange(edu)" />
-                      至今
-                    </label>
+                  <div class="date-range-inputs">
+                    <RichTextEditor v-model="edu.date_range[0]" placeholder="例如 2024.09" compact default-bold />
+                    <span class="date-range-separator">至</span>
+                    <RichTextEditor v-model="edu.date_range[1]" placeholder="例如 2025.09/至今" compact default-bold />
                   </div>
                 </div>
                 <div class="field-group full-width">
                   <label>学校标签</label>
                   <div class="tags-input">
-                    <span v-for="(tag, j) in edu.school_tags" :key="j" class="tag">
-                      <span v-html="formatInlineHtml(tag)"></span>
+                    <span v-for="(tag, j) in edu.school_tags" :key="j" class="tag school-tag-edit-row">
+                      <RichTextEditor v-model="edu.school_tags[j]" placeholder="例如 211/985/双一流" compact default-bold />
                       <button @click="edu.school_tags.splice(j, 1)" class="tag-remove">×</button>
                     </span>
-                    <RichTextEditor v-model="edu.newSchoolTag" placeholder="如 211 · 双一流" compact />
+                    <RichTextEditor v-model="edu.newSchoolTag" placeholder="例如 211/985/双一流" compact default-bold />
                     <button type="button" class="tag-add-btn" @click="addSchoolTag(edu)">添加</button>
                   </div>
                 </div>
@@ -4488,7 +4483,7 @@ watch(
             <RichTextEditor v-model="resumeModuleTitles.honors" class="module-title-editor" compact default-bold @update:modelValue="previewResumeModuleTitles" />
             <RichTextEditor
               v-model="honorsText"
-              placeholder="每行一项奖学金、竞赛奖项或荣誉"
+              placeholder="例如 国家奖学金"
               class="rich-editor-field"
               :resume-metrics="resumeEditorMetrics"
             />
@@ -4504,7 +4499,7 @@ watch(
             <RichTextEditor v-model="resumeModuleTitles.research_interests" class="module-title-editor" compact default-bold @update:modelValue="previewResumeModuleTitles" />
             <RichTextEditor
               v-model="researchInterestsText"
-              placeholder="每行一条研究方向，导入内容会按原文保留"
+              placeholder="例如 人机协作与智能系统"
               class="rich-editor-field"
               :resume-metrics="resumeEditorMetrics"
             />
@@ -4514,12 +4509,22 @@ watch(
             <div class="others-section">
               <div class="field-group full-width">
                 <label>技能条目</label>
-                <div class="tags-input">
-                  <span v-for="(skill, i) in resumeFormData.others.skills" :key="i" class="tag">
-                    <span v-html="formatInlineHtml(skill)"></span>
+                <div class="tags-input sortable-list">
+                  <div
+                    v-for="(skill, i) in resumeFormData.others.skills"
+                    :key="`skill-${i}`"
+                    class="sortable-item"
+                    draggable="true"
+                    @dragstart="startOtherItemDrag('skills', i, $event)"
+                    @dragover.prevent
+                    @drop="dropOtherItem('skills', i, $event)"
+                    @dragend="endOtherItemDrag"
+                  >
+                    <span class="sortable-handle" aria-hidden="true">⋮⋮</span>
+                    <RichTextEditor v-model="resumeFormData.others.skills[i]" placeholder="例如 Python、Vue、FastAPI" compact />
                     <button @click="resumeFormData.others.skills.splice(i, 1)" class="tag-remove">×</button>
-                  </span>
-                  <RichTextEditor v-model="newResumeSkill" placeholder="添加技能" compact />
+                  </div>
+                  <RichTextEditor v-model="newResumeSkill" placeholder="例如 Python、Vue、FastAPI" compact />
                   <button type="button" class="tag-add-btn" @click="addResumeSkill">添加</button>
                 </div>
               </div>
@@ -4535,60 +4540,36 @@ watch(
               <div class="form-grid">
                 <div class="field-group">
                   <label>公司</label>
-                  <RichTextEditor v-model="work.company_name" placeholder="请输入" compact default-bold />
+                  <RichTextEditor v-model="work.company_name" placeholder="例如 某某科技有限公司" compact default-bold />
                 </div>
                 <div class="field-group">
                   <label>职位</label>
-                  <RichTextEditor v-model="work.job_title" placeholder="请输入" compact />
+                  <RichTextEditor v-model="work.job_title" placeholder="例如 算法工程师" compact default-bold />
                 </div>
                 <div class="field-group">
                   <label>工作类型</label>
-                  <el-select v-model="work.job_type" placeholder="请选择" class="element-select" popper-class="resume-dark-select-popper">
-                    <el-option label="全职" value="全职" />
-                    <el-option label="实习" value="实习" />
-                  </el-select>
+                  <RichTextEditor v-model="work.job_type" placeholder="例如 全职或实习" compact default-bold />
                 </div>
                 <div class="field-group full-width">
                   <label>时间范围</label>
-                  <div class="date-range-wrapper">
-                    <template v-if="!work._isPresent">
-                      <el-date-picker
-                        v-model="work._dateRange"
-                        type="monthrange"
-                        range-separator="至"
-                        start-placeholder="开始时间"
-                        end-placeholder="结束时间"
-                        format="YYYY.MM"
-                        value-format="YYYY-MM"
-                        class="element-date-picker"
-                        popper-class="resume-dark-date-popper"
-                      />
-                    </template>
-                    <template v-else>
-                      <div class="present-date-display">
-                        <span class="present-start-date">{{ work._dateRange?.[0]?.replace('-', '.') || '' }}</span>
-                        <span class="present-separator">至</span>
-                        <span class="present-end-text">至今</span>
-                      </div>
-                    </template>
-                    <label class="present-label">
-                      <input type="checkbox" v-model="work._isPresent" @change="onPresentChange(work)" />
-                      至今
-                    </label>
+                  <div class="date-range-inputs">
+                    <RichTextEditor v-model="work.date_range[0]" placeholder="例如 2024.09" compact default-bold />
+                    <span class="date-range-separator">至</span>
+                    <RichTextEditor v-model="work.date_range[1]" placeholder="例如 2025.09/至今" compact default-bold />
                   </div>
                 </div>
               </div>
               <!-- 可选的项目化工作内容；普通工作内容仍可无标签显示。 -->
               <div class="array-item-nested">
                 <div class="content-block-heading-row">
-                  <RichTextEditor v-model="work._introLabel" placeholder="项目简介" compact default-bold />
+                  <RichTextEditor v-model="work._introLabel" placeholder="例如 项目简介" compact default-bold />
                   <select v-model="work._introType" aria-label="项目简介内容形式">
                     <option v-for="(label, value) in CONTENT_BLOCK_TYPE_OPTIONS" :key="value" :value="value">{{ label }}</option>
                   </select>
                 </div>
                 <RichTextEditor
                   v-model="work._introText"
-                  placeholder="填写内容；分点或编号形式下每行一项"
+                  placeholder="例如 负责模型设计、实现与优化"
                   class="rich-editor-field"
                   :resume-metrics="resumeEditorMetrics"
                   :resume-flow="projectIntroFlow(work)"
@@ -4597,14 +4578,14 @@ watch(
               </div>
               <div class="array-item-nested">
                 <div class="content-block-heading-row">
-                  <RichTextEditor v-model="work._dutiesLabel" placeholder="项目职责" compact default-bold />
+                  <RichTextEditor v-model="work._dutiesLabel" placeholder="例如 项目职责" compact default-bold />
                   <select v-model="work._dutiesType" aria-label="项目职责内容形式">
                     <option v-for="(label, value) in CONTENT_BLOCK_TYPE_OPTIONS" :key="value" :value="value">{{ label }}</option>
                   </select>
                 </div>
                 <RichTextEditor
                   v-model="work._dutiesText"
-                  placeholder="填写内容；分点或编号形式下每行一项"
+                  placeholder="例如 完成接口开发与性能优化"
                   class="rich-editor-field"
                   :resume-metrics="resumeEditorMetrics"
                   :resume-flow="projectDutiesFlow(work)"
@@ -4612,13 +4593,18 @@ watch(
                 <div v-if="hasEditorText(work._dutiesText) && !hasEditorText(work._dutiesLabel)" class="semantic-hidden-notice">标签为空，该职责内容已保留但不会显示或导出。</div>
               </div>
               <div class="array-item-nested">
-                <label>普通工作内容（无标签，每行一个分点）</label>
+                <div class="content-block-heading-row generic-content-heading">
+                  <label>普通工作内容（可选）</label>
+                  <select v-model="work._detailsType" aria-label="普通工作内容分点形式">
+                    <option v-for="(label, value) in CONTENT_BLOCK_TYPE_OPTIONS" :key="value" :value="value">{{ label }}</option>
+                  </select>
+                </div>
                 <RichTextEditor
                   v-model="work._detailsText"
-                  placeholder="适用于不包含项目简介、项目职责的常规工作内容"
+                  placeholder="例如 参与日常需求分析与开发"
                   class="rich-editor-field"
                   :resume-metrics="resumeEditorMetrics"
-                  :resume-flow="genericDetailsFlow()"
+                  :resume-flow="genericDetailsFlow(work)"
                 />
               </div>
             </div>
@@ -4634,53 +4620,32 @@ watch(
               <div class="form-grid">
                 <div class="field-group">
                   <label>项目名称</label>
-                  <RichTextEditor v-model="proj.project_name" placeholder="请输入" compact default-bold />
+                  <RichTextEditor v-model="proj.project_name" placeholder="例如 智能调度平台" compact default-bold />
                 </div>
                 <div class="field-group">
                   <label>角色</label>
-                  <RichTextEditor v-model="proj.role" placeholder="请输入" compact />
+                  <RichTextEditor v-model="proj.role" placeholder="例如 项目负责人" compact />
                 </div>
                 <div class="field-group full-width">
                   <label>时间范围</label>
-                  <div class="date-range-wrapper">
-                    <template v-if="!proj._isPresent">
-                      <el-date-picker
-                        v-model="proj._dateRange"
-                        type="monthrange"
-                        range-separator="至"
-                        start-placeholder="开始时间"
-                        end-placeholder="结束时间"
-                        format="YYYY.MM"
-                        value-format="YYYY-MM"
-                        class="element-date-picker"
-                        popper-class="resume-dark-date-popper"
-                      />
-                    </template>
-                    <template v-else>
-                      <div class="present-date-display">
-                        <span class="present-start-date">{{ proj._dateRange?.[0]?.replace('-', '.') || '' }}</span>
-                        <span class="present-separator">至</span>
-                        <span class="present-end-text">至今</span>
-                      </div>
-                    </template>
-                    <label class="present-label">
-                      <input type="checkbox" v-model="proj._isPresent" @change="onPresentChange(proj)" />
-                      至今
-                    </label>
+                  <div class="date-range-inputs">
+                    <RichTextEditor v-model="proj.date_range[0]" placeholder="例如 2024.09" compact default-bold />
+                    <span class="date-range-separator">至</span>
+                    <RichTextEditor v-model="proj.date_range[1]" placeholder="例如 2025.09/至今" compact default-bold />
                   </div>
                 </div>
               </div>
               <!-- 项目内容 -->
               <div class="array-item-nested">
                 <div class="content-block-heading-row">
-                  <RichTextEditor v-model="proj._introLabel" placeholder="项目简介" compact default-bold />
+                  <RichTextEditor v-model="proj._introLabel" placeholder="例如 项目简介" compact default-bold />
                   <select v-model="proj._introType" aria-label="项目简介内容形式">
                     <option v-for="(label, value) in CONTENT_BLOCK_TYPE_OPTIONS" :key="value" :value="value">{{ label }}</option>
                   </select>
                 </div>
                 <RichTextEditor
                   v-model="proj._introText"
-                  placeholder="填写内容；分点或编号形式下每行一项"
+                  placeholder="例如 面向公司实际业务场景完成方案设计"
                   class="rich-editor-field"
                   :resume-metrics="resumeEditorMetrics"
                   :resume-flow="projectIntroFlow(proj)"
@@ -4689,14 +4654,14 @@ watch(
               </div>
               <div class="array-item-nested">
                 <div class="content-block-heading-row">
-                  <RichTextEditor v-model="proj._dutiesLabel" placeholder="项目职责" compact default-bold />
+                  <RichTextEditor v-model="proj._dutiesLabel" placeholder="例如 项目职责" compact default-bold />
                   <select v-model="proj._dutiesType" aria-label="项目职责内容形式">
                     <option v-for="(label, value) in CONTENT_BLOCK_TYPE_OPTIONS" :key="value" :value="value">{{ label }}</option>
                   </select>
                 </div>
                 <RichTextEditor
                   v-model="proj._dutiesText"
-                  placeholder="填写内容；分点或编号形式下每行一项"
+                  placeholder="例如 负责项目推进、测试验证与交付"
                   class="rich-editor-field"
                   :resume-metrics="resumeEditorMetrics"
                   :resume-flow="projectDutiesFlow(proj)"
@@ -4704,13 +4669,18 @@ watch(
                 <div v-if="hasEditorText(proj._dutiesText) && !hasEditorText(proj._dutiesLabel)" class="semantic-hidden-notice">标签为空，该职责内容已保留但不会显示或导出。</div>
               </div>
               <div class="array-item-nested">
-                <label>其他项目内容（可选）</label>
+                <div class="content-block-heading-row generic-content-heading">
+                  <label>其他项目内容（可选）</label>
+                  <select v-model="proj._detailsType" aria-label="其他项目内容分点形式">
+                    <option v-for="(label, value) in CONTENT_BLOCK_TYPE_OPTIONS" :key="value" :value="value">{{ label }}</option>
+                  </select>
+                </div>
                 <RichTextEditor
                   v-model="proj._extraDetailsText"
-                  placeholder="不属于项目简介或项目职责的补充内容，每行一条"
+                  placeholder="例如 获得校级优秀项目称号"
                   class="rich-editor-field"
                   :resume-metrics="resumeEditorMetrics"
-                  :resume-flow="genericDetailsFlow()"
+                  :resume-flow="genericDetailsFlow(proj)"
                 />
               </div>
             </div>
@@ -4724,13 +4694,13 @@ watch(
               </div>
               <div class="field-group full-width">
                 <label>栏目标题</label>
-                <RichTextEditor v-model="section.title" placeholder="保留原简历栏目标题" compact />
+                <RichTextEditor v-model="section.title" placeholder="例如 社团经历" compact default-bold />
               </div>
               <div class="array-item-nested">
                 <label>栏目内容</label>
                 <RichTextEditor
                   v-model="section._itemsText"
-                  placeholder="每行一条，按原简历阅读顺序保留"
+                  placeholder="例如 负责学院学生会活动组织"
                   class="rich-editor-field"
                   :resume-metrics="resumeEditorMetrics"
                 />
@@ -4743,23 +4713,43 @@ watch(
             <div class="others-section">
               <div class="field-group full-width">
                 <label>证书</label>
-                <div class="tags-input">
-                  <span v-for="(cert, i) in resumeFormData.others.certificates" :key="i" class="tag">
-                    <span v-html="formatInlineHtml(cert)"></span>
+                <div class="tags-input sortable-list">
+                  <div
+                    v-for="(cert, i) in resumeFormData.others.certificates"
+                    :key="`cert-${i}`"
+                    class="sortable-item"
+                    draggable="true"
+                    @dragstart="startOtherItemDrag('certificates', i, $event)"
+                    @dragover.prevent
+                    @drop="dropOtherItem('certificates', i, $event)"
+                    @dragend="endOtherItemDrag"
+                  >
+                    <span class="sortable-handle" aria-hidden="true">⋮⋮</span>
+                    <RichTextEditor v-model="resumeFormData.others.certificates[i]" placeholder="例如 软件设计师" compact />
                     <button @click="resumeFormData.others.certificates.splice(i, 1)" class="tag-remove">×</button>
-                  </span>
-                  <RichTextEditor v-model="newResumeCert" placeholder="添加证书" compact />
+                  </div>
+                  <RichTextEditor v-model="newResumeCert" placeholder="例如 软件设计师" compact />
                   <button type="button" class="tag-add-btn" @click="addResumeCert">添加</button>
                 </div>
               </div>
               <div class="field-group full-width">
                 <label>语言</label>
-                <div class="tags-input">
-                  <span v-for="(lang, i) in resumeFormData.others.languages" :key="i" class="tag">
-                    <span v-html="formatInlineHtml(lang)"></span>
+                <div class="tags-input sortable-list">
+                  <div
+                    v-for="(lang, i) in resumeFormData.others.languages"
+                    :key="`lang-${i}`"
+                    class="sortable-item"
+                    draggable="true"
+                    @dragstart="startOtherItemDrag('languages', i, $event)"
+                    @dragover.prevent
+                    @drop="dropOtherItem('languages', i, $event)"
+                    @dragend="endOtherItemDrag"
+                  >
+                    <span class="sortable-handle" aria-hidden="true">⋮⋮</span>
+                    <RichTextEditor v-model="resumeFormData.others.languages[i]" placeholder="例如 英语 CET-6" compact />
                     <button @click="resumeFormData.others.languages.splice(i, 1)" class="tag-remove">×</button>
-                  </span>
-                  <RichTextEditor v-model="newResumeLang" placeholder="添加语言" compact />
+                  </div>
+                  <RichTextEditor v-model="newResumeLang" placeholder="例如 英语 CET-6" compact />
                   <button type="button" class="tag-add-btn" @click="addResumeLang">添加</button>
                 </div>
               </div>
@@ -4769,7 +4759,7 @@ watch(
             <RichTextEditor v-model="resumeModuleTitles.self_evaluation" class="module-title-editor" compact default-bold @update:modelValue="previewResumeModuleTitles" />
             <RichTextEditor
               v-model="selfEvalText"
-              placeholder="请输入自我评价，支持换行"
+              placeholder="例如 学习能力强，重视工程质量。"
               class="rich-editor-field"
               :resume-metrics="resumeEditorMetrics"
             />
@@ -6775,12 +6765,44 @@ watch(
   font-size: 0.78rem;
 }
 
+.generic-content-heading {
+  align-items: center;
+}
+
+.generic-content-heading > label {
+  margin: 0;
+}
+
 .module-title-editor {
-  margin: 1.35rem 0 0.7rem;
+  position: relative;
+  width: 33.333%;
+  min-width: 220px;
+  max-width: 100%;
+  margin: 1.6rem 0 0.85rem;
+  overflow: visible !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  border-radius: 10px !important;
+  background: rgba(255, 255, 255, 0.035) !important;
+  box-shadow: none !important;
+}
+
+.module-title-editor:focus-within {
+  border-color: rgba(120, 166, 255, 0.72) !important;
+  box-shadow: 0 0 0 3px rgba(120, 166, 255, 0.09) !important;
+}
+
+.module-title-editor::after {
+  content: '';
+  position: absolute;
+  top: calc(100% + 0.55rem);
+  left: 0;
+  width: 300%;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.72);
+  pointer-events: none;
 }
 
 .module-title-editor :deep(.editor-content) {
-  font-weight: 700;
+  font-size: 1rem;
 }
 
 .array-item-nested > label {
@@ -6923,46 +6945,22 @@ watch(
   border-color: #303030;
 }
 
-/* 日期选择器样式 */
-.date-range-wrapper {
-  display: flex;
+.date-range-inputs {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
-  gap: 1rem;
+  gap: 0.55rem;
+  width: 100%;
 }
 
-.element-date-picker {
-  flex: 1;
+.date-range-inputs .rich-editor {
+  min-width: 0;
 }
 
-.element-date-picker :deep(.el-input__wrapper) {
-  background: #fafafa;
-  border-color: #e9ecef;
-}
-
-.element-date-picker :deep(.el-input__wrapper:hover) {
-  border-color: #dee2e6;
-}
-
-.element-date-picker :deep(.el-input__wrapper.is-focus) {
-  background: #fff;
-  border-color: var(--primary-color);
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.08);
-}
-
-.present-label {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
+.date-range-separator {
+  color: #aeb3bf;
   font-size: 0.8rem;
-  color: var(--text-secondary);
-  cursor: pointer;
   white-space: nowrap;
-}
-
-.present-label input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
-  cursor: pointer;
 }
 
 .present-text {
@@ -7039,26 +7037,6 @@ watch(
 }
 
 .element-select :deep(.el-input__wrapper.is-focus) {
-  background: #fff;
-  border-color: var(--primary-color);
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.08);
-}
-
-.element-date-picker {
-  width: 100%;
-}
-
-.element-date-picker :deep(.el-input__wrapper) {
-  background: #fafafa;
-  border-color: #e9ecef;
-  border-radius: var(--radius-sm);
-}
-
-.element-date-picker :deep(.el-input__wrapper:hover) {
-  border-color: #dee2e6;
-}
-
-.element-date-picker :deep(.el-input__wrapper.is-focus) {
   background: #fff;
   border-color: var(--primary-color);
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.08);
@@ -7519,6 +7497,8 @@ watch(
 }
 
 :is(.fullscreen-dialog, .translate-dialog, .jd-dialog, .resume-dialog) .dialog-header {
+  position: relative;
+  padding-right: 4.5rem;
   color: #f5f5f7;
   background: rgba(255, 255, 255, 0.02);
   border-bottom-color: rgba(255, 255, 255, 0.075);
@@ -7529,6 +7509,10 @@ watch(
 }
 
 :is(.fullscreen-dialog, .translate-dialog, .jd-dialog, .resume-dialog) .dialog-close-btn {
+  position: absolute;
+  top: 50%;
+  right: 1rem;
+  transform: translateY(-50%);
   color: #9b9ba4;
   background: rgba(255, 255, 255, 0.055);
   border: 1px solid rgba(255, 255, 255, 0.07);
@@ -7640,109 +7624,11 @@ watch(
 }
 
 .resume-dialog .element-select :deep(.el-select__wrapper),
-.resume-dialog .element-select :deep(.el-input__wrapper),
-.resume-dialog .element-date-picker :deep(.el-input__wrapper),
-.resume-dialog :deep(.element-date-picker.el-input__wrapper) {
+.resume-dialog .element-select :deep(.el-input__wrapper) {
   height: 46px !important;
   min-height: 46px !important;
   padding: 0 0.75rem;
   box-sizing: border-box !important;
-}
-
-.resume-dialog .present-date-display {
-  height: 46px;
-  min-height: 46px;
-  box-sizing: border-box;
-  color: #ededf1;
-  background: rgba(255, 255, 255, 0.045);
-  border-color: rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
-}
-
-.resume-dialog .present-start-date {
-  color: #ededf1;
-}
-
-.resume-dialog .present-separator {
-  color: #777780;
-}
-
-.resume-dialog .present-end-text {
-  color: #78a6ff;
-}
-
-.resume-dialog .present-label {
-  color: #d5d5da;
-}
-
-.resume-dialog .present-label input[type='checkbox'] {
-  position: relative;
-  width: 18px;
-  height: 18px;
-  flex: 0 0 18px;
-  margin: 0;
-  padding: 0;
-  appearance: none;
-  background: #25262c;
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  border-radius: 4px;
-  box-shadow: none;
-}
-
-.resume-dialog .present-label input[type='checkbox']:checked {
-  background: #5f8ff2;
-  border-color: #78a6ff;
-}
-
-.resume-dialog .present-label input[type='checkbox']:checked::after {
-  position: absolute;
-  top: 2px;
-  left: 5px;
-  width: 5px;
-  height: 9px;
-  content: '';
-  border: solid #fff;
-  border-width: 0 2px 2px 0;
-  transform: rotate(45deg);
-}
-
-.resume-dialog :deep(.element-date-picker) {
-  gap: 8px;
-}
-
-.resume-dialog :deep(.element-date-picker .el-range-input) {
-  height: auto;
-  min-height: 0;
-  padding: 0 4px;
-  color: #ededf1;
-  background: transparent !important;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-}
-
-.resume-dialog :deep(.element-date-picker .el-range-input:focus) {
-  background: transparent !important;
-  border: 0;
-  box-shadow: none;
-}
-
-.resume-dialog :deep(.element-date-picker .el-range__icon) {
-  width: 18px;
-  margin: 0 2px 0 0;
-  flex: 0 0 18px;
-}
-
-.resume-dialog :deep(.element-date-picker .el-range-separator) {
-  width: 22px;
-  flex: 0 0 22px;
-  color: #777780;
-}
-
-.resume-dialog :deep(.element-date-picker .el-range__close-icon) {
-  width: 18px;
-  margin-left: 2px;
-  flex: 0 0 18px;
 }
 
 .resume-dialog .element-select :deep(.el-select__placeholder),
@@ -7932,10 +7818,55 @@ watch(
   box-sizing: border-box;
 }
 
+.resume-dialog .tags-input.sortable-list {
+  align-items: stretch;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.resume-dialog .sortable-item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.35rem;
+  width: 100%;
+}
+
+.resume-dialog .sortable-handle {
+  color: #777b88;
+  cursor: grab;
+  user-select: none;
+  letter-spacing: -0.16em;
+  text-align: center;
+}
+
+.resume-dialog .sortable-handle:active {
+  cursor: grabbing;
+}
+
+.resume-dialog .sortable-item .rich-editor {
+  flex: none;
+  width: 100%;
+}
+
 .resume-dialog .tags-input .tag {
   color: #dbe6ff;
   background: rgba(95, 143, 242, 0.13);
   border-radius: 6px;
+}
+
+.resume-dialog .school-tag-edit-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.3rem;
+  width: 100%;
+}
+
+.resume-dialog .school-tag-edit-row .rich-editor {
+  min-width: 0;
+  flex: none;
+  width: 100%;
 }
 
 .resume-dialog .tags-input .tag-remove {

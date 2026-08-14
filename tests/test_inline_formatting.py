@@ -82,6 +82,11 @@ class InlineFormattingTests(unittest.TestCase):
         self.assertEqual(unbolded, "性能提升35**%**")
         self.assertEqual(plain_inline_text(unbolded), "性能提升35%")
 
+    def test_multiline_bold_closes_markers_on_each_line(self):
+        bolded = set_inline_bold("第一行\n第二行", "第一行\n第二行", bold=True)
+        self.assertEqual(bolded, "**第一行**\n**第二行**")
+        self.assertEqual(plain_inline_text(bolded), "第一行\n第二行")
+
     def test_quoted_section_words_do_not_expand_scope(self):
         original = resume_with_repeated_text()
         candidate, reference = format_resume_text(

@@ -33,7 +33,7 @@ FIELD_LABELS = {
     "school": "学校", "school_name": "学校名称", "degree": "学历", "major": "专业", "date_range": "时间",
     "start_date": "开始时间", "end_date": "结束时间",
     "graduation_date": "毕业时间", "gpa": "GPA", "gpa_scale": "GPA 满分",
-    "ranking": "排名", "average_score": "平均分", "company_name": "公司",
+    "ranking": "排名", "company_name": "公司",
     "company": "公司", "job_title": "职位", "position": "职位",
     "job_type": "工作类型", "project_name": "项目名称", "role": "角色",
     "details": "详细内容", "skills": "技能", "certificates": "证书",

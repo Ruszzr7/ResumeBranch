@@ -1,5 +1,5 @@
 <template>
-  <div class="rich-editor" :class="{ compact }">
+  <div class="rich-editor" :class="{ compact, 'default-bold-active': defaultBoldActive }">
     <!-- 编辑区域 -->
     <div
       ref="editorRef"
@@ -22,7 +22,13 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted, nextTick, computed } from 'vue'
+import { ref, watch, onMounted, nextTick } from 'vue'
+import {
+  formatInlineHtml,
+  plainInlineText,
+  serializeInlineBold,
+  toggleInlineBoldRange
+} from '../utils/inlineFormatting.js'
 
 const props = defineProps({
   modelValue: {
@@ -55,6 +61,7 @@ const emit = defineEmits(['update:modelValue'])
 
 const editorRef = ref(null)
 const isUpdating = ref(false) // 避免循环更新
+const defaultBoldActive = ref(false)
 const displayLineCount = ref(0) // 按当前简历正文排版估算的视觉行数
 
 function measureResumeLineCount(text) {
@@ -132,48 +139,60 @@ function onInput() {
 }
 
 function formatToHtml(text) {
-  if (!text) return ''
-  // 转义 HTML 特殊字符
-  let escaped = text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-  // 将换行转为 <br>
-  escaped = escaped.replace(/\n/g, '<br>')
-  // 将 **text** 转为 <b>text</b>
-  escaped = escaped.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')
-  return escaped
+  return formatInlineHtml(text).replace(/\n/g, '<br>')
 }
 
-// 解析 HTML 为纯文本（保留 ** 标记）
-function parseToText(html) {
-  if (!html) return ''
-  // 将 <b> 转回 **
-  let text = html
-    .replace(/<(?:b|strong)\b[^>]*>/gi, '**')
-    .replace(/<\/(?:b|strong)>/gi, '**')
-  // 将 <br> 和 <div> 转为换行
-  text = text.replace(/<br\s*\/?>/gi, '\n').replace(/<\/div>/gi, '\n').replace(/<div[^>]*>/gi, '\n')
-  // 移除其他 HTML 标签
-  text = text.replace(/<[^>]+>/g, '')
-  // 解码 HTML 实体
-  text = text.replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-  // 清理多余的换行
-  text = text.replace(/\n{3,}/g, '\n\n')
-  return text.trim()
+function domToInlineText(root, { trim = true, baseBold = false } = {}) {
+  const segments = []
+  const push = (text, bold) => {
+    if (!text) return
+    const previous = segments[segments.length - 1]
+    if (previous && previous.bold === bold) previous.text += text
+    else segments.push({ text, bold })
+  }
+  const endsWithNewline = () => segments.length > 0 && segments[segments.length - 1].text.endsWith('\n')
+  const walk = (node, inheritedBold = false) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      push(node.textContent || '', inheritedBold)
+      return
+    }
+    if (![Node.ELEMENT_NODE, Node.DOCUMENT_FRAGMENT_NODE].includes(node.nodeType)) return
+    const tag = node.nodeType === Node.ELEMENT_NODE ? node.tagName : ''
+    if (tag === 'BR') {
+      push('\n', inheritedBold)
+      return
+    }
+    let bold = inheritedBold
+    if (tag === 'B' || tag === 'STRONG') bold = true
+    const fontWeight = node.nodeType === Node.ELEMENT_NODE ? String(node.style?.fontWeight || '').toLowerCase() : ''
+    if (fontWeight === 'normal' || fontWeight === '400') bold = false
+    else if (fontWeight === 'bold' || Number(fontWeight) >= 600) bold = true
+    const isBlock = tag === 'DIV' || tag === 'P'
+    if (isBlock && segments.length && !endsWithNewline()) push('\n', inheritedBold)
+    node.childNodes.forEach(child => walk(child, bold))
+    if (isBlock && !endsWithNewline()) push('\n', inheritedBold)
+  }
+  walk(root, baseBold)
+  let value = serializeInlineBold(segments).replace(/\n{3,}/g, '\n\n')
+  if (trim) value = value.trim()
+  return value
+}
+
+// 解析编辑器 DOM 为存储协议；不会把浏览器生成的 normal 样式误判成粗体。
+function parseToText() {
+  if (!editorRef.value) return ''
+  return domToInlineText(editorRef.value, { baseBold: defaultBoldActive.value })
 }
 
 function onBlur() {
   syncValue()
+  defaultBoldActive.value = false
+  nextTick(updateDisplay)
 }
 
 function onFocus() {
-  if (!props.defaultBold || parseToText(editorRef.value?.innerHTML || '')) return
-  // New title-like values start bold, while existing values remain entirely
-  // user-controlled and can be toggled with Ctrl+B.
-  document.execCommand('bold', false, null)
+  // 新建的标题类字段第一次输入即写入显式粗体；已有内容完全尊重已保存字重。
+  defaultBoldActive.value = Boolean(props.defaultBold && !parseToText())
 }
 
 function handleEnter(event) {
@@ -186,262 +205,66 @@ function handleCtrlB(e) {
   if (selection.rangeCount === 0) return
 
   const range = selection.getRangeAt(0)
-  const selectedText = range.toString()
-  if (!selectedText) return
-
-  // 使用浏览器原生的 execCommand('bold') 命令
-  // 这会自动处理各种边界情况
-  document.execCommand('bold', false, null)
-
-  // 命令执行后收起蓝色选区，把光标放到改动末尾，便于立即辨认结果。
-  if (selection.rangeCount > 0) selection.collapseToEnd()
-
-  // 更新行数
-  updateLineCount()
-  syncValue()
+  if (!editorRef.value?.contains(range.commonAncestorContainer) || range.collapsed) return
+  const before = document.createRange()
+  before.selectNodeContents(editorRef.value)
+  before.setEnd(range.startContainer, range.startOffset)
+  const throughSelection = document.createRange()
+  throughSelection.selectNodeContents(editorRef.value)
+  throughSelection.setEnd(range.endContainer, range.endOffset)
+  const fragmentText = sourceRange => {
+    const holder = document.createDocumentFragment()
+    holder.appendChild(sourceRange.cloneContents())
+    return plainInlineText(domToInlineText(holder, { trim: false })).length
+  }
+  const start = fragmentText(before)
+  const end = fragmentText(throughSelection)
+  const current = parseToText()
+  const updated = toggleInlineBoldRange(current, start, end)
+  defaultBoldActive.value = false
+  isUpdating.value = true
+  editorRef.value.innerHTML = formatToHtml(updated) || '<br>'
+  emit('update:modelValue', updated)
+  nextTick(() => {
+    isUpdating.value = false
+    placeCaretAtOffset(end)
+    updateLineCount()
+  })
 }
 
-// 获取文本节点在父元素中的相对偏移
-function getRelativeOffset(textNode, parentElement, absoluteOffset) {
+function placeCaretAtOffset(targetOffset) {
+  const editor = editorRef.value
+  if (!editor) return
   let offset = 0
-  for (const child of parentElement.childNodes) {
-    if (child === textNode) {
-      return offset + absoluteOffset
-    }
-    if (child.nodeType === Node.TEXT_NODE) {
-      offset += child.textContent.length
-    }
-  }
-  return null
-}
-
-// 对整个选区取消加粗
-function toggleUnbold(editor, range, selectedText) {
-  const selection = window.getSelection()
-
-  // 获取选区的边界
-  const startContainer = range.startContainer
-  const startOffset = range.startOffset
-  const endContainer = range.endContainer
-  const endOffset = range.endOffset
-
-  // 如果是同一个文本节点，直接在节点内处理
-  if (startContainer === endContainer && startContainer.nodeType === Node.TEXT_NODE) {
-    const text = startContainer.textContent
-    const beforeText = text.substring(0, startOffset)
-    const selectedTextContent = text.substring(startOffset, endOffset)
-    const afterText = text.substring(endOffset)
-
-    // 将选中部分的 <b> 标签替换为纯文本
-    // 创建一个临时容器来处理
-    const tempDiv = document.createElement('div')
-    tempDiv.textContent = selectedTextContent
-
-    // 找到所有被选中的文本节点部分
-    processTextNodeForUnbold(startContainer, startOffset, endOffset)
-  } else {
-    // 跨多个节点的情况：遍历选区内的所有节点
-    processRangeForUnbold(range)
-  }
-
-  // 合并相邻的 <b> 标签
-  mergeAdjacentBoldTags(editor)
-
-  // 恢复选区
-  try {
-    const newRange = document.createRange()
-    newRange.setStart(startContainer, startOffset)
-    newRange.setEnd(endContainer, endOffset)
-    selection.removeAllRanges()
-    selection.addRange(newRange)
-  } catch (e) {
-    console.warn('Failed to restore selection:', e)
-  }
-}
-
-// 处理单个文本节点的取消加粗
-function processTextNodeForUnbold(textNode, start, end) {
-  const parent = textNode.parentElement
-  if (!parent) return
-
-  // 检查父元素是否是 <b>
-  if (parent.tagName === 'B' || parent.tagName === 'STRONG') {
-    const grandParent = parent.parentNode
-    if (!grandParent) return
-
-    const text = textNode.textContent
-    const beforeText = text.substring(0, start)
-    const selectedTextContent = text.substring(start, end)
-    const afterText = text.substring(end)
-
-    // 构建新的文档片段
-    const fragment = document.createDocumentFragment()
-
-    // 前面的文本
-    if (beforeText) {
-      fragment.appendChild(document.createTextNode(beforeText))
-    }
-
-    // 选中的文本 - 去掉 <b> 标签
-    if (selectedTextContent) {
-      fragment.appendChild(document.createTextNode(selectedTextContent))
-    }
-
-    // 后面的文本
-    if (afterText) {
-      fragment.appendChild(document.createTextNode(afterText))
-    }
-
-    grandParent.replaceChild(fragment, parent)
-  }
-}
-
-// 处理跨多个节点的选区取消加粗
-function processRangeForUnbold(range) {
-  // 创建一个 TreeWalker 来遍历选区内容
-  const container = range.commonAncestorContainer
-  const walker = document.createTreeWalker(
-    container,
-    NodeFilter.SHOW_TEXT,
-    null,
-    false
-  )
-
-  const startContainer = range.startContainer
-  const endContainer = range.endContainer
-
-  let node = walker.currentNode
+  let targetNode = editor
+  let targetNodeOffset = editor.childNodes.length
+  const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT)
+  let node = walker.nextNode()
   while (node) {
-    // 检查这个节点是否在选区内
-    if (isNodeInRange(node, range)) {
-      processTextNodeForUnboldInRange(node, range)
+    if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'BR') {
+      if (offset >= targetOffset) {
+        targetNode = node.parentNode
+        targetNodeOffset = Array.prototype.indexOf.call(node.parentNode.childNodes, node) + 1
+        break
+      }
+      offset += 1
+    } else if (node.nodeType === Node.TEXT_NODE) {
+      const length = node.textContent?.length || 0
+      if (offset + length >= targetOffset) {
+        targetNode = node
+        targetNodeOffset = Math.max(0, targetOffset - offset)
+        break
+      }
+      offset += length
     }
     node = walker.nextNode()
   }
-}
-
-// 检查节点是否在选区内
-function isNodeInRange(node, range) {
-  const nodeRange = document.createRange()
-  try {
-    nodeRange.selectNode(node)
-    return range.compareBoundaryPoints(Range.END_TO_START, nodeRange) <= 0 &&
-           range.compareBoundaryPoints(Range.START_TO_END, nodeRange) >= 0
-  } catch (e) {
-    return false
-  }
-}
-
-// 处理范围内的文本节点取消加粗
-function processTextNodeForUnboldInRange(textNode, range) {
-  const parent = textNode.parentElement
-  if (!parent) return
-
-  // 检查父元素是否是 <b>
-  if (parent.tagName !== 'B' && parent.tagName !== 'STRONG') return
-
-  // 计算在文本节点中的偏移
-  const text = textNode.textContent
-  let start = 0
-  let end = text.length
-
-  if (textNode === range.startContainer) {
-    start = range.startOffset
-  }
-  if (textNode === range.endContainer) {
-    end = range.endOffset
-  }
-
-  if (start >= end) return
-
-  const grandParent = parent.parentNode
-  if (!grandParent) return
-
-  const beforeText = text.substring(0, start)
-  const selectedTextContent = text.substring(start, end)
-  const afterText = text.substring(end)
-
-  // 构建新的文档片段
-  const fragment = document.createDocumentFragment()
-
-  if (beforeText) {
-    fragment.appendChild(document.createTextNode(beforeText))
-  }
-
-  if (selectedTextContent) {
-    fragment.appendChild(document.createTextNode(selectedTextContent))
-  }
-
-  if (afterText) {
-    fragment.appendChild(document.createTextNode(afterText))
-  }
-
-  grandParent.replaceChild(fragment, parent)
-}
-
-// 对整个选区加粗
-function toggleBold(editor, range, selectedText) {
+  const range = document.createRange()
+  range.setStart(targetNode, targetNodeOffset)
+  range.collapse(true)
   const selection = window.getSelection()
-
-  // 直接用 range.extractContents() 提取选区内容，然后包裹 <b>
-  const contents = range.extractContents()
-  const b = document.createElement('b')
-  b.appendChild(contents)
-  range.insertNode(b)
-
-  // 合并相邻的 <b> 标签
-  mergeAdjacentBoldTags(editor)
-
-  // 恢复选区到加粗文本之后
-  try {
-    const newRange = document.createRange()
-    newRange.setStartAfter(b)
-    newRange.setEndAfter(b)
-    selection.removeAllRanges()
-    selection.addRange(newRange)
-  } catch (e) {
-    console.warn('Failed to restore selection:', e)
-  }
-}
-
-// 收集所有 <b> 标签及其在编辑器中的位置
-function collectBTags(node, bTags, parentElement = null) {
-  if (node.nodeType === Node.ELEMENT_NODE) {
-    const isB = node.tagName === 'B' || node.tagName === 'STRONG'
-    const currentParent = isB ? node : parentElement
-
-    if (isB) {
-      // 计算 <b> 在整个编辑器中的位置
-      const tempRange = document.createRange()
-      tempRange.selectNodeContents(editorRef.value)
-      tempRange.setEnd(node, 0)
-      const bStart = tempRange.toString().length
-
-      bTags.push({
-        element: node,
-        start: bStart,
-        end: bStart + node.textContent.length
-      })
-    }
-
-    node.childNodes.forEach(child => collectBTags(child, bTags, currentParent))
-  }
-}
-
-// 合并相邻的 <b> 标签
-function mergeAdjacentBoldTags(editor) {
-  const bTags = editor.querySelectorAll('b')
-  for (let i = 0; i < bTags.length; i++) {
-    const b = bTags[i]
-    if (!b.parentNode) continue
-
-    const nextSibling = b.nextSibling
-    if (nextSibling && nextSibling.nodeType === Node.ELEMENT_NODE &&
-        (nextSibling.tagName === 'B' || nextSibling.tagName === 'STRONG')) {
-      b.textContent = b.textContent + nextSibling.textContent
-      nextSibling.remove()
-    }
-  }
+  selection.removeAllRanges()
+  selection.addRange(range)
 }
 
 function handlePaste(e) {
@@ -457,11 +280,10 @@ function handlePaste(e) {
 // 更新显示（从 modelValue 到 HTML）
 function updateDisplay() {
   if (editorRef.value && !isUpdating.value) {
-    const currentHtml = editorRef.value.innerHTML
     const formatted = formatToHtml(props.modelValue || '')
 
     // 比较并更新
-    const currentText = parseToText(currentHtml)
+    const currentText = parseToText()
     if (currentText !== props.modelValue) {
       isUpdating.value = true
       editorRef.value.innerHTML = formatted || '<br>'
@@ -566,6 +388,11 @@ onMounted(() => {
 }
 
 .editor-content b {
+  font-weight: 600;
+  color: #fff;
+}
+
+.default-bold-active .editor-content {
   font-weight: 600;
   color: #fff;
 }

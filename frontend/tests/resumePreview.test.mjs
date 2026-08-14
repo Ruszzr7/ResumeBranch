@@ -71,7 +71,7 @@ test('semantic font sizes use a half-point modal with live preview and page-limi
 })
 
 test('resume fields render the escaped bold-only protocol', () => {
-  assert.ok(previewSource.includes("import { formatInlineHtml } from '../utils/inlineFormatting.js'"))
+  assert.ok(previewSource.includes("formatInlineHtml, isFullyBoldInlineText, plainInlineText"))
   assert.ok(previewSource.includes('return formatInlineHtml(text)'))
   assert.equal(previewSource.includes(".replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>')"), false)
 })
@@ -106,6 +106,25 @@ test('layout menu opens a dedicated bidirectional manual ordering dialog', () =>
   assert.ok(previewSource.includes('dragOverSection($event, section)'))
   assert.ok(previewSource.includes('@click="resetSectionOrder">恢复默认</button>'))
   assert.equal(previewSource.includes('根据 JD 推荐排序'), false)
+  assert.ok(previewSource.includes('@click="applySectionOrder"'))
+  assert.ok(previewSource.includes('@click="closeSectionOrderDialog"'))
+  assert.equal(previewSource.includes('localSectionOrder.value = order\n  persistSectionOrder()'), false)
+})
+
+test('module ordering exposes every supported top-level module before content exists', () => {
+  assert.ok(previewSource.includes('Keep empty but supported modules in the ordering dialog as well'))
+  assert.ok(previewSource.includes(".filter(section => SECTION_LABELS[section] && !isEducationChildSection(section))"))
+  for (const section of ['honors', 'publications', 'research_interests', 'skills', 'work_experience', 'project_experience', 'custom_sections', 'others', 'self_evaluation']) {
+    assert.ok(previewSource.includes(`${section}:`), `missing module label: ${section}`)
+  }
+  assert.equal(previewSource.includes('sectionHasContent(section)'), false)
+})
+
+test('font size order and section dialogs are mutually exclusive', () => {
+  assert.ok(previewSource.includes('closeSectionOrderDialog()\n  closeFontSizeDialog()'))
+  assert.ok(previewSource.includes('closeFontSizeDialog()\n  closeSectionSettingsDialog()'))
+  assert.ok(previewSource.includes('closeSectionOrderDialog()\n  closeSectionSettingsDialog()'))
+  assert.ok(previewSource.includes('top: 6px;\n  right: 6px;'))
 })
 
 test('section ordering uses a compact left-side dialog so the PDF stays visible', () => {
@@ -171,8 +190,32 @@ test('column settings are compact, explicit, and preview every draft selection',
   assert.ok(previewSource.includes('<option value="standalone">独立栏目</option>'))
   assert.ok(previewSource.includes(':value="editableSectionPlacement(section)"'))
   assert.ok(previewSource.includes('v-model="sectionSettingsDraft[section].listStyle"'))
-  assert.ok(previewSource.includes('height: min(600px, calc(100vh - 96px))'))
+  assert.ok(previewSource.includes('height: min(480px, calc(100vh - 96px))'))
   assert.ok(previewSource.includes('box-sizing: border-box'))
+})
+
+test('closing live-preview settings restores saved values', () => {
+  assert.ok(previewSource.includes('fontSizeDraft.value = { ...fontSizes.value }'))
+  assert.ok(previewSource.includes('sectionSettingsDraft.value = normalizeLayoutConfig(props.layoutConfig)'))
+  assert.ok(previewSource.includes('localSectionOrder.value = [...sectionOrderSnapshot.value]'))
+})
+
+test('birth date and merged education headings use body semantics', () => {
+  assert.ok(previewSource.includes("!hiddenBasicField('birth_date') && basics.birth_date ? basics.birth_date : ''"))
+  assert.equal(previewSource.includes('`${t.value.birthDate}：${basics.birth_date}`'), false)
+  assert.ok(previewSource.includes('.education-merged-title {'))
+  assert.ok(previewSource.includes('font-size: var(--body-font-size);\n  font-weight: var(--body-font-weight);'))
+})
+
+test('all basic information components use pipe separators', () => {
+  assert.ok(previewSource.includes(".personal-info .module-component-cell.flow-inline .module-component + .module-component::before { content: ' | '; }"))
+  assert.equal(previewSource.includes("`${t.value.birthDate}：${basics.birth_date}`"), false)
+})
+
+test('target position label follows the content bold state', () => {
+  assert.ok(previewSource.includes('isFullyBoldInlineText(basics.target_position) ? `**${label}**` : label'))
+  assert.equal(previewSource.includes('.module-component.component-target_position { font-weight: var(--manual-title-font-weight); }'), false)
+  assert.ok(previewSource.includes("'is-bold': isFullyBoldInlineText(data.basics.target_position)"))
 })
 
 test('merged education children use their saved order and cannot leave education', () => {
@@ -228,10 +271,10 @@ test('education uses normalized component rows with configurable alignment and w
   assert.ok(previewSource.includes('componentRowStyle(row, \'education\')'))
   assert.ok(previewSource.includes('componentCellStyle(cell)'))
   assert.ok(previewSource.includes('educationComponentText(item, component)'))
-  assert.ok(previewSource.includes('formatCompactAcademicMetric(item, hidden, t.value.averageScore)'))
+  assert.ok(previewSource.includes('formatCompactAcademicMetric(item, hidden)'))
   assert.ok(previewSource.includes("filter(Boolean).join(' · ')"))
   assert.ok(previewSource.includes("(item?.school_tags || []).join(' · ')"))
-  assert.ok(previewSource.includes('text-align: left'))
+  assert.ok(previewSource.includes('text-align: center'))
   assert.ok(previewSource.includes('margin-right: 0'))
   assert.ok(previewSource.includes('position: static'))
   assert.equal(previewSource.includes('right: 6mm'), false)
@@ -249,7 +292,7 @@ test('semantic labels and their numbered responsibilities preserve nested indent
 
 test('field labels and semantic content labels use their requested typography roles', () => {
   assert.ok(previewSource.includes('.module-component.component-school_tags,'))
-  assert.ok(previewSource.includes('.module-component.component-job_type { font-size: var(--label-font-size); font-weight: var(--label-font-weight); }'))
+  assert.ok(previewSource.includes('.module-component.component-job_type { font-size: var(--label-font-size); font-weight: var(--manual-field-font-weight); }'))
   assert.ok(previewSource.includes('.project-block-label { margin-bottom: var(--content-label-spacing); font-size: var(--body-font-size);'))
 })
 

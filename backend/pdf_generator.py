@@ -8,7 +8,7 @@ import re
 from io import BytesIO
 from html import escape
 
-from .inline_formatting import format_inline_html
+from .inline_formatting import format_inline_html, parse_inline_bold
 from .pdf_renderer import render_html_with_chromium
 from .resume_data import normalize_resume_data
 from .resume_labels import LABELS
@@ -35,7 +35,30 @@ def _module_list_content(value: object) -> str:
 
 
 def _is_fully_bold(value: object) -> bool:
-    return bool(re.fullmatch(r"\*\*[^*][\s\S]*\*\*", _module_list_content(value).strip()))
+    segments = [segment for segment in parse_inline_bold(_module_list_content(value).strip()) if segment.text]
+    return bool(segments) and all(segment.bold for segment in segments)
+
+
+def _photo_aspect_ratio(photo: str | None, resume_data: dict) -> float:
+    """Return the imported photo's width/height ratio, with a safe legacy fallback."""
+    try:
+        explicit = float((resume_data.get("basics") or {}).get("photo_aspect_ratio"))
+        if 0.2 <= explicit <= 3.0:
+            return explicit
+    except (TypeError, ValueError):
+        pass
+    if photo:
+        try:
+            from PIL import Image
+            import base64
+            encoded = photo.split(",", 1)[-1]
+            with Image.open(BytesIO(base64.b64decode(encoded))) as image:
+                width, height = image.size
+            if width and height:
+                return max(0.2, min(3.0, width / height))
+        except Exception:
+            pass
+    return 21.0 / 26.0
 
 
 def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = None, lang: str = 'zh', layout_config: dict = None) -> str:
@@ -81,7 +104,6 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         return format_compact_academic_metric(
             item,
             education_hidden_metrics,
-            average_score_label=labels["averageScore"],
         )
 
     compact_education_metrics = [compact_education_metric(item) for item in education_items]
@@ -119,7 +141,10 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         )
 
     def section_title(section: str, fallback: str) -> str:
-        return global_layout.get("titleOverrides", {}).get(section, {}).get(lang, fallback)
+        override = global_layout.get("titleOverrides", {}).get(section, {}).get(lang)
+        if override is not None:
+            return override
+        return f"**{fallback}**" if int(resume_data.get("formatting_version") or 0) >= 2 else fallback
 
     def merged_into_education(section: str) -> bool:
         return bool(resume_data.get("education")) and global_layout.get("sectionPlacements", {}).get(section) == "education"
@@ -185,6 +210,8 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     display_photo = photo
     if not display_photo and resume_data.get("basics"):
         display_photo = resume_data["basics"].get("photo", "")
+    photo_ratio = _photo_aspect_ratio(display_photo, resume_data)
+    photo_width_mm = tokens["photoHeightMm"] * photo_ratio
 
     # 个人信息
     if resume_data.get("basics"):
@@ -195,20 +222,28 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         html_parts.append(f'<div class="personal-info basics-{basics_layout["preset"]} contact-{basics_layout["contactLayout"]}" style="order:0">')
         personal_meta = " | ".join(filter(None, [
             str(basics.get("gender", "")) if "gender" not in hidden_basics else "",
-            f'{labels["birthDate"]}：{basics["birth_date"]}' if basics.get("birth_date") and "birth_date" not in hidden_basics else "",
+            str(basics["birth_date"]) if basics.get("birth_date") and "birth_date" not in hidden_basics else "",
         ]))
         contact = " | ".join(filter(None, [
             str(basics.get("phone", "")) if "phone" not in hidden_basics else "",
             str(basics.get("email", "")) if "email" not in hidden_basics else "",
         ]))
         additional = " | ".join(
-            f'{item.get("label", "")}：{item.get("value", "")}'
+            (
+                f'{item.get("label", "")}：{item.get("value", "")}'
+                if item.get("label") and item.get("value")
+                else str(item.get("label") or item.get("value") or "")
+            )
             for item in basics.get("additional_fields", [])
-            if item.get("label") and item.get("value") and "additional_fields" not in hidden_basics
+            if (item.get("label") or item.get("value")) and "additional_fields" not in hidden_basics
         )
+        target_position = str(basics.get("target_position", ""))
+        target_position_label = f'{labels["targetPosition"]}：'
+        if _is_fully_bold(target_position):
+            target_position_label = f'**{target_position_label}**'
         html_parts.append(component_rows_markup("basics", {
             "name": format_markdown(basics.get("name", labels["nameNotSet"])),
-            "target_position": format_markdown(f'{labels["targetPosition"]}：{basics["target_position"]}') if basics.get("target_position") and "target_position" not in hidden_basics else "",
+            "target_position": format_markdown(f'{target_position_label}{target_position}') if target_position and "target_position" not in hidden_basics else "",
             "personal_meta": format_markdown(personal_meta),
             "contact": format_markdown(contact),
             "additional_fields": format_markdown(additional),
@@ -238,9 +273,6 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
                 academic_metrics.append(f'{labels["gpa"]}：{gpa_value}')
             if edu.get("ranking") and "ranking" not in hidden_metrics:
                 academic_metrics.append(f'{labels["ranking"]}：{edu["ranking"]}')
-            if edu.get("average_score") and "average_score" not in hidden_metrics:
-                academic_metrics.append(f'{labels["averageScore"]}：{edu["average_score"]}')
-
             date_range = edu.get("date_range", [])
             date_str = ""
             if len(date_range) > 0:
@@ -585,9 +617,10 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         --entry-title-font-weight: {tokens['entryTitleFontWeight']};
         --manual-title-font-weight: {400 if int(resume_data.get('formatting_version') or 0) >= 1 else tokens['entryTitleFontWeight']};
         --manual-name-font-weight: {400 if int(resume_data.get('formatting_version') or 0) >= 1 else tokens['nameFontWeight']};
-        --section-title-font-weight: {tokens['sectionTitleFontWeight']};
-        --name-font-weight: {tokens['nameFontWeight']};
+        --section-title-font-weight: {400 if int(resume_data.get('formatting_version') or 0) >= 2 else tokens['sectionTitleFontWeight']};
+        --name-font-weight: {400 if int(resume_data.get('formatting_version') or 0) >= 1 else tokens['nameFontWeight']};
         --label-font-weight: {tokens['labelFontWeight']};
+        --manual-field-font-weight: {tokens['labelFontWeight'] if int(resume_data.get('formatting_version') or 0) < 3 else tokens['bodyFontWeight']};
         --letter-spacing: {tokens['letterSpacingPt']:g}pt;
         --module-margin: {tokens['moduleSpacingPt']:g}pt;
         --header-name-after: {tokens['headerNameAfterPt']:g}pt;
@@ -604,6 +637,8 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         --education-side-column: {tokens['educationSideColumnMm']:g}mm;
         --education-compact-side-column: {education_column_widths['sideMm']:g}mm;
         --education-middle-column: {education_column_widths['middleMm']:g}mm;
+        --photo-width: {photo_width_mm:g}mm;
+        --photo-height: {tokens['photoHeightMm']:g}mm;
         --line-height: {line_height};
     }}
 
@@ -639,7 +674,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     }}
 
     .personal-info.basics-left-aligned {{ text-align: left; }}
-    .personal-info.has-photo {{ min-height: 2.65cm; }}
+    .personal-info.has-photo {{ min-height: var(--photo-height); }}
     .personal-info.basics-left-aligned .contact-info {{ justify-content: flex-start; }}
     .personal-info.contact-stacked .contact-info {{
         flex-direction: column;
@@ -671,8 +706,8 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     }}
 
     .profile-photo {{
-        width: {tokens['photoWidthMm']:g}mm;
-        height: {tokens['photoHeightMm']:g}mm;
+        width: var(--photo-width);
+        height: var(--photo-height);
         object-fit: cover;
         border: 1px solid #ddd;
         border-radius: 2px;
@@ -842,6 +877,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     .module-component-cell {{ display: flex; min-width: 0; flex-wrap: wrap; gap: 0.3em; overflow-wrap: anywhere; }}
     .module-component-cell.flow-stacked {{ flex-direction: column; }}
     .module-component-cell.flow-inline .module-component + .module-component::before {{ content: ' · '; white-space: pre; }}
+    .personal-info .module-component-cell.flow-inline .module-component + .module-component::before {{ content: ' | '; }}
     .module-component-cell.flow-inline .component-position + .component-job_type::before {{ content: ' '; }}
     .module-component.component-school {{ font-size: var(--entry-title-font-size); font-weight: var(--manual-title-font-weight); }}
     .module-component.component-organization,
@@ -851,15 +887,14 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     .module-component.component-personal_meta,
     .module-component.component-contact,
     .module-component.component-additional_fields {{ font-size: var(--meta-font-size); font-weight: var(--meta-font-weight); color: #333333; }}
-    .module-component.component-target_position {{ font-weight: var(--manual-title-font-weight); }}
-    .component-photo {{ position: static; flex: none; width: {tokens['photoWidthMm']:g}mm; height: {tokens['photoHeightMm']:g}mm; object-fit: cover; }}
+    .personal-info .component-photo {{ position: absolute; top: 0; right: 0; flex: none; width: var(--photo-width); height: var(--photo-height); object-fit: cover; }}
     .module-component.component-school_tags,
     .module-component.component-degree,
     .module-component.component-major,
     .module-component.component-metrics,
     .module-component.component-date,
     .module-component.component-position,
-    .module-component.component-job_type {{ font-size: var(--label-font-size); font-weight: var(--label-font-weight); }}
+    .module-component.component-job_type {{ font-size: var(--label-font-size); font-weight: var(--manual-field-font-weight); }}
     .module-component.component-role {{ font-size: var(--meta-font-size); font-weight: var(--meta-font-weight); }}
     .education-item.preset-three-column .education-header {{
         display: grid;
@@ -952,6 +987,8 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     .education-merged-title {{
         margin: var(--item-spacing) 0 var(--paragraph-spacing);
         color: #111111;
+        font-size: var(--body-font-size);
+        font-weight: var(--body-font-weight);
     }}
 
     .company {{

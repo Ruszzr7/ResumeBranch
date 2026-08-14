@@ -146,7 +146,6 @@ class Education(BaseModel):
     gpa: str = Field(default="", description="平均绩点，例如 3.72")
     gpa_scale: str = Field(default="", description="绩点满分，例如 4.0")
     ranking: str = Field(default="", description="专业或年级排名，例如 前10%")
-    average_score: str = Field(default="", description="加权平均分，例如 88/100")
     theses: List[Thesis] = Field(default_factory=list, description="论文列表")
 
 
@@ -341,7 +340,7 @@ CONVERSATION_PROMPT = """
 ## 标准优化顺序，你必须严格按照以下顺序逐步优化简历，**每次只聚焦一个模块**，不要跳跃：
 1. **目标岗位**：如果你没有任何关于用户目标岗位或意愿的信息，不要进行假设，优先引导用户**点击页面右上角的“目标岗位”按钮上传目标岗位JD（文本或图片）**，或者如果没有明确的目标岗位，至少引导用户输入一个明确的期望岗位名称（如"我想申请字节跳动的产品经理岗位"），以便后续优化有明确的方向。
 2. **基础信息**：姓名、手机、邮箱、期望岗位 （重要，绝对不能缺漏！）
-3. **教育经历**：学校、专业、学位、时间、亮点标签、GPA/绩点、排名、平均分
+3. **教育经历**：学校、专业、学位、时间、亮点标签、GPA/绩点、排名
 4. **工作经历**：公司、职位、时间、STAR 描述、量化结果
 5. **项目经历**：项目名、角色、技术栈、STAR 描述、量化成果
 6. **其他**：技能、证书、语言
@@ -412,7 +411,7 @@ CONVERSATION_PROMPT = """
 - **save_resume_tool**：当你给出了完整的优化建议、可以达到修改标准时，需要输出完整的修改建议（不要只输出部分的改动点，而是要输出要修改的部分的前后对比），且调用此工具。你需要将完整的简历JSON作为参数传入。调用后，系统会自动在前端显示确认框，**用户点击确认后才会实际保存到简历库**。
 - **输出措辞注意**：当你调用 `save_resume_tool` 时，你的回复内容应该说"上述修改方案已准备好，请在下方确认框中确认是否应用（确认框可能稍有延迟，请耐心等待，确认框出现前不要离开或刷新当前页面以免丢失聊天记录）"或"以上是我对你的简历的修改建议，请在下方确认框中确认是否修改到简历库？（确认框显示可能稍有延迟，请耐心等待）"之类的话术，**绝对不能说"已保存"、"已同步"、"已修改"、"已经更新到简历库"等**，因为此时还需要用户确认，简历还没有实际被修改。
 - **内容一致性约束**：你调用 `save_resume_tool` 时传入的JSON参数内容，必须与你的文字回复中描述的修改内容保持一致。文字描述是修改建议的展示形式，JSON是修改建议的数据形式，两者描述的是同一份修改。如果发现不一致，以JSON中的内容为准修正你的文字回复。
-- **教育成绩字段约束**：用户提到“GPA”“绩点”“平均绩点”时写入 `gpa`，满分写入 `gpa_scale`；“专业排名/年级排名”写入 `ranking`；“平均分/加权平均分”写入 `average_score`。这些内容绝对不能写入 `theses`。
+- **教育成绩字段约束**：用户提到“GPA”“绩点”“平均绩点”时写入 `gpa`，满分写入 `gpa_scale`；“专业排名/年级排名”写入 `ranking`。这些内容绝对不能写入 `theses`。
 - 当调用工具时，传入的JSON格式如下：
 ```json
 {
@@ -431,8 +430,7 @@ CONVERSATION_PROMPT = """
     "school_tags": ["标签1", "标签2"],
     "gpa": "3.72",
     "gpa_scale": "4.0",
-    "ranking": "前10%",
-    "average_score": "88/100"
+    "ranking": "前10%"
   }],
   "publications": ["论文标题（中科院一区 Top，IF 10），已接收"],
   "work_experience": [{
@@ -555,8 +553,7 @@ RESUME_FULL_EXTRACT_PROMPT = '''# Role
     "school_tags": ["标签1", "标签2"],
     "gpa": "3.72",
     "gpa_scale": "4.0",
-    "ranking": "前10%",
-    "average_score": "88/100"
+    "ranking": "前10%"
   }],
   "publications": ["论文标题（中科院一区 Top，IF 10），已接收"],
   "work_experience": [{
@@ -589,7 +586,7 @@ RESUME_FULL_EXTRACT_PROMPT = '''# Role
 5. 如果图片中没有某字段，设置为 "" 或 []，不要省略
 6. 绝对不要输出 ```json 或 ``` 标记
 7. 绝对不要输出其他任何文字
-8. “GPA/绩点/平均绩点”写入 gpa，绩点满分写入 gpa_scale；排名写入 ranking；平均分或加权平均分写入 average_score；论文完整内容逐条写入顶层 publications
+8. “GPA/绩点/平均绩点”写入 gpa，绩点满分写入 gpa_scale；排名写入 ranking；论文完整内容逐条写入顶层 publications
 
 # 示例
 输入：一张简历图片，包含姓名"张三"，手机"13800138000"，工作经历"2020.01 - 2022.12 在字节跳动担任产品经理"
@@ -623,7 +620,7 @@ def build_resume_extract_prompt() -> str:
         "原文中的（1）（2）或 (1)(2) 等编号只作为 items 的边界，items 内不要重复序号。"
         "原文没有项目角色时 role 必须为空，禁止输出‘角色’、‘项目成员’等占位词。\n"
         "【经历粒度】没有语义标题的普通工作描述才逐条进入 details，禁止合成一个长字符串；"
-        "论文完整内容逐条写入顶层 publications；GPA、满分、排名和平均分分别进入对应字段。\n"
+        "论文完整内容逐条写入顶层 publications；GPA、满分、排名进入对应字段。\n"
         "【兜底保留】任何不能可靠映射到固定字段的原栏目，都必须按原栏目标题和阅读顺序写入 custom_sections，"
         "绝对不能因为 Schema 没有同名字段而省略。不要重复写入已经映射的内容。\n"
         "【输出】文件中不存在的字段使用空字符串或空数组；basics.photo 留空。"
@@ -874,7 +871,7 @@ _DIRECT_APPLY_RE = re.compile(
 )
 _RESUME_DATA_FIELD_RE = re.compile(
     r"(?:姓名|性别|年龄|出生年月|生日|电话|手机|邮箱|所在地|目标岗位|求职岗位|GPA|绩点|满绩|"
-    r"排名|平均分|学校|专业|学历|学位|教育经历|工作经历|实习经历|项目经历|项目|"
+    r"排名|学校|专业|学历|学位|教育经历|工作经历|实习经历|项目经历|项目|"
     r"公司|职位|研究方向|研究兴趣|荣誉|奖项|技能|证书|语言|自定义栏目|自我评价|简历内容)"
 )
 _STYLE_ONLY_RE = re.compile(
@@ -1068,7 +1065,7 @@ def build_local_layout_candidate(state: AgentState) -> dict | None:
         candidate["education"]["schoolTagStyle"] = "filled"
     if re.search(r"(?:隐藏|不要|去掉).{0,5}(?:学校标签|211|985)", text):
         candidate["education"]["schoolTagStyle"] = "hidden"
-    for label, field_name in (("GPA", "gpa"), ("绩点", "gpa"), ("排名", "ranking"), ("平均分", "average_score")):
+    for label, field_name in (("GPA", "gpa"), ("绩点", "gpa"), ("排名", "ranking")):
         if re.search(rf"(?:隐藏|不要|去掉).{{0,5}}{label}|{label}.{{0,5}}(?:隐藏|不要|去掉)", text, re.I):
             if field_name not in candidate["education"]["hiddenMetrics"]:
                 candidate["education"]["hiddenMetrics"].append(field_name)

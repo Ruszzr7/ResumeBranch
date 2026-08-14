@@ -46,7 +46,6 @@ def resume_payload(name="测试用户", *, with_education=False):
             "gpa": "3.5",
             "gpa_scale": "4.0",
             "ranking": "",
-            "average_score": "",
             "theses": [],
         }]
     return payload

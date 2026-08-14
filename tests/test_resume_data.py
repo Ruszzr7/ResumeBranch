@@ -60,6 +60,29 @@ class ResumeDataNormalizationTests(unittest.TestCase):
         self.assertEqual(result["ranking"], "前 10%")
         self.assertNotIn("GPA", result)
 
+    def test_removes_retired_average_score_and_keeps_single_sided_basic_fields(self):
+        result = normalize_resume_data({
+            "basics": {
+                "additional_fields": [
+                    {"label": "籍贯", "value": ""},
+                    {"label": "", "value": "广州"},
+                    {"label": "", "value": ""},
+                ],
+            },
+            "education": [{
+                "average_score": "88/100", "平均分": "90", "gpa": "3.8",
+                "school_tags": "211/985/双一流",
+            }],
+        })
+
+        self.assertEqual(result["basics"]["additional_fields"], [
+            {"label": "籍贯", "value": ""},
+            {"label": "", "value": "广州"},
+        ])
+        self.assertNotIn("average_score", result["education"][0])
+        self.assertNotIn("平均分", result["education"][0])
+        self.assertEqual(result["education"][0]["school_tags"], ["211", "985", "双一流"])
+
     def test_migrates_chinese_gpa_with_full_score_phrase(self):
         source = {
             "education": [
@@ -214,6 +237,20 @@ class ResumeDataNormalizationTests(unittest.TestCase):
             "5. 仿真、强化学习与英语：Isaac Sim、PyTorch",
             "英语 CET-4",
         ])
+
+    def test_user_added_language_stays_in_language_module(self):
+        result = normalize_resume_data({
+            "formatting_version": 3,
+            "basics": {"name": "**测试**"},
+            "others": {
+                "skills": ["英语相关 NLP 技术"],
+                "certificates": [],
+                "languages": ["英语 CET-6"],
+            },
+        })
+
+        self.assertEqual(result["others"]["skills"], ["英语相关 NLP 技术"])
+        self.assertEqual(result["others"]["languages"], ["英语 CET-6"])
 
     def test_parser_metadata_never_becomes_a_resume_module(self):
         result = normalize_resume_data({

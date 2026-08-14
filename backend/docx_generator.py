@@ -35,7 +35,28 @@ def _module_list_content(value: object) -> str:
 
 
 def _is_fully_bold(value: object) -> bool:
-    return bool(re.fullmatch(r"\*\*[^*][\s\S]*\*\*", _module_list_content(value).strip()))
+    segments = [segment for segment in parse_inline_bold(_module_list_content(value).strip()) if segment.text]
+    return bool(segments) and all(segment.bold for segment in segments)
+
+
+def _photo_aspect_ratio(photo_bytes: bytes | None, resume_data: dict) -> float:
+    """Return the imported photo's width/height ratio with a legacy fallback."""
+    try:
+        explicit = float((resume_data.get("basics") or {}).get("photo_aspect_ratio"))
+        if 0.2 <= explicit <= 3.0:
+            return explicit
+    except (TypeError, ValueError):
+        pass
+    if photo_bytes:
+        try:
+            from PIL import Image
+            with Image.open(BytesIO(photo_bytes)) as image:
+                width, height = image.size
+            if width and height:
+                return max(0.2, min(3.0, width / height))
+        except Exception:
+            pass
+    return 21.0 / 26.0
 
 
 def _set_cell_borderless(cell) -> None:
@@ -290,7 +311,7 @@ def _bullet(
     marker_match = _NATIVE_LIST_MARKER_RE.match(value)
     if marker_match:
         paragraph = document.add_paragraph()
-        paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
         _paragraph_spacing(paragraph, after=after, line=line_spacing)
         if native_hanging:
             _set_numbered_indent(
@@ -358,7 +379,10 @@ def generate_docx(
     section_title_bold = tokens["sectionTitleFontWeight"] >= 600
     name_bold = tokens["nameFontWeight"] >= 600
     label_bold = tokens["labelFontWeight"] >= 600
-    legacy_default_bold = int(data.get("formatting_version") or 0) < 1
+    formatting_version = int(data.get("formatting_version") or 0)
+    legacy_default_bold = formatting_version < 1
+    legacy_section_title_bold = formatting_version < 2
+    legacy_manual_field_bold = formatting_version < 3
 
     def entry_heading_runs(primary: str, secondary: str = "") -> list[tuple[str, float, bool]]:
         """Map one entry heading to the shared title/meta typography roles."""
@@ -400,7 +424,9 @@ def generate_docx(
     normal.paragraph_format.widow_control = False
 
     def title(section_id: str, fallback: str) -> None:
-        text = global_layout.get("titleOverrides", {}).get(section_id, {}).get(lang, fallback)
+        text = global_layout.get("titleOverrides", {}).get(section_id, {}).get(lang)
+        if text is None:
+            text = f"**{fallback}**" if formatting_version >= 2 else fallback
         module_layout = layout.get(section_id, layout["custom_sections"])
         paragraph = document.add_paragraph()
         paragraph.alignment = {
@@ -414,7 +440,13 @@ def generate_docx(
             after=tokens["sectionTitleAfterPt"],
             line=Pt(tokens["sectionTitleLineHeightPt"]),
         )
-        _add_markdown_runs(paragraph, text, section_title_font_size, fonts=font_spec, base_bold=section_title_bold)
+        _add_markdown_runs(
+            paragraph,
+            text,
+            section_title_font_size,
+            fonts=font_spec,
+            base_bold=section_title_bold if legacy_section_title_bold else False,
+        )
         if (module_layout.get("titleStyle") or global_layout["titleStyle"]) in {"plain", "underline"}:
             p_pr = paragraph._p.get_or_add_pPr()
             borders = OxmlElement("w:pBdr")
@@ -456,12 +488,16 @@ def generate_docx(
     hidden_basics = set(basics_layout["hiddenFields"])
     contact_values = [str(basics.get(key)) for key in ("gender",) if basics.get(key) and key not in hidden_basics]
     if basics.get("birth_date") and "birth_date" not in hidden_basics:
-        contact_values.append(f'{labels["birthDate"]}{colon}{basics["birth_date"]}')
+        contact_values.append(str(basics["birth_date"]))
     direct_contact = [str(basics.get(key)) for key in ("phone", "email") if basics.get(key) and key not in hidden_basics]
     additional_values = [
-        f'{item.get("label")}{colon}{item.get("value")}'
+        (
+            f'{item.get("label")}{colon}{item.get("value")}'
+            if item.get("label") and item.get("value")
+            else str(item.get("label") or item.get("value") or "")
+        )
         for item in basics.get("additional_fields", [])
-        if item.get("label") and item.get("value") and "additional_fields" not in hidden_basics
+        if (item.get("label") or item.get("value")) and "additional_fields" not in hidden_basics
     ]
     photo_bytes = None
     if (photo or basics.get("photo")) and "photo" not in hidden_basics:
@@ -470,10 +506,14 @@ def generate_docx(
             photo_bytes = base64.b64decode(encoded)
         except (ValueError, TypeError):
             photo_bytes = None
+    photo_width_mm = tokens["photoHeightMm"] * _photo_aspect_ratio(photo_bytes, data)
     basics_values = {
         "name": basics.get("name") or labels["nameNotSet"],
         "target_position": (
-            f'{labels["targetPosition"]}{colon}{basics["target_position"]}'
+            f'{"**" if _is_fully_bold(basics["target_position"]) else ""}'
+            f'{labels["targetPosition"]}{colon}'
+            f'{"**" if _is_fully_bold(basics["target_position"]) else ""}'
+            f'{basics["target_position"]}'
             if basics.get("target_position") and "target_position" not in hidden_basics else ""
         ),
         "personal_meta": " | ".join(contact_values),
@@ -521,11 +561,11 @@ def generate_docx(
                 if component == "photo":
                     paragraph.add_run().add_picture(
                         BytesIO(photo_bytes),
-                        width=Mm(tokens["photoWidthMm"]),
+                        width=Mm(photo_width_mm),
                         height=Mm(tokens["photoHeightMm"]),
                     )
                     continue
-                prefix = " · " if cell_config["flow"] == "inline" and component_index else ""
+                prefix = " | " if cell_config["flow"] == "inline" and component_index else ""
                 if component == "name":
                     _add_markdown_runs(paragraph, prefix + basics_values[component], name_font_size, fonts=font_spec, base_bold=name_bold if legacy_default_bold else False)
                 else:
@@ -555,7 +595,6 @@ def generate_docx(
             return format_compact_academic_metric(
                 item,
                 hidden_metrics,
-                average_score_label=labels["averageScore"],
             )
 
         compact_metrics = [compact_metric(item) for item in items]
@@ -587,8 +626,6 @@ def generate_docx(
                 metrics.append(f'{labels["gpa"]}{colon}{value}')
             if item.get("ranking") and "ranking" not in hidden_metrics:
                 metrics.append(f'{labels["ranking"]}{colon}{item["ranking"]}')
-            if item.get("average_score") and "average_score" not in hidden_metrics:
-                metrics.append(f'{labels["averageScore"]}{colon}{item["average_score"]}')
             component_values = {
                 "school": school,
                 "school_tags": tag_text,
@@ -651,7 +688,9 @@ def generate_docx(
                         if component == "school":
                             _add_markdown_runs(paragraph, prefix + component_values[component], entry_title_font_size, fonts=font_spec, base_bold=entry_title_bold if legacy_default_bold else False)
                         elif component in {"school_tags", "degree", "major", "metrics", "date"}:
-                            _add_markdown_runs(paragraph, prefix + component_values[component], label_font_size, fonts=font_spec, base_bold=label_bold)
+                            # These are user-entered field values. Their visual
+                            # weight comes only from explicit inline-bold marks.
+                            _add_markdown_runs(paragraph, prefix + component_values[component], label_font_size, fonts=font_spec, base_bold=legacy_manual_field_bold)
                         else:
                             _add_markdown_runs(paragraph, prefix + component_values[component], meta_font_size, fonts=font_spec, base_bold=meta_bold)
             if cfg["thesisDisplay"] != "hidden" and "theses" not in cfg["hiddenComponents"]:
@@ -701,8 +740,10 @@ def generate_docx(
                 continue
             heading = document.add_paragraph()
             _paragraph_spacing(heading, after=tokens["paragraphSpacingPt"], line=Pt(body_line_height))
-            heading_text = global_layout.get("titleOverrides", {}).get(section_id, {}).get(lang, fallback)
-            _add_markdown_runs(heading, heading_text, label_font_size, fonts=font_spec, base_bold=True)
+            heading_text = global_layout.get("titleOverrides", {}).get(section_id, {}).get(lang)
+            if heading_text is None:
+                heading_text = f"**{fallback}**" if formatting_version >= 2 else fallback
+            _add_markdown_runs(heading, heading_text, body_font_size, fonts=font_spec, base_bold=body_bold)
             for value_index, value in enumerate(values):
                 module_id = section_id if section_id in tokens["modules"] and "listStyle" in layout.get(section_id, {}) else "publications"
                 add_module_list_item(module_id, value, value_index)
@@ -745,7 +786,7 @@ def generate_docx(
                         else (" · " if cell_cfg["flow"] == "inline" and component_index else "")
                     )
                     size = entry_title_font_size if component in title_components else (label_font_size if component in label_components else meta_font_size)
-                    bold = (entry_title_bold if legacy_default_bold else False) if component in title_components else (label_bold if component in label_components else meta_bold)
+                    bold = (entry_title_bold if legacy_default_bold else False) if component in title_components else (legacy_manual_field_bold if component in label_components else meta_bold)
                     _add_markdown_runs(paragraph, prefix + values[component], size, fonts=font_spec, base_bold=bold)
 
     def add_module_list_item(module_id: str, value: object, index: int) -> None:
@@ -778,7 +819,7 @@ def generate_docx(
             )
             return
         paragraph = document.add_paragraph()
-        paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
         _paragraph_spacing(paragraph, after=after, line=Pt(body_line_height))
         _set_numbered_indent(
             paragraph,
@@ -859,7 +900,7 @@ def generate_docx(
                 trailing_block_spacing = module_tokens["contentBlockSpacingPt"] if detail_index == len(details) else 0
                 if block_type == "numbered_list":
                     paragraph = document.add_paragraph()
-                    paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
                     _paragraph_spacing(
                         paragraph,
                         after=tokens["numberedItemSpacingPt"] + trailing_block_spacing,
