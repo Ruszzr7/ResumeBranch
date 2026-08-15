@@ -8,6 +8,7 @@ test('current defaults use the compact practical spacing range', () => {
   assert.equal(result.global.lineHeight, 1.25)
   assert.equal(result.global.moduleMargin, 0.5)
   assert.equal(result.global.titleStyle, 'underline')
+  assert.equal(result.education.supplementListStyle, 'bullet')
   assert.equal(result.basics.photoWidthMm, 21)
   assert.equal(normalizeLayoutConfig({ global: { lineHeight: 9, moduleMargin: 9 } }).global.lineHeight, 1.8)
   assert.equal(normalizeLayoutConfig({ global: { lineHeight: 9, moduleMargin: 9 } }).global.moduleMargin, 1)
@@ -17,6 +18,11 @@ test('current defaults use the compact practical spacing range', () => {
     'education', 'honors', 'publications', 'research_interests', 'skills',
     'work_experience', 'project_experience', 'custom_sections', 'others', 'self_evaluation'
   ])
+})
+
+test('education supplement list style is normalized as part of the shared education contract', () => {
+  assert.equal(normalizeLayoutConfig({ version: 8, education: { supplementListStyle: 'numbered' } }).education.supplementListStyle, 'numbered')
+  assert.equal(normalizeLayoutConfig({ version: 8, education: { supplementListStyle: 'invalid' } }).education.supplementListStyle, 'bullet')
 })
 
 test('v7 default section order migrates without overwriting a user order', () => {
@@ -80,7 +86,7 @@ test('content block flow keeps inline and separate labels explicit', () => {
   assert.equal(resolveContentBlockFlow({ type: 'numbered_list', semantic_role: 'responsibilities', label: '主要贡献' }).contentIndentLevels, 2)
 })
 
-test('legacy default layout migrates to schema v8 and exposes every module in the new default order', () => {
+test('legacy default layout migrates to schema v9 and exposes every module in the new default order', () => {
   const result = normalizeLayoutConfig({
     version: 1,
     global: {
@@ -92,7 +98,7 @@ test('legacy default layout migrates to schema v8 and exposes every module in th
     }
   })
 
-  assert.equal(result.version, 8)
+  assert.equal(result.version, 9)
   assert.equal(result.global.fontSize, 9)
   assert.equal(result.global.lineHeight, 1.28)
   assert.ok(result.global.sectionOrder.indexOf('skills') > result.global.sectionOrder.indexOf('education'))
@@ -147,13 +153,13 @@ test('compact metric preserves the ranking wording entered by the user', () => {
   assert.equal(formatCompactAcademicMetric({ ...base, ranking: '前10%' }), '3.8/5.0 (前10%)')
 })
 
-test('saved v3 defaults migrate through the semantic scale to schema v8', () => {
+test('saved v3 defaults migrate through the semantic scale to schema v9', () => {
   const result = normalizeLayoutConfig({
     version: 3,
     global: { fontSize: 10.5, lineHeight: 1.32, moduleMargin: 0.45 }
   })
 
-  assert.equal(result.version, 8)
+  assert.equal(result.version, 9)
   assert.equal(result.global.fontSize, 9)
   assert.equal(result.global.lineHeight, 1.28)
   assert.equal(result.global.moduleMargin, 0.55)
@@ -189,7 +195,7 @@ test('semantic font sizes use half-point bounds and discard unknown roles', () =
 
 test('v5 standard default line height migrates to the compact export rhythm', () => {
   const result = normalizeLayoutConfig({ version: 5, global: { density: 'standard', lineHeight: 1.35 } })
-  assert.equal(result.version, 8)
+  assert.equal(result.version, 9)
   assert.equal(result.global.lineHeight, 1.28)
 
   const custom = normalizeLayoutConfig({ version: 5, global: { density: 'standard', lineHeight: 1.4 } })

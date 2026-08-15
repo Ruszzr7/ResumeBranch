@@ -76,13 +76,10 @@ class LayoutRuleTests(unittest.TestCase):
         self.assertIn("技术栈", html)
         self.assertIn('list-style-numbered', html)
         self.assertIn('component-school_tags">211 · 双一流</span>', html)
-        self.assertIn('education-merged-title">论文</h4>', html)
+        self.assertNotIn('<h4 class="subfield-title education-merged-title"', html)
         self.assertNotIn('class="section-title title-underline" style="text-align:left">论文</h2>', html)
         self.assertIn("论文标题（中科院一区 Top，IF 10），已接收", html)
-        self.assertLess(html.index('education-merged-title">论文</h4>'), html.index('education-merged-title">研究方向</h4>'))
-        self.assertLess(html.index('education-merged-title">研究方向</h4>'), html.index('education-merged-title">主要荣誉</h4>'))
-        self.assertIn("margin: var(--item-spacing) 0 var(--paragraph-spacing);", html)
-        self.assertIn("color: #111111;", html)
+        self.assertIn('<ul class="list-items module-list list-style-bullet">', html)
 
         document = Document(BytesIO(generate_docx(data, layout_config=layout)))
         text = "\n".join(paragraph.text for paragraph in document.paragraphs)
@@ -90,10 +87,11 @@ class LayoutRuleTests(unittest.TestCase):
         self.assertIn("示例大学 · 211 · 双一流", table_text)
         self.assertIn("技术栈", text)
         self.assertIn("论文标题（中科院一区 Top，IF 10），已接收", text)
-        publication_heading = next(paragraph for paragraph in document.paragraphs if paragraph.text == "论文")
-        self.assertFalse(bool(publication_heading._p.xpath("./w:pPr/w:pBdr")))
-        merged_headings = [paragraph.text for paragraph in document.paragraphs if paragraph.text in {"论文", "研究方向", "主要荣誉", "证书与语言"}]
-        self.assertEqual(merged_headings, ["论文", "研究方向", "主要荣誉", "证书与语言"])
+        paragraph_texts = [paragraph.text for paragraph in document.paragraphs]
+        self.assertNotIn("论文", paragraph_texts)
+        self.assertNotIn("研究方向", paragraph_texts)
+        self.assertNotIn("主要荣誉", paragraph_texts)
+        self.assertNotIn("证书与语言", paragraph_texts)
 
     def test_certificates_and_languages_render_as_a_standalone_ordered_section(self):
         data = resume_with_two_jobs()
@@ -181,7 +179,7 @@ class LayoutRuleTests(unittest.TestCase):
                 "sectionOrder": ["education", "project_experience", "others"],
             },
         })
-        self.assertEqual(layout["version"], 8)
+        self.assertEqual(layout["version"], 9)
         self.assertEqual(layout["global"]["fontSize"], 9)
         self.assertEqual(layout["global"]["lineHeight"], 1.28)
         self.assertIn("skills", layout["global"]["sectionOrder"])

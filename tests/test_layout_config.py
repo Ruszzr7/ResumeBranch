@@ -40,6 +40,13 @@ class LayoutConfigTests(unittest.TestCase):
         self.assertEqual(config["skills"]["listStyle"], "numbered")
         self.assertEqual(config["publications"]["listStyle"], "paragraph")
 
+        supplement = normalize_layout_config({"version": 8, "education": {"supplementListStyle": "numbered"}})
+        self.assertEqual(supplement["education"]["supplementListStyle"], "numbered")
+        self.assertEqual(
+            normalize_layout_config({"version": 8, "education": {"supplementListStyle": "invalid"}})["education"]["supplementListStyle"],
+            "bullet",
+        )
+
     def test_content_block_flow_distinguishes_inline_and_separate_labels(self):
         self.assertEqual(
             resolve_content_block_flow({"type": "paragraph", "label": "项目简介"})["labelPlacement"],
@@ -159,7 +166,7 @@ class LayoutConfigTests(unittest.TestCase):
                 "eastAsiaFont": "Random CJK",
             },
         })
-        self.assertEqual(config["version"], 8)
+        self.assertEqual(config["version"], 9)
         self.assertEqual(config["typography"]["preset"], "microsoft-office")
         self.assertEqual(config["typography"]["latinFont"], "Arial")
         self.assertEqual(config["typography"]["eastAsiaFont"], "Microsoft YaHei")
@@ -169,7 +176,7 @@ class LayoutConfigTests(unittest.TestCase):
             "version": 3,
             "global": {"fontSize": 10.5, "lineHeight": 1.32, "moduleMargin": 0.45},
         })
-        self.assertEqual(config["version"], 8)
+        self.assertEqual(config["version"], 9)
         self.assertEqual(config["global"]["fontSize"], 9)
         self.assertEqual(config["global"]["lineHeight"], 1.28)
         self.assertEqual(config["global"]["moduleMargin"], 0.55)
@@ -201,7 +208,7 @@ class LayoutConfigTests(unittest.TestCase):
             "version": 4,
             "global": {"fontSize": 9.5},
         })
-        self.assertEqual(config["version"], 8)
+        self.assertEqual(config["version"], 9)
         self.assertEqual(config["typography"]["fontSizes"], {
             "name": 14, "sectionTitle": 11.5, "entryTitle": 10.5,
             "meta": 9.5, "body": 9.5, "label": 9.5,
@@ -232,7 +239,7 @@ class LayoutConfigTests(unittest.TestCase):
             "version": 5,
             "global": {"density": "standard", "lineHeight": 1.35},
         })
-        self.assertEqual(config["version"], 8)
+        self.assertEqual(config["version"], 9)
         self.assertEqual(config["global"]["lineHeight"], 1.28)
 
         custom = normalize_layout_config({
@@ -377,7 +384,7 @@ class LayoutConfigTests(unittest.TestCase):
             "education": {"preset": "classic"},
         })
         module = resolve_module_layout(config, "education")
-        self.assertEqual(config["version"], 8)
+        self.assertEqual(config["version"], 9)
         self.assertEqual(module["resolvedLineHeight"], 1.45)
         self.assertNotIn("lineHeight", config["education"])
         self.assertEqual(component_position(config, "education", "school"), (0, 0))

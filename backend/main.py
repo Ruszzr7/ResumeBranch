@@ -1225,6 +1225,15 @@ async def parse_and_save_resume_endpoint(
             timeout=150,
         )
         resume_data = normalize_and_validate_resume(parse_json_output(raw), include_defaults=True)
+        # Imported content uses the explicit inline-format protocol. This
+        # prevents the legacy compatibility mode from making every editable
+        # field bold when the source did not mark it as bold. School names are
+        # the one education field with a product-level default bold style.
+        for education in resume_data.get("education") or []:
+            school = str(education.get("school_name") or "").strip()
+            if school and not (school.startswith("**") and school.endswith("**")):
+                education["school_name"] = f"**{school}**"
+        resume_data["formatting_version"] = 4
         text_volume = len(json.dumps(resume_data, ensure_ascii=False).replace('"', '').replace(':', ''))
         basics = resume_data.get("basics", {})
         if text_volume < 60 or not any(str(basics.get(key, "")).strip() for key in ("name", "phone", "email")):

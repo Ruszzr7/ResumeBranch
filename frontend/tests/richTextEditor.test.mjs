@@ -32,7 +32,7 @@ test('editor toggles selections through the deterministic bold-only protocol', (
 
 test('default-bold fields are explicit while module editors do not force all text bold', () => {
   assert.ok(appSource.includes('v-model="resumeFormData.basics.target_position" placeholder="例如 后端开发工程师" compact default-bold'))
-  assert.ok(appSource.includes('data.formatting_version = 3'))
+  assert.ok(appSource.includes('data.formatting_version = 4'))
   assert.equal(appSource.includes('.module-title-editor :deep(.editor-content) {\n  font-weight: 700'), false)
 })
 

@@ -199,9 +199,13 @@ class CustomSection(BaseModel):
 
 class Resume(BaseModel):
     """完整简历数据结构"""
-    formatting_version: int = Field(default=0, description="内联文字格式协议版本；0 为兼容旧默认粗体")
+    formatting_version: int = Field(default=0, description="内联文字格式协议版本；4 表示教育经历仅学校名称默认加粗")
     basics: BasicInfo = Field(..., description="基本信息")
     education: List[Education] = Field(default_factory=list, description="教育背景")
+    education_supplement: List[str] = Field(
+        default_factory=list,
+        description="教育经历补充；无独立标题的补充内容，按原顺序逐条保存，不包含序号",
+    )
     research_interests: List[str] = Field(default_factory=list, description="研究方向或研究兴趣")
     honors: List[str] = Field(default_factory=list, description="荣誉、奖项、奖学金")
     publications: List[str] = Field(default_factory=list, description="论文，每个元素为一篇完整论文信息")
@@ -432,6 +436,7 @@ CONVERSATION_PROMPT = """
     "gpa_scale": "4.0",
     "ranking": "前10%"
   }],
+  "education_supplement": [],
   "publications": ["论文标题（中科院一区 Top，IF 10），已接收"],
   "work_experience": [{
     "company_name": "公司",
@@ -459,6 +464,7 @@ CONVERSATION_PROMPT = """
 - **重要** 当 just_saved=True（简历刚保存）时，说明简历已经修改完成了，不要调用任何工具。
 - **重要** 绝对禁止在聊天内容中输出 JSON 代码块。
 - **重要** 严禁在聊天内容中输出JSON格式内容。
+- **重要** 面向用户的回复只使用中文栏目名和“段落、分点、编号”等中文表述；不得直接展示 `bullet`、`bullet_list`、`numbered`、`numbered_list`、`semantic_role`、`layout_config` 等内部标识。
 - **重要** 禁止构造虚假的修改建议，必须基于用户实际提供的内容，为了提高质量而虚构任何东西（哪怕是一个词）最终会害了用户。
 - 绝对禁止说："已保存"、"已修改"、"正在为你更新"。
 - 当输出文本时，绝对禁止提及 JSON、Key、Value 等技术术语。
@@ -586,7 +592,8 @@ RESUME_FULL_EXTRACT_PROMPT = '''# Role
 5. 如果图片中没有某字段，设置为 "" 或 []，不要省略
 6. 绝对不要输出 ```json 或 ``` 标记
 7. 绝对不要输出其他任何文字
-8. “GPA/绩点/平均绩点”写入 gpa，绩点满分写入 gpa_scale；排名写入 ranking；论文完整内容逐条写入顶层 publications
+8. “GPA/绩点/平均绩点”写入 gpa，绩点满分写入 gpa_scale；排名写入 ranking；原文独立论文栏目中的论文逐条写入顶层 publications
+9. 如果语言、荣誉、论文、证书出现在同一个可见栏目中，保留原标题和顺序，整栏写入 custom_sections，不得拆分；明确可见的粗体文字用成对 **文字** 标记保留
 
 # 示例
 输入：一张简历图片，包含姓名"张三"，手机"13800138000"，工作经历"2020.01 - 2022.12 在字节跳动担任产品经理"
@@ -613,17 +620,23 @@ def build_resume_extract_prompt() -> str:
         "字段映射必须先遵循原简历的可见栏目边界，而不是仅凭内容语义重新分类：专业技能、技能特长、技术栈栏目下的全部内容"
         "都进入 others.skills，即使其中包含 CET-4/CET-6、英语、证书或认证；只有原文存在独立的证书/资格栏目时才写入"
         "others.certificates，只有原文存在独立的语言/外语能力栏目时才写入 others.languages。禁止把原简历一个栏目拆成多个新栏目，"
-        "也不要跨数组重复同一内容。不能把专业技能放入 custom_sections，也不能把荣誉混入 certificates。\n"
+        "也不要跨数组重复同一内容。若一个可见栏目标题同时包含语言、荣誉、奖项、论文或证书等多个类别，必须保留为一个"
+        "custom_sections 项目，保留原标题和原阅读顺序，不得为了套用系统栏目而拆成多个数组。不能把专业技能放入 custom_sections，"
+        "也不能把荣誉混入 certificates。\n"
+        "【文字格式】对图片/PDF 中有明确视觉依据的粗体文字，在对应字符串中使用成对的 **文字** 标记保留；"
+        "只在能够确认原文为粗体时标记，不确定时保持普通文字。不要输出其他 Markdown 标记，列表序号不要写入 items。\n"
         "【经历语义】工作和项目内容优先写入各自的 content_blocks：项目简介/项目背景使用 paragraph 且 semantic_role=introduction；"
         "项目职责/主要职责使用 numbered_list 且 semantic_role=responsibilities；普通无标签内容使用 bullet_list 且 semantic_role=generic。"
         "label 保留原文标题且 label_bold=true；语义标签为空表示保留内容但不显示，不能擅自补回默认标签；"
         "原文中的（1）（2）或 (1)(2) 等编号只作为 items 的边界，items 内不要重复序号。"
         "原文没有项目角色时 role 必须为空，禁止输出‘角色’、‘项目成员’等占位词。\n"
         "【经历粒度】没有语义标题的普通工作描述才逐条进入 details，禁止合成一个长字符串；"
-        "论文完整内容逐条写入顶层 publications；GPA、满分、排名进入对应字段。\n"
+        "论文完整内容在原文存在独立论文栏目时逐条写入顶层 publications；若论文与语言、荣誉、证书等共用一个可见栏目标题，"
+        "混合栏目保留规则优先，此时整栏只能作为一个 custom_sections 项目保存，不得拆分。GPA、满分、排名进入对应字段。\n"
         "【兜底保留】任何不能可靠映射到固定字段的原栏目，都必须按原栏目标题和阅读顺序写入 custom_sections，"
         "绝对不能因为 Schema 没有同名字段而省略。不要重复写入已经映射的内容。\n"
-        "【输出】文件中不存在的字段使用空字符串或空数组；basics.photo 留空。"
+        "【输出】文件中不存在的字段使用空字符串或空数组；basics.photo 留空；formatting_version 固定为 4，"
+        "以便没有明确粗体依据的字段保持普通字重。"
         "只输出符合下面 JSON Schema 的 JSON 对象，不要输出 Markdown、注释或其他文字。JSON Schema：\n"
         + json.dumps(Resume.model_json_schema(), ensure_ascii=False, separators=(",", ":"))
     )
@@ -1477,8 +1490,9 @@ async def proposal_generator_node(state: AgentState) -> dict:
 3. GPA 数值写入 gpa，满分写入 gpa_scale，排名写入 ranking；论文写入顶层 publications。
 4. 如果用户同时提出多项修改，必须一次性体现在同一份完整简历中。
 5. 排版只能修改给定 layout_config 已存在的键和值；禁止输出 CSS、HTML、坐标或新增字段。
-6. 可选值：density=compact/standard/comfortable；titleStyle=underline/plain；basics.preset=centered/left-aligned；contactLayout=inline/stacked；education.preset=classic/compact/three-column；schoolTagStyle=filled/outline/text/hidden；metricsPlacement=below/with-degree/info-column；work/project preset=classic/compact；detailsStyle=bullets/paragraph；datePosition=right/inline；others.preset=inline/tags/stacked；self_evaluation.preset=paragraphs/bullets/compact。
-7. 字号只能由用户在字号设置弹窗中选择；必须原样保留 global.fontSize 和 typography.fontSizes，不得根据对话修改字号。
+6. 回复用户时必须把 paragraph、bullet_list、numbered_list 分别称为“段落、分点、编号”，不得展示这些内部英文值。
+7. 可选值：density=compact/standard/comfortable；titleStyle=underline/plain；basics.preset=centered/left-aligned；contactLayout=inline/stacked；education.preset=classic/compact/three-column；schoolTagStyle=filled/outline/text/hidden；metricsPlacement=below/with-degree/info-column；work/project preset=classic/compact；detailsStyle=bullets/paragraph；datePosition=right/inline；others.preset=inline/tags/stacked；self_evaluation.preset=paragraphs/bullets/compact。
+8. 字号只能由用户在字号设置弹窗中选择；必须原样保留 global.fontSize 和 typography.fontSizes，不得根据对话修改字号。
 
 当前简历：
 {json.dumps(current, ensure_ascii=False, indent=2)}
@@ -1889,7 +1903,17 @@ async def tool_node(state: AgentState) -> dict:
                             base_layout = normalize_layout_config(
                                 state.pending_confirmation.get("base_layout")
                             )
-                            if base_hash and resume_digest(state.resume_data or {}) != base_hash:
+                            # Pending confirmations created before a schema
+                            # migration may contain a digest of the raw resume,
+                            # while newer confirmations use normalized data.
+                            # Accept either representation; any other digest
+                            # still indicates a real concurrent edit.
+                            raw_resume_data = state.resume_data or {}
+                            live_digests = {
+                                resume_digest(raw_resume_data),
+                                resume_digest(normalize_resume_data(raw_resume_data)),
+                            }
+                            if base_hash and base_hash not in live_digests:
                                 result = "保存失败：简历已发生其他修改，请重新生成修改建议"
                                 saved_resume = False
                             elif (

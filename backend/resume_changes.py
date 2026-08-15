@@ -17,6 +17,7 @@ from typing import Any, Iterable
 SECTION_LABELS = {
     "basics": "基础信息",
     "education": "教育经历",
+    "education_supplement": "教育经历补充",
     "research_interests": "研究方向",
     "honors": "主要荣誉",
     "work_experience": "工作经历",
@@ -38,9 +39,24 @@ FIELD_LABELS = {
     "job_type": "工作类型", "project_name": "项目名称", "role": "角色",
     "details": "详细内容", "skills": "技能", "certificates": "证书",
     "languages": "语言", "school_tags": "学校标签", "theses": "论文",
+    "education_supplement": "教育经历补充",
     "title": "标题", "content": "内容", "content_blocks": "内容结构",
     "label": "小标题", "label_bold": "小标题加粗", "text": "正文",
     "items": "条目", "type": "内容类型",
+}
+
+VALUE_LABELS = {
+    "paragraph": "段落",
+    "paragraphs": "分段",
+    "bullet": "分点",
+    "bullets": "分点",
+    "bullet_list": "分点",
+    "numbered": "编号",
+    "numbered_list": "编号",
+    "introduction": "项目简介",
+    "responsibilities": "项目职责",
+    "generic": "普通内容",
+    "standalone": "独立栏目",
 }
 
 ATOMIC_LIST_FIELDS = {
@@ -54,22 +70,23 @@ def resume_digest(data: dict) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _display_value(value: Any) -> str:
+def _display_value(value: Any, field_key: str = "") -> str:
     if value in (None, "", []):
         return "未填写"
+    if isinstance(value, bool):
+        return "是" if value else "否"
     if isinstance(value, list):
         rendered = []
         for item in value:
-            if isinstance(item, dict):
-                rendered.append(
-                    str(item.get("title") or item.get("name") or item.get("content") or item)
-                )
-            else:
-                rendered.append(str(item))
+            rendered.append(_display_value(item))
         return "；".join(rendered) if rendered else "未填写"
     if isinstance(value, dict):
-        return json.dumps(value, ensure_ascii=False)
-    return str(value)
+        rendered = []
+        for key, item in value.items():
+            label = FIELD_LABELS.get(str(key), "内容")
+            rendered.append(f"{label}：{_display_value(item, str(key))}")
+        return "；".join(rendered) if rendered else "未填写"
+    return VALUE_LABELS.get(str(value), str(value))
 
 
 def _is_blank(value: Any) -> bool:
@@ -103,8 +120,8 @@ def build_resume_changes(before: dict, after: dict) -> list[dict]:
             "label": label,
             "before": deepcopy(old),
             "after": deepcopy(new),
-            "before_display": _display_value(old),
-            "after_display": _display_value(new),
+            "before_display": _display_value(old, str(path[-1]) if path else ""),
+            "after_display": _display_value(new, str(path[-1]) if path else ""),
             "operation": operation,
         })
 

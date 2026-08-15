@@ -46,6 +46,7 @@ const FIELD_LABELS = Object.freeze({
   title: '标题',
   content: '内容',
   content_blocks: '内容结构',
+  semantic_role: '内容用途',
   label: '小标题',
   label_bold: '小标题加粗',
   text: '正文',
@@ -63,12 +64,27 @@ const FIELD_LABELS = Object.freeze({
   separator: '分隔方式',
 })
 
+const INTERNAL_VALUE_LABELS = Object.freeze({
+  paragraph: '段落',
+  paragraphs: '分段',
+  bullet: '分点',
+  bullets: '分点',
+  bullet_list: '分点',
+  numbered: '编号',
+  numbered_list: '编号',
+  introduction: '项目简介',
+  responsibilities: '项目职责',
+  generic: '普通内容',
+  standalone: '独立栏目',
+})
+
 const INTERNAL_FIELD_PATTERN = /^[a-z][a-z0-9_.\[\]-]*$/i
 
 function mapFieldToken(token) {
   const clean = String(token || '').trim()
   if (!clean) return ''
   if (FIELD_LABELS[clean]) return FIELD_LABELS[clean]
+  if (INTERNAL_VALUE_LABELS[clean]) return INTERNAL_VALUE_LABELS[clean]
   const pathParts = clean.replace(/\[\d+\]/g, '').split('.').filter(Boolean)
   const lastPart = pathParts[pathParts.length - 1]
   if (lastPart && FIELD_LABELS[lastPart]) return FIELD_LABELS[lastPart]
@@ -89,6 +105,10 @@ const INTERNAL_REFERENCES = Object.keys(FIELD_LABELS)
   .filter(key => /^[a-z][a-z0-9_]*$/i.test(key) && key.includes('_'))
   .sort((left, right) => right.length - left.length)
 
+const INTERNAL_VALUE_REFERENCES = Object.keys(INTERNAL_VALUE_LABELS)
+  .filter(key => /^[a-z][a-z0-9_]*$/i.test(key))
+  .sort((left, right) => right.length - left.length)
+
 export function localizeInternalFieldReferences(value) {
   let text = String(value || '')
   for (const section of [
@@ -106,6 +126,12 @@ export function localizeInternalFieldReferences(value) {
     const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     text = text.replace(new RegExp(`(^|[^A-Za-z0-9_])${escaped}(?=$|[^A-Za-z0-9_])`, 'g'), (match, prefix) => (
       `${prefix}${FIELD_LABELS[field]}`
+    ))
+  }
+  for (const field of INTERNAL_VALUE_REFERENCES) {
+    const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    text = text.replace(new RegExp(`(^|[^A-Za-z0-9_])${escaped}(?=$|[^A-Za-z0-9_])`, 'g'), (match, prefix) => (
+      `${prefix}${INTERNAL_VALUE_LABELS[field]}`
     ))
   }
   return text

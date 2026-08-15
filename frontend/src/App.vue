@@ -551,8 +551,10 @@ const newSkill = ref('') // 用于添加技能标签
 // 简历编辑弹窗状态（新增）
 const isResumeEditDialogOpen = ref(false)
 const resumeFormData = ref({
+  formatting_version: 4,
   basics: { name: '', gender: '', birth_date: '', phone: '', email: '', target_position: '', photo: '', photo_aspect_ratio: 21 / 26, additional_fields: [] },
   education: [],
+  education_supplement: [],
   research_interests: [],
   honors: [],
   publications: [],
@@ -576,6 +578,7 @@ const projectDetailsText = ref('')
 const researchInterestsText = ref('')
 const honorsText = ref('')
 const publicationsText = ref('')
+const educationSupplementText = ref('')
 const selfEvalText = ref('')
 const EDITABLE_MODULE_TITLE_DEFAULTS = Object.freeze({
   education: '教育经历',
@@ -597,20 +600,31 @@ function wrapDefaultBold(value) {
   return !text || (text.startsWith('**') && text.endsWith('**')) ? text : `**${text}**`
 }
 
+function stripDefaultBold(value) {
+  const text = String(value || '')
+  return text.length >= 4 && text.startsWith('**') && text.endsWith('**')
+    ? text.slice(2, -2)
+    : text
+}
+
 function initializeResumeModuleTitles(migrateDefaultBold = false) {
   const overrides = activeLayoutConfig.value.global?.titleOverrides || {}
   resumeModuleTitles.value = Object.fromEntries(Object.entries(EDITABLE_MODULE_TITLE_DEFAULTS).map(([section, fallback]) => [
     section,
-    migrateDefaultBold
-      ? wrapDefaultBold(overrides[section]?.[currentLang.value] || fallback)
-      : (overrides[section]?.[currentLang.value] || fallback)
+    (() => {
+      const stored = String(overrides[section]?.[currentLang.value] || '').trim()
+      // A deleted title is normalized back to its system name.  System names
+      // are always bold; an explicitly customized title remains untouched.
+      if (!stored || plainInlineText(stored) === fallback) return wrapDefaultBold(fallback)
+      return migrateDefaultBold ? wrapDefaultBold(stored) : stored
+    })()
   ]))
 }
 
 function buildResumeTitleLayout() {
   const candidate = normalizeLayoutConfig(activeLayoutConfig.value)
   for (const [section, fallback] of Object.entries(EDITABLE_MODULE_TITLE_DEFAULTS)) {
-    const title = String(resumeModuleTitles.value[section] || '').trim() || fallback
+    const title = String(resumeModuleTitles.value[section] || '').trim() || wrapDefaultBold(fallback)
     candidate.global.titleOverrides[section] = {
       ...(candidate.global.titleOverrides[section] || {}),
       [currentLang.value]: title
@@ -2138,7 +2152,7 @@ function editableExperienceToContentBlocks(work) {
 }
 
 function migrateEditableDefaultBold(data) {
-  if (!data || Number(data.formatting_version || 0) >= 3) return
+  if (!data || Number(data.formatting_version || 0) >= 4) return
   const formattingVersion = Number(data.formatting_version || 0)
   if (formattingVersion < 1) {
     if (data.basics) {
@@ -2166,16 +2180,20 @@ function migrateEditableDefaultBold(data) {
     }
     for (const section of data.custom_sections || []) section.title = wrapDefaultBold(section.title)
   }
-  if (formattingVersion < 3) {
-    for (const education of data.education || []) {
-      for (const key of ['degree', 'major', 'gpa', 'gpa_scale', 'ranking']) {
-        education[key] = wrapDefaultBold(education[key])
-      }
-      education.date_range = Array.isArray(education.date_range)
-        ? education.date_range.map(value => wrapDefaultBold(value))
-        : education.date_range
-      education.school_tags = (education.school_tags || []).map(tag => wrapDefaultBold(tag))
+  // The previous editor made every education field bold by default. Remove
+  // only those legacy outer markers while keeping partial/manual formatting.
+  // School names remain the sole education field with a default bold value.
+  for (const education of data.education || []) {
+    if (formattingVersion < 3) education.school_name = wrapDefaultBold(education.school_name)
+    for (const key of ['degree', 'major', 'gpa', 'gpa_scale', 'ranking']) {
+      education[key] = stripDefaultBold(education[key])
     }
+    education.date_range = Array.isArray(education.date_range)
+      ? education.date_range.map(value => stripDefaultBold(value))
+      : education.date_range
+    education.school_tags = (education.school_tags || []).map(tag => stripDefaultBold(tag))
+  }
+  if (formattingVersion < 3) {
     for (const work of data.work_experience || []) {
       work.job_title = wrapDefaultBold(work.job_title)
       work.job_type = wrapDefaultBold(work.job_type)
@@ -2185,7 +2203,7 @@ function migrateEditableDefaultBold(data) {
       project.date_range = Array.isArray(project.date_range) ? project.date_range.map(value => wrapDefaultBold(value)) : project.date_range
     }
   }
-  data.formatting_version = 3
+  data.formatting_version = 4
 }
 
 // 打开简历编辑弹窗
@@ -2203,8 +2221,10 @@ function openResumeEditDialog() {
   } else {
     // 使用空结构
     resumeFormData.value = {
+      formatting_version: 4,
       basics: { name: '', gender: '', birth_date: '', phone: '', email: '', target_position: '', photo: '', photo_aspect_ratio: 21 / 26, additional_fields: [] },
       education: [],
+      education_supplement: [],
       research_interests: [],
       honors: [],
       publications: [],
@@ -2232,6 +2252,7 @@ function openResumeEditDialog() {
     image.src = resumeFormData.value.basics.photo
   }
   resumeFormData.value.education = resumeFormData.value.education || []
+  resumeFormData.value.education_supplement = resumeFormData.value.education_supplement || []
   resumeFormData.value.research_interests = resumeFormData.value.research_interests || []
   resumeFormData.value.honors = resumeFormData.value.honors || []
   resumeFormData.value.publications = resumeFormData.value.publications || []
@@ -2284,6 +2305,7 @@ function openResumeEditDialog() {
   researchInterestsText.value = arrayToMultiline(resumeFormData.value.research_interests)
   honorsText.value = arrayToMultiline(resumeFormData.value.honors)
   publicationsText.value = arrayToMultiline(resumeFormData.value.publications)
+  educationSupplementText.value = arrayToMultiline(resumeFormData.value.education_supplement)
   // 转换自我评价为多行文本
   selfEvalText.value = arrayToMultiline(resumeFormData.value.self_evaluation || [])
 
@@ -2590,6 +2612,7 @@ async function saveResume() {
     addResumeLang()
     // 复制数据进行处理
     const dataToSave = JSON.parse(JSON.stringify(resumeFormData.value))
+    dataToSave.formatting_version = 4
 
     // 处理日期格式：确保是 YYYY.MM 格式
     dataToSave.education?.forEach(edu => {
@@ -2622,6 +2645,7 @@ async function saveResume() {
     dataToSave.research_interests = multilineToArray(researchInterestsText.value)
     dataToSave.honors = multilineToArray(honorsText.value)
     dataToSave.publications = multilineToArray(publicationsText.value)
+    dataToSave.education_supplement = multilineToArray(educationSupplementText.value)
     dataToSave.custom_sections = (dataToSave.custom_sections || [])
       .map(section => ({
         title: String(section.title || '').trim(),
@@ -4405,46 +4429,56 @@ watch(
                 </div>
                 <div class="field-group">
                   <label>专业</label>
-                  <RichTextEditor v-model="edu.major" placeholder="例如 电子信息工程" compact default-bold />
+                  <RichTextEditor v-model="edu.major" placeholder="例如 电子信息工程" compact />
                 </div>
                 <div class="field-group">
                   <label>学历</label>
-                  <RichTextEditor v-model="edu.degree" placeholder="例如 硕士" compact default-bold />
+                  <RichTextEditor v-model="edu.degree" placeholder="例如 硕士" compact />
                 </div>
                 <div class="field-group">
                   <label>GPA / 绩点</label>
-                  <RichTextEditor v-model="edu.gpa" placeholder="例如 3.72" compact default-bold />
+                  <RichTextEditor v-model="edu.gpa" placeholder="例如 3.72" compact />
                 </div>
                 <div class="field-group">
                   <label>绩点满分</label>
-                  <RichTextEditor v-model="edu.gpa_scale" placeholder="例如 4.0" compact default-bold />
+                  <RichTextEditor v-model="edu.gpa_scale" placeholder="例如 4.0" compact />
                 </div>
                 <div class="field-group">
                   <label>专业 / 年级排名</label>
-                  <RichTextEditor v-model="edu.ranking" placeholder="例如 前 10%" compact default-bold />
+                  <RichTextEditor v-model="edu.ranking" placeholder="例如 前 10%" compact />
                 </div>
                 <div class="field-group full-width">
                   <label>时间范围</label>
                   <div class="date-range-inputs">
-                    <RichTextEditor v-model="edu.date_range[0]" placeholder="例如 2024.09" compact default-bold />
+                    <RichTextEditor v-model="edu.date_range[0]" placeholder="例如 2024.09" compact />
                     <span class="date-range-separator">至</span>
-                    <RichTextEditor v-model="edu.date_range[1]" placeholder="例如 2025.09/至今" compact default-bold />
+                    <RichTextEditor v-model="edu.date_range[1]" placeholder="例如 2025.09/至今" compact />
                   </div>
                 </div>
                 <div class="field-group full-width">
                   <label>学校标签</label>
                   <div class="tags-input">
                     <span v-for="(tag, j) in edu.school_tags" :key="j" class="tag school-tag-edit-row">
-                      <RichTextEditor v-model="edu.school_tags[j]" placeholder="例如 211/985/双一流" compact default-bold />
+                      <RichTextEditor v-model="edu.school_tags[j]" placeholder="例如 211/985/双一流" compact />
                       <button @click="edu.school_tags.splice(j, 1)" class="tag-remove">×</button>
                     </span>
-                    <RichTextEditor v-model="edu.newSchoolTag" placeholder="例如 211/985/双一流" compact default-bold />
+                    <RichTextEditor v-model="edu.newSchoolTag" placeholder="例如 211/985/双一流" compact />
                     <button type="button" class="tag-add-btn" @click="addSchoolTag(edu)">添加</button>
                   </div>
                 </div>
               </div>
             </div>
             <button @click="addEducation" class="add-btn">+ 添加学历</button>
+
+            <div class="field-group full-width education-supplement-editor">
+              <label>教育经历补充</label>
+              <RichTextEditor
+                v-model="educationSupplementText"
+                placeholder="例如 参与科研项目并获校级奖励"
+                class="rich-editor-field"
+                :resume-metrics="resumeEditorMetrics"
+              />
+            </div>
 
             <RichTextEditor v-model="resumeModuleTitles.honors" class="module-title-editor" compact default-bold @update:modelValue="previewResumeModuleTitles" />
             <RichTextEditor
@@ -6670,11 +6704,6 @@ watch(
   background: transparent;
   border: 0;
   border-radius: 0;
-}
-
-.resume-format-hint::before {
-  content: '提示：';
-  color: #d9dae0;
 }
 
 .resume-format-hint kbd {

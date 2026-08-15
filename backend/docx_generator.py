@@ -910,7 +910,7 @@ def generate_docx(
                         elif component in {"school_tags", "degree", "major", "metrics", "date"}:
                             # These are user-entered field values. Their visual
                             # weight comes only from explicit inline-bold marks.
-                            _add_markdown_runs(paragraph, prefix + component_values[component], label_font_size, fonts=font_spec, base_bold=legacy_manual_field_bold)
+                            _add_markdown_runs(paragraph, prefix + component_values[component], label_font_size, fonts=font_spec, base_bold=False)
                         else:
                             _add_markdown_runs(paragraph, prefix + component_values[component], meta_font_size, fonts=font_spec, base_bold=meta_bold)
             if cfg["thesisDisplay"] != "hidden" and "theses" not in cfg["hiddenComponents"]:
@@ -939,34 +939,33 @@ def generate_docx(
                     _increase_paragraph_after(cell.paragraphs[-1], tokens["modules"]["education"]["itemSpacingPt"])
 
         merged_sections = [
-            ("research_interests", labels["researchInterests"], data.get("research_interests") or []),
-            ("honors", labels["honors"], data.get("honors") or []),
-            ("publications", "Publications" if lang == "en" else "论文", data.get("publications") or []),
+            ("research_interests", data.get("research_interests") or []),
+            ("honors", data.get("honors") or []),
+            ("publications", data.get("publications") or []),
         ]
         other_values = data.get("others") or {}
         other_cfg = layout["others"]
         other_hidden = set(other_cfg["hiddenFields"]) | set(other_cfg["hiddenComponents"])
         other_labels = _other_field_labels(other_values, labels)
-        separator = " · " if other_cfg["separator"] == "dot" else " | "
         merged_other = [
-            _other_field_value(other_labels[field], other_values[field], separator, colon)
+            f'{other_labels[field]}{colon}{value}' if other_labels[field] else str(value)
             for field in other_cfg["fieldOrder"]
-            if field in other_labels and field not in other_hidden and other_values.get(field)
+            if field in other_labels and field not in other_hidden
+            for value in (other_values.get(field) or [])
         ]
-        merged_sections.append(("others", "Certificates & Languages" if lang == "en" else "证书与语言", merged_other))
+        merged_sections.append(("others", merged_other))
         merged_sections.sort(key=lambda item: global_layout["sectionOrder"].index(item[0]))
-        for section_id, fallback, values in merged_sections:
-            if not merged_into_education(section_id) or section_id in hidden_sections or not values:
-                continue
-            heading = document.add_paragraph()
-            _paragraph_spacing(heading, after=tokens["paragraphSpacingPt"], line=Pt(body_line_height))
-            heading_text = global_layout.get("titleOverrides", {}).get(section_id, {}).get(lang)
-            if heading_text is None:
-                heading_text = f"**{fallback}**" if formatting_version >= 2 else fallback
-            _add_markdown_runs(heading, heading_text, body_font_size, fonts=font_spec, base_bold=body_bold)
-            for value_index, value in enumerate(values):
-                module_id = section_id if section_id in tokens["modules"] and "listStyle" in layout.get(section_id, {}) else "publications"
-                add_module_list_item(module_id, value, value_index)
+        supplement_values = list(data.get("education_supplement") or [])
+        for section_id, values in merged_sections:
+            if merged_into_education(section_id) and section_id not in hidden_sections:
+                supplement_values.extend(values)
+        for value_index, value in enumerate(supplement_values):
+            add_module_list_item(
+                "education",
+                value,
+                value_index,
+                list_style_override=layout["education"].get("supplementListStyle", "bullet"),
+            )
 
     def add_component_rows(module_id: str, values: dict[str, str], excluded: set[str]) -> None:
         cfg = layout[module_id]
@@ -1009,12 +1008,12 @@ def generate_docx(
                     bold = (entry_title_bold if legacy_default_bold else False) if component in title_components else (legacy_manual_field_bold if component in label_components else meta_bold)
                     _add_markdown_runs(paragraph, prefix + values[component], size, fonts=font_spec, base_bold=bold)
 
-    def add_module_list_item(module_id: str, value: object, index: int) -> None:
+    def add_module_list_item(module_id: str, value: object, index: int, list_style_override: str | None = None) -> None:
         cfg = layout[module_id]
         module_tokens = tokens["modules"][module_id]
         base_indent_mm = module_tokens["indentPt"] * 25.4 / 72.0
         after = module_tokens["itemSpacingPt"]
-        list_style = cfg.get("listStyle", "bullet")
+        list_style = list_style_override or cfg.get("listStyle", "bullet")
         content = _module_list_content(value)
         marker_bold = _is_fully_bold(value)
         if list_style == "paragraph":

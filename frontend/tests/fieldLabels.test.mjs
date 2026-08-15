@@ -14,6 +14,8 @@ test('internal resume field paths are rendered in Chinese', () => {
 test('unknown code-like fields use a safe Chinese fallback', () => {
   assert.equal(userFacingFieldLabel('future_internal_field'), '简历字段')
   assert.equal(userFacingFieldLabel('自定义说明'), '自定义说明')
+  assert.equal(userFacingFieldLabel('numbered_list'), '编号')
+  assert.equal(userFacingFieldLabel('bullet_list'), '分点')
 })
 
 test('historical assistant text localizes embedded internal field names', () => {
@@ -24,5 +26,9 @@ test('historical assistant text localizes embedded internal field names', () => 
   assert.equal(
     localizeInternalFieldReferences('请检查 basics.target_position、school_name 与荣誉(honors)。'),
     '请检查 基础信息中的目标岗位、学校名称 与荣誉(主要荣誉)。'
+  )
+  assert.equal(
+    localizeInternalFieldReferences('项目职责使用 numbered_list，普通内容使用 bullet_list。'),
+    '项目职责使用 编号，普通内容使用 分点。'
   )
 })

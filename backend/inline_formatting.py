@@ -229,6 +229,7 @@ def iter_resume_text_references(data: dict, request_text: str = "") -> Iterator[
         ("research_interests", "research_interests", "研究方向"),
         ("honors", "honors", "主要荣誉"),
         ("self_evaluation", "self_evaluation", "自我评价"),
+        ("education_supplement", "education", "教育经历补充"),
     )
     for key, section, label in list_sections:
         if not allowed(section):

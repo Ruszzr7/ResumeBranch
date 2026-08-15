@@ -95,6 +95,7 @@ _KNOWN_TOP_LEVEL = {
     "formatting_version",
     "basics",
     "education",
+    "education_supplement",
     "research_interests",
     "honors",
     "publications",
@@ -376,6 +377,10 @@ def normalize_resume_data(data: dict) -> dict:
     for key in ("research_interests", "honors", "publications", "self_evaluation"):
         if key in normalized:
             normalized[key] = _string_list(normalized.get(key))
+    # Education supplements are intentionally a flat, heading-free list.  The
+    # original source fields remain intact for compatibility and can be merged
+    # into this block at render time without losing their editable data.
+    normalized["education_supplement"] = _string_list(normalized.get("education_supplement"))
 
     work_items = normalized.get("work_experience") or []
     if not isinstance(work_items, list):
@@ -424,7 +429,7 @@ def normalize_resume_data(data: dict) -> dict:
     # 解析器旧版本会仅凭内容语义，把原“专业技能”栏目中的 CET、语言或
     # 认证拆到新栏目。若技能原文自身明确包含对应标签，则把被拆出的内容
     # 归回专业技能，优先保持上传文件的栏目边界。
-    # 仅对旧解析数据执行历史归类修复。新版编辑器会显式写入 formatting_version=3，
+    # 仅对旧解析数据执行历史归类修复。新版编辑器会显式写入 formatting_version=4，
     # 其中 languages/certificates 是用户确认过的栏目，保存时不得再次挪到 skills。
     if int(normalized.get("formatting_version") or 0) < 2:
         skill_text = "\n".join(others["skills"])

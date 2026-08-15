@@ -64,6 +64,7 @@ class ResumeFileApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(payload["draft"])
         self.assertEqual(payload["source_document_token"], "source-1")
+        self.assertEqual(payload["resume_data"]["formatting_version"], 4)
         save_resume.assert_not_called()
 
     async def test_verified_parser_can_preserve_legacy_immediate_save(self):
@@ -131,6 +132,8 @@ class ResumeFileApiTests(unittest.IsolatedAsyncioTestCase):
         for field in ("birth_date", "research_interests", "honors", "custom_sections"):
             self.assertIn(field, prompt)
         self.assertIn("禁止把原简历一个栏目拆成多个新栏目", prompt)
+        self.assertIn("custom_sections 项目", prompt)
+        self.assertIn("成对的 **文字** 标记", prompt)
         self.assertIn("CET-4/CET-6", prompt)
 
 

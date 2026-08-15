@@ -141,7 +141,7 @@ const otherFieldValue = (field, values) => {
 const otherSeparator = computed(() => moduleLayout('others').separator === 'dot' ? ' · ' : ' | ')
 const sectionMergedIntoEducation = section => Boolean(props.data?.education?.length)
   && layout.value.global.sectionPlacements?.[section] === 'education'
-const mergedEducationSections = computed(() => {
+const mergedEducationGroups = computed(() => {
   const sections = [
     { id: 'research_interests', fallback: t.value.researchInterests, values: props.data?.research_interests || [] },
     { id: 'honors', fallback: t.value.honors, values: props.data?.honors || [] },
@@ -149,14 +149,38 @@ const mergedEducationSections = computed(() => {
     {
       id: 'others',
       fallback: props.lang === 'en' ? 'Certificates & Languages' : '证书与语言',
-      values: visibleOtherFields.value.map(field => otherFieldValue(field, props.data?.others?.[field]))
+      values: visibleOtherFields.value.flatMap(field => {
+        const label = otherFieldLabel(field)
+        return (props.data?.others?.[field] || []).map(value => label ? `${label}：${value}` : value)
+      })
     }
   ]
   return sections
     .filter(section => sectionMergedIntoEducation(section.id) && !hiddenSection(section.id) && section.values.length)
     .sort((left, right) => sectionOrder(layout.value, left.id) - sectionOrder(layout.value, right.id))
-    .map(section => ({ ...section, title: displayTitle(section.id, section.fallback) }))
 })
+const educationSupplementValues = computed(() => {
+  const manual = (props.data?.education_supplement || [])
+    .map(value => String(value || '').trim())
+    .filter(Boolean)
+  return [
+    ...mergedEducationGroups.value.flatMap(section => section.values),
+    ...manual
+  ]
+})
+const educationSupplementStyle = computed(() => moduleLayout('education').supplementListStyle || 'bullet')
+function educationSupplementMarker(value, index) {
+  if (educationSupplementStyle.value === 'numbered') return `(${index + 1})`
+  return educationSupplementStyle.value === 'bullet' ? '•' : ''
+}
+function educationSupplementClasses(value, extra = '') {
+  return [
+    'generic-list-item',
+    `list-style-${educationSupplementStyle.value}`,
+    extra,
+    { 'marker-bold': isFullyBoldText(value) }
+  ]
+}
 const selfEvaluationValues = computed(() => {
   const values = (props.data?.self_evaluation || [])
     .map(value => String(value || '').trim())
@@ -509,6 +533,7 @@ function resetSectionSettings() {
   for (const section of listSettingSections) {
     sectionSettingsDraft.value[section].listStyle = defaults[section].listStyle
   }
+  sectionSettingsDraft.value.education.supplementListStyle = defaults.education.supplementListStyle
 }
 
 async function applySectionSettings() {
@@ -1139,10 +1164,9 @@ const allItems = computed(() => {
           ;(edu.theses || []).forEach((_, tIdx) => push({ type: 'thesis-item', dataIndex: `${i}-${tIdx}`, groupId: `education:${i}`, breakKey: `education:${i}` }))
         }
       })
-      for (const merged of mergedEducationSections.value) {
-        push({ type: `education-merged-${merged.id}-title`, groupId: `education-merged:${merged.id}`, breakKey: `education-merged:${merged.id}`, isSectionTitle: true })
-        merged.values.forEach((_, i) => push({ type: `education-merged-${merged.id}-item`, dataIndex: i, groupId: `education-merged:${merged.id}`, breakKey: `education-merged:${merged.id}` }))
-      }
+      educationSupplementValues.value.forEach((_, i) => {
+        push({ type: 'education-supplement-item', dataIndex: i, groupId: 'education-supplement', breakKey: 'education-supplement' })
+      })
     }
     if (section === 'skills' && props.data.others?.skills?.length) {
       push({ type: 'skills-title', groupId: 'skills', breakKey: 'skills', isSectionTitle: true })
@@ -1209,6 +1233,7 @@ const overflowItemLabel = computed(() => {
   if (!item) return '后续内容'
   const labelsByType = {
     'education-title': '教育经历', 'education-item': '教育经历', 'thesis-item': '论文',
+    'education-supplement-item': '教育经历补充',
     'skills-title': '专业技能', 'skills-item': '专业技能',
     'research-title': '研究方向', 'research-item': '研究方向',
     'honors-title': '主要荣誉', 'honors-item': '主要荣誉', 'others-content': '证书与语言',
@@ -1833,9 +1858,8 @@ const getItemIndex = (type, dataIndex) => {
         </template>
       </template>
 
-      <template v-for="merged in mergedEducationSections" :key="`source-education-merged-${merged.id}`">
-        <h4 class="pageable-item subfield-title education-merged-title" :style="moduleOrder('education')" v-html="formatText(merged.title)"></h4>
-        <div v-for="(item, idx) in merged.values" :key="`source-education-merged-${merged.id}-${idx}`" :class="['pageable-item', ...moduleListClasses(merged.id, item)]" :data-marker="moduleListMarker(merged.id, item, idx)" :style="moduleOrder('education')" v-html="formatText(moduleListContent(item))"></div>
+      <template v-if="data.education?.length && educationSupplementValues.length">
+        <div v-for="(item, idx) in educationSupplementValues" :key="`source-education-supplement-${idx}`" :class="['pageable-item', ...educationSupplementClasses(item)]" :data-marker="educationSupplementMarker(item, idx)" :style="moduleOrder('education')" v-html="formatText(moduleListContent(item))"></div>
       </template>
 
       <template v-if="data.others?.skills?.length && !hiddenSection('skills')">
@@ -2152,9 +2176,8 @@ const getItemIndex = (type, dataIndex) => {
               </template>
             </template>
 
-            <template v-for="merged in mergedEducationSections" :key="`page-${page}-education-merged-${merged.id}`">
-              <h4 v-if="isItemVisible({index: getItemIndex(`education-merged-${merged.id}-title`, 0)}, page - 1)" class="subfield-title education-merged-title" :style="moduleOrder('education')" v-html="formatText(merged.title)"></h4>
-              <div v-for="(item, idx) in merged.values" v-show="isItemVisible({index: getItemIndex(`education-merged-${merged.id}-item`, idx)}, page - 1)" :key="`page-${page}-education-merged-${merged.id}-${idx}`" :class="moduleListClasses(merged.id, item)" :data-marker="moduleListMarker(merged.id, item, idx)" :style="moduleOrder('education')" v-html="formatText(moduleListContent(item))"></div>
+            <template v-if="data.education?.length && educationSupplementValues.length">
+              <div v-for="(item, idx) in educationSupplementValues" v-show="isItemVisible({index: getItemIndex('education-supplement-item', idx)}, page - 1)" :key="`page-${page}-education-supplement-${idx}`" :class="educationSupplementClasses(item)" :data-marker="educationSupplementMarker(item, idx)" :style="moduleOrder('education')" v-html="formatText(moduleListContent(item))"></div>
             </template>
 
             <template v-if="data.others?.skills?.length && !hiddenSection('skills')">
@@ -2386,6 +2409,12 @@ const getItemIndex = (type, dataIndex) => {
               <option v-for="(label, value) in LIST_STYLE_LABELS" :key="value" :value="value">{{ label }}</option>
             </select>
           </label>
+          <label class="section-setting-row">
+            <span>教育经历补充</span>
+            <select v-model="sectionSettingsDraft.education.supplementListStyle">
+              <option v-for="(label, value) in LIST_STYLE_LABELS" :key="value" :value="value">{{ label }}</option>
+            </select>
+          </label>
         </section>
         <section>
           <h4>栏目位置</h4>
@@ -2396,6 +2425,7 @@ const getItemIndex = (type, dataIndex) => {
               <option value="education">并入教育经历</option>
             </select>
           </label>
+          <p class="section-settings-note">并入教育经历后将不显示模块标题</p>
         </section>
       </div>
       <div v-if="sectionSettingsError" class="font-size-error" role="alert">{{ sectionSettingsError }}</div>
@@ -3269,6 +3299,11 @@ const getItemIndex = (type, dataIndex) => {
 .module-component.component-date,
 .module-component.component-position,
 .module-component.component-job_type { font-size: var(--label-font-size); font-weight: var(--manual-field-font-weight); }
+.education-item .module-component.component-school_tags,
+.education-item .module-component.component-degree,
+.education-item .module-component.component-major,
+.education-item .module-component.component-metrics,
+.education-item .module-component.component-date { font-weight: var(--body-font-weight); }
 .module-component.component-role { font-size: var(--meta-font-size); font-weight: var(--meta-font-weight); }
 .education-item.preset-three-column .education-header {
   display: grid;
@@ -3533,12 +3568,6 @@ const getItemIndex = (type, dataIndex) => {
   color: #6c757d;
   margin-bottom: 0.25em;
   display: block;
-}
-.education-merged-title {
-  margin: var(--item-spacing) 0 var(--paragraph-spacing);
-  color: #111;
-  font-size: var(--body-font-size);
-  font-weight: var(--body-font-weight);
 }
 .inline-list {
   display: inline;
@@ -3853,6 +3882,12 @@ const getItemIndex = (type, dataIndex) => {
   color: #f3f4f7;
   background: #30323a;
   font: inherit;
+}
+.section-settings-note {
+  margin: 2px 0 0;
+  color: #aeb0b9;
+  font-size: 0.78rem;
+  line-height: 1.4;
 }
 @media (max-width: 820px) {
   .font-size-overlay {

@@ -368,29 +368,31 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
             html_parts.append('</div>')
 
         merged_sections = [
-            ("research_interests", labels["researchInterests"], resume_data.get("research_interests") or []),
-            ("honors", labels["honors"], resume_data.get("honors") or []),
-            ("publications", "Publications" if lang == "en" else "论文", resume_data.get("publications") or []),
+            ("research_interests", resume_data.get("research_interests") or []),
+            ("honors", resume_data.get("honors") or []),
+            ("publications", resume_data.get("publications") or []),
         ]
         other_values = resume_data.get("others") or {}
         other_layout = layout_config["others"]
         other_hidden = set(other_layout["hiddenFields"]) | set(other_layout["hiddenComponents"])
         other_labels = _other_field_labels(other_values, labels)
-        other_separator = " · " if other_layout["separator"] == "dot" else " | "
         merged_other_values = [
-            _other_field_value(other_labels[field], other_values[field], other_separator)
+            f'{other_labels[field]}：{value}' if other_labels[field] else str(value)
             for field in other_layout["fieldOrder"]
-            if field in other_labels and field not in other_hidden and other_values.get(field)
+            if field in other_labels and field not in other_hidden
+            for value in (other_values.get(field) or [])
         ]
-        merged_sections.append(("others", "Certificates & Languages" if lang == "en" else "证书与语言", merged_other_values))
+        merged_sections.append(("others", merged_other_values))
         merged_sections.sort(key=lambda item: global_layout["sectionOrder"].index(item[0]))
-        for section_id, fallback, values in merged_sections:
-            if not merged_into_education(section_id) or hidden(section_id) or not values:
+        supplement_values = list(resume_data.get("education_supplement") or [])
+        for section_id, values in merged_sections:
+            if not merged_into_education(section_id) or hidden(section_id):
                 continue
-            html_parts.append(f'<h4 class="subfield-title education-merged-title">{format_markdown(section_title(section_id, fallback))}</h4>')
-            list_style = layout_config.get(section_id, {}).get("listStyle", "bullet")
+            supplement_values.extend(values)
+        if supplement_values:
+            list_style = layout_config["education"].get("supplementListStyle", "bullet")
             html_parts.append(f'<ul class="list-items module-list list-style-{list_style}">')
-            for value in values:
+            for value in supplement_values:
                 marker_class = " marker-bold" if _is_fully_bold(value) else ""
                 html_parts.append(f'<li class="list-item{marker_class}">{format_markdown(_module_list_content(value))}</li>')
             html_parts.append('</ul>')
@@ -915,6 +917,11 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     .module-component.component-date,
     .module-component.component-position,
     .module-component.component-job_type {{ font-size: var(--label-font-size); font-weight: var(--manual-field-font-weight); }}
+    .education-item .module-component.component-school_tags,
+    .education-item .module-component.component-degree,
+    .education-item .module-component.component-major,
+    .education-item .module-component.component-metrics,
+    .education-item .module-component.component-date {{ font-weight: var(--body-font-weight); }}
     .module-component.component-role {{ font-size: var(--meta-font-size); font-weight: var(--meta-font-weight); }}
     .education-item.preset-three-column .education-header {{
         display: grid;
@@ -1003,12 +1010,6 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         color: #6c757d;
         margin-bottom: 0.25em;
         display: block;
-    }}
-    .education-merged-title {{
-        margin: var(--item-spacing) 0 var(--paragraph-spacing);
-        color: #111111;
-        font-size: var(--body-font-size);
-        font-weight: var(--body-font-weight);
     }}
 
     .company {{

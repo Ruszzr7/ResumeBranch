@@ -12,7 +12,7 @@ import re
 from typing import Any
 
 
-LAYOUT_SCHEMA_VERSION = 8
+LAYOUT_SCHEMA_VERSION = 9
 
 FONT_SIZE_LIMITS: dict[str, tuple[float, float]] = {
     "name": (12.0, 20.0),
@@ -257,6 +257,7 @@ DEFAULT_LAYOUT_CONFIG: dict[str, Any] = {
         metricsPlacement="with-degree",
         hiddenMetrics=[],
         thesisDisplay="expanded",
+        supplementListStyle="bullet",
     ),
     "skills": _module_contract("skills", listStyle="bullet"),
     "research_interests": _module_contract("research_interests", listStyle="bullet"),
@@ -305,6 +306,7 @@ ENUMS = {
     ("education", "schoolTagStyle"): {"filled", "outline", "text", "hidden"},
     ("education", "metricsPlacement"): {"below", "with-degree", "info-column"},
     ("education", "thesisDisplay"): {"expanded", "compact", "hidden"},
+    ("education", "supplementListStyle"): {"paragraph", "bullet", "numbered"},
     ("work_experience", "preset"): {"compact"},
     ("work_experience", "detailsStyle"): {"bullets", "paragraph"},
     ("work_experience", "datePosition"): {"right", "inline"},
@@ -350,7 +352,10 @@ VALUE_LABELS = {
     "classic": "经典", "three-column": "三列", "filled": "实心标签",
     "outline": "描边标签", "text": "普通文字", "below": "独立下一行",
     "with-degree": "与学历专业同行", "info-column": "信息列",
-    "expanded": "完整展示", "bullets": "圆点列表", "paragraph": "普通段落",
+    "expanded": "完整展示", "bullets": "圆点列表", "bullet": "分点", "bullet_list": "分点",
+    "numbered": "编号", "numbered_list": "编号", "paragraph": "普通段落",
+    "introduction": "项目简介", "responsibilities": "项目职责", "generic": "普通内容",
+    "standalone": "独立栏目",
     "paragraphs": "分段", "tags": "标签", "pipe": "竖线分隔", "dot": "圆点分隔",
 }
 
@@ -377,6 +382,7 @@ FIELD_LABELS = {
     ("education", "metricsPlacement"): "成绩信息位置",
     ("education", "hiddenMetrics"): "隐藏成绩项",
     ("education", "thesisDisplay"): "论文展示方式",
+    ("education", "supplementListStyle"): "教育经历补充分点形式",
     ("work_experience", "preset"): "工作经历布局",
     ("work_experience", "detailsStyle"): "工作描述样式",
     ("work_experience", "datePosition"): "工作日期位置",
@@ -409,13 +415,17 @@ ITEM_LABELS = {
 }
 
 
-def _display_layout_value(value: Any) -> str:
+def _display_layout_value(value: Any, field_key: str = "") -> str:
     if isinstance(value, bool):
         return "是" if value else "否"
     if isinstance(value, list):
         return "、".join(ITEM_LABELS.get(str(item), VALUE_LABELS.get(str(item), str(item))) for item in value) or "无"
     if isinstance(value, dict):
-        return "、".join(f"{ITEM_LABELS.get(str(key), str(key))}：{item}" for key, item in value.items()) or "无"
+        placement_labels = {"standalone": "独立栏目", "education": "并入教育经历"} if field_key == "sectionPlacements" else {}
+        return "、".join(
+            f"{ITEM_LABELS.get(str(key), str(key))}：{placement_labels.get(str(item), VALUE_LABELS.get(str(item), str(item)))}"
+            for key, item in value.items()
+        ) or "无"
     return VALUE_LABELS.get(str(value), str(value))
 
 
@@ -578,6 +588,9 @@ def _normalize_module_contract(result: dict[str, Any], source: dict | None, supp
         except (TypeError, ValueError):
             indent = 0
         module["indentLevel"] = min(max(indent, 0), 3)
+        if module_id == "education":
+            if module.get("supplementListStyle") not in {"paragraph", "bullet", "numbered"}:
+                module["supplementListStyle"] = DEFAULT_LAYOUT_CONFIG["education"]["supplementListStyle"]
         hidden = {
             component for component in module.get("hiddenComponents", [])
             if component in MODULE_COMPONENTS[module_id] and component not in REQUIRED_COMPONENTS[module_id]
@@ -1122,8 +1135,8 @@ def build_layout_changes(before: dict | None, after: dict | None) -> list[dict]:
                 "field_label": FIELD_LABELS.get((section, key), key),
                 "before": before_value,
                 "after": after_value,
-                "before_display": _display_layout_value(before_value),
-                "after_display": _display_layout_value(after_value),
+                "before_display": _display_layout_value(before_value, key),
+                "after_display": _display_layout_value(after_value, key),
             })
         if typography_changed:
             before_value = old["typography"]["fontSizes"]

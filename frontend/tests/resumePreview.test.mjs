@@ -203,6 +203,7 @@ test('column settings are compact, explicit, and preview every draft selection',
   assert.ok(previewSource.includes('<option value="standalone">独立栏目</option>'))
   assert.ok(previewSource.includes(':value="editableSectionPlacement(section)"'))
   assert.ok(previewSource.includes('v-model="sectionSettingsDraft[section].listStyle"'))
+  assert.ok(previewSource.includes('v-model="sectionSettingsDraft.education.supplementListStyle"'))
   assert.ok(previewSource.includes('height: min(480px, calc(100vh - 96px))'))
   assert.ok(previewSource.includes('box-sizing: border-box'))
 })
@@ -216,8 +217,9 @@ test('closing live-preview settings restores saved values', () => {
 test('birth date and merged education headings use body semantics', () => {
   assert.ok(previewSource.includes("!hiddenBasicField('birth_date') && basics.birth_date ? basics.birth_date : ''"))
   assert.equal(previewSource.includes('`${t.value.birthDate}：${basics.birth_date}`'), false)
-  assert.ok(previewSource.includes('.education-merged-title {'))
-  assert.ok(previewSource.includes('font-size: var(--body-font-size);\n  font-weight: var(--body-font-weight);'))
+  assert.ok(previewSource.includes('educationSupplementValues'))
+  assert.ok(previewSource.includes('教育经历补充'))
+  assert.ok(previewSource.includes('const educationSupplementStyle = computed'))
 })
 
 test('all basic information components use pipe separators', () => {

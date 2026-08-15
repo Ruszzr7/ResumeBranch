@@ -5,6 +5,13 @@ from backend.resume_agent import normalize_and_validate_resume
 
 
 class ResumeDataNormalizationTests(unittest.TestCase):
+    def test_education_supplement_is_a_flat_lossless_list(self):
+        result = normalize_resume_data({
+            "education_supplement": ["**论文标题**", {"text": "校级奖励"}, ""],
+            "education": [],
+        })
+        self.assertEqual(result["education_supplement"], ["**论文标题**", "校级奖励"])
+
     def test_publications_are_a_standalone_editable_string_list(self):
         result = normalize_resume_data({
             "publications": ["论文 A，已接收", {"text": "论文 B，返修"}],

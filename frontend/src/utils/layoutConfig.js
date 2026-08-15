@@ -69,7 +69,7 @@ const LEGACY_V7_DEFAULT_SECTION_ORDER = [
 ]
 
 export const DEFAULT_LAYOUT_CONFIG = Object.freeze({
-  version: 8,
+  version: 9,
   typography: {
     preset: 'microsoft-office',
     latinFont: 'Arial',
@@ -89,7 +89,7 @@ export const DEFAULT_LAYOUT_CONFIG = Object.freeze({
     // the imported image's aspect ratio at render time.
     photoHeightMm: 26, photoWidthMm: 21, hiddenFields: []
   }),
-  education: moduleContract('education', { preset: 'compact', schoolTagStyle: 'text', metricsPlacement: 'with-degree', hiddenMetrics: [], thesisDisplay: 'expanded' }),
+  education: moduleContract('education', { preset: 'compact', schoolTagStyle: 'text', metricsPlacement: 'with-degree', hiddenMetrics: [], thesisDisplay: 'expanded', supplementListStyle: 'bullet' }),
   skills: moduleContract('skills', { listStyle: 'bullet' }),
   research_interests: moduleContract('research_interests', { listStyle: 'bullet' }),
   honors: moduleContract('honors', { listStyle: 'bullet' }),
@@ -135,6 +135,7 @@ const ENUMS = Object.freeze({
   'education.schoolTagStyle': ['filled', 'outline', 'text', 'hidden'],
   'education.metricsPlacement': ['below', 'with-degree', 'info-column'],
   'education.thesisDisplay': ['expanded', 'compact', 'hidden'],
+  'education.supplementListStyle': ['paragraph', 'bullet', 'numbered'],
   'work_experience.preset': ['compact'],
   'work_experience.detailsStyle': ['bullets', 'paragraph'],
   'work_experience.datePosition': ['right', 'inline'],
@@ -273,6 +274,9 @@ function normalizeModuleContracts(result, source, suppliedVersion, bounded) {
     module.contentBlockSpacing = bounded(module.contentBlockSpacing, 0, 2, 0.14)
     module.rowSpacing = bounded(module.rowSpacing, 0, 2, 0)
     module.indentLevel = Math.min(3, Math.max(0, Math.trunc(Number(module.indentLevel) || 0)))
+    if (moduleId === 'education' && !['paragraph', 'bullet', 'numbered'].includes(module.supplementListStyle)) {
+      module.supplementListStyle = DEFAULT_LAYOUT_CONFIG.education.supplementListStyle
+    }
     const required = new Set(REQUIRED_COMPONENTS[moduleId])
     const hidden = new Set((Array.isArray(module.hiddenComponents) ? module.hiddenComponents : [])
       .filter(component => MODULE_COMPONENTS[moduleId].includes(component) && !required.has(component)))
