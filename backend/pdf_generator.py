@@ -11,6 +11,7 @@ from html import escape
 from .inline_formatting import format_inline_html, parse_inline_bold
 from .pdf_renderer import render_html_with_chromium
 from .resume_data import normalize_resume_data
+from .render_contract import iter_experience_content_blocks
 from .resume_labels import LABELS
 
 def format_markdown(text: str) -> str:
@@ -88,7 +89,6 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     from .layout_config import (
         format_compact_academic_metric,
         normalize_layout_config,
-        resolve_content_block_flow,
         resolve_education_column_widths,
         resolve_layout_tokens,
         resolve_module_layout,
@@ -440,10 +440,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
             }, {"content"}))
 
             # 工作详情沿用与项目经历一致的语义块，避免标题和已编号内容被重复加圆点。
-            for block in work.get("content_blocks") or []:
-                flow = resolve_content_block_flow(block)
-                if not flow["visible"]:
-                    continue
+            for block, flow in iter_experience_content_blocks(work, experience_kind="work"):
                 block_type = flow["type"]
                 label = flow["label"]
                 label_class = " is-bold" if flow["labelBold"] else ""
@@ -501,10 +498,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
             }, {"content"}))
 
             # 项目详情使用语义块：标题不带圆点，职责内部保留编号。
-            for block in project.get("content_blocks") or []:
-                flow = resolve_content_block_flow(block)
-                if not flow["visible"]:
-                    continue
+            for block, flow in iter_experience_content_blocks(project, experience_kind="project"):
                 block_type = flow["type"]
                 label = flow["label"]
                 label_class = " is-bold" if flow["labelBold"] else ""

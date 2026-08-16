@@ -100,7 +100,12 @@ class InterviewHarnessTests(unittest.IsolatedAsyncioTestCase):
             memory={},
             workflow={"status": "active", "phase": "questioning"},
             request_id="request-2",
+            layout_data=default_layout_config(),
         )
+
+        prompt = llm.ainvoke.call_args.args[0][1].content
+        self.assertIn("当前排版与经历内容契约", prompt)
+        self.assertIn("项目职责", prompt)
 
         self.assertEqual(result["content"].count("？"), 1)
         self.assertNotIn("?", result["content"])

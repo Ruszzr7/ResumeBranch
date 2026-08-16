@@ -3,6 +3,7 @@ import { ref, computed, onMounted, watch, nextTick, onUnmounted } from 'vue'
 import { labels } from '../utils/labels.js'
 import { formatInlineHtml, isFullyBoldInlineText, plainInlineText } from '../utils/inlineFormatting.js'
 import { buildAuthorizationHeaders } from '../config/appMode.js'
+import { normalizeContentBlocks } from '../utils/resumeContract.js'
 import {
   DEFAULT_LAYOUT_CONFIG,
   FONT_SIZE_LABELS,
@@ -259,39 +260,8 @@ function academicMetrics(item) {
 }
 
 function projectContentBlocks(item, experienceKind = 'project') {
-  if (Array.isArray(item?.content_blocks) && item.content_blocks.length) {
-    return item.content_blocks.filter(block => resolveContentBlockFlow(block).visible)
-  }
-  const details = Array.isArray(item?.details) ? item.details.filter(Boolean) : []
-  if (!details.length) return []
-  if (experienceKind === 'work') {
-    return [{ type: 'bullet_list', semantic_role: 'generic', label: '', label_bold: true, text: '', items: details }]
-  }
-  const blocks = []
-  let duties = null
-  const extras = []
-  for (const raw of details) {
-    const text = String(raw || '').trim()
-    const intro = text.match(/^(项目简介|项目背景|项目概述|项目说明)\s*[：:]\s*(.*)$/)
-    const duty = text.match(/^(项目职责|主要职责|个人职责|负责内容)\s*[：:]?\s*(.*)$/)
-    if (intro) {
-      blocks.push({ type: 'paragraph', semantic_role: 'introduction', label: intro[1], label_bold: true, text: intro[2], items: [] })
-    } else if (duty) {
-      duties = { type: 'numbered_list', semantic_role: 'responsibilities', label: duty[1], label_bold: true, text: '', items: [] }
-      if (duty[2]) duties.items.push(duty[2].replace(/^\s*[（(]?\d+[）).、]\s*/, ''))
-      blocks.push(duties)
-    } else if (duties || /^\s*[（(]?\d+[）).、]/.test(text)) {
-      if (!duties) {
-        duties = { type: 'numbered_list', semantic_role: 'responsibilities', label: '项目职责', label_bold: true, text: '', items: [] }
-        blocks.push(duties)
-      }
-      duties.items.push(text.replace(/^\s*[（(]?\d+[）).、]\s*/, ''))
-    } else if (text) {
-      extras.push(text)
-    }
-  }
-  if (extras.length) blocks.push({ type: 'bullet_list', semantic_role: 'generic', label: '', label_bold: true, text: '', items: extras })
-  return blocks.filter(block => block.text || block.items?.length)
+  return normalizeContentBlocks(item?.content_blocks, item?.details, { experienceKind })
+    .filter(block => resolveContentBlockFlow(block).visible)
 }
 
 function workPosition(item, moduleId = 'work_experience') {

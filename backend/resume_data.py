@@ -6,6 +6,8 @@ from copy import deepcopy
 import re
 from typing import Any
 
+from .resume_contract import normalize_content_blocks
+
 
 ACADEMIC_FIELD_ALIASES = {
     "gpa": ("GPA", "绩点", "平均绩点", "grade_point_average"),
@@ -118,9 +120,6 @@ _TOP_LEVEL_ALIASES = {
 }
 
 _NUMBERED_MARKER_RE = re.compile(r"(?<![A-Za-z0-9])[（(]\s*\d{1,2}\s*[）)]")
-_LEADING_NUMBER_RE = re.compile(r"^\s*[（(]?\s*\d{1,2}\s*[）).、]\s*")
-_PROJECT_INTRO_RE = re.compile(r"^(项目简介|项目背景|项目概述|项目说明)\s*[：:]\s*(.*)$")
-_PROJECT_DUTY_RE = re.compile(r"^(项目职责|主要职责|个人职责|负责内容)\s*[：:]?\s*(.*)$")
 _SKILL_SECTION_RE = re.compile(r"^(?:专业技能|技能特长|技术栈|核心技能|技能)$", re.IGNORECASE)
 _LANGUAGE_SKILL_HINT_RE = re.compile(r"(?:英语|英文|语言能力|外语|CET[- ]?[四六46]|IELTS|TOEFL|雅思|托福)", re.IGNORECASE)
 _CERTIFICATE_SKILL_HINT_RE = re.compile(r"(?:证书|认证|资格)", re.IGNORECASE)
@@ -173,85 +172,6 @@ def _normalize_details(value: Any) -> list[str]:
             if part and part not in result:
                 result.append(part)
     return result
-
-
-def _normalize_project_blocks(value: Any, legacy_details: list[str], *, experience_kind: str = "project") -> list[dict]:
-    """Normalize semantic blocks and migrate the common legacy details shape."""
-    result: list[dict] = []
-    if isinstance(value, list):
-        for raw in value:
-            if not isinstance(raw, dict):
-                continue
-            block_type = _text(raw.get("type"))
-            if block_type not in {"paragraph", "numbered_list", "bullet_list"}:
-                block_type = "paragraph" if _text(raw.get("text")) else "bullet_list"
-            label = _text(raw.get("label"))
-            semantic_role = _text(raw.get("semantic_role"))
-            if semantic_role not in {"introduction", "responsibilities", "generic"}:
-                semantic_role = (
-                    "introduction" if label and block_type == "paragraph"
-                    else "responsibilities" if label
-                    else "generic"
-                )
-            text = _text(raw.get("text"))
-            items = [_LEADING_NUMBER_RE.sub("", item).strip() for item in _string_list(raw.get("items"))]
-            items = [item for item in items if item]
-            if text or items:
-                result.append({
-                    "type": block_type,
-                    "semantic_role": semantic_role,
-                    "label": label,
-                    "label_bold": bool(raw.get("label_bold", True)),
-                    "text": text,
-                    "items": items,
-                })
-    if result or not legacy_details:
-        return result
-
-    # Work details are user-authored body text. Never infer semantic labels
-    # from their wording; only explicit structured blocks may act as labels.
-    if experience_kind == "work":
-        return [{
-            "type": "bullet_list", "semantic_role": "generic", "label": "", "label_bold": True,
-            "text": "", "items": legacy_details,
-        }]
-
-    active_duties: dict | None = None
-    unmatched: list[str] = []
-    for detail in legacy_details:
-        text = _text(detail)
-        intro_match = _PROJECT_INTRO_RE.match(text)
-        if intro_match:
-            active_duties = None
-            if intro_match.group(2).strip():
-                result.append({
-                    "type": "paragraph", "semantic_role": "introduction", "label": intro_match.group(1),
-                    "label_bold": True, "text": intro_match.group(2).strip(), "items": [],
-                })
-            continue
-        duty_match = _PROJECT_DUTY_RE.match(text)
-        if duty_match:
-            active_duties = {
-                "type": "numbered_list", "semantic_role": "responsibilities", "label": duty_match.group(1),
-                "label_bold": True, "text": "", "items": [],
-            }
-            remainder = _LEADING_NUMBER_RE.sub("", duty_match.group(2)).strip()
-            if remainder:
-                active_duties["items"].append(remainder)
-            result.append(active_duties)
-            continue
-        if active_duties is not None:
-            clean = _LEADING_NUMBER_RE.sub("", text).strip()
-            if clean:
-                active_duties["items"].append(clean)
-            continue
-        unmatched.append(text)
-    if unmatched:
-        result.append({
-            "type": "bullet_list", "semantic_role": "generic", "label": "", "label_bold": True,
-            "text": "", "items": unmatched,
-        })
-    return [block for block in result if block.get("text") or block.get("items")]
 
 
 def _date_range(item: dict) -> list[str]:
@@ -393,7 +313,7 @@ def normalize_resume_data(data: dict) -> dict:
         item.setdefault("job_type", _text(item.pop("type", "")))
         item["date_range"] = _date_range(item)
         item["details"] = _normalize_details(item.get("details", item.pop("content", [])))
-        item["content_blocks"] = _normalize_project_blocks(
+        item["content_blocks"] = normalize_content_blocks(
             item.get("content_blocks"), item["details"], experience_kind="work",
         )
     normalized["work_experience"] = work_items
@@ -408,7 +328,7 @@ def normalize_resume_data(data: dict) -> dict:
         item["role"] = _text(item.get("role"))
         item["date_range"] = _date_range(item)
         item["details"] = _normalize_details(item.get("details", item.pop("content", [])))
-        item["content_blocks"] = _normalize_project_blocks(item.get("content_blocks"), item["details"])
+        item["content_blocks"] = normalize_content_blocks(item.get("content_blocks"), item["details"])
     normalized["project_experience"] = project_items
 
     others = normalized.get("others")

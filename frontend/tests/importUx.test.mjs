@@ -33,6 +33,28 @@ test('resume import does not trigger an unsolicited LLM reply', () => {
   assert.equal(importFlow.includes("fetch('/api/chat'"), false)
 })
 
+test('all resume upload entry points share the same draft parser and confirmation helpers', () => {
+  const requestStart = appSource.indexOf('async function requestResumeImport')
+  const requestEnd = appSource.indexOf('// 解析并保存简历', requestStart)
+  const requestHelper = appSource.slice(requestStart, requestEnd)
+  assert.ok(requestStart >= 0 && requestEnd > requestStart)
+  assert.ok(requestHelper.includes("fetch('/api/resume/parse_and_save'"))
+  assert.ok(requestHelper.includes("formData.append('draft_only', 'true')"))
+
+  const confirmStart = appSource.indexOf('async function confirmResumeImportDraft')
+  const confirmEnd = appSource.indexOf('// 解析并保存简历', confirmStart)
+  const confirmHelper = appSource.slice(confirmStart, confirmEnd)
+  assert.ok(confirmHelper.includes("fetch('/api/resume/confirm_import'"))
+  assert.ok(confirmHelper.includes('getAuthHeaders(taskId)'))
+
+  const taskStart = appSource.indexOf('async function confirmCreateProjectTask')
+  const taskEnd = appSource.indexOf('async function deleteProjectTask', taskStart)
+  const taskFlow = appSource.slice(taskStart, taskEnd)
+  assert.ok(taskFlow.includes('requestResumeImport(taskImportFile.value, task.id)'))
+  assert.ok(taskFlow.includes('confirmResumeImportDraft(importData, task.id)'))
+  assert.equal(taskFlow.includes("fetch('/api/resume/parse_and_save'"), false)
+})
+
 test('import confirmation stays concise and hides parser diagnostics', () => {
   assert.equal(appSource.includes('source_fingerprint'), false)
   assert.equal(appSource.includes('parser_transport'), false)

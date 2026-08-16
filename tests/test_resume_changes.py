@@ -1,6 +1,6 @@
 import unittest
 
-from backend.resume_changes import apply_resume_changes, build_resume_changes, resume_digest
+from backend.resume_changes import apply_resume_changes, build_resume_changes, resume_digest, validate_resume_change_set
 
 
 class ResumeChangeTests(unittest.TestCase):
@@ -54,6 +54,21 @@ class ResumeChangeTests(unittest.TestCase):
         labels = [item["label"] for item in changes]
         self.assertTrue(any("出生年月" in label for label in labels))
         self.assertFalse(any("birth_date" in label or "custom_sections" in label for label in labels))
+
+    def test_change_set_is_bound_to_the_candidate_before_selective_apply(self):
+        changes = build_resume_changes(self.before, self.after)
+        self.assertTrue(validate_resume_change_set(self.before, self.after, changes))
+        tampered = [dict(change) for change in changes]
+        tampered[0]["after"] = "恶意替换"
+        self.assertFalse(validate_resume_change_set(self.before, self.after, tampered))
+
+    def test_change_set_rejects_unknown_paths(self):
+        changes = build_resume_changes(self.before, self.after)
+        changes.append({
+            "id": "change-extra", "path": ["basics", "photo"],
+            "operation": "replace", "before": "", "after": "data:image/png;base64,unexpected",
+        })
+        self.assertFalse(validate_resume_change_set(self.before, self.after, changes))
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from ..resume_data import normalize_resume_data
+from ..prompt_contract import build_model_contract_context
 
 
 INTERVIEW_SCHEMA_VERSION = 1
@@ -330,6 +331,7 @@ def handle_control_action(action: str, mode: str, workflow: dict, memory: dict) 
 async def run_interview_turn(
     *, llm, action: str, mode: str, user_text: str, resume_data: dict,
     jd_data: dict, memory: dict, workflow: dict, request_id: str,
+    layout_data: dict | None = None,
 ) -> dict:
     """Run one structured coaching turn and return validated state changes."""
     mode = mode if mode in INTERVIEW_MODES else "coaching"
@@ -350,6 +352,9 @@ async def run_interview_turn(
 
 当前简历（只读）：
 {json.dumps(normalize_resume_data(resume_data or {}), ensure_ascii=False)}
+
+当前排版与经历内容契约（只读）：
+{build_model_contract_context(layout_data)}
 
 目标岗位 JD（只读，可能为空）：
 {json.dumps(jd_data or {}, ensure_ascii=False)}

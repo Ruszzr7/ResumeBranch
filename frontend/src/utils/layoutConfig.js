@@ -1,3 +1,5 @@
+import { normalizeContentBlock } from './resumeContract.js'
+
 export const MODULE_COMPONENTS = Object.freeze({
   basics: ['name', 'target_position', 'personal_meta', 'contact', 'additional_fields', 'photo'],
   education: ['school', 'school_tags', 'degree', 'major', 'metrics', 'date', 'theses'],
@@ -683,16 +685,10 @@ export function formatCompactAcademicMetric(item = {}, hiddenMetrics = []) {
 // measurement both consume this descriptor, so an inline label participates in
 // wrapping while a label rendered as its own paragraph does not.
 export function resolveContentBlockFlow(block = {}) {
-  const type = ['paragraph', 'numbered_list', 'bullet_list'].includes(block?.type)
-    ? block.type
-    : 'paragraph'
-  const label = String(block?.label || '').trim()
-  let semanticRole = String(block?.semantic_role || '').trim()
-  if (!['introduction', 'responsibilities', 'generic'].includes(semanticRole)) {
-    semanticRole = label && type === 'paragraph'
-      ? 'introduction'
-      : (label ? 'responsibilities' : 'generic')
-  }
+  const normalized = normalizeContentBlock(block)
+  const type = normalized.type
+  const label = normalized.label
+  const semanticRole = normalized.semantic_role
   const requiresLabel = semanticRole !== 'generic'
   // Labeled lists preserve two visible hierarchy levels: the outer semantic
   // label and its child bullets/numbers. Generic lists use one level.
@@ -710,7 +706,7 @@ export function resolveContentBlockFlow(block = {}) {
     labelMarker: requiresLabel && label ? 'bullet' : 'none',
     contentIndentLevels,
     labelPlacement,
-    labelBold: block?.label_bold !== false,
+    labelBold: normalized.label_bold,
     prefixText: label ? `${label}：` : ''
   }
 }

@@ -32,6 +32,18 @@ test('editor toggles selections through the deterministic bold-only protocol', (
 
 test('default-bold fields are explicit while module editors do not force all text bold', () => {
   assert.ok(appSource.includes('v-model="resumeFormData.basics.target_position" placeholder="例如 后端开发工程师" compact default-bold'))
+  assert.ok(appSource.includes("label_bold: semanticRole === 'introduction' || semanticRole === 'responsibilities'"))
+  assert.ok(appSource.includes("semantic_role: 'introduction',\n  label: project?._introLabel,\n  label_bold: true"))
+  assert.ok(appSource.includes("semantic_role: 'responsibilities', label: project?._dutiesLabel,\n  label_bold: true"))
+  for (const field of [
+    'v-model="work.job_type" placeholder="例如 全职或实习" compact',
+    'v-model="work.date_range[0]" placeholder="例如 2024.09" compact',
+    'v-model="proj.date_range[0]" placeholder="例如 2024.09" compact'
+  ]) assert.ok(appSource.includes(field))
+  assert.ok(appSource.includes('v-model="work.job_title" placeholder="例如 算法工程师" compact default-bold'))
+  assert.equal(appSource.includes('v-model="work.job_type" placeholder="例如 全职或实习" compact default-bold'), false)
+  assert.equal(appSource.includes('v-model="work.date_range[0]" placeholder="例如 2024.09" compact default-bold'), false)
+  assert.equal(appSource.includes('v-model="proj.date_range[0]" placeholder="例如 2024.09" compact default-bold'), false)
   assert.ok(appSource.includes('data.formatting_version = 4'))
   assert.equal(appSource.includes('.module-title-editor :deep(.editor-content) {\n  font-weight: 700'), false)
 })

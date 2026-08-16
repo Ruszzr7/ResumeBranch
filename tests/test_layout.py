@@ -701,7 +701,9 @@ class LayoutRuleTests(unittest.TestCase):
         name_run = next(run for paragraph in all_paragraphs for run in paragraph.runs if run.text == "测试用户")
         company_run = next(run for paragraph in all_paragraphs for run in paragraph.runs if run.text == "示例科技")
         date_run = next(run for paragraph in all_paragraphs for run in paragraph.runs if "2025.01" in run.text)
-        label_run = next(run for paragraph in all_paragraphs for run in paragraph.runs if run.text == "成果：")
+        # Unknown generic labels are flattened into the first content line so
+        # the three-role contract cannot create an extra semantic block.
+        label_run = next(run for paragraph in all_paragraphs for run in paragraph.runs if run.text == "成果")
         bold_body_run = next(run for paragraph in all_paragraphs for run in paragraph.runs if run.text == "延迟降低35%")
         section_run = next(
             paragraph.runs[0]

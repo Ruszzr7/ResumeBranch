@@ -9,6 +9,12 @@ import BrandLogo from './components/BrandLogo.vue'
 import { labels } from './utils/labels.js'
 import { buildAuthorizationHeaders, loadAppConfig } from './config/appMode.js'
 import { normalizeLayoutConfig, resolveContentBlockFlow, resolveLayoutTokens } from './utils/layoutConfig.js'
+import {
+  CONTENT_BLOCK_TYPE_OPTIONS,
+  EDITABLE_RESUME_MODULE_ORDER,
+  EDITABLE_RESUME_MODULE_TITLE_DEFAULTS,
+  normalizeContentBlocks,
+} from './utils/resumeContract.js'
 import { hasMeaningfulResumeContent } from './utils/resumePresence.js'
 import { formatInlineHtml, plainInlineText } from './utils/inlineFormatting.js'
 
@@ -416,20 +422,15 @@ const projectIntroFlow = project => resolveContentBlockFlow({
   type: project?._introType || 'paragraph',
   semantic_role: 'introduction',
   label: project?._introLabel,
-  label_bold: false
+  label_bold: true
 })
 const projectDutiesFlow = project => resolveContentBlockFlow({
   type: project?._dutiesType || 'numbered_list', semantic_role: 'responsibilities', label: project?._dutiesLabel,
-  label_bold: false
+  label_bold: true
 })
 const genericDetailsFlow = item => resolveContentBlockFlow({
   type: item?._detailsType || 'bullet_list', semantic_role: 'generic', label: ''
 })
-const CONTENT_BLOCK_TYPE_OPTIONS = {
-  paragraph: '段落',
-  bullet_list: '分点',
-  numbered_list: '编号'
-}
 const hasEditorText = value => Boolean(String(value || '').trim())
 const showTaskCreateDialog = ref(false)
 const newTaskTitle = ref('')
@@ -580,18 +581,7 @@ const honorsText = ref('')
 const publicationsText = ref('')
 const educationSupplementText = ref('')
 const selfEvalText = ref('')
-const EDITABLE_MODULE_TITLE_DEFAULTS = Object.freeze({
-  education: '教育经历',
-  honors: '主要荣誉',
-  publications: '论文',
-  research_interests: '研究方向',
-  skills: '专业技能',
-  work_experience: '工作经历',
-  project_experience: '项目经历',
-  others: '证书与语言',
-  self_evaluation: '自我评价'
-})
-const resumeModuleTitles = ref({ ...EDITABLE_MODULE_TITLE_DEFAULTS })
+const resumeModuleTitles = ref({ ...EDITABLE_RESUME_MODULE_TITLE_DEFAULTS })
 let resumeEditorPreviousResumeData = null
 let resumeEditorPreviousPreviewLayout = null
 
@@ -609,7 +599,7 @@ function stripDefaultBold(value) {
 
 function initializeResumeModuleTitles(migrateDefaultBold = false) {
   const overrides = activeLayoutConfig.value.global?.titleOverrides || {}
-  resumeModuleTitles.value = Object.fromEntries(Object.entries(EDITABLE_MODULE_TITLE_DEFAULTS).map(([section, fallback]) => [
+  resumeModuleTitles.value = Object.fromEntries(Object.entries(EDITABLE_RESUME_MODULE_TITLE_DEFAULTS).map(([section, fallback]) => [
     section,
     (() => {
       const stored = String(overrides[section]?.[currentLang.value] || '').trim()
@@ -623,7 +613,7 @@ function initializeResumeModuleTitles(migrateDefaultBold = false) {
 
 function buildResumeTitleLayout() {
   const candidate = normalizeLayoutConfig(activeLayoutConfig.value)
-  for (const [section, fallback] of Object.entries(EDITABLE_MODULE_TITLE_DEFAULTS)) {
+  for (const [section, fallback] of Object.entries(EDITABLE_RESUME_MODULE_TITLE_DEFAULTS)) {
     const title = String(resumeModuleTitles.value[section] || '').trim() || wrapDefaultBold(fallback)
     candidate.global.titleOverrides[section] = {
       ...(candidate.global.titleOverrides[section] || {}),
@@ -696,19 +686,19 @@ const IDENTITY_GREETINGS = {
   }
 }
 
-// 获取认证 headers
-function getAuthorizationHeaders() {
+// 获取认证 headers；上传入口可显式指定目标任务，确保解析与确认使用同一上下文。
+function getAuthorizationHeaders(taskId = currentTaskId.value) {
   const headers = buildAuthorizationHeaders(token.value)
-  if (currentTaskId.value) {
-    headers['X-Task-ID'] = currentTaskId.value
+  if (taskId) {
+    headers['X-Task-ID'] = taskId
   }
   return headers
 }
 
-function getAuthHeaders() {
+function getAuthHeaders(taskId = currentTaskId.value) {
   return {
     'Content-Type': 'application/json',
-    ...getAuthorizationHeaders()
+    ...getAuthorizationHeaders(taskId)
   }
 }
 
@@ -966,19 +956,8 @@ async function confirmCreateProjectTask() {
     const task = await response.json()
     createdTask = task
     if (taskCreateMode.value === 'import') {
-      const formData = new FormData()
-      formData.append('file', taskImportFile.value)
-      const importHeaders = buildAuthorizationHeaders(token.value)
-      importHeaders['X-Task-ID'] = task.id
-      const importResponse = await fetch('/api/resume/parse_and_save', {
-        method: 'POST',
-        headers: importHeaders,
-        body: formData
-      })
-      const importData = await importResponse.json().catch(() => ({}))
-      if (!importResponse.ok || !importData.success) {
-        throw new Error(importData.error || importData.detail || '简历导入失败，请重试')
-      }
+      const importData = await requestResumeImport(taskImportFile.value, task.id)
+      await confirmResumeImportDraft(importData, task.id)
     }
     isCreatingTask.value = false
     showTaskCreateDialog.value = false
@@ -1851,7 +1830,7 @@ async function handleUndoClick({ message_id }) {
 function detectChangedModule(oldData, newData) {
   if (!oldData || !newData) return ''
 
-  const modules = ['basics', 'education', 'research_interests', 'honors', 'work_experience', 'project_experience', 'custom_sections', 'others', 'self_evaluation']
+  const modules = ['basics', ...EDITABLE_RESUME_MODULE_ORDER]
 
   for (const module of modules) {
     const oldVal = JSON.stringify(oldData[module] || {})
@@ -2063,11 +2042,26 @@ function closeJDDialog() {
 
 // ==================== 简历编辑功能（新增） ====================
 
-function initializeExperienceContentEditor(proj, migrateDefaultBold = false) {
-  const blocks = Array.isArray(proj.content_blocks) ? proj.content_blocks : []
+function initializeExperienceContentEditor(proj, migrateDefaultBold = false, experienceKind = 'project') {
+  const blocks = normalizeContentBlocks(proj.content_blocks, proj.details, { experienceKind })
   const intro = blocks.find(block => resolveContentBlockFlow(block).semanticRole === 'introduction')
   const duties = blocks.find(block => resolveContentBlockFlow(block).semanticRole === 'responsibilities')
   const extraBlocks = blocks.filter(block => block !== intro && block !== duties)
+  const extraBlockValues = block => {
+    const values = block?.items?.length
+      ? block.items
+      : (block?.text ? [block.text] : [])
+    const label = String(block?.label || '').trim()
+    if (!label) return values
+    const plainLabel = plainInlineText(label).trim()
+    if (!plainLabel) return values
+    const renderedLabel = block?.label_bold === false ? plainLabel : `**${plainLabel}**`
+    const separator = /[：:]$/.test(plainLabel) ? '' : '：'
+    const prefix = `${renderedLabel}${separator}`
+    return values.length
+      ? [`${prefix}${values[0]}`, ...values.slice(1)]
+      : [prefix.replace(/[：:]$/, '')]
+  }
   proj._introLabel = intro ? String(intro.label ?? '') : '**项目简介**'
   proj._dutiesLabel = duties ? String(duties.label ?? '') : '**项目职责**'
   proj._introType = intro?.type || 'paragraph'
@@ -2075,7 +2069,7 @@ function initializeExperienceContentEditor(proj, migrateDefaultBold = false) {
   proj._detailsType = extraBlocks.find(block => ['paragraph', 'bullet_list', 'numbered_list'].includes(block?.type))?.type || 'bullet_list'
   proj._introText = intro?.type === 'paragraph' ? (intro?.text || '') : arrayToMultiline(intro?.items || [])
   proj._dutiesText = duties?.type === 'paragraph' ? (duties?.text || '') : arrayToMultiline(duties?.items || [])
-  proj._extraDetailsText = arrayToMultiline(extraBlocks.flatMap(block => block?.items?.length ? block.items : (block?.text ? [block.text] : [])))
+  proj._extraDetailsText = arrayToMultiline(extraBlocks.flatMap(extraBlockValues))
 
   if (!blocks.length && Array.isArray(proj.details)) {
     let dutyMode = false
@@ -2109,24 +2103,27 @@ function initializeExperienceContentEditor(proj, migrateDefaultBold = false) {
 }
 
 function initializeProjectContentEditor(proj, migrateDefaultBold = false) {
-  initializeExperienceContentEditor(proj, migrateDefaultBold)
+  initializeExperienceContentEditor(proj, migrateDefaultBold, 'project')
 }
 
 function initializeWorkContentEditor(work, migrateDefaultBold = false) {
-  initializeExperienceContentEditor(work, migrateDefaultBold)
+  initializeExperienceContentEditor(work, migrateDefaultBold, 'work')
   work._detailsText = work._extraDetailsText
 }
 
 function editableExperienceToContentBlocks(work) {
   const contentBlock = (semanticRole, label, type, rawText) => {
-    const resolvedType = CONTENT_BLOCK_TYPE_OPTIONS[type] ? type : 'paragraph'
+    const fallbackType = semanticRole === 'introduction'
+      ? 'paragraph'
+      : semanticRole === 'responsibilities' ? 'numbered_list' : 'bullet_list'
+    const resolvedType = CONTENT_BLOCK_TYPE_OPTIONS[type] ? type : fallbackType
     const values = multilineToArray(rawText)
     if (!values.length) return null
     return {
       type: resolvedType,
       semantic_role: semanticRole,
       label: String(label || '').trim(),
-      label_bold: false,
+      label_bold: semanticRole === 'introduction' || semanticRole === 'responsibilities',
       text: resolvedType === 'paragraph' ? values.join(' ') : '',
       items: resolvedType === 'paragraph' ? [] : values
     }
@@ -2165,7 +2162,7 @@ function migrateEditableDefaultBold(data) {
       for (const block of work.content_blocks || []) {
         if (block?.label) {
           block.label = wrapDefaultBold(block.label)
-          block.label_bold = false
+          block.label_bold = true
         }
       }
     }
@@ -2174,7 +2171,7 @@ function migrateEditableDefaultBold(data) {
       for (const block of project.content_blocks || []) {
         if (block?.label) {
           block.label = wrapDefaultBold(block.label)
-          block.label_bold = false
+          block.label_bold = true
         }
       }
     }
@@ -3203,6 +3200,38 @@ function handleResumeImageSelect(event) {
   event.target.value = ''
 }
 
+// 所有简历上传入口共用同一解析请求；页面只负责选择文件和展示结果。
+async function requestResumeImport(file, taskId = currentTaskId.value) {
+  if (!file) throw new Error('请先选择简历图片')
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('draft_only', 'true')
+  const response = await fetch('/api/resume/parse_and_save', {
+    method: 'POST',
+    headers: getAuthorizationHeaders(taskId),
+    body: formData
+  })
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok || !data.success) throw new Error(data.error || data.detail || '解析失败')
+  return data
+}
+
+// 所有上传入口共用同一草稿确认请求；X-Task-ID 决定写入主简历或岗位版本。
+async function confirmResumeImportDraft(draft, taskId = currentTaskId.value) {
+  const response = await fetch('/api/resume/confirm_import', {
+    method: 'POST',
+    headers: getAuthHeaders(taskId),
+    body: JSON.stringify({
+      resume_data: draft?.resume_data || {},
+      source_page_count: draft?.source_page_count || 1,
+      source_document_token: draft?.source_document_token || null
+    })
+  })
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok || !data.success) throw new Error(data.detail || data.error || '保存导入结果失败')
+  return data
+}
+
 // 解析并保存简历
 async function parseAndSaveResume(confirmedData = null) {
   if (!confirmedData || confirmedData.success !== true) confirmedData = null
@@ -3217,14 +3246,7 @@ async function parseAndSaveResume(confirmedData = null) {
   try {
     let data = confirmedData
     if (!data) {
-      const formData = new FormData()
-      formData.append('file', resumeImageFile.value)
-      formData.append('draft_only', 'true')
-      const response = await fetch('/api/resume/parse_and_save', {
-        method: 'POST', headers: getAuthorizationHeaders(), body: formData
-      })
-      data = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(data.error || data.detail || '解析失败')
+      data = await requestResumeImport(resumeImageFile.value)
     }
 
     if (data.success && data.draft) {
@@ -3265,17 +3287,7 @@ async function confirmResumeImport() {
   isParsingResume.value = true
   resumeImportError.value = ''
   try {
-    const response = await fetch('/api/resume/confirm_import', {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify({
-        resume_data: resumeImportDraft.value.resume_data,
-        source_page_count: resumeImportDraft.value.source_page_count || 1,
-        source_document_token: resumeImportDraft.value.source_document_token || null
-      })
-    })
-    const data = await response.json().catch(() => ({}))
-    if (!response.ok || !data.success) throw new Error(data.detail || '保存导入结果失败')
+    const data = await confirmResumeImportDraft(resumeImportDraft.value)
     resumeImportDraft.value = null
     await parseAndSaveResume(data)
   } catch (error) {
@@ -4548,14 +4560,14 @@ watch(
                 </div>
                 <div class="field-group">
                   <label>工作类型</label>
-                  <RichTextEditor v-model="work.job_type" placeholder="例如 全职或实习" compact default-bold />
+                  <RichTextEditor v-model="work.job_type" placeholder="例如 全职或实习" compact />
                 </div>
                 <div class="field-group full-width">
                   <label>时间范围</label>
                   <div class="date-range-inputs">
-                    <RichTextEditor v-model="work.date_range[0]" placeholder="例如 2024.09" compact default-bold />
+                  <RichTextEditor v-model="work.date_range[0]" placeholder="例如 2024.09" compact />
                     <span class="date-range-separator">至</span>
-                    <RichTextEditor v-model="work.date_range[1]" placeholder="例如 2025.09/至今" compact default-bold />
+                  <RichTextEditor v-model="work.date_range[1]" placeholder="例如 2025.09/至今" compact />
                   </div>
                 </div>
               </div>
@@ -4629,9 +4641,9 @@ watch(
                 <div class="field-group full-width">
                   <label>时间范围</label>
                   <div class="date-range-inputs">
-                    <RichTextEditor v-model="proj.date_range[0]" placeholder="例如 2024.09" compact default-bold />
+                  <RichTextEditor v-model="proj.date_range[0]" placeholder="例如 2024.09" compact />
                     <span class="date-range-separator">至</span>
-                    <RichTextEditor v-model="proj.date_range[1]" placeholder="例如 2025.09/至今" compact default-bold />
+                  <RichTextEditor v-model="proj.date_range[1]" placeholder="例如 2025.09/至今" compact />
                   </div>
                 </div>
               </div>

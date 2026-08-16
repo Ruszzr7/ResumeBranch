@@ -18,6 +18,7 @@ from docx.shared import Mm, Pt, RGBColor
 from .inline_formatting import parse_inline_bold
 from .resume_labels import LABELS
 from .resume_data import normalize_resume_data
+from .render_contract import iter_experience_content_blocks
 
 DEFAULT_FONT_SPEC = {
     "latinFont": "Arial",
@@ -493,7 +494,6 @@ def generate_docx(
     from .layout_config import (
         format_compact_academic_metric,
         normalize_layout_config,
-        resolve_content_block_flow,
         resolve_education_column_widths,
         resolve_layout_tokens,
         resolve_photo_height_mm,
@@ -1087,14 +1087,10 @@ def generate_docx(
         module_tokens = tokens["modules"][module_id]
         module_indent_mm = module_tokens["indentPt"] * 25.4 / 72.0
         semantic_indent_mm = module_indent_mm + list_text_indent_mm
-        blocks = item.get("content_blocks") or []
-        if not blocks:
-            add_details(item.get("details"), "bullets")
-            return
-        for block in blocks:
-            flow = resolve_content_block_flow(block)
-            if not flow["visible"]:
-                continue
+        blocks = iter_experience_content_blocks(item, experience_kind="work" if module_id in {"work_experience", "internship_experience"} else "project")
+        rendered = False
+        for block, flow in blocks:
+            rendered = True
             block_type = flow["type"]
             label = flow["label"]
             if block_type == "paragraph":
@@ -1145,6 +1141,8 @@ def generate_docx(
                         fonts=font_spec,
                         text_indent_mm=module_indent_mm + list_text_indent_mm * max(1, flow["contentIndentLevels"]),
                     )
+        if not rendered:
+            add_details(item.get("details"), "bullets")
 
     def render_projects() -> None:
         items = data.get("project_experience") or []

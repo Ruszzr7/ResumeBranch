@@ -95,7 +95,7 @@ test('preview pagination measures shared spacing and uses a strict page boundary
 
 test('legacy work details remain body content regardless of their wording', () => {
   assert.ok(previewSource.includes("function projectContentBlocks(item, experienceKind = 'project')"))
-  assert.ok(previewSource.includes("if (experienceKind === 'work')"))
+  assert.ok(previewSource.includes('normalizeContentBlocks(item?.content_blocks, item?.details, { experienceKind })'))
   assert.ok(previewSource.includes("projectContentBlocks(entry.item, 'work')"))
   assert.ok(previewSource.includes("projectContentBlocks(item, 'work')"))
 })

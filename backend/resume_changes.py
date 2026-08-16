@@ -20,7 +20,9 @@ SECTION_LABELS = {
     "education_supplement": "教育经历补充",
     "research_interests": "研究方向",
     "honors": "主要荣誉",
+    "publications": "论文",
     "work_experience": "工作经历",
+    "internship_experience": "实习经历",
     "project_experience": "项目经历",
     "custom_sections": "自定义模块",
     "others": "专业技能与补充信息",
@@ -63,6 +65,8 @@ ATOMIC_LIST_FIELDS = {
     "details", "skills", "certificates", "languages", "school_tags",
     "theses", "self_evaluation",
 }
+
+CHANGE_CONTRACT_VERSION = 1
 
 
 def resume_digest(data: dict) -> str:
@@ -154,6 +158,37 @@ def build_resume_changes(before: dict, after: dict) -> list[dict]:
 
     walk(before or {}, after or {}, [])
     return changes
+
+
+def validate_resume_change_set(before: dict, after: dict, changes: Iterable[dict]) -> bool:
+    """Verify that a persisted change list describes the supplied candidate.
+
+    Confirmation records live longer than a single request.  Recomputing the
+    leaf changes before selective apply prevents a stale or manually altered
+    record from writing an unrelated path into the resume.
+    """
+    expected = build_resume_changes(before or {}, after or {})
+    expected_by_path = {
+        json.dumps(item.get("path", []), ensure_ascii=False, sort_keys=True): item
+        for item in expected
+    }
+    seen: set[str] = set()
+    for change in changes or []:
+        if not isinstance(change, dict) or change.get("kind") == "layout":
+            continue
+        path = change.get("path")
+        key = json.dumps(path if isinstance(path, list) else [], ensure_ascii=False, sort_keys=True)
+        expected_change = expected_by_path.get(key)
+        if expected_change is None or key in seen:
+            return False
+        if change.get("operation") != expected_change.get("operation"):
+            return False
+        if change.get("before") != expected_change.get("before"):
+            return False
+        if change.get("after") != expected_change.get("after"):
+            return False
+        seen.add(key)
+    return True
 
 
 def apply_resume_changes(base: dict, changes: Iterable[dict], selected_ids: Iterable[str]) -> dict:

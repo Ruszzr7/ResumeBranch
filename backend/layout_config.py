@@ -11,6 +11,8 @@ import math
 import re
 from typing import Any
 
+from .resume_contract import normalize_content_block
+
 
 LAYOUT_SCHEMA_VERSION = 9
 
@@ -26,19 +28,10 @@ FONT_SIZE_LIMITS: dict[str, tuple[float, float]] = {
 
 def resolve_content_block_flow(block: dict[str, Any] | None = None) -> dict[str, Any]:
     """Describe whether a semantic content label shares the content line."""
-    block = block or {}
-    block_type = str(block.get("type") or "paragraph")
-    if block_type not in {"paragraph", "numbered_list", "bullet_list"}:
-        block_type = "paragraph"
-    label = str(block.get("label") or "").strip()
-    semantic_role = str(block.get("semantic_role") or "").strip()
-    if semantic_role not in {"introduction", "responsibilities", "generic"}:
-        if label and block_type == "paragraph":
-            semantic_role = "introduction"
-        elif label:
-            semantic_role = "responsibilities"
-        else:
-            semantic_role = "generic"
+    block = normalize_content_block(block or {}, keep_empty=True) or {}
+    block_type = block["type"]
+    label = block["label"]
+    semantic_role = block["semantic_role"]
     requires_label = semantic_role != "generic"
     # A labeled list has two visible hierarchy levels: the outer semantic
     # label and its child bullets/numbers. Paragraph labels remain at level 1,

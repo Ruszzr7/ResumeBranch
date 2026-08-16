@@ -65,6 +65,7 @@ class ResumeFileApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(payload["draft"])
         self.assertEqual(payload["source_document_token"], "source-1")
         self.assertEqual(payload["resume_data"]["formatting_version"], 4)
+        self.assertTrue(payload["import_quality"]["accepted"])
         save_resume.assert_not_called()
 
     async def test_verified_parser_can_preserve_legacy_immediate_save(self):
@@ -127,6 +128,7 @@ class ResumeFileApiTests(unittest.IsolatedAsyncioTestCase):
         payload = json.loads(response.body)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(payload["resume_data"]["research_interests"], ["机器人控制"])
+        self.assertTrue(payload["import_quality"]["accepted"])
         self.assertEqual(invoke.call_args.kwargs["mime_type"], "image/png")
         prompt = invoke.call_args.kwargs["prompt"]
         for field in ("birth_date", "research_interests", "honors", "custom_sections"):
@@ -135,6 +137,22 @@ class ResumeFileApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("custom_sections 项目", prompt)
         self.assertIn("成对的 **文字** 标记", prompt)
         self.assertIn("CET-4/CET-6", prompt)
+        self.assertIn("教育经历补充", prompt)
+        self.assertIn("label 不要写 ** 标记", prompt)
+        self.assertIn("内部建立带字重的逐行转写", prompt)
+        self.assertIn("固定标题字段不受原文视觉字重影响", prompt)
+        self.assertIn("保留段落内部真实存在的重点词汇粗体", prompt)
+        self.assertIn("明确视觉证据", prompt)
+        self.assertIn("段落或分点开头出现完整粗体片段", prompt)
+        self.assertIn("高优先级的局部粗体证据", prompt)
+        self.assertIn("宁可漏标也不要误标", prompt)
+        self.assertIn("generic 的 label 必须为空", prompt)
+        self.assertIn("普通内容用分点", prompt)
+        self.assertIn("内容块边界与分类顺序", prompt)
+        self.assertIn("视觉边界优先于语义猜测", prompt)
+        self.assertIn("项目简介后、在同一视觉层级且没有新标题的连续内容，默认属于项目职责", prompt)
+        self.assertIn("若整个经历没有任何明确的项目简介/项目职责标题，全部内容归入 generic", prompt)
+        self.assertIn("所有可见内容必须原样进入某个 content_blocks", prompt)
 
 
 if __name__ == "__main__":

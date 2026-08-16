@@ -25,12 +25,19 @@ from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 from dataclasses import dataclass
-from typing import List, Literal, Optional
+from typing import List
 from pydantic import BaseModel, Field
 
 from .resume_data import normalize_resume_data
+from .resume_contract import ProjectContentBlock
+from .prompt_contract import CONTENT_STRUCTURE_GUIDANCE, build_layout_context
 from .inline_formatting import InlineFormatError, format_resume_text, plain_inline_text
-from .resume_changes import apply_resume_changes, build_resume_changes, resume_digest
+from .resume_changes import (
+    apply_resume_changes,
+    build_resume_changes,
+    resume_digest,
+    validate_resume_change_set,
+)
 from .layout_config import (
     apply_density,
     apply_layout_change_groups,
@@ -149,20 +156,6 @@ class Education(BaseModel):
     theses: List[Thesis] = Field(default_factory=list, description="论文列表")
 
 
-class ProjectContentBlock(BaseModel):
-    """经历正文的语义块，避免标题、正文和编号被统一渲染成圆点列表。"""
-    type: Literal["paragraph", "numbered_list", "bullet_list"] = Field(
-        default="paragraph", description="段落、编号列表或普通分点列表"
-    )
-    semantic_role: Optional[Literal["introduction", "responsibilities", "generic"]] = Field(
-        default=None, description="稳定语义角色；旧数据缺省时由类型和标签兼容推断"
-    )
-    label: str = Field(default="", description="例如项目简介、项目职责")
-    label_bold: bool = Field(default=True, description="语义标签是否加粗")
-    text: str = Field(default="", description="paragraph 类型的正文")
-    items: List[str] = Field(default_factory=list, description="列表类型的逐条内容，不包含序号")
-
-
 class WorkExperience(BaseModel):
     """工作经历"""
     company_name: str = Field(..., description="公司名称")
@@ -199,7 +192,7 @@ class CustomSection(BaseModel):
 
 class Resume(BaseModel):
     """完整简历数据结构"""
-    formatting_version: int = Field(default=0, description="内联文字格式协议版本；4 表示教育经历仅学校名称默认加粗")
+    formatting_version: int = Field(default=0, description="内联文字格式协议版本；4 表示固定字段字重与大输入框局部粗体协议")
     basics: BasicInfo = Field(..., description="基本信息")
     education: List[Education] = Field(default_factory=list, description="教育背景")
     education_supplement: List[str] = Field(
@@ -406,6 +399,8 @@ CONVERSATION_PROMPT = """
 
 # 目标岗位JD数据：{{jd_data}}
 
+# 当前排版与经历内容契约：{{layout_contract}}
+
 # 对话逻辑规则与输出风格
 1. **单点质询原则**：每次对话只输出一个核心问题的提问或一个具体的修改点，严禁一次性抛出多个问题分散用户注意力。
 2. **引导式提问**：若描述简略，严禁说“很棒”，应通过提问启发细节。例：“这个项目方向很有意思。你能细说下当时遇到最难的技术点是什么吗？或者你用什么指标衡量它的成功？”
@@ -531,83 +526,6 @@ JD_PARSER_PROMPT = '''# Role
 '''
 
 
-# Resume Full Extract Prompt - 用于完整提取简历图片为JSON（首次上传流程）
-RESUME_FULL_EXTRACT_PROMPT = '''# Role
-你是简历OCR提取专家，负责从图片中完整提取所有简历信息。
-
-# 核心要求
-**逐字提取，不要省略任何内容**。图片中的每一个字、每一行都要完整提取。
-
-# 严格的输出格式
-你必须严格按照以下JSON Schema输出（其中的数组代表可以有多个），直接输出JSON对象：
-
-```json规范参考
-{
-  "photo": "",（留空）
-  "basics": {
-    "name": "姓名",
-    "gender": "性别",
-    "phone": "手机号",
-    "email": "邮箱",
-    "target_position": "期望岗位"
-  },
-  "education": [{
-    "school_name": "学校",
-    "major": "专业",
-    "degree": "学位",
-    "date_range": ["开始时间", "结束时间"],
-    "school_tags": ["标签1", "标签2"],
-    "gpa": "3.72",
-    "gpa_scale": "4.0",
-    "ranking": "前10%"
-  }],
-  "publications": ["论文标题（中科院一区 Top，IF 10），已接收"],
-  "work_experience": [{
-    "company_name": "公司",
-    "job_title": "职位",
-    "date_range": ["开始时间", "结束时间"],
-    "job_type": "实习/全职",
-    "details": ["具体工作内容1", "具体工作内容2"]
-  }],
-  "project_experience": [{
-    "project_name": "项目名称",
-    "role": "角色",
-    "date_range": ["开始时间", "结束时间"],
-    "details": ["具体内容1", "具体内容2"]
-  }],
-  "others": {
-    "skills": ["技能1", "技能2"],
-    "certificates": ["证书1", "证书2"],
-    "languages": ["语言"]
-  },
-  "self_evaluation": ["自我评价1", "自我评价2"]
-}
-```
-
-# 严格规则
-1. **只输出JSON**，不要有任何解释、前缀、后缀、markdown代码块标记
-2. **必须包含所有字段**，即使值为空字符串、空数组或空对象
-3. **content 必须是数组**，每一条内容都要独立成数组元素
-4. 时间格式统一为 "YYYY.MM - YYYY.MM" 或 "至今"
-5. 如果图片中没有某字段，设置为 "" 或 []，不要省略
-6. 绝对不要输出 ```json 或 ``` 标记
-7. 绝对不要输出其他任何文字
-8. “GPA/绩点/平均绩点”写入 gpa，绩点满分写入 gpa_scale；排名写入 ranking；原文独立论文栏目中的论文逐条写入顶层 publications
-9. 如果语言、荣誉、论文、证书出现在同一个可见栏目中，保留原标题和顺序，整栏写入 custom_sections，不得拆分；明确可见的粗体文字用成对 **文字** 标记保留
-
-# 示例
-输入：一张简历图片，包含姓名"张三"，手机"13800138000"，工作经历"2020.01 - 2022.12 在字节跳动担任产品经理"
-输出：{"basics":{"name":"张三","gender":"","phone":"13800138000","email":"","target_position":""},"education":[],"work_experience":[{"company":"字节跳动","position":"产品经理","time":"2020.01 - 2022.12","type":"","content":[]}],"project_experience":[],"others":{"skills":[],"certificates":[],"languages":[]},"self_evaluation":[]}
-'''
-
-
-RESUME_IMAGE_TRANSCRIPTION_PROMPT = '''你是只负责忠实转写的简历 OCR 引擎。
-
-请按图片的阅读顺序逐行转写全部可见文字，不要总结、改写、补全或猜测。
-无法确认的字符用“〔无法辨认〕”标记；图片中不存在的信息绝对不要生成。
-保留各段标题、项目符号、日期、数字、邮箱和电话号码。只输出转写文本。'''
-
-
 def build_resume_extract_prompt() -> str:
     """Return the single canonical prompt used for PDF and image imports."""
     return (
@@ -623,18 +541,20 @@ def build_resume_extract_prompt() -> str:
         "也不要跨数组重复同一内容。若一个可见栏目标题同时包含语言、荣誉、奖项、论文或证书等多个类别，必须保留为一个"
         "custom_sections 项目，保留原标题和原阅读顺序，不得为了套用系统栏目而拆成多个数组。不能把专业技能放入 custom_sections，"
         "也不能把荣誉混入 certificates。\n"
-        "【文字格式】对图片/PDF 中有明确视觉依据的粗体文字，在对应字符串中使用成对的 **文字** 标记保留；"
-        "只在能够确认原文为粗体时标记，不确定时保持普通文字。不要输出其他 Markdown 标记，列表序号不要写入 items。\n"
-        "【经历语义】工作和项目内容优先写入各自的 content_blocks：项目简介/项目背景使用 paragraph 且 semantic_role=introduction；"
-        "项目职责/主要职责使用 numbered_list 且 semantic_role=responsibilities；普通无标签内容使用 bullet_list 且 semantic_role=generic。"
-        "label 保留原文标题且 label_bold=true；语义标签为空表示保留内容但不显示，不能擅自补回默认标签；"
+        "【文字格式】在生成 JSON 前先按页面阅读顺序在内部建立带字重的逐行转写。以下固定标题字段不受原文视觉字重影响，必须默认加粗：basics.name、basics.target_position、education.school_name、work_experience.company_name、work_experience.job_title、project_experience.project_name，以及项目简介和项目职责的 label（label_bold=true）。以下固定字段必须保持普通字重，不得写 **：基本信息中的性别、出生年月、手机、邮箱和其他基本信息；教育经历中的学校标签、学历、专业、绩点、排名、日期；工作/实习经历中的工作类型、日期；项目经历中的角色、日期。"
+        "其余编辑内容中的大输入框需保留段落内部真实存在的重点词汇粗体，但只保留原文有明确视觉证据的局部粗体：只有能确认原文字符确实使用粗体时，才使用成对的 **文字** 标记；段落或分点开头出现完整粗体片段并紧接冒号/中文冒号或其他分隔符（例如 **重点内容**：XXXXX）时，必须优先检查并保留开头实际粗体片段，这是高优先级的局部粗体证据；只标记冒号前实际粗体范围，不延伸到后文。不能因为是英文、缩写、技术名词、数字、百分比或看起来重要就推断加粗。无法确认时保持普通字重，宁可漏标也不要误标。列表按每一条独立判断，条目内部的局部粗体同样要保留。内容块的 label 不要写 ** 标记，使用 label_bold=true/false 表示标签字重；不要输出其他 Markdown 标记，列表序号不要写入 items。\n"
+        + CONTENT_STRUCTURE_GUIDANCE
+        + "\n"
+        "只有上述已识别的语义标题才保留原文标题并设置 label_bold=true；generic 的 label 必须为空。语义标签为空表示保留内容但不显示，不能擅自补回默认标签；"
         "原文中的（1）（2）或 (1)(2) 等编号只作为 items 的边界，items 内不要重复序号。"
         "原文没有项目角色时 role 必须为空，禁止输出‘角色’、‘项目成员’等占位词。\n"
-        "【经历粒度】没有语义标题的普通工作描述才逐条进入 details，禁止合成一个长字符串；"
+        "【教育经历边界】教育经历栏目下、下一个顶层栏目标题之前的无标题分点，必须按原顺序逐条写入顶层 education_supplement；不要因为内容像奖项、活动或成果就写入 honors。只有原文明确出现独立的荣誉/奖项/奖学金标题时，才写入 honors。\n"
+        "【经历粒度】项目或工作一旦使用 content_blocks，就不要再把同一内容重复写入 details；没有语义标题的普通工作描述才逐条进入 details，禁止合成一个长字符串；"
         "论文完整内容在原文存在独立论文栏目时逐条写入顶层 publications；若论文与语言、荣誉、证书等共用一个可见栏目标题，"
         "混合栏目保留规则优先，此时整栏只能作为一个 custom_sections 项目保存，不得拆分。GPA、满分、排名进入对应字段。\n"
         "【兜底保留】任何不能可靠映射到固定字段的原栏目，都必须按原栏目标题和阅读顺序写入 custom_sections，"
         "绝对不能因为 Schema 没有同名字段而省略。不要重复写入已经映射的内容。\n"
+        "固定字段的字重规则优先于原文视觉差异：即使原文把学历、专业或日期加粗，导入后也不要给这些固定字段写 **；用户需要时可在编辑内容中手动加粗。大输入框中的局部粗体仍按上一条规则保留。\n"
         "【输出】文件中不存在的字段使用空字符串或空数组；basics.photo 留空；formatting_version 固定为 4，"
         "以便没有明确粗体依据的字段保持普通字重。"
         "只输出符合下面 JSON Schema 的 JSON 对象，不要输出 Markdown、注释或其他文字。JSON Schema：\n"
@@ -1500,6 +1420,10 @@ async def proposal_generator_node(state: AgentState) -> dict:
 当前布局配置：
 {json.dumps(current_layout, ensure_ascii=False, indent=2)}
 
+{CONTENT_STRUCTURE_GUIDANCE}
+
+{build_layout_context(current_layout)}
+
 当前目标岗位 JD：
 {json.dumps(state.jd_data or {}, ensure_ascii=False, indent=2)}
 
@@ -1626,6 +1550,7 @@ async def interview_coach_node(state: AgentState) -> dict:
             memory=memory,
             workflow=state.workflow_state or {},
             request_id=state.request_id,
+            layout_data=current_layout,
         )
     except Exception as exc:
         print(f"[interview_coach] 结构化输出失败，安全回退: {exc}")
@@ -1692,6 +1617,7 @@ async def conversation_node(state: AgentState) -> dict:
         base_prompt=CONVERSATION_PROMPT,
         resume_data=state.resume_data,
         jd_data=state.jd_data,
+        layout_data=state.layout_data,
         state_messages=state.messages,
         coaching_mode=coaching_mode,
         just_saved=getattr(state, "just_saved", False),
@@ -1925,7 +1851,14 @@ async def tool_node(state: AgentState) -> dict:
                                 saved_resume = False
                             else:
                                 all_change_ids = [item.get("id") for item in changes if item.get("id")]
-                                if changes:
+                                if changes and not validate_resume_change_set(
+                                    normalize_resume_data(state.resume_data or {}),
+                                    candidate_resume_data,
+                                    changes,
+                                ):
+                                    result = "保存失败：修改预览已失效，请重新生成修改建议"
+                                    saved_resume = False
+                                elif changes:
                                     ids_to_apply = (
                                         all_change_ids
                                         if value in {'confirm', 'confirm_all'}

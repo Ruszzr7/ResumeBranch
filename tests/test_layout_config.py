@@ -72,6 +72,13 @@ class LayoutConfigTests(unittest.TestCase):
         self.assertEqual(resolve_content_block_flow({
             "type": "numbered_list", "semantic_role": "responsibilities", "label": "主要贡献",
         })["contentIndentLevels"], 2)
+        normalized = resolve_content_block_flow({
+            "type": "numbered", "semantic_role": "responsibility", "label": "项目职责",
+            "label_bold": "false",
+        })
+        self.assertEqual(normalized["type"], "numbered_list")
+        self.assertEqual(normalized["semanticRole"], "responsibilities")
+        self.assertFalse(normalized["labelBold"])
 
     def test_defaults_are_complete_and_independent(self):
         first = default_layout_config()

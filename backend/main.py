@@ -1210,6 +1210,7 @@ async def parse_and_save_resume_endpoint(
         source_page_count = detect_source_page_count(file_content, content_type)
 
         from .resume_agent import build_resume_extract_prompt, normalize_and_validate_resume
+        from .import_contract import finalize_import_resume
 
         # 设置解析状态为进行中
         set_parsing_status(db, current_user.id, "parsing")
@@ -1224,20 +1225,9 @@ async def parse_and_save_resume_endpoint(
             prompt=schema_prompt,
             timeout=150,
         )
-        resume_data = normalize_and_validate_resume(parse_json_output(raw), include_defaults=True)
-        # Imported content uses the explicit inline-format protocol. This
-        # prevents the legacy compatibility mode from making every editable
-        # field bold when the source did not mark it as bold. School names are
-        # the one education field with a product-level default bold style.
-        for education in resume_data.get("education") or []:
-            school = str(education.get("school_name") or "").strip()
-            if school and not (school.startswith("**") and school.endswith("**")):
-                education["school_name"] = f"**{school}**"
-        resume_data["formatting_version"] = 4
-        text_volume = len(json.dumps(resume_data, ensure_ascii=False).replace('"', '').replace(':', ''))
-        basics = resume_data.get("basics", {})
-        if text_volume < 60 or not any(str(basics.get(key, "")).strip() for key in ("name", "phone", "email")):
-            raise ValueError("解析结果缺少足够的简历内容，请更换更清晰的文件或解析模型后重试。")
+        resume_data, import_quality = finalize_import_resume(
+            parse_json_output(raw), normalize_and_validate_resume,
+        )
 
         for storage_key in delete_unreferenced_source_documents(db, current_user.id):
             remove_source_document_file(storage_key)
@@ -1275,6 +1265,7 @@ async def parse_and_save_resume_endpoint(
                 "openai_responses": "OpenAI Responses（文件输入）",
                 "openai_chat": "OpenAI Chat（图片视觉）",
             }.get(parser_gateway.resolved_adapter(), parser_gateway.resolved_adapter()),
+            "import_quality": import_quality.as_dict(),
             "source_document_token": source_document.id if source_document and draft_only else None,
             "has_source_document": bool(source_document and not draft_only),
             "draft": bool(draft_only),
@@ -1304,8 +1295,9 @@ async def confirm_resume_import_endpoint(
     current_user = Depends(get_current_user),
 ):
     from .resume_agent import normalize_and_validate_resume
+    from .import_contract import finalize_import_resume
     try:
-        resume_data = normalize_and_validate_resume(request.resume_data, include_defaults=True)
+        resume_data, _ = finalize_import_resume(request.resume_data, normalize_and_validate_resume)
         if request.source_document_token:
             document = get_source_document(db, current_user.id, request.source_document_token)
             if not document or document.status != "pending":

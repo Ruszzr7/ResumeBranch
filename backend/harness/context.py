@@ -4,6 +4,8 @@ import json
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
+from ..prompt_contract import build_model_contract_context
+
 
 CURRENT_STATE_PRIORITY = (
     "\n\n【当前状态优先级】本轮系统消息中的简历 JSON 是当前数据库的唯一事实来源，"
@@ -47,6 +49,7 @@ def build_system_content(
     resume_data: dict | None,
     jd_data: dict | None,
     *,
+    layout_data: dict | None = None,
     coaching_mode: bool,
     memory_summary: str = "",
 ) -> str:
@@ -64,6 +67,11 @@ def build_system_content(
     else:
         system_content = base_prompt.replace("{{resume_data}}", "\n（简历数据尚未加载）")
 
+    layout_contract = build_model_contract_context(layout_data)
+    if "{{layout_contract}}" in system_content:
+        system_content = system_content.replace("{{layout_contract}}", f"\n{layout_contract}\n")
+    else:
+        system_content += f"\n\n{layout_contract}"
     system_content += CURRENT_STATE_PRIORITY
     if coaching_mode:
         system_content += COACHING_CONTEXT
@@ -109,6 +117,7 @@ def build_conversation_context(
     base_prompt: str,
     resume_data: dict | None,
     jd_data: dict | None,
+    layout_data: dict | None = None,
     state_messages: list,
     coaching_mode: bool,
     just_saved: bool,
@@ -119,6 +128,7 @@ def build_conversation_context(
         base_prompt,
         resume_data,
         jd_data,
+        layout_data=layout_data,
         coaching_mode=coaching_mode,
         memory_summary=memory_summary,
     )
