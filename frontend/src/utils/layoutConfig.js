@@ -10,6 +10,11 @@ export const MODULE_COMPONENTS = Object.freeze({
   custom_sections: ['items'], others: ['certificates', 'languages'], self_evaluation: ['items']
 })
 
+// Fixed physical clearance between the photo bottom and the first visible
+// section divider.  The preview and PDF measurement paths use the same value;
+// Word keeps its existing table-specific resolver.
+export const PHOTO_BOTTOM_GAP_MM = 1.5
+
 const REQUIRED_COMPONENTS = Object.freeze({
   basics: ['name'], education: ['school'], skills: ['items'], research_interests: ['items'], honors: ['items'], publications: ['items'],
   work_experience: ['organization', 'content'], internship_experience: ['organization', 'content'],
@@ -664,7 +669,7 @@ export function resolvePhotoHeightMm(resumeData = {}, config = {}, tokens = {}) 
   )
   // Let the photo reach the next divider while preserving a physical safety
   // gap for browser/PDF/Word font and table-box differences.
-  const availableMm = headerPt * 25.4 / 72 - 1.5
+  const availableMm = headerPt * 25.4 / 72 - PHOTO_BOTTOM_GAP_MM
   return Math.round(Math.max(10, Math.min(desired, availableMm)) * 100) / 100
 }
 

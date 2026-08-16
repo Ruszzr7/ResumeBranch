@@ -87,6 +87,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     """
     resume_data = normalize_resume_data(resume_data)
     from .layout_config import (
+        PHOTO_BOTTOM_GAP_MM,
         format_compact_academic_metric,
         normalize_layout_config,
         resolve_education_column_widths,
@@ -104,6 +105,16 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     from .layout import apply_page_mode_defaults
     style = apply_page_mode_defaults(style)
     tokens = resolve_layout_tokens(layout_config, style)
+    configured_photo_height_mm = float(tokens.get("photoHeightMm") or 26.0)
+    display_photo = photo
+    if not display_photo and resume_data.get("basics"):
+        display_photo = resume_data["basics"].get("photo", "")
+    photo_ratio = _photo_aspect_ratio(display_photo, resume_data)
+    if display_photo and isinstance(resume_data.get("basics"), dict):
+        # The PDF endpoint may receive the photo separately from resume_data.
+        # Use the actual imported image ratio for both the fallback cap and the
+        # browser measurement script without mutating persisted data.
+        resume_data["basics"]["photo_aspect_ratio"] = photo_ratio
     tokens["photoHeightMm"] = resolve_photo_height_mm(
         resume_data,
         layout_config,
@@ -173,7 +184,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     def title_markup(section: str, text: str) -> str:
         module = resolve_module_layout(layout_config, section)
         return (
-            f'<h2 class="section-title title-{module["resolvedTitleStyle"]}" '
+            f'<h2 data-photo-divider="candidate" class="section-title title-{module["resolvedTitleStyle"]}" '
             f'style="text-align:{module["resolvedTitleAlignment"]}">'
             f'{format_markdown(text)}</h2>'
         )
@@ -212,7 +223,15 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
                     f'style="text-align:{cell["alignment"]};justify-content:{justify}">'
                 )
                 for component in components:
-                    parts.append(f'<span class="module-component component-{component}">{values[component]}</span>')
+                    # The photo is already an <img> element.  Keep it as a
+                    # direct child of the cell, matching the browser preview,
+                    # instead of wrapping it in a positioned span.  A nested
+                    # wrapper gives the image a second independent box and
+                    # lets it extend past the measured divider in Chromium.
+                    if component == "photo":
+                        parts.append(values[component])
+                    else:
+                        parts.append(f'<span class="module-component component-{component}">{values[component]}</span>')
                 parts.append('</div>')
             parts.append('</div>')
         parts.append('</div>')
@@ -228,10 +247,6 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
             section_chunks.append((section_id, len(section_chunks), chunk))
 
     # 获取证件照（优先使用参数，其次使用resume_data）
-    display_photo = photo
-    if not display_photo and resume_data.get("basics"):
-        display_photo = resume_data["basics"].get("photo", "")
-    photo_ratio = _photo_aspect_ratio(display_photo, resume_data)
     photo_width_mm = tokens["photoHeightMm"] * photo_ratio
 
     # 个人信息
@@ -1270,6 +1285,47 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     }}
     """
 
+    photo_measure_script = f"""
+<script>
+(() => {{
+    const container = document.querySelector('.resume-container');
+    if (!container) return;
+    const configuredHeight = Number(container.dataset.photoConfiguredHeight || 26);
+    const ratio = Number(container.dataset.photoRatio || {photo_ratio:g});
+    const gapMm = Number(container.dataset.photoBottomGap || {PHOTO_BOTTOM_GAP_MM:g});
+    const applyPhotoFrame = () => {{
+        const personal = container.querySelector('.personal-info');
+        const photoElement = container.querySelector('.personal-info .component-photo');
+        const divider = container.querySelector('[data-photo-divider="candidate"]');
+        if (!personal || !photoElement || !divider) return;
+        const availableMm = (
+            divider.getBoundingClientRect().bottom - personal.getBoundingClientRect().top
+        ) * 25.4 / 96 - gapMm;
+        const heightMm = Math.max(1, Math.min(configuredHeight, availableMm));
+        photoElement.style.height = heightMm.toFixed(2) + 'mm';
+        photoElement.style.width = (heightMm * ratio).toFixed(2) + 'mm';
+    }};
+    const settle = () => {{
+        applyPhotoFrame();
+        window.requestAnimationFrame(() => {{
+            applyPhotoFrame();
+            window.requestAnimationFrame(applyPhotoFrame);
+        }});
+    }};
+    // Apply synchronously for non-browser fallbacks, then settle again after
+    // fonts and the embedded data URL image have completed layout.
+    settle();
+    const imagesReady = Promise.all(Array.from(container.querySelectorAll('img')).map(image => (
+        image.complete ? Promise.resolve() : new Promise(resolve => {{
+            image.addEventListener('load', resolve, {{ once: true }});
+            image.addEventListener('error', resolve, {{ once: true }});
+        }})
+    )));
+    Promise.all([document.fonts ? document.fonts.ready : Promise.resolve(), imagesReady]).then(settle);
+}})();
+</script>
+"""
+
     # 组装完整HTML
     full_html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -1282,9 +1338,11 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     </style>
 </head>
 <body>
-    <div class="resume-container">
+    <div class="resume-container" data-photo-configured-height="{configured_photo_height_mm:g}"
+         data-photo-ratio="{photo_ratio:g}" data-photo-bottom-gap="{PHOTO_BOTTOM_GAP_MM:g}">
         {rendered_content}
     </div>
+    {photo_measure_script}
 </body>
 </html>
 """

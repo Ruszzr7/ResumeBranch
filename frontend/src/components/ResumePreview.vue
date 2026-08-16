@@ -14,6 +14,7 @@ import {
   resolveEducationColumnWidths,
   resolveLayoutTokens,
   resolvePhotoHeightMm,
+  PHOTO_BOTTOM_GAP_MM,
   sectionTitle,
   sectionOrder,
   isSectionHidden
@@ -956,7 +957,62 @@ function refreshPhotoAspectRatio() {
   }
   image.src = source
 }
-const photoRenderHeightMm = computed(() => resolvePhotoHeightMm(props.data || {}, renderLayout.value, layoutTokens.value))
+const photoMeasuredHeightMm = ref(null)
+let photoMeasureRequest = 0
+
+function resetPhotoHeightMeasurement() {
+  photoMeasureRequest += 1
+  photoMeasuredHeightMm.value = null
+}
+
+function orderedPhotoDivider(root) {
+  const titles = Array.from(root.querySelectorAll('.section-title'))
+  return titles
+    .map((element, index) => ({
+      element,
+      index,
+      order: Number.parseInt(getComputedStyle(element).order || '0', 10) || 0
+    }))
+    .sort((left, right) => left.order - right.order || left.index - right.index)[0]?.element || null
+}
+
+async function measurePhotoHeightFromDivider() {
+  const request = ++photoMeasureRequest
+  if (!props.data?.basics?.photo || hiddenBasicField('photo') || !contentRef.value) {
+    photoMeasuredHeightMm.value = null
+    return
+  }
+
+  // The hidden content source has the same width, padding, fonts, CSS order,
+  // and section spacing as the visible pages.  Measuring its real divider is
+  // more reliable than estimating line counts in JavaScript.
+  await nextTick()
+  await nextTick()
+  for (let pass = 0; pass < 2; pass += 1) {
+    if (request !== photoMeasureRequest || !contentRef.value) return
+    const personalInfo = contentRef.value.querySelector('.personal-info')
+    const divider = orderedPhotoDivider(contentRef.value)
+    if (!personalInfo || !divider) {
+      photoMeasuredHeightMm.value = null
+      return
+    }
+    const availableMm = (
+      divider.getBoundingClientRect().bottom - personalInfo.getBoundingClientRect().top
+    ) / MM_TO_PX - PHOTO_BOTTOM_GAP_MM
+    const desired = Number(layoutTokens.value.photoHeightMm) || 26
+    const measured = Math.round(Math.max(1, Math.min(desired, availableMm)) * 100) / 100
+    if (Math.abs(Number(photoMeasuredHeightMm.value || 0) - measured) < 0.01) break
+    photoMeasuredHeightMm.value = measured
+    await nextTick()
+    await nextTick()
+  }
+}
+
+const photoRenderHeightMm = computed(() => (
+  photoMeasuredHeightMm.value == null
+    ? resolvePhotoHeightMm(props.data || {}, renderLayout.value, layoutTokens.value)
+    : photoMeasuredHeightMm.value
+))
 const pageStyles = computed(() => ({
   fontFamily: layoutTokens.value.fontFamilyCss,
   fontSize: `${layoutTokens.value.fontSizePt}pt`,
@@ -1262,6 +1318,10 @@ const calculatePagination = async () => {
   await nextTick()
   await nextTick()
 
+  await measurePhotoHeightFromDivider()
+  await nextTick()
+  await nextTick()
+
   if (!props.data || !contentRef.value) {
     pageRanges.value = []
     pageCount.value = 1
@@ -1322,8 +1382,9 @@ const calculatePagination = async () => {
 }
 
 // ========== 监听变化 ==========
-watch([() => props.data, () => props.sourcePageCount, renderLayout, marginVertical, marginHorizontal, moduleMargin, lineHeight, fontSize, fontSizes, fontSizeDraft, showFontSizeDialog],
+watch([() => props.data, () => props.sourcePageCount, renderLayout, marginVertical, marginHorizontal, moduleMargin, lineHeight, fontSize, fontSizes, fontSizeDraft, showFontSizeDialog, photoAspectRatio],
   () => {
+    resetPhotoHeightMeasurement()
     // 增加延迟时间，确保字体变化后浏览器有足够时间重新渲染
     if (window.requestAnimationFrame) {
       window.requestAnimationFrame(() => {
@@ -1349,7 +1410,10 @@ watch(() => props.taskId, () => {
 watch(() => props.hasSourceDocument, value => {
   if (!value) closeSourceDocument()
 })
-watch(() => [props.data?.basics?.photo, props.data?.basics?.photo_aspect_ratio], refreshPhotoAspectRatio, { immediate: true })
+watch(() => [props.data?.basics?.photo, props.data?.basics?.photo_aspect_ratio], () => {
+  resetPhotoHeightMeasurement()
+  refreshPhotoAspectRatio()
+}, { immediate: true })
 
 // ========== 高亮模块滚动 ==========
 watch(() => props.highlightedModule, async (newModule) => {

@@ -44,6 +44,21 @@ class ProjectContentBlock(BaseModel):
     label_bold: bool = Field(default=True, description="语义标签是否加粗")
     text: str = Field(default="", description="paragraph 类型的正文")
     items: list[str] = Field(default_factory=list, description="列表类型的逐条内容，不包含序号")
+    # These fields are parser-only evidence.  normalize_content_block consumes
+    # them and never persists or renders them, but the extraction model needs a
+    # way to describe where the source document's visual group changes.
+    source_layout_group: str = Field(
+        default="",
+        description="仅供解析阶段使用的连续视觉组标识；不要写入最终简历数据",
+    )
+    source_indent_level: int | None = Field(
+        default=None,
+        description="仅供解析阶段使用的相对缩进层级；无法确认时留空",
+    )
+    source_marker_type: Literal["paragraph", "bullet", "numbered", ""] = Field(
+        default="",
+        description="仅供解析阶段使用的原始段落/分点/编号形式；不要写入最终简历数据",
+    )
 
 
 _TYPE_ALIASES = {
@@ -156,6 +171,53 @@ def _bool_value(value: Any, default: bool = True) -> bool:
         if normalized in {"true", "1", "yes", "on", "是", "加粗"}:
             return True
     return bool(value)
+
+
+def _source_visual_signature(raw: Any) -> tuple[str, int | None, str]:
+    """Read parser-only visual evidence without exposing it to renderers.
+
+    The parser may use either the canonical ``source_*`` names or the shorter
+    aliases while producing JSON.  The normalized persisted block deliberately
+    omits all of these fields; they are only used to decide whether a block is
+    a continuation of the responsibility group after an introduction.
+    """
+    if not isinstance(raw, Mapping):
+        return "", None, ""
+    group = _text(
+        raw.get("source_layout_group")
+        or raw.get("source_visual_group")
+        or raw.get("visual_group")
+    )
+    indent_value = raw.get("source_indent_level")
+    if indent_value is None:
+        indent_value = raw.get("visual_indent_level")
+    try:
+        indent = int(indent_value) if indent_value is not None and str(indent_value).strip() else None
+    except (TypeError, ValueError):
+        indent = None
+    marker = _text(raw.get("source_marker_type") or raw.get("visual_marker_type")).lower()
+    marker = {
+        "paragraph": "paragraph",
+        "段落": "paragraph",
+        "text": "paragraph",
+        "bullet": "bullet",
+        "bullet_list": "bullet",
+        "分点": "bullet",
+        "numbered": "numbered",
+        "numbered_list": "numbered",
+        "编号": "numbered",
+    }.get(marker, "")
+    return group, indent, marker
+
+
+def _visual_group_key(signature: tuple[str, int | None, str]) -> tuple[Any, ...] | None:
+    """Return a comparable visual-group key, or ``None`` when unavailable."""
+    group, indent, marker = signature
+    if group:
+        return ("group", group)
+    if indent is not None or marker:
+        return ("shape", indent, marker)
+    return None
 
 
 def canonical_content_block_type(value: Any) -> str:
@@ -350,49 +412,90 @@ def normalize_content_blocks(
     experience_kind: str = "project",
 ) -> list[dict[str, Any]]:
     """Normalize explicit blocks and migrate the supported legacy shape."""
-    entries: list[tuple[Any, dict[str, Any]]] = []
+    entries: list[tuple[Any, dict[str, Any], tuple[str, int | None, str]]] = []
     if isinstance(value, list):
         for raw in value:
             block = normalize_content_block(raw)
             if block is not None:
-                entries.append((raw, block))
+                entries.append((raw, block, _source_visual_signature(raw)))
+
     # A parser may omit semantic_role for content that visually continues an
-    # explicit introduction.  Treat that unlabeled continuation as duties;
-    # explicit generic roles/labels and unknown labels remain generic because
-    # they are evidence of a separate visual group or an inline prefix.
+    # explicit introduction.  The introduction's own body remains an
+    # introduction; only blocks after that body enter the responsibility
+    # candidate window.  The first visual group in that window is the default
+    # responsibility group.  A later, clearly different visual group becomes
+    # generic.  With no visual evidence we stay conservative and keep the
+    # continuation in responsibilities instead of risking data loss.
     result: list[dict[str, Any]] = []
-    saw_labeled_introduction = False
-    for raw, block in entries:
-        raw_role = canonical_content_block_role(raw.get("semantic_role")) if isinstance(raw, Mapping) else ""
-        raw_label = _text(raw.get("label")) if isinstance(raw, Mapping) else ""
+    active_semantic_group: str | None = None
+    responsibility_visual_key: tuple[Any, ...] | None = None
+
+    def as_responsibilities(
+        block: dict[str, Any],
+        *,
+        promoted: bool = True,
+    ) -> dict[str, Any]:
+        items = list(block["items"])
+        if not items and block["text"]:
+            items = [block["text"]]
+        return {
+            **block,
+            "type": "numbered_list",
+            "semantic_role": "responsibilities",
+            "label": "项目职责" if promoted else block["label"],
+            "label_bold": True if promoted else block["label_bold"],
+            "text": "",
+            "items": items,
+        }
+
+    def append_responsibilities(block: dict[str, Any]) -> None:
+        if result and result[-1]["semantic_role"] == "responsibilities" and result[-1]["label"] == "项目职责":
+            result[-1]["items"].extend(block["items"])
+        else:
+            result.append(block)
+
+    for raw, block, visual_signature in entries:
         if block["semantic_role"] == "introduction":
-            saw_labeled_introduction = bool(block["label"])
+            result.append(block)
+            active_semantic_group = "introduction" if block["label"] else None
+            responsibility_visual_key = None
+            continue
         elif block["semantic_role"] == "responsibilities":
-            saw_labeled_introduction = False
-        elif saw_labeled_introduction and block["semantic_role"] == "generic":
-            candidate = (
-                not raw_role
-                and not raw_label
-                and bool(block["text"] or block["items"])
+            block = as_responsibilities(block, promoted=False)
+            append_responsibilities(block)
+            active_semantic_group = "responsibilities" if block["label"] else None
+            responsibility_visual_key = _visual_group_key(visual_signature)
+            continue
+
+        if active_semantic_group in {"introduction", "responsibilities"}:
+            visual_key = _visual_group_key(visual_signature)
+            if responsibility_visual_key is None and visual_key is not None:
+                responsibility_visual_key = visual_key
+
+            # A block is generic after an introduction/responsibility only
+            # when the parser supplied clear visual evidence that it belongs
+            # to a different group.  Missing evidence, unlabeled blocks, and
+            # conflicting semantic guesses all default to responsibilities.
+            is_distinct_visual_group = (
+                responsibility_visual_key is not None
+                and visual_key is not None
+                and visual_key != responsibility_visual_key
             )
-            if candidate:
-                items = list(block["items"])
-                if not items and block["text"]:
-                    items = [block["text"]]
-                block = {
-                    **block,
-                    "type": "numbered_list",
-                    "semantic_role": "responsibilities",
-                    "label": "项目职责",
-                    "label_bold": True,
-                    "text": "",
-                    "items": items,
-                }
-                if result and result[-1]["semantic_role"] == "responsibilities" and result[-1]["label"] == "项目职责":
-                    result[-1]["items"].extend(block["items"])
-                    continue
-            else:
-                saw_labeled_introduction = False
+            if not is_distinct_visual_group:
+                append_responsibilities(as_responsibilities(block))
+                continue
+
+            result.append({
+                **block,
+                "type": "bullet_list" if block["type"] == "numbered_list" else block["type"],
+                "semantic_role": "generic",
+                "label": "",
+            })
+            continue
+
+        # Without an explicit semantic heading there is no basis for inventing
+        # a project-introduction or responsibility label.  The block remains
+        # generic and retains its source form where one was explicitly given.
         result.append(block)
     legacy = _string_list(legacy_details)
     if result or not legacy:

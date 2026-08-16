@@ -498,6 +498,18 @@ def create_resume_project(db, user_id: int, title: str = "未命名简历"):
     return project, task
 
 
+def rename_resume_project(db, user_id: int, project_id: str, title: str):
+    """Rename a resume project and make the rename visible to recent-edit sorting."""
+    project = get_resume_project(db, user_id, project_id)
+    if not project:
+        return None
+    project.title = str(title or "").strip()[:120]
+    project.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(project)
+    return project
+
+
 def get_resume_project(db, user_id: int, project_id: str):
     return db.query(ResumeProject).filter(
         ResumeProject.id == project_id,
@@ -572,6 +584,63 @@ def get_resume_task(db, user_id: int, task_id: str):
         ProjectTask.id == task_id,
         ProjectTask.user_id == user_id,
     ).first()
+
+
+def rename_resume_task(db, user_id: int, task_id: str, title: str):
+    """Rename any task, including the protected base task."""
+    task = get_resume_task(db, user_id, task_id)
+    if not task:
+        return None
+    task.title = str(title or "").strip()[:120]
+    now = datetime.utcnow()
+    task.updated_at = now
+    project = get_resume_project(db, user_id, task.project_id)
+    if project:
+        project.updated_at = now
+    db.commit()
+    db.refresh(task)
+    return task
+
+
+def switch_base_resume_task(db, user_id: int, task_id: str):
+    """Switch the base role between two tasks in the same resume project.
+
+    The selected version becomes the base task, while the previous base task
+    becomes an ordinary version named ``版本简历``. No data is copied or deleted.
+    """
+    selected_task = get_resume_task(db, user_id, task_id)
+    if not selected_task:
+        return "not_found", None, None
+
+    base_task = db.query(ProjectTask).filter(
+        ProjectTask.project_id == selected_task.project_id,
+        ProjectTask.user_id == user_id,
+        ProjectTask.is_base.is_(True),
+    ).first()
+    if not base_task:
+        return "base_missing", None, selected_task
+    if selected_task.id == base_task.id:
+        return "ok", base_task, None
+
+    now = datetime.utcnow()
+    base_task.is_base = False
+    base_task.title = "版本简历"
+    base_task.updated_at = now
+    selected_task.is_base = True
+    selected_task.updated_at = now
+
+    project = get_resume_project(db, user_id, selected_task.project_id)
+    if project:
+        project.base_resume_data = normalize_resume_data(selected_task.resume_data or {})
+        project.photo = selected_task.photo or ""
+        project.updated_at = now
+
+    db.commit()
+    db.refresh(selected_task)
+    db.refresh(base_task)
+    if project:
+        db.refresh(project)
+    return "ok", selected_task, base_task
 
 
 def get_source_document(db, user_id: int, document_id: str):

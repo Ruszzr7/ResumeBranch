@@ -15,6 +15,9 @@ from .resume_contract import normalize_content_block
 
 
 LAYOUT_SCHEMA_VERSION = 9
+# Physical clearance between the photo bottom and the first visible section
+# divider for browser/PDF geometry.  Word keeps its own table-specific cap.
+PHOTO_BOTTOM_GAP_MM = 1.5
 
 FONT_SIZE_LIMITS: dict[str, tuple[float, float]] = {
     "name": (12.0, 20.0),
@@ -1094,7 +1097,7 @@ def resolve_photo_height_mm(
     )
     # Keep a physical safety gap so renderer-specific font rasterization and
     # Word table row boxes cannot let the image touch or overlap the divider.
-    available_mm = header_pt * 25.4 / 72.0 - 1.5
+    available_mm = header_pt * 25.4 / 72.0 - PHOTO_BOTTOM_GAP_MM
     return round(max(10.0, min(desired, available_mm)), 2)
 
 

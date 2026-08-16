@@ -448,8 +448,20 @@ const taskCreateError = ref('')
 const taskToDelete = ref(null)
 const isDeletingTask = ref(false)
 const taskDeleteError = ref('')
+const taskToRename = ref(null)
+const renameTaskTitle = ref('')
+const isRenamingTask = ref(false)
+const taskRenameError = ref('')
+const taskActionMenu = ref(null)
+const taskToSetBase = ref(null)
+const isSettingBaseTask = ref(false)
+const setBaseError = ref('')
 const uiNotice = ref({ visible: false, type: 'error', message: '' })
 let uiNoticeTimer = null
+
+function displayTaskTitle(task) {
+  return plainDisplayText(task?.title || (task?.is_base ? '基础简历' : '岗位版本'))
+}
 
 const currentProjectSources = computed(() => taskResumeSources.value.filter(
   source => source.project_id === String(route.params.projectId || '')
@@ -982,6 +994,7 @@ async function confirmCreateProjectTask() {
 
 async function deleteProjectTask(task, event) {
   if (task.is_base) return
+  closeTaskActionMenu()
   if (event?.detail > 0) {
     event.currentTarget?.blur()
   }
@@ -2099,6 +2112,108 @@ function initializeExperienceContentEditor(proj, migrateDefaultBold = false, exp
   if (migrateDefaultBold) {
     proj._introLabel = wrapDefaultBold(proj._introLabel)
     proj._dutiesLabel = wrapDefaultBold(proj._dutiesLabel)
+  }
+}
+
+function toggleTaskActionMenu(task) {
+  if (!task) return
+  taskActionMenu.value = taskActionMenu.value?.id === task.id ? null : task
+}
+
+function closeTaskActionMenu() {
+  taskActionMenu.value = null
+}
+
+function openRenameTaskDialog(task) {
+  if (!task) return
+  closeTaskActionMenu()
+  taskToRename.value = task
+  renameTaskTitle.value = String(task.title || (task.is_base ? '基础简历' : '岗位版本'))
+  taskRenameError.value = ''
+}
+
+function closeTaskRenameDialog() {
+  if (isRenamingTask.value) return
+  taskToRename.value = null
+  taskRenameError.value = ''
+}
+
+function sortProjectTasks(tasks) {
+  return [...tasks].sort((left, right) => {
+    if (Boolean(left.is_base) !== Boolean(right.is_base)) return left.is_base ? -1 : 1
+    return String(right.updated_at || '').localeCompare(String(left.updated_at || ''))
+  })
+}
+
+async function confirmRenameTask() {
+  if (!taskToRename.value || isRenamingTask.value) return
+  const title = renameTaskTitle.value.trim()
+  if (!title) {
+    taskRenameError.value = '请输入名称'
+    return
+  }
+  isRenamingTask.value = true
+  taskRenameError.value = ''
+  try {
+    const response = await fetch(`/tasks/${taskToRename.value.id}`, {
+      method: 'PATCH',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ title })
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(data.detail || '重命名失败，请重试')
+    const updated = data
+    projectTasks.value = sortProjectTasks(projectTasks.value.map(task => (
+      task.id === updated.id ? updated : task
+    )))
+    if (currentProject.value) currentProject.value.tasks = projectTasks.value
+    taskToRename.value = null
+    showNotice('简历名称已更新', 'success')
+  } catch (error) {
+    taskRenameError.value = error.message || '重命名失败，请重试'
+  } finally {
+    isRenamingTask.value = false
+  }
+}
+
+function openSetBaseDialog(task) {
+  if (!task || task.is_base || isSettingBaseTask.value) return
+  closeTaskActionMenu()
+  taskToSetBase.value = task
+  setBaseError.value = ''
+}
+
+function closeSetBaseDialog() {
+  if (isSettingBaseTask.value) return
+  taskToSetBase.value = null
+  setBaseError.value = ''
+}
+
+async function confirmSetBaseTask() {
+  if (!taskToSetBase.value || isSettingBaseTask.value) return
+  isSettingBaseTask.value = true
+  setBaseError.value = ''
+  try {
+    const response = await fetch(`/tasks/${taskToSetBase.value.id}/set-as-base`, {
+      method: 'POST',
+      headers: getAuthorizationHeaders()
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(data.detail || '更换基础简历失败，请重试')
+    const updates = new Map(
+      [data.base_task, data.former_base_task].filter(Boolean).map(task => [task.id, task])
+    )
+    projectTasks.value = sortProjectTasks(projectTasks.value.map(task => updates.get(task.id) || task))
+    if (currentProject.value) {
+      currentProject.value.tasks = projectTasks.value
+      if (data.project) Object.assign(currentProject.value, data.project, { tasks: projectTasks.value })
+    }
+    taskToSetBase.value = null
+    showNotice('已切换基础简历', 'success')
+  } catch (error) {
+    setBaseError.value = error.message || '更换基础简历失败，请重试'
+  } finally {
+    isSettingBaseTask.value = false
   }
 }
 
@@ -3407,7 +3522,7 @@ watch(
               <strong class="source-group-title">当前主简历</strong>
               <label v-for="source in currentProjectSources" :key="source.id" class="resume-source-row">
                 <input v-model="taskSourceId" type="radio" :value="source.id" />
-                <span><b>{{ plainDisplayText(source.is_base ? '基础简历' : source.title) }}</b><small>{{ plainDisplayText(source.target_position || source.candidate_name || '未填写目标岗位') }}</small></span>
+                <span><b>{{ displayTaskTitle(source) }}</b><small>{{ plainDisplayText(source.target_position || source.candidate_name || '未填写目标岗位') }}</small></span>
               </label>
               <details v-if="otherProjectSourceGroups.length" class="other-resume-sources">
                 <summary>其他主简历</summary>
@@ -3415,7 +3530,7 @@ watch(
                   <strong>{{ plainDisplayText(group.title) }}</strong>
                   <label v-for="source in group.sources" :key="source.id" class="resume-source-row">
                     <input v-model="taskSourceId" type="radio" :value="source.id" />
-                    <span><b>{{ plainDisplayText(source.is_base ? '基础简历' : source.title) }}</b><small>{{ plainDisplayText(source.target_position || source.candidate_name || '未填写目标岗位') }}</small></span>
+                    <span><b>{{ displayTaskTitle(source) }}</b><small>{{ plainDisplayText(source.target_position || source.candidate_name || '未填写目标岗位') }}</small></span>
                   </label>
                 </div>
               </details>
@@ -3453,7 +3568,7 @@ watch(
               <input v-model="newTaskTitle" maxlength="80" placeholder="例如：字节跳动 · 后端开发" />
             </label>
             <dl class="task-review-list">
-              <div><dt>简历来源</dt><dd>{{ taskCreateMode === 'blank' ? '空白简历' : taskCreateMode === 'import' ? `导入：${taskImportFile?.name || ''}` : `${selectedTaskSource?.project_title || ''} / ${selectedTaskSource?.is_base ? '基础简历' : selectedTaskSource?.title || ''}` }}</dd></div>
+              <div><dt>简历来源</dt><dd>{{ taskCreateMode === 'blank' ? '空白简历' : taskCreateMode === 'import' ? `导入：${taskImportFile?.name || ''}` : `${selectedTaskSource?.project_title || ''} / ${displayTaskTitle(selectedTaskSource)}` }}</dd></div>
               <div><dt>目标岗位</dt><dd>{{ taskJDData.position || '暂未添加 JD' }}</dd></div>
               <div v-if="taskJDData.company"><dt>公司</dt><dd>{{ taskJDData.company }}</dd></div>
             </dl>
@@ -3498,6 +3613,61 @@ watch(
             <button type="button" class="workspace-btn secondary" :disabled="isDeletingTask" @click="closeTaskDeleteDialog">取消</button>
             <button type="button" class="workspace-btn danger" :disabled="isDeletingTask" @click="confirmDeleteProjectTask">
               {{ isDeletingTask ? '删除中…' : '确认删除' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
+
+  <!-- 重命名简历版本弹窗 -->
+  <Teleport to="body">
+    <Transition name="dialog-fade">
+      <div v-if="taskToRename" class="workspace-modal-mask" @click.self="closeTaskRenameDialog">
+        <form class="workspace-modal compact" @submit.prevent="confirmRenameTask">
+          <div class="workspace-modal-header">
+            <div>
+              <span class="workspace-modal-kicker">简历版本</span>
+              <h2>重命名</h2>
+            </div>
+            <button type="button" class="modal-close-btn" aria-label="关闭" @click="closeTaskRenameDialog">×</button>
+          </div>
+          <label class="workspace-field">
+            <span>名称</span>
+            <input v-model="renameTaskTitle" maxlength="120" autocomplete="off" placeholder="例如：后端开发版本" />
+          </label>
+          <p v-if="taskRenameError" class="workspace-modal-error">{{ taskRenameError }}</p>
+          <div class="workspace-modal-footer">
+            <button type="button" class="workspace-btn secondary" :disabled="isRenamingTask" @click="closeTaskRenameDialog">取消</button>
+            <button type="submit" class="workspace-btn primary" :disabled="isRenamingTask">
+              {{ isRenamingTask ? '保存中…' : '保存' }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </Transition>
+  </Teleport>
+
+  <!-- 更换基础简历确认弹窗 -->
+  <Teleport to="body">
+    <Transition name="dialog-fade">
+      <div v-if="taskToSetBase" class="workspace-modal-mask" @click.self="closeSetBaseDialog">
+        <div class="workspace-modal compact">
+          <div class="workspace-modal-header">
+            <div>
+              <span class="workspace-modal-kicker">基础简历</span>
+              <h2>切换为基础简历？</h2>
+            </div>
+            <button type="button" class="modal-close-btn" aria-label="关闭" @click="closeSetBaseDialog">×</button>
+          </div>
+          <p class="workspace-modal-copy">
+            将“{{ displayTaskTitle(taskToSetBase) }}”切换为基础简历；原基础简历会变为“版本简历”。双方内容、照片、排版、JD 和对话均保留。
+          </p>
+          <p v-if="setBaseError" class="workspace-modal-error">{{ setBaseError }}</p>
+          <div class="workspace-modal-footer">
+            <button type="button" class="workspace-btn secondary" :disabled="isSettingBaseTask" @click="closeSetBaseDialog">取消</button>
+            <button type="button" class="workspace-btn primary" :disabled="isSettingBaseTask" @click="confirmSetBaseTask">
+              {{ isSettingBaseTask ? '应用中…' : '设为基础' }}
             </button>
           </div>
         </div>
@@ -3791,23 +3961,44 @@ watch(
     <router-view v-if="!isLoggedIn || isAdminRoute || !isWorkspaceRoute"></router-view>
 
     <!-- 已登录且非管理页面：显示主内容（聊天界面） -->
-    <div v-if="isLoggedIn && isWorkspaceRoute" class="workspace-shell">
+    <div v-if="isLoggedIn && isWorkspaceRoute" class="workspace-shell" @click="closeTaskActionMenu">
       <aside class="task-sidebar">
         <div class="task-sidebar-title">岗位版本</div>
-        <div v-for="task in projectTasks" :key="task.id" class="task-row">
+        <div
+          v-for="task in projectTasks"
+          :key="task.id"
+          :class="['task-row', { 'base-task-row': task.is_base }]"
+        >
           <router-link
             :to="`/projects/${task.project_id}/tasks/${task.id}`"
             :class="['task-link', { active: task.id === currentTaskId }]"
-            :title="plainDisplayText(task.is_base ? '基础简历' : task.title)"
+            :title="displayTaskTitle(task)"
           >
-            <span>{{ plainDisplayText(task.is_base ? '基础简历' : task.title) }}</span>
+            <span>{{ displayTaskTitle(task) }}</span>
           </router-link>
           <button
-            v-if="!task.is_base"
-            class="task-delete-btn"
-            title="删除岗位版本"
-            @click="deleteProjectTask(task, $event)"
-          >×</button>
+            type="button"
+            class="task-action-trigger"
+            title="版本操作"
+            aria-label="打开版本操作"
+            @click.stop="toggleTaskActionMenu(task)"
+          >⋯</button>
+          <div v-if="taskActionMenu?.id === task.id" class="task-action-menu" @click.stop>
+            <button type="button" class="task-action-menu-item" @click="openRenameTaskDialog(task)">重命名</button>
+            <button
+              v-if="!task.is_base"
+              type="button"
+              class="task-action-menu-item"
+              @click="openSetBaseDialog(task)"
+            >设为基础简历</button>
+            <button
+              v-if="!task.is_base"
+              type="button"
+              class="task-action-menu-item danger"
+              @click="deleteProjectTask(task)"
+            >删除</button>
+            <span v-else class="task-action-menu-note">当前基础简历</span>
+          </div>
         </div>
         <button class="new-task-btn" @click="createProjectTask">＋ 新建版本</button>
       </aside>
@@ -3820,7 +4011,7 @@ watch(
           <div class="assistant-orb" aria-hidden="true"></div>
           <div class="chat-panel-title">
             <strong>简历助手</strong>
-            <span>{{ plainDisplayText(currentTask?.is_base ? '基础简历' : (currentTask?.title || '岗位版本')) }}</span>
+            <span>{{ displayTaskTitle(currentTask) }}</span>
           </div>
         </div>
         <div class="chat-container">
@@ -5078,26 +5269,81 @@ watch(
 }
 
 .task-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: .25rem;
   margin-bottom: .2rem;
 }
 
-.task-delete-btn {
+.task-row.base-task-row {
+  margin-bottom: .65rem;
+  padding-bottom: .55rem;
+  border-bottom: 1px solid rgba(255, 255, 255, .72);
+}
+
+.task-action-trigger {
   width: 26px;
   height: 26px;
   flex: 0 0 26px;
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: #686871;
+  color: #8a8a94;
+  font-size: .95rem;
+  line-height: 1;
   cursor: pointer;
 }
 
-.task-delete-btn:hover {
+.task-action-trigger:hover {
+  background: rgba(120, 166, 255, .12);
+  color: #dbe6ff;
+}
+
+.task-action-menu {
+  position: absolute;
+  top: calc(100% - .1rem);
+  right: 0;
+  z-index: 20;
+  display: grid;
+  min-width: 126px;
+  padding: .3rem;
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 9px;
+  background: #292a30;
+  box-shadow: 0 14px 32px rgba(0, 0, 0, .35);
+}
+
+.task-action-menu-item,
+.task-action-menu-note {
+  min-height: 30px;
+  padding: .35rem .55rem;
+  border: 0;
+  border-radius: 6px;
+  color: #d9d9df;
   background: transparent;
-  color: #ff8e8e;
+  font: inherit;
+  font-size: .72rem;
+  text-align: left;
+}
+
+.task-action-menu-item:hover {
+  background: rgba(120, 166, 255, .12);
+  color: #dbe6ff;
+}
+
+.task-action-menu-item.danger {
+  color: #ef9393;
+}
+
+.task-action-menu-item.danger:hover {
+  background: rgba(239, 147, 147, .1);
+  color: #ffadad;
+}
+
+.task-action-menu-note {
+  color: #85858e;
+  cursor: default;
 }
 
 .main-content {
@@ -5135,10 +5381,6 @@ watch(
 
   .task-row {
     flex: 0 0 auto;
-  }
-
-  .task-delete-btn {
-    display: none;
   }
 
   .new-task-btn {

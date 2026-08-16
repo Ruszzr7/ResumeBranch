@@ -60,6 +60,7 @@ from .database import (
     get_parsing_status, set_parsing_status, set_source_page_count, get_user_photo,
     list_resume_projects, create_resume_project, get_resume_project,
     list_project_tasks, list_user_resume_sources, create_resume_task, get_resume_task,
+    rename_resume_project, rename_resume_task, switch_base_resume_task,
     delete_resume_project, delete_resume_task, undo_latest_resume_revision,
     get_task_layout_config, save_task_layout_config, attach_source_document,
     delete_unreferenced_source_documents, discard_pending_source_document,
@@ -225,6 +226,11 @@ class CreateTaskRequest(BaseModel):
     copy_base_resume: bool = True
     source_task_id: str | None = None
     jd_data: dict | None = None
+
+
+class RenameTitleRequest(BaseModel):
+    """Rename a project or task without changing its resume content."""
+    title: str
 
 
 class SaveLayoutRequest(BaseModel):
@@ -631,6 +637,30 @@ async def create_project(
     return {**serialize_project(project, 1), "base_task_id": base_task.id}
 
 
+def _validated_rename_title(value: str) -> str:
+    title = str(value or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="名称不能为空")
+    if len(title) > 120:
+        raise HTTPException(status_code=400, detail="名称不能超过 120 个字符")
+    return title
+
+
+@app.patch("/projects/{project_id}")
+async def rename_project(
+    project_id: str,
+    request: RenameTitleRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    """Rename a main resume without changing any resume data."""
+    title = _validated_rename_title(request.title)
+    project = rename_resume_project(db, current_user.id, project_id, title)
+    if not project:
+        raise HTTPException(status_code=404, detail="主简历不存在")
+    return serialize_project(project, len(list_project_tasks(db, current_user.id, project_id)))
+
+
 @app.get("/projects/{project_id}")
 async def get_project(
     project_id: str,
@@ -712,6 +742,45 @@ async def get_task(
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     return serialize_task(task)
+
+
+@app.patch("/tasks/{task_id}")
+async def rename_task(
+    task_id: str,
+    request: RenameTitleRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    """Rename a base resume or a job-specific version."""
+    title = _validated_rename_title(request.title)
+    task = rename_resume_task(db, current_user.id, task_id, title)
+    if not task:
+        raise HTTPException(status_code=404, detail="简历版本不存在")
+    return serialize_task(task)
+
+
+@app.post("/tasks/{task_id}/set-as-base")
+async def set_task_as_base(
+    task_id: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    """Switch a version into the project's base-resume role."""
+    result, base_task, former_base_task = switch_base_resume_task(db, current_user.id, task_id)
+    if result == "not_found":
+        raise HTTPException(status_code=404, detail="简历版本不存在")
+    if result == "base_missing":
+        raise HTTPException(status_code=409, detail="当前项目缺少基础简历")
+    project = get_resume_project(db, current_user.id, base_task.project_id)
+    return {
+        "success": True,
+        "base_task": serialize_task(base_task),
+        "former_base_task": serialize_task(former_base_task) if former_base_task else None,
+        "project": serialize_project(
+            project,
+            len(list_project_tasks(db, current_user.id, base_task.project_id)),
+        ) if project else None,
+    }
 
 
 @app.get("/tasks/{task_id}/source-document")

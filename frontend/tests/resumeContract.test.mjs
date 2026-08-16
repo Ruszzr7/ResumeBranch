@@ -89,20 +89,20 @@ test('bold semantic headings and unlabeled lists keep their responsibility role'
     { type: 'paragraph', semantic_role: 'introduction', label: '项目简介', text: '项目背景' },
      { type: 'bullet_list', semantic_role: 'generic', label: '', items: ['补充说明'] }
   ])
-  assert.equal(explicit[1].semantic_role, 'generic')
-  assert.equal(explicit[1].type, 'bullet_list')
+  assert.equal(explicit[1].semantic_role, 'responsibilities')
+  assert.equal(explicit[1].type, 'numbered_list')
   assert.deepEqual(explicit[1].items, ['补充说明'])
 })
 
-test('generic fallback labels after an intro remain separate generic blocks', () => {
+test('visual group is required for generic content after an intro', () => {
   const blocks = normalizeContentBlocks([
     { type: 'paragraph', semantic_role: 'introduction', label: '项目简介', text: '背景' },
-    { type: 'bullet_list', label: '普通工作内容', items: ['完成设计'] },
-    { type: 'bullet_list', label: '其他项目内容', items: ['补充说明'] }
+    { type: 'bullet_list', label: '普通工作内容', items: ['完成设计'], source_layout_group: 'duties' },
+    { type: 'bullet_list', label: '其他项目内容', items: ['补充说明'], source_layout_group: 'generic' }
   ])
-  assert.deepEqual(blocks.map(block => block.semantic_role), ['introduction', 'generic', 'generic'])
-  assert.deepEqual(blocks.map(block => block.type), ['paragraph', 'bullet_list', 'bullet_list'])
-  assert.deepEqual(blocks.map(block => block.label), ['项目简介', '', ''])
+  assert.deepEqual(blocks.map(block => block.semantic_role), ['introduction', 'responsibilities', 'generic'])
+  assert.deepEqual(blocks.map(block => block.type), ['paragraph', 'numbered_list', 'bullet_list'])
+  assert.deepEqual(blocks.map(block => block.label), ['项目简介', '项目职责', ''])
   assert.deepEqual(blocks.slice(1).map(block => block.items), [['完成设计'], ['补充说明']])
 })
 
@@ -142,7 +142,7 @@ test('explicit generic multi-item content after an introduction stays generic', 
     { type: 'paragraph', semantic_role: 'introduction', label: '项目简介', text: '背景' },
      { type: 'bullet_list', semantic_role: 'generic', label: '', items: ['补充说明一', '补充说明二'] }
   ])
-  assert.equal(blocks[1].semantic_role, 'generic')
-  assert.equal(blocks[1].type, 'bullet_list')
+  assert.equal(blocks[1].semantic_role, 'responsibilities')
+  assert.equal(blocks[1].type, 'numbered_list')
   assert.deepEqual(blocks[1].items, ['补充说明一', '补充说明二'])
 })

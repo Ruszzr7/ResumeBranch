@@ -244,28 +244,28 @@ class ResumeDataNormalizationTests(unittest.TestCase):
         self.assertEqual(work_blocks[1]["items"], ["**完成模块实现**", "完成联调验证"])
 
         project_blocks = result["project_experience"][0]["content_blocks"]
-        self.assertEqual(project_blocks[1]["semantic_role"], "generic")
-        self.assertEqual(project_blocks[1]["type"], "bullet_list")
+        self.assertEqual(project_blocks[1]["semantic_role"], "responsibilities")
+        self.assertEqual(project_blocks[1]["type"], "numbered_list")
         self.assertEqual(project_blocks[1]["items"], ["补充说明"])
 
-    def test_generic_ui_labels_after_intro_remain_separate_generic_blocks(self):
+    def test_visual_group_is_required_for_generic_content_after_intro(self):
         result = normalize_resume_data({
             "basics": {"name": "测试"},
             "project_experience": [{
                 "project_name": "项目",
                 "content_blocks": [
                     {"type": "paragraph", "semantic_role": "introduction", "label": "项目简介", "text": "背景"},
-                    {"type": "bullet_list", "label": "普通工作内容", "items": ["完成设计"]},
-                    {"type": "bullet_list", "label": "其他项目内容", "items": ["补充说明"]},
+                    {"type": "bullet_list", "label": "普通工作内容", "items": ["完成设计"], "source_layout_group": "duties"},
+                    {"type": "bullet_list", "label": "其他项目内容", "items": ["补充说明"], "source_layout_group": "generic"},
                 ],
             }],
         })
 
         blocks = result["project_experience"][0]["content_blocks"]
         self.assertEqual(len(blocks), 3)
-        self.assertEqual([block["semantic_role"] for block in blocks], ["introduction", "generic", "generic"])
-        self.assertEqual([block["type"] for block in blocks], ["paragraph", "bullet_list", "bullet_list"])
-        self.assertEqual([block["label"] for block in blocks], ["项目简介", "", ""])
+        self.assertEqual([block["semantic_role"] for block in blocks], ["introduction", "responsibilities", "generic"])
+        self.assertEqual([block["type"] for block in blocks], ["paragraph", "numbered_list", "bullet_list"])
+        self.assertEqual([block["label"] for block in blocks], ["项目简介", "项目职责", ""])
         self.assertEqual([block["items"] for block in blocks[1:]], [["完成设计"], ["补充说明"]])
 
     def test_unlabelled_content_after_explicit_intro_defaults_to_responsibilities(self):
@@ -304,6 +304,32 @@ class ResumeDataNormalizationTests(unittest.TestCase):
         self.assertEqual(blocks[1]["label"], "项目职责")
         self.assertEqual(blocks[1]["items"], ["职责段落"])
 
+    def test_intro_following_visual_groups_split_responsibilities_and_generic_content(self):
+        result = normalize_resume_data({
+            "basics": {"name": "测试"},
+            "project_experience": [{
+                "project_name": "项目",
+                "content_blocks": [
+                    {"type": "paragraph", "semantic_role": "introduction", "label": "项目简介", "text": "背景"},
+                    {
+                        "type": "bullet_list", "items": ["职责一", "职责二", "职责三"],
+                        "source_layout_group": "duties", "source_indent_level": 1, "source_marker_type": "bullet",
+                    },
+                    {
+                        "type": "bullet_list", "items": ["补充内容"],
+                        "source_layout_group": "generic", "source_indent_level": 0, "source_marker_type": "bullet",
+                    },
+                ],
+            }],
+        })
+
+        blocks = result["project_experience"][0]["content_blocks"]
+        self.assertEqual([block["semantic_role"] for block in blocks], ["introduction", "responsibilities", "generic"])
+        self.assertEqual([block["type"] for block in blocks], ["paragraph", "numbered_list", "bullet_list"])
+        self.assertEqual(blocks[1]["items"], ["职责一", "职责二", "职责三"])
+        self.assertEqual(blocks[2]["items"], ["补充内容"])
+        self.assertFalse(any(key.startswith("source_") for key in blocks[1]))
+
     def test_experience_without_semantic_headings_stays_generic(self):
         result = normalize_resume_data({
             "basics": {"name": "测试"},
@@ -327,14 +353,14 @@ class ResumeDataNormalizationTests(unittest.TestCase):
                 "project_name": "项目",
                 "content_blocks": [
                     {"type": "paragraph", "semantic_role": "introduction", "label": "项目简介", "text": "背景"},
-                    {"type": "bullet_list", "semantic_role": "generic", "label": "", "items": ["补充说明一", "补充说明二"]},
+                    {"type": "bullet_list", "semantic_role": "generic", "label": "", "items": ["补充说明一", "补充说明二"], "source_layout_group": "generic"},
                 ],
             }],
         })
 
         block = result["project_experience"][0]["content_blocks"][1]
-        self.assertEqual(block["semantic_role"], "generic")
-        self.assertEqual(block["type"], "bullet_list")
+        self.assertEqual(block["semantic_role"], "responsibilities")
+        self.assertEqual(block["type"], "numbered_list")
         self.assertEqual(block["items"], ["补充说明一", "补充说明二"])
 
     def test_unknown_generic_labels_stay_inline_and_role_defaults_are_stable(self):
@@ -354,14 +380,12 @@ class ResumeDataNormalizationTests(unittest.TestCase):
         blocks = result["project_experience"][0]["content_blocks"]
         self.assertEqual(blocks[0]["type"], "paragraph")
         self.assertEqual(blocks[1], {
-            "type": "bullet_list", "semantic_role": "generic", "label": "",
-            "label_bold": True, "text": "", "items": ["**未定义前缀**：基于 **方法** 完成"],
+            "type": "numbered_list", "semantic_role": "responsibilities", "label": "项目职责",
+            "label_bold": True, "text": "", "items": [
+                "**未定义前缀**：基于 **方法** 完成", "完成联调", "补充说明",
+            ],
         })
-        self.assertEqual(blocks[2]["type"], "numbered_list")
-        self.assertEqual(blocks[3], {
-            "type": "bullet_list", "semantic_role": "generic", "label": "",
-            "label_bold": True, "text": "", "items": ["补充说明"],
-        })
+        self.assertEqual(len(blocks), 2)
 
     def test_content_block_type_defaults_follow_semantic_role(self):
         result = normalize_resume_data({
@@ -376,7 +400,8 @@ class ResumeDataNormalizationTests(unittest.TestCase):
             }],
         })
         blocks = result["project_experience"][0]["content_blocks"]
-        self.assertEqual([block["type"] for block in blocks], ["paragraph", "numbered_list", "bullet_list"])
+        self.assertEqual([block["type"] for block in blocks], ["paragraph", "numbered_list"])
+        self.assertEqual([block["semantic_role"] for block in blocks], ["introduction", "responsibilities"])
 
     def test_unlabelled_work_body_is_not_promoted_by_inline_wording(self):
         source = {

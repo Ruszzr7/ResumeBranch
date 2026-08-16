@@ -276,6 +276,27 @@ class LayoutRuleTests(unittest.TestCase):
         self.assertNotIn('component-metrics">GPA', html)
         self.assertIn('text-align:right;justify-content:flex-end', html)
 
+    def test_pdf_photo_uses_the_same_first_divider_frame_as_preview(self):
+        photo = (
+            "data:image/png;base64,"
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+            "YAAAAAYAAjCB0C8AAAAASUVORK5CYII="
+        )
+        data = resume_with_two_jobs()
+        data["basics"].update({"photo": photo, "target_position": "目标岗位"})
+        data["education"] = [{"school_name": "示例大学", "date_range": ["2024", "2027"]}]
+
+        html = render_resume_to_html(data)
+
+        self.assertIn('data-photo-divider="candidate"', html)
+        self.assertIn('data-photo-bottom-gap="1.5"', html)
+        self.assertIn("const photoElement = container.querySelector('.personal-info .component-photo')", html)
+        self.assertIn('<img src="data:image/png;base64,', html)
+        # The browser preview uses a direct image in the basics cell.  The PDF
+        # markup must use the same structure so the measured height applies to
+        # the visible image rather than an independent wrapper box.
+        self.assertNotIn('<span class="module-component component-photo"><img', html)
+
     def test_default_layout_keeps_dates_right_aligned_and_work_heading_on_one_row(self):
         data = resume_with_two_jobs()
         data["work_experience"][0].update({"company_name": "示例科技", "job_title": "机器人算法工程师", "job_type": "实习"})

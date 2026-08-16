@@ -36,15 +36,26 @@
             :class="['project-card', { featured: index === 0 }]"
             @click="openProject(project)"
           >
-            <button
-              class="card-menu"
-              type="button"
-              aria-label="删除主简历"
-              title="删除主简历"
-              @click.stop="openDeleteDialog(project)"
-            >
-              •••
-            </button>
+            <div class="card-actions" @click.stop>
+              <button
+                class="card-menu card-rename"
+                type="button"
+                aria-label="重命名主简历"
+                title="重命名主简历"
+                @click="openRenameDialog(project)"
+              >
+                重命名
+              </button>
+              <button
+                class="card-menu card-delete"
+                type="button"
+                aria-label="删除主简历"
+                title="删除主简历"
+                @click="openDeleteDialog(project)"
+              >
+                删除
+              </button>
+            </div>
 
             <div class="project-copy">
               <div class="project-meta">
@@ -147,6 +158,41 @@
               <button class="secondary-btn" :disabled="isCreatingProject" @click="closeCreateDialog">取消</button>
               <button class="primary-btn" :disabled="isCreatingProject" @click="createProject">
                 {{ isCreatingProject ? '创建中…' : '创建并进入' }}
+              </button>
+            </footer>
+          </section>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <Teleport to="body">
+      <Transition name="modal-fade">
+        <div v-if="projectToRename" class="internal-modal-mask" @click.self="closeRenameDialog">
+          <section class="internal-modal" role="dialog" aria-modal="true" aria-labelledby="rename-title">
+            <header>
+              <div>
+                <span class="modal-kicker">主简历</span>
+                <h2 id="rename-title">重命名主简历</h2>
+              </div>
+              <button class="modal-close" type="button" aria-label="关闭" @click="closeRenameDialog">×</button>
+            </header>
+            <div class="modal-body">
+              <label for="rename-project-title">简历名称</label>
+              <input
+                id="rename-project-title"
+                ref="renameProjectTitleInput"
+                v-model="renameProjectTitle"
+                maxlength="120"
+                autocomplete="off"
+                placeholder="例如：我的主简历"
+                @keydown.enter.prevent="confirmRenameProject"
+              />
+              <p v-if="renameError" class="form-error">{{ renameError }}</p>
+            </div>
+            <footer>
+              <button class="secondary-btn" :disabled="isRenamingProject" @click="closeRenameDialog">取消</button>
+              <button class="primary-btn" :disabled="isRenamingProject" @click="confirmRenameProject">
+                {{ isRenamingProject ? '保存中…' : '保存' }}
               </button>
             </footer>
           </section>
@@ -275,6 +321,11 @@ const newProjectTitle = ref('')
 const projectTitleInput = ref(null)
 const isCreatingProject = ref(false)
 const createError = ref('')
+const projectToRename = ref(null)
+const renameProjectTitle = ref('')
+const renameProjectTitleInput = ref(null)
+const isRenamingProject = ref(false)
+const renameError = ref('')
 const projectToDelete = ref(null)
 const isDeletingProject = ref(false)
 const deleteError = ref('')
@@ -362,6 +413,46 @@ function closeCreateDialog() {
   if (isCreatingProject.value) return
   showCreateDialog.value = false
   createError.value = ''
+}
+
+function openRenameDialog(project) {
+  projectToRename.value = project
+  renameProjectTitle.value = String(project?.title || '')
+  renameError.value = ''
+  nextTick(() => renameProjectTitleInput.value?.focus())
+}
+
+function closeRenameDialog() {
+  if (isRenamingProject.value) return
+  projectToRename.value = null
+  renameError.value = ''
+}
+
+async function confirmRenameProject() {
+  if (!projectToRename.value || isRenamingProject.value) return
+  const title = renameProjectTitle.value.trim()
+  if (!title) {
+    renameError.value = '请输入简历名称'
+    renameProjectTitleInput.value?.focus()
+    return
+  }
+  isRenamingProject.value = true
+  renameError.value = ''
+  try {
+    const response = await fetch(`/projects/${projectToRename.value.id}`, {
+      method: 'PATCH',
+      headers: authHeaders(),
+      body: JSON.stringify({ title })
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(data.detail || '重命名失败，请重试')
+    projectToRename.value = null
+    await loadProjects()
+  } catch (error) {
+    renameError.value = error.message || '重命名失败，请重试'
+  } finally {
+    isRenamingProject.value = false
+  }
 }
 
 async function createProject() {
@@ -608,6 +699,7 @@ async function saveSettings() {
 function handleKeydown(event) {
   if (event.key !== 'Escape') return
   if (showCreateDialog.value) closeCreateDialog()
+  if (projectToRename.value) closeRenameDialog()
   if (projectToDelete.value) closeDeleteDialog()
   if (showSettingsDialog.value) closeSettings()
 }
@@ -886,24 +978,32 @@ onUnmounted(() => {
   font-size: 0.65rem;
 }
 
-.card-menu {
+.card-actions {
   position: absolute;
   top: 1.15rem;
   right: 1.15rem;
   z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: .25rem;
+}
+
+.card-menu {
+  position: static;
   display: grid;
-  width: 40px;
+  width: auto;
+  min-width: 2.4rem;
   height: 32px;
   padding: 0;
   box-sizing: border-box;
   place-items: center;
   border: 0;
   border-radius: 0;
-  color: #fff;
+  color: #8eafff;
   background: transparent;
-  font-size: 1.1rem;
+  font-size: .68rem;
   line-height: 1;
-  letter-spacing: 0.08em;
+  letter-spacing: 0;
   opacity: 0.82;
   cursor: pointer;
 }
@@ -912,10 +1012,31 @@ onUnmounted(() => {
   right: 2rem;
 }
 
+.featured .card-actions {
+  right: 2rem;
+}
+
+.card-rename {
+  padding-inline: .35rem;
+  color: #8eafff;
+}
+
+.card-delete {
+  padding-inline: .35rem;
+  color: #e88989;
+}
+
 .card-menu:hover {
-  color: #fff;
   background: transparent;
   opacity: 1;
+}
+
+.card-rename:hover {
+  color: #b3c9ff;
+}
+
+.card-delete:hover {
+  color: #ffaaaa;
 }
 
 .card-menu:focus,

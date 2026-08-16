@@ -76,6 +76,34 @@ function boolValue(value, fallback = true) {
   return Boolean(value)
 }
 
+function sourceVisualSignature(source) {
+  if (!source || typeof source !== 'object') return { group: '', indent: null, marker: '' }
+  const group = text(source.source_layout_group || source.source_visual_group || source.visual_group)
+  const rawIndent = source.source_indent_level ?? source.visual_indent_level
+  const parsedIndent = rawIndent == null || String(rawIndent).trim() === '' ? null : Number.parseInt(rawIndent, 10)
+  const indent = Number.isFinite(parsedIndent) ? parsedIndent : null
+  const markerValue = text(source.source_marker_type || source.visual_marker_type).toLowerCase()
+  const marker = {
+    paragraph: 'paragraph',
+    段落: 'paragraph',
+    text: 'paragraph',
+    bullet: 'bullet',
+    bullet_list: 'bullet',
+    分点: 'bullet',
+    numbered: 'numbered',
+    numbered_list: 'numbered',
+    编号: 'numbered'
+  }[markerValue] || ''
+  return { group, indent, marker }
+}
+
+function visualGroupKey(signature) {
+  if (!signature) return null
+  if (signature.group) return `group:${signature.group}`
+  if (signature.indent != null || signature.marker) return `shape:${signature.indent ?? ''}:${signature.marker}`
+  return null
+}
+
 function normalizeHeadingSurface(value) {
   let surface = text(value)
   if (!surface) return { surface: '', wholeBold: false }
@@ -212,42 +240,63 @@ function legacySemanticBlocks(details) {
 
 export function normalizeContentBlocks(value, legacyDetails = [], { experienceKind = 'project' } = {}) {
   const normalizedExplicit = []
-  let sawLabeledIntroduction = false
+  let activeSemanticGroup = null
+  let responsibilityVisualKey = null
+
+  const asResponsibilities = (block, { promoted = true } = {}) => {
+    const items = block.items?.length ? [...block.items] : (block.text ? [block.text] : [])
+    return {
+      ...block,
+      type: 'numbered_list',
+      semantic_role: 'responsibilities',
+      label: promoted ? '项目职责' : block.label,
+      label_bold: promoted ? true : block.label_bold,
+      text: '',
+      items
+    }
+  }
+
+  const appendResponsibilities = block => {
+    const previous = normalizedExplicit[normalizedExplicit.length - 1]
+    if (previous?.semantic_role === 'responsibilities' && previous.label === '项目职责') {
+      previous.items.push(...block.items)
+    } else {
+      normalizedExplicit.push(block)
+    }
+  }
+
   if (Array.isArray(value)) {
     value.forEach(raw => {
       let block = normalizeContentBlock(raw, { keepEmpty: false })
       if (!block) return
-      const rawRole = raw && typeof raw === 'object'
-        ? (ROLE_ALIASES[text(raw.semantic_role).toLowerCase()] || '')
-        : ''
-      const rawLabel = raw && typeof raw === 'object' ? text(raw.label) : ''
+      const visualKey = visualGroupKey(sourceVisualSignature(raw))
       if (block.semantic_role === 'introduction') {
-        sawLabeledIntroduction = Boolean(block.label)
+        normalizedExplicit.push(block)
+        activeSemanticGroup = block.label ? 'introduction' : null
+        responsibilityVisualKey = null
       } else if (block.semantic_role === 'responsibilities') {
-        sawLabeledIntroduction = false
-      } else if (sawLabeledIntroduction && block.semantic_role === 'generic') {
-        const candidate = !rawRole && !rawLabel && (block.text || block.items?.length)
-        if (candidate) {
-          const items = block.items?.length ? [...block.items] : [block.text]
-          block = {
-            ...block,
-            type: 'numbered_list',
-            semantic_role: 'responsibilities',
-            label: '项目职责',
-            label_bold: true,
-            text: '',
-            items
-          }
-          const previous = normalizedExplicit[normalizedExplicit.length - 1]
-          if (previous?.semantic_role === 'responsibilities' && previous.label === '项目职责') {
-            previous.items.push(...block.items)
-            return
-          }
+        block = asResponsibilities(block, { promoted: false })
+        appendResponsibilities(block)
+        activeSemanticGroup = block.label ? 'responsibilities' : null
+        responsibilityVisualKey = visualKey
+      } else if (['introduction', 'responsibilities'].includes(activeSemanticGroup)) {
+        if (responsibilityVisualKey == null && visualKey != null) responsibilityVisualKey = visualKey
+        const distinctVisualGroup = responsibilityVisualKey != null && visualKey != null && visualKey !== responsibilityVisualKey
+        if (!distinctVisualGroup) {
+          appendResponsibilities(asResponsibilities(block))
         } else {
-          sawLabeledIntroduction = false
+          normalizedExplicit.push({
+            ...block,
+            type: block.type === 'numbered_list' ? 'bullet_list' : block.type,
+            semantic_role: 'generic',
+            label: ''
+          })
         }
+      } else {
+        // Without an explicit semantic heading, do not invent introduction or
+        // responsibility labels; retain the generic source block.
+        normalizedExplicit.push(block)
       }
-      normalizedExplicit.push(block)
     })
   }
   const legacy = (Array.isArray(legacyDetails) ? legacyDetails : [legacyDetails]).map(text).filter(Boolean)
