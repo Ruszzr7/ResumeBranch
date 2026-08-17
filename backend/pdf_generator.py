@@ -40,6 +40,17 @@ def _is_fully_bold(value: object) -> bool:
     return bool(segments) and all(segment.bold for segment in segments)
 
 
+def _module_list_values(values: list[object], list_style: str) -> list[str]:
+    """Keep source items recoverable while rendering paragraph mode as one block."""
+    normalized = [str(value or '').strip() for value in values if str(value or '').strip()]
+    return [''.join(normalized)] if list_style == 'paragraph' and normalized else normalized
+
+
+def _paragraph_text(value: object) -> str:
+    """Paragraph mode removes editor line boundaries at render time."""
+    return re.sub(r'\s*\r?\n\s*', '', str(value or '')).strip()
+
+
 def _photo_aspect_ratio(photo: str | None, resume_data: dict) -> float:
     """Return the imported photo's width/height ratio, with a safe legacy fallback."""
     try:
@@ -406,8 +417,9 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
             supplement_values.extend(values)
         if supplement_values:
             list_style = layout_config["education"].get("supplementListStyle", "bullet")
+            display_values = _module_list_values(supplement_values, list_style)
             html_parts.append(f'<ul class="list-items module-list list-style-{list_style}">')
-            for value in supplement_values:
+            for value in display_values:
                 marker_class = " marker-bold" if _is_fully_bold(value) else ""
                 html_parts.append(f'<li class="list-item{marker_class}">{format_markdown(_module_list_content(value))}</li>')
             html_parts.append('</ul>')
@@ -463,7 +475,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
                 semantic_class = " has-semantic-label" if flow["labelMarker"] == "bullet" else ""
                 html_parts.append(f'<div class="project-content-block block-{block_type}{semantic_class}">')
                 if block_type == "paragraph":
-                    html_parts.append(f'<p class="project-paragraph">{label_html}{format_markdown(block.get("text", ""))}</p>')
+                    html_parts.append(f'<p class="project-paragraph">{label_html}{format_markdown(_paragraph_text(block.get("text", "")))}</p>')
                 else:
                     if flow["labelPlacement"] == "separate":
                         html_parts.append(f'<div class="project-block-label{label_class}">{format_markdown(label)}：</div>')
@@ -521,7 +533,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
                 semantic_class = " has-semantic-label" if flow["labelMarker"] == "bullet" else ""
                 html_parts.append(f'<div class="project-content-block block-{block_type}{semantic_class}">')
                 if block_type == "paragraph":
-                    html_parts.append(f'<p class="project-paragraph">{label_html}{format_markdown(block.get("text", ""))}</p>')
+                    html_parts.append(f'<p class="project-paragraph">{label_html}{format_markdown(_paragraph_text(block.get("text", "")))}</p>')
                 else:
                     if flow["labelPlacement"] == "separate":
                         html_parts.append(f'<div class="project-block-label{label_class}">{format_markdown(label)}：</div>')
@@ -547,8 +559,9 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
                 continue
             html_parts.append(f'<section class="section custom-section{break_class(f"custom_sections:{custom_index}")}"{order_style("custom_sections")}>')
             html_parts.append(title_markup("custom_sections", custom["title"]))
-            html_parts.append(f'<ul class="list-items module-list list-style-{layout_config["custom_sections"]["listStyle"]}">')
-            for value in custom["items"]:
+            list_style = custom.get("list_style") if custom.get("list_style") in {"paragraph", "bullet", "numbered"} else layout_config["custom_sections"]["listStyle"]
+            html_parts.append(f'<ul class="list-items module-list list-style-{list_style}">')
+            for value in _module_list_values(custom["items"], list_style):
                 html_parts.append(f'<li class="list-item">{format_markdown(value)}</li>')
             html_parts.append('</ul></section>')
         commit_section("custom_sections", chunk_start)
@@ -584,7 +597,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         html_parts.append(title_markup(section_id, section_title(section_id, title)))
         list_style = layout_config[section_id]["listStyle"]
         html_parts.append(f'<ul class="list-items module-list list-style-{list_style}">')
-        for value in values:
+        for value in _module_list_values(values, list_style):
             marker_class = " marker-bold" if _is_fully_bold(value) else ""
             section_item_class = " skill-list-item" if section_id == "skills" else ""
             item_html = format_markdown(_module_list_content(value))
@@ -603,10 +616,8 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         self_layout = layout_config["self_evaluation"]
         html_parts.append(f'<section class="section self-evaluation self-{self_layout["preset"]}{break_class("self_evaluation")}"{order_style("self_evaluation")}>')
         html_parts.append(title_markup("self_evaluation", section_title("self_evaluation", labels["selfEvaluation"])))
-        evaluations = resume_data["self_evaluation"]
-        if self_layout["preset"] == "compact":
-            evaluations = [" ".join(str(item) for item in evaluations)]
         list_style = self_layout["listStyle"]
+        evaluations = _module_list_values(resume_data["self_evaluation"], list_style)
         html_parts.append(f'<div class="module-list list-style-{list_style}">')
         for eval_item in evaluations:
             html_parts.append(f'<div class="self-eval-item list-item">{format_markdown(eval_item)}</div>')

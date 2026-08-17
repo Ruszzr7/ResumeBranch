@@ -594,6 +594,15 @@ const publicationsText = ref('')
 const educationSupplementText = ref('')
 const selfEvalText = ref('')
 const resumeModuleTitles = ref({ ...EDITABLE_RESUME_MODULE_TITLE_DEFAULTS })
+const resumeEditorLayoutDraft = ref(null)
+const RESUME_LIST_STYLE_OPTIONS = Object.freeze({
+  paragraph: '段落',
+  bullet: '分点',
+  numbered: '编号'
+})
+const normalizeResumeListStyle = value => Object.prototype.hasOwnProperty.call(RESUME_LIST_STYLE_OPTIONS, value)
+  ? value
+  : 'bullet'
 let resumeEditorPreviousResumeData = null
 let resumeEditorPreviousPreviewLayout = null
 
@@ -624,7 +633,7 @@ function initializeResumeModuleTitles(migrateDefaultBold = false) {
 }
 
 function buildResumeTitleLayout() {
-  const candidate = normalizeLayoutConfig(activeLayoutConfig.value)
+  const candidate = normalizeLayoutConfig(resumeEditorLayoutDraft.value || activeLayoutConfig.value)
   for (const [section, fallback] of Object.entries(EDITABLE_RESUME_MODULE_TITLE_DEFAULTS)) {
     const title = String(resumeModuleTitles.value[section] || '').trim() || wrapDefaultBold(fallback)
     candidate.global.titleOverrides[section] = {
@@ -637,6 +646,39 @@ function buildResumeTitleLayout() {
 
 function previewResumeModuleTitles() {
   previewLayoutConfig.value = buildResumeTitleLayout()
+}
+
+function previewResumeEditorLayout() {
+  if (!resumeEditorLayoutDraft.value) return
+  previewLayoutConfig.value = buildResumeTitleLayout()
+}
+
+function resumeEditListStyle(section) {
+  const config = resumeEditorLayoutDraft.value || activeLayoutConfig.value
+  if (section === 'education_supplement') return config.education?.supplementListStyle || 'bullet'
+  return config[section]?.listStyle || 'bullet'
+}
+
+function setResumeEditListStyle(section, value) {
+  const config = normalizeLayoutConfig(resumeEditorLayoutDraft.value || activeLayoutConfig.value)
+  const style = Object.prototype.hasOwnProperty.call(RESUME_LIST_STYLE_OPTIONS, value) ? value : 'bullet'
+  if (section === 'education_supplement') config.education.supplementListStyle = style
+  else if (config[section]) config[section].listStyle = style
+  resumeEditorLayoutDraft.value = config
+  previewResumeEditorLayout()
+}
+
+function resumeEditPlacement(section) {
+  const config = resumeEditorLayoutDraft.value || activeLayoutConfig.value
+  return config.global?.sectionPlacements?.[section] === 'education' ? 'education' : 'standalone'
+}
+
+function setResumeEditPlacement(section, value) {
+  const config = normalizeLayoutConfig(resumeEditorLayoutDraft.value || activeLayoutConfig.value)
+  if (value === 'education') config.global.sectionPlacements[section] = 'education'
+  else delete config.global.sectionPlacements[section]
+  resumeEditorLayoutDraft.value = config
+  previewResumeEditorLayout()
 }
 
 // 首次进入选择弹窗状态
@@ -2232,18 +2274,23 @@ function editableExperienceToContentBlocks(work) {
       ? 'paragraph'
       : semanticRole === 'responsibilities' ? 'numbered_list' : 'bullet_list'
     const resolvedType = CONTENT_BLOCK_TYPE_OPTIONS[type] ? type : fallbackType
-    const values = multilineToArray(rawText)
+    const normalizedText = normalizeEditorMultiline(rawText)
+    const values = multilineToArray(normalizedText)
     if (!values.length) return null
     return {
       type: resolvedType,
       semantic_role: semanticRole,
       label: String(label || '').trim(),
       label_bold: semanticRole === 'introduction' || semanticRole === 'responsibilities',
-      text: resolvedType === 'paragraph' ? values.join(' ') : '',
+      // Keep the authored line boundaries in paragraph mode. The renderers
+      // remove those boundaries for a paragraph, while switching back to a
+      // list can still recover the original items without data loss.
+      text: resolvedType === 'paragraph' ? normalizedText : '',
       items: resolvedType === 'paragraph' ? [] : values
     }
   }
-  const lines = multilineToArray(work?._detailsText ?? work?._extraDetailsText)
+  const detailsText = normalizeEditorMultiline(work?._detailsText ?? work?._extraDetailsText)
+  const lines = multilineToArray(detailsText)
   const blocks = []
   const intro = contentBlock('introduction', work?._introLabel, work?._introType || 'paragraph', work?._introText)
   const duties = contentBlock('responsibilities', work?._dutiesLabel, work?._dutiesType || 'numbered_list', work?._dutiesText)
@@ -2256,7 +2303,7 @@ function editableExperienceToContentBlocks(work) {
       semantic_role: 'generic',
       label: '',
       label_bold: false,
-      text: type === 'paragraph' ? lines.join(' ') : '',
+      text: type === 'paragraph' ? detailsText : '',
       items: type === 'paragraph' ? [] : lines,
     })
   }
@@ -2324,6 +2371,7 @@ function openResumeEditDialog() {
   resumeEditorPreviousPreviewLayout = previewLayoutConfig.value
     ? JSON.parse(JSON.stringify(previewLayoutConfig.value))
     : null
+  resumeEditorLayoutDraft.value = normalizeLayoutConfig(activeLayoutConfig.value)
   newResumeSkill.value = ''
   newResumeCert.value = ''
   newResumeLang.value = ''
@@ -2411,6 +2459,7 @@ function openResumeEditDialog() {
   })
 
   resumeFormData.value.custom_sections.forEach(section => {
+    section._listStyle = normalizeResumeListStyle(section.list_style || activeLayoutConfig.value.custom_sections?.listStyle)
     section._itemsText = arrayToMultiline(section.items || [])
   })
 
@@ -2444,6 +2493,7 @@ function closeResumeEditDialog() {
   resumeEditorPreviousResumeData = null
   previewLayoutConfig.value = resumeEditorPreviousPreviewLayout
   resumeEditorPreviousPreviewLayout = null
+  resumeEditorLayoutDraft.value = null
 }
 
 // 处理证件照上传
@@ -2690,17 +2740,26 @@ async function loadResume() {
 // 将数组转换为多行文本（用于编辑）
 function arrayToMultiline(arr) {
   if (!arr || !Array.isArray(arr)) return ''
-  return arr.filter(item => item.trim()).join('\n')
+  return arr.map(item => String(item ?? '')).filter(item => item.trim()).join('\n')
 }
 
 // 将多行文本转换为数组（用于保存）
 function multilineToArray(text) {
   if (!text) return []
-  return text.split('\n').map(line => line.trim()).filter(line => line)
+  return String(text).replace(/\r\n?/g, '\n').split('\n').map(line => line.trim()).filter(line => line)
+}
+
+function normalizeEditorMultiline(text) {
+  return String(text ?? '').replace(/\r\n?/g, '\n').trim()
 }
 
 function addCustomSection() {
-  resumeFormData.value.custom_sections.push({ title: '', items: [], _itemsText: '' })
+  resumeFormData.value.custom_sections.push({
+    title: '',
+    items: [],
+    _itemsText: '',
+    _listStyle: normalizeResumeListStyle(activeLayoutConfig.value.custom_sections?.listStyle)
+  })
 }
 
 function removeCustomSection(index) {
@@ -2761,7 +2820,8 @@ async function saveResume() {
     dataToSave.custom_sections = (dataToSave.custom_sections || [])
       .map(section => ({
         title: String(section.title || '').trim(),
-        items: multilineToArray(section._itemsText !== undefined ? section._itemsText : arrayToMultiline(section.items || []))
+        items: multilineToArray(section._itemsText !== undefined ? section._itemsText : arrayToMultiline(section.items || [])),
+        list_style: normalizeResumeListStyle(section._listStyle || section.list_style)
       }))
       .filter(section => section.title && section.items.length)
 
@@ -4673,8 +4733,13 @@ watch(
             </div>
             <button @click="addEducation" class="add-btn">+ 添加学历</button>
 
-            <div class="field-group full-width education-supplement-editor">
-              <label>教育经历补充</label>
+            <div class="education-supplement-editor">
+              <div class="module-title-setting-row module-title-setting-row-label">
+                <span class="module-title-inline-label">教育经历补充</span>
+                <select :value="resumeEditListStyle('education_supplement')" aria-label="教育经历补充内容形式" @change="setResumeEditListStyle('education_supplement', $event.target.value)">
+                  <option v-for="(label, value) in RESUME_LIST_STYLE_OPTIONS" :key="value" :value="value">{{ label }}</option>
+                </select>
+              </div>
               <RichTextEditor
                 v-model="educationSupplementText"
                 placeholder="例如 参与科研项目并获校级奖励"
@@ -4683,7 +4748,18 @@ watch(
               />
             </div>
 
-            <RichTextEditor v-model="resumeModuleTitles.honors" class="module-title-editor" compact default-bold @update:modelValue="previewResumeModuleTitles" />
+            <div class="module-title-setting-row">
+              <RichTextEditor v-model="resumeModuleTitles.honors" class="module-title-editor" compact default-bold @update:modelValue="previewResumeModuleTitles" />
+              <div class="module-title-setting-controls">
+                <select :value="resumeEditListStyle('honors')" aria-label="主要荣誉内容形式" @change="setResumeEditListStyle('honors', $event.target.value)">
+                  <option v-for="(label, value) in RESUME_LIST_STYLE_OPTIONS" :key="value" :value="value">{{ label }}</option>
+                </select>
+                <select :value="resumeEditPlacement('honors')" aria-label="主要荣誉栏目位置" @change="setResumeEditPlacement('honors', $event.target.value)">
+                  <option value="standalone">独立栏目</option>
+                  <option value="education">并入教育经历</option>
+                </select>
+              </div>
+            </div>
             <RichTextEditor
               v-model="honorsText"
               placeholder="例如 国家奖学金"
@@ -4691,7 +4767,18 @@ watch(
               :resume-metrics="resumeEditorMetrics"
             />
 
-            <RichTextEditor v-model="resumeModuleTitles.publications" class="module-title-editor" compact default-bold @update:modelValue="previewResumeModuleTitles" />
+            <div class="module-title-setting-row">
+              <RichTextEditor v-model="resumeModuleTitles.publications" class="module-title-editor" compact default-bold @update:modelValue="previewResumeModuleTitles" />
+              <div class="module-title-setting-controls">
+                <select :value="resumeEditListStyle('publications')" aria-label="论文内容形式" @change="setResumeEditListStyle('publications', $event.target.value)">
+                  <option v-for="(label, value) in RESUME_LIST_STYLE_OPTIONS" :key="value" :value="value">{{ label }}</option>
+                </select>
+                <select :value="resumeEditPlacement('publications')" aria-label="论文栏目位置" @change="setResumeEditPlacement('publications', $event.target.value)">
+                  <option value="standalone">独立栏目</option>
+                  <option value="education">并入教育经历</option>
+                </select>
+              </div>
+            </div>
             <RichTextEditor
               v-model="publicationsText"
               placeholder="论文标题（中科院一区 Top，IF 10），已接收"
@@ -4699,7 +4786,18 @@ watch(
               :resume-metrics="resumeEditorMetrics"
             />
 
-            <RichTextEditor v-model="resumeModuleTitles.research_interests" class="module-title-editor" compact default-bold @update:modelValue="previewResumeModuleTitles" />
+            <div class="module-title-setting-row">
+              <RichTextEditor v-model="resumeModuleTitles.research_interests" class="module-title-editor" compact default-bold @update:modelValue="previewResumeModuleTitles" />
+              <div class="module-title-setting-controls">
+                <select :value="resumeEditListStyle('research_interests')" aria-label="研究方向内容形式" @change="setResumeEditListStyle('research_interests', $event.target.value)">
+                  <option v-for="(label, value) in RESUME_LIST_STYLE_OPTIONS" :key="value" :value="value">{{ label }}</option>
+                </select>
+                <select :value="resumeEditPlacement('research_interests')" aria-label="研究方向栏目位置" @change="setResumeEditPlacement('research_interests', $event.target.value)">
+                  <option value="standalone">独立栏目</option>
+                  <option value="education">并入教育经历</option>
+                </select>
+              </div>
+            </div>
             <RichTextEditor
               v-model="researchInterestsText"
               placeholder="例如 人机协作与智能系统"
@@ -4708,7 +4806,14 @@ watch(
             />
 
             <!-- 专业技能 -->
-            <RichTextEditor v-model="resumeModuleTitles.skills" class="module-title-editor" compact default-bold @update:modelValue="previewResumeModuleTitles" />
+            <div class="module-title-setting-row">
+              <RichTextEditor v-model="resumeModuleTitles.skills" class="module-title-editor" compact default-bold @update:modelValue="previewResumeModuleTitles" />
+              <div class="module-title-setting-controls">
+                <select :value="resumeEditListStyle('skills')" aria-label="专业技能内容形式" @change="setResumeEditListStyle('skills', $event.target.value)">
+                  <option v-for="(label, value) in RESUME_LIST_STYLE_OPTIONS" :key="value" :value="value">{{ label }}</option>
+                </select>
+              </div>
+            </div>
             <div class="others-section">
               <div class="field-group full-width">
                 <label>技能条目</label>
@@ -4889,7 +4994,9 @@ watch(
             </div>
             <button @click="addProject" class="add-btn">+ 添加项目经历</button>
 
-            <h4 class="section-title">自定义项目</h4>
+            <div class="module-title-setting-row module-title-setting-row-label custom-sections-title-row">
+              <span class="module-title-inline-label">自定义项目</span>
+            </div>
             <div v-for="(section, sectionIndex) in resumeFormData.custom_sections" :key="`custom-section-${sectionIndex}`" class="array-item">
               <div class="array-item-header">
                 <span>自定义栏目 {{ sectionIndex + 1 }}</span>
@@ -4900,7 +5007,12 @@ watch(
                 <RichTextEditor v-model="section.title" placeholder="例如 社团经历" compact default-bold />
               </div>
               <div class="array-item-nested">
-                <label>栏目内容</label>
+                <div class="content-block-heading-row generic-content-heading">
+                  <label>栏目内容</label>
+                  <select v-model="section._listStyle" aria-label="自定义栏目内容分点形式">
+                    <option v-for="(label, value) in RESUME_LIST_STYLE_OPTIONS" :key="value" :value="value">{{ label }}</option>
+                  </select>
+                </div>
                 <RichTextEditor
                   v-model="section._itemsText"
                   placeholder="例如 负责学院学生会活动组织"
@@ -4912,7 +5024,16 @@ watch(
             <button type="button" @click="addCustomSection" class="add-btn">+ 添加自定义栏目</button>
 
             <!-- 补充信息 -->
-            <RichTextEditor v-model="resumeModuleTitles.others" class="module-title-editor" compact default-bold @update:modelValue="previewResumeModuleTitles" />
+            <div class="module-title-setting-row">
+              <RichTextEditor v-model="resumeModuleTitles.others" class="module-title-editor" compact default-bold @update:modelValue="previewResumeModuleTitles" />
+              <div class="module-title-setting-controls">
+                <select :value="resumeEditPlacement('others')" aria-label="证书与语言栏目位置" @change="setResumeEditPlacement('others', $event.target.value)">
+                  <option value="standalone">独立栏目</option>
+                  <option value="education">并入教育经历</option>
+                </select>
+              </div>
+            </div>
+            <div class="section-content-note">并入教育经历后将不显示模块标题</div>
             <div class="others-section">
               <div class="field-group full-width certificate-language-field">
                 <RichTextEditor v-model="resumeFormData.others.field_labels.certificates" class="field-label-editor" placeholder="例如 证书" compact />
@@ -4959,7 +5080,14 @@ watch(
             </div>
 
             <!-- 自我评价 -->
-            <RichTextEditor v-model="resumeModuleTitles.self_evaluation" class="module-title-editor" compact default-bold @update:modelValue="previewResumeModuleTitles" />
+            <div class="module-title-setting-row">
+              <RichTextEditor v-model="resumeModuleTitles.self_evaluation" class="module-title-editor" compact default-bold @update:modelValue="previewResumeModuleTitles" />
+              <div class="module-title-setting-controls">
+                <select :value="resumeEditListStyle('self_evaluation')" aria-label="自我评价内容形式" @change="setResumeEditListStyle('self_evaluation', $event.target.value)">
+                  <option v-for="(label, value) in RESUME_LIST_STYLE_OPTIONS" :key="value" :value="value">{{ label }}</option>
+                </select>
+              </div>
+            </div>
             <RichTextEditor
               v-model="selfEvalText"
               placeholder="例如 学习能力强，重视工程质量。"
@@ -7014,6 +7142,73 @@ watch(
   font-size: 0.78rem;
 }
 
+.module-title-setting-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 33.333%) auto;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 1.6rem 0 0.85rem;
+}
+
+.module-title-setting-row .module-title-editor {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  margin: 0;
+}
+
+.module-title-setting-controls {
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.module-title-setting-row > select,
+.module-title-setting-controls select {
+  width: 108px;
+  min-width: 108px;
+  height: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  padding: 0 9px;
+  color: #ededf1;
+  background: #30323a;
+  font: inherit;
+  font-size: 0.78rem;
+  /* Keep the native select affordance visible.  Hiding it here also hid the
+     existing arrows on every module/content selector in Chromium. */
+  -webkit-appearance: menulist;
+  appearance: auto;
+  background-image: none;
+  padding-right: 9px;
+}
+
+.module-title-setting-row-label {
+  align-items: center;
+}
+
+.module-title-inline-label {
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  color: #dfe2e9;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.custom-sections-title-row {
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.section-content-note {
+  margin: -0.15rem 0 0.6rem;
+  color: #8f929e;
+  font-size: 0.72rem;
+}
+
 .generic-content-heading {
   align-items: center;
 }
@@ -8964,5 +9159,17 @@ watch(
   .copy-mode-icon {
     display: none;
   }
+}
+
+/* The legacy field-group rule appears later in this scoped stylesheet and
+   hides native arrows. Keep every resume-content selector native so the
+   affordance remains visible in the dark editor. */
+.resume-dialog .module-title-setting-row > select,
+.resume-dialog .module-title-setting-controls select,
+.resume-dialog .content-block-heading-row select {
+  -webkit-appearance: menulist !important;
+  appearance: auto !important;
+  background-image: none !important;
+  padding-right: 9px !important;
 }
 </style>

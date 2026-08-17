@@ -78,6 +78,16 @@ test('multiline editors estimate resume visual lines from shared layout metrics'
   assert.ok(appSource.includes(':resume-metrics="resumeEditorMetrics"'))
 })
 
+test('multiline content keeps authored line boundaries when switching display styles', () => {
+  assert.ok(editorSource.includes('const lineBreak = document.createElement(\'br\')'))
+  assert.ok(appSource.includes('text: resolvedType === \'paragraph\' ? normalizedText : \'\''))
+  assert.ok(appSource.includes('text: type === \'paragraph\' ? detailsText : \'\''))
+  assert.equal(appSource.includes('text: resolvedType === \'paragraph\' ? values.join(\' \') : \'\''), false)
+  assert.ok(appSource.includes('RESUME_LIST_STYLE_OPTIONS'))
+  assert.ok(appSource.includes("setResumeEditListStyle('self_evaluation'"))
+  assert.ok(appSource.includes("setResumeEditPlacement('research_interests'"))
+})
+
 test('project introduction line measurement includes its rendered semantic prefix', () => {
   assert.ok(editorSource.includes("flow.labelPlacement === 'inline' && flow.prefixText"))
   assert.ok(editorSource.includes('prefix.textContent = flow.prefixText'))

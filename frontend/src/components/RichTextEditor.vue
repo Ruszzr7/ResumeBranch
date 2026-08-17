@@ -197,6 +197,21 @@ function onFocus() {
 
 function handleEnter(event) {
   if (props.compact) event.preventDefault()
+  if (props.compact || !editorRef.value) return
+  event.preventDefault()
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0) return
+  const range = selection.getRangeAt(0)
+  if (!editorRef.value.contains(range.commonAncestorContainer)) return
+  range.deleteContents()
+  const lineBreak = document.createElement('br')
+  range.insertNode(lineBreak)
+  range.setStartAfter(lineBreak)
+  range.collapse(true)
+  selection.removeAllRanges()
+  selection.addRange(range)
+  syncValue()
+  nextTick(updateLineCount)
 }
 
 function handleCtrlB(e) {

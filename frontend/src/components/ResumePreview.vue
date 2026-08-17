@@ -165,10 +165,13 @@ const educationSupplementValues = computed(() => {
   const manual = (props.data?.education_supplement || [])
     .map(value => String(value || '').trim())
     .filter(Boolean)
-  return [
+  const values = [
     ...mergedEducationGroups.value.flatMap(section => section.values),
     ...manual
   ]
+  return educationSupplementStyle.value === 'paragraph' && values.length
+    ? [values.join('')]
+    : values
 })
 const educationSupplementStyle = computed(() => moduleLayout('education').supplementListStyle || 'bullet')
 function educationSupplementMarker(value, index) {
@@ -187,7 +190,7 @@ const selfEvaluationValues = computed(() => {
   const values = (props.data?.self_evaluation || [])
     .map(value => String(value || '').trim())
     .filter(Boolean)
-  return values.length && moduleLayout('self_evaluation').preset === 'compact' ? [values.join(' ')] : values
+  return moduleListStyle('self_evaluation') === 'paragraph' && values.length ? [values.join('')] : values
 })
 
 const showSourceDocument = ref(false)
@@ -384,23 +387,54 @@ function isFullyBoldText(value) {
   return isFullyBoldInlineText(moduleListContent(value).trim())
 }
 
+const VALID_LIST_STYLES = new Set(['paragraph', 'bullet', 'numbered'])
+const normalizeListStyle = (value, fallback = 'bullet') => VALID_LIST_STYLES.has(value) ? value : fallback
+
 function moduleListStyle(moduleId) {
-  return moduleLayout(moduleId).listStyle || 'bullet'
+  return normalizeListStyle(moduleLayout(moduleId).listStyle)
 }
 
-function moduleListMarker(moduleId, value, index) {
-  const style = moduleListStyle(moduleId)
+function listValuesForStyle(values, listStyle) {
+  const normalized = (Array.isArray(values) ? values : [])
+    .map(value => String(value || '').trim())
+    .filter(Boolean)
+  return listStyle === 'paragraph' && normalized.length
+    ? [normalized.join('')]
+    : normalized
+}
+
+function listMarkerForStyle(style, index) {
   if (style === 'numbered') return `(${index + 1})`
   return style === 'bullet' ? '•' : ''
 }
 
-function moduleListClasses(moduleId, value, extra = '') {
+function listClassesForStyle(style, value, extra = '') {
   return [
     'generic-list-item',
-    `list-style-${moduleListStyle(moduleId)}`,
+    `list-style-${style}`,
     extra,
     { 'marker-bold': isFullyBoldText(value) }
   ]
+}
+
+function moduleListValues(moduleId, values) {
+  return listValuesForStyle(values, moduleListStyle(moduleId))
+}
+
+function moduleListMarker(moduleId, value, index) {
+  return listMarkerForStyle(moduleListStyle(moduleId), index)
+}
+
+function moduleListClasses(moduleId, value, extra = '') {
+  return listClassesForStyle(moduleListStyle(moduleId), value, extra)
+}
+
+function customSectionListStyle(custom) {
+  return normalizeListStyle(custom?.list_style, moduleListStyle('custom_sections'))
+}
+
+function customSectionListValues(custom) {
+  return listValuesForStyle(custom?.items, customSectionListStyle(custom))
 }
 
 function othersComponentText(component) {
@@ -468,7 +502,7 @@ const sectionOrderSnapshot = ref([])
 const sectionOrderError = ref('')
 const listSettingSections = ['skills', 'research_interests', 'honors', 'publications', 'custom_sections', 'self_evaluation']
 const mergeSettingSections = ['research_interests', 'honors', 'publications', 'others']
-const LIST_STYLE_LABELS = { paragraph: '无标记', bullet: '分点', numbered: '编号' }
+const LIST_STYLE_LABELS = { paragraph: '段落', bullet: '分点', numbered: '编号' }
 
 function editableSectionPlacement(section) {
   return sectionSettingsDraft.value.global.sectionPlacements[section] === 'education'
@@ -1194,21 +1228,21 @@ const allItems = computed(() => {
         push({ type: 'education-supplement-item', dataIndex: i, groupId: 'education-supplement', breakKey: 'education-supplement' })
       })
     }
-    if (section === 'skills' && props.data.others?.skills?.length) {
+    if (section === 'skills' && moduleListValues('skills', props.data.others?.skills).length) {
       push({ type: 'skills-title', groupId: 'skills', breakKey: 'skills', isSectionTitle: true })
-      props.data.others.skills.forEach((_, i) => push({ type: 'skills-item', dataIndex: i, groupId: 'skills', breakKey: 'skills' }))
+      moduleListValues('skills', props.data.others?.skills).forEach((_, i) => push({ type: 'skills-item', dataIndex: i, groupId: 'skills', breakKey: 'skills' }))
     }
-    if (section === 'research_interests' && !sectionMergedIntoEducation(section) && props.data.research_interests?.length) {
+    if (section === 'research_interests' && !sectionMergedIntoEducation(section) && moduleListValues('research_interests', props.data.research_interests).length) {
       push({ type: 'research-title', groupId: 'research_interests', breakKey: 'research_interests', isSectionTitle: true })
-      props.data.research_interests.forEach((_, i) => push({ type: 'research-item', dataIndex: i, groupId: 'research_interests', breakKey: 'research_interests' }))
+      moduleListValues('research_interests', props.data.research_interests).forEach((_, i) => push({ type: 'research-item', dataIndex: i, groupId: 'research_interests', breakKey: 'research_interests' }))
     }
-    if (section === 'honors' && !sectionMergedIntoEducation(section) && props.data.honors?.length) {
+    if (section === 'honors' && !sectionMergedIntoEducation(section) && moduleListValues('honors', props.data.honors).length) {
       push({ type: 'honors-title', groupId: 'honors', breakKey: 'honors', isSectionTitle: true })
-      props.data.honors.forEach((_, i) => push({ type: 'honors-item', dataIndex: i, groupId: 'honors', breakKey: 'honors' }))
+      moduleListValues('honors', props.data.honors).forEach((_, i) => push({ type: 'honors-item', dataIndex: i, groupId: 'honors', breakKey: 'honors' }))
     }
-    if (section === 'publications' && !sectionMergedIntoEducation(section) && props.data.publications?.length) {
+    if (section === 'publications' && !sectionMergedIntoEducation(section) && moduleListValues('publications', props.data.publications).length) {
       push({ type: 'publications-title', groupId: 'publications', breakKey: 'publications', isSectionTitle: true })
-      props.data.publications.forEach((_, i) => push({ type: 'publications-item', dataIndex: i, groupId: 'publications', breakKey: 'publications' }))
+      moduleListValues('publications', props.data.publications).forEach((_, i) => push({ type: 'publications-item', dataIndex: i, groupId: 'publications', breakKey: 'publications' }))
     }
     if ((section === 'work_experience' || section === 'internship_experience')) {
       const entries = workEntries(section)
@@ -1235,7 +1269,7 @@ const allItems = computed(() => {
       props.data.custom_sections.forEach((custom, sectionIndex) => {
         if (!custom?.title || !custom?.items?.length) return
         push({ type: 'custom-title', dataIndex: sectionIndex, groupId: `custom_sections:${sectionIndex}`, breakKey: `custom_sections:${sectionIndex}`, isSectionTitle: true })
-        custom.items.forEach((_, itemIndex) => push({ type: 'custom-item', dataIndex: `${sectionIndex}-${itemIndex}`, groupId: `custom_sections:${sectionIndex}`, breakKey: `custom_sections:${sectionIndex}` }))
+        customSectionListValues(custom).forEach((_, itemIndex) => push({ type: 'custom-item', dataIndex: `${sectionIndex}-${itemIndex}`, groupId: `custom_sections:${sectionIndex}`, breakKey: `custom_sections:${sectionIndex}` }))
       })
     }
     if (section === 'others' && !sectionMergedIntoEducation(section) && props.data.others) {
@@ -1245,9 +1279,9 @@ const allItems = computed(() => {
         push({ type: 'others-content', groupId: 'others', breakKey: 'others' })
       }
     }
-    if (section === 'self_evaluation' && props.data.self_evaluation?.length) {
+    if (section === 'self_evaluation' && selfEvaluationValues.value.length) {
       push({ type: 'self-eval-title', groupId: 'self_evaluation', breakKey: 'self_evaluation', isSectionTitle: true })
-      const values = moduleLayout('self_evaluation').preset === 'compact' ? [props.data.self_evaluation.join(' ')] : props.data.self_evaluation
+      const values = selfEvaluationValues.value
       values.forEach((_, i) => push({ type: 'self-eval-item', dataIndex: i, groupId: 'self_evaluation', breakKey: 'self_evaluation' }))
     }
   }
@@ -1513,6 +1547,11 @@ const formatText = (text) => {
   if (typeof text !== 'string') return text
   return formatInlineHtml(text)
 }
+
+// Paragraph mode treats authored line boundaries as editor-only separators.
+// Remove the boundary and surrounding whitespace at render time so HTML does
+// not collapse it into a visible space; the source text remains unchanged.
+const paragraphText = value => String(value ?? '').replace(/\s*\r?\n\s*/g, '')
 
 // ========== 导出PDF（调用后端API，使用WeasyPrint生成矢量PDF）============
 const showSuccessDialog = ref(false)
@@ -1782,7 +1821,6 @@ const getItemIndex = (type, dataIndex) => {
               </section>
               <button type="button" class="layout-guide-btn font-size-open-btn" aria-haspopup="dialog" :aria-label="`文字大小，当前正文字号 ${fontSizes.body}pt`" @click="openFontSizeDialog">文字大小</button>
               <button class="layout-guide-btn section-order-open-btn" @click="openSectionOrderDialog">模块顺序</button>
-              <button class="layout-guide-btn section-settings-open-btn" @click="openSectionSettingsDialog">栏目设置</button>
             </div>
           </div>
 
@@ -1896,19 +1934,19 @@ const getItemIndex = (type, dataIndex) => {
         <div v-for="(item, idx) in educationSupplementValues" :key="`source-education-supplement-${idx}`" :class="['pageable-item', ...educationSupplementClasses(item)]" :data-marker="educationSupplementMarker(item, idx)" :style="moduleOrder('education')" v-html="formatText(moduleListContent(item))"></div>
       </template>
 
-      <template v-if="data.others?.skills?.length && !hiddenSection('skills')">
+      <template v-if="moduleListValues('skills', data.others?.skills).length && !hiddenSection('skills')">
         <h2 class="pageable-item section-title" :class="`title-${moduleTitleStyle('skills')}`" :style="moduleOrder('skills')" data-module="skills" v-html="formatText(displayTitle('skills', t.skillsSection))"></h2>
-        <div v-for="(item, idx) in data.others.skills" :key="`source-skill-${idx}`" :class="['pageable-item', ...moduleListClasses('skills', item, 'skill-list-item')]" :data-marker="moduleListMarker('skills', item, idx)" :style="moduleOrder('skills')" v-html="formatText(moduleListContent(item))"></div>
+        <div v-for="(item, idx) in moduleListValues('skills', data.others?.skills)" :key="`source-skill-${idx}`" :class="['pageable-item', ...moduleListClasses('skills', item, 'skill-list-item')]" :data-marker="moduleListMarker('skills', item, idx)" :style="moduleOrder('skills')" v-html="formatText(moduleListContent(item))"></div>
       </template>
 
-      <template v-if="data.research_interests?.length && !hiddenSection('research_interests') && !sectionMergedIntoEducation('research_interests')">
+      <template v-if="moduleListValues('research_interests', data.research_interests).length && !hiddenSection('research_interests') && !sectionMergedIntoEducation('research_interests')">
         <h2 class="pageable-item section-title" :class="`title-${moduleTitleStyle('research_interests')}`" :style="moduleOrder('research_interests')" data-module="research_interests" v-html="formatText(displayTitle('research_interests', t.researchInterests))"></h2>
-        <div v-for="(item, idx) in data.research_interests" :key="`source-research-${idx}`" :class="['pageable-item', ...moduleListClasses('research_interests', item)]" :data-marker="moduleListMarker('research_interests', item, idx)" :style="moduleOrder('research_interests')" v-html="formatText(moduleListContent(item))"></div>
+        <div v-for="(item, idx) in moduleListValues('research_interests', data.research_interests)" :key="`source-research-${idx}`" :class="['pageable-item', ...moduleListClasses('research_interests', item)]" :data-marker="moduleListMarker('research_interests', item, idx)" :style="moduleOrder('research_interests')" v-html="formatText(moduleListContent(item))"></div>
       </template>
 
-      <template v-if="data.honors?.length && !hiddenSection('honors') && !sectionMergedIntoEducation('honors')">
+      <template v-if="moduleListValues('honors', data.honors).length && !hiddenSection('honors') && !sectionMergedIntoEducation('honors')">
         <h2 class="pageable-item section-title" :class="`title-${moduleTitleStyle('honors')}`" :style="moduleOrder('honors')" data-module="honors" v-html="formatText(displayTitle('honors', t.honors))"></h2>
-        <div v-for="(item, idx) in data.honors" :key="`source-honor-${idx}`" :class="['pageable-item', ...moduleListClasses('honors', item)]" :data-marker="moduleListMarker('honors', item, idx)" :style="moduleOrder('honors')" v-html="formatText(moduleListContent(item))"></div>
+        <div v-for="(item, idx) in moduleListValues('honors', data.honors)" :key="`source-honor-${idx}`" :class="['pageable-item', ...moduleListClasses('honors', item)]" :data-marker="moduleListMarker('honors', item, idx)" :style="moduleOrder('honors')" v-html="formatText(moduleListContent(item))"></div>
       </template>
 
       <!-- {{ t.workExperience }} -->
@@ -1926,7 +1964,7 @@ const getItemIndex = (type, dataIndex) => {
           </div>
           <div v-if="projectContentBlocks(entry.item, 'work').length" class="pageable-item work-details" :class="`details-${moduleLayout(section.id).detailsStyle}`" :style="moduleOrder(section.id)">
             <div v-for="(block, bIdx) in projectContentBlocks(entry.item, 'work')" :key="bIdx" class="project-content-block" :class="contentBlockClasses(block)">
-              <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(block.text)"></span></p>
+              <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(paragraphText(block.text))"></span></p>
               <template v-else>
                 <div v-if="contentBlockLabel(block, 'separate')" class="project-block-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'separate') }" v-html="`${formatText(contentBlockLabel(block, 'separate'))}：`"></div>
                 <ol v-if="block.type === 'numbered_list'" class="project-numbered-list">
@@ -1956,7 +1994,7 @@ const getItemIndex = (type, dataIndex) => {
           </div>
           <div v-if="projectContentBlocks(item).length" class="pageable-item project-details" :style="moduleOrder('project_experience')">
             <div v-for="(block, blockIndex) in projectContentBlocks(item)" :key="blockIndex" class="project-content-block" :class="contentBlockClasses(block)">
-              <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(block.text)"></span></p>
+              <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(paragraphText(block.text))"></span></p>
               <template v-else>
                 <div v-if="contentBlockLabel(block, 'separate')" class="project-block-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'separate') }" v-html="`${formatText(contentBlockLabel(block, 'separate'))}：`"></div>
                 <ol v-if="block.type === 'numbered_list'" class="project-numbered-list">
@@ -1974,7 +2012,7 @@ const getItemIndex = (type, dataIndex) => {
       <template v-if="data.custom_sections?.length && !hiddenSection('custom_sections')">
         <template v-for="(custom, sectionIndex) in data.custom_sections" :key="`source-custom-${sectionIndex}`">
           <h2 v-if="custom.title && custom.items?.length" class="pageable-item section-title" :class="`title-${moduleTitleStyle('custom_sections')}`" :style="moduleOrder('custom_sections')" data-module="custom_sections" v-html="formatText(custom.title)"></h2>
-          <div v-for="(item, itemIndex) in (custom.items || [])" :key="`source-custom-${sectionIndex}-${itemIndex}`" :class="['pageable-item', ...moduleListClasses('custom_sections', item)]" :data-marker="moduleListMarker('custom_sections', item, itemIndex)" :style="moduleOrder('custom_sections')" v-html="formatText(moduleListContent(item))"></div>
+          <div v-for="(item, itemIndex) in customSectionListValues(custom)" :key="`source-custom-${sectionIndex}-${itemIndex}`" :class="['pageable-item', ...listClassesForStyle(customSectionListStyle(custom), item)]" :data-marker="listMarkerForStyle(customSectionListStyle(custom), itemIndex)" :style="moduleOrder('custom_sections')" v-html="formatText(moduleListContent(item))"></div>
         </template>
       </template>
 
@@ -1992,9 +2030,9 @@ const getItemIndex = (type, dataIndex) => {
         </div>
       </template>
 
-      <template v-if="data.publications?.length && !hiddenSection('publications') && !sectionMergedIntoEducation('publications')">
+      <template v-if="moduleListValues('publications', data.publications).length && !hiddenSection('publications') && !sectionMergedIntoEducation('publications')">
         <h2 class="pageable-item section-title" :class="`title-${moduleTitleStyle('publications')}`" :style="moduleOrder('publications')" data-module="publications" v-html="formatText(displayTitle('publications', lang === 'en' ? 'Publications' : '论文'))"></h2>
-        <div v-for="(item, idx) in data.publications" :key="`source-publication-${idx}`" :class="['pageable-item', ...moduleListClasses('publications', item)]" :data-marker="moduleListMarker('publications', item, idx)" :style="moduleOrder('publications')" v-html="formatText(moduleListContent(item))"></div>
+        <div v-for="(item, idx) in moduleListValues('publications', data.publications)" :key="`source-publication-${idx}`" :class="['pageable-item', ...moduleListClasses('publications', item)]" :data-marker="moduleListMarker('publications', item, idx)" :style="moduleOrder('publications')" v-html="formatText(moduleListContent(item))"></div>
       </template>
 
       <!-- {{ t.selfEvaluation }} -->
@@ -2065,19 +2103,19 @@ const getItemIndex = (type, dataIndex) => {
         </div>
       </template>
 
-      <template v-if="data.others?.skills?.length">
+      <template v-if="moduleListValues('skills', data.others?.skills).length">
         <h2 class="section-title" v-html="formatText(displayTitle('skills', t.skillsSection))"></h2>
-        <div v-for="(item, idx) in data.others.skills" :key="`print-skill-${idx}`" :class="moduleListClasses('skills', item, 'skill-list-item')" :data-marker="moduleListMarker('skills', item, idx)" v-html="formatText(moduleListContent(item))"></div>
+        <div v-for="(item, idx) in moduleListValues('skills', data.others?.skills)" :key="`print-skill-${idx}`" :class="moduleListClasses('skills', item, 'skill-list-item')" :data-marker="moduleListMarker('skills', item, idx)" v-html="formatText(moduleListContent(item))"></div>
       </template>
 
-      <template v-if="data.research_interests?.length">
+      <template v-if="moduleListValues('research_interests', data.research_interests).length">
         <h2 class="section-title" v-html="formatText(displayTitle('research_interests', t.researchInterests))"></h2>
-        <div v-for="(item, idx) in data.research_interests" :key="`print-research-${idx}`" :class="moduleListClasses('research_interests', item)" :data-marker="moduleListMarker('research_interests', item, idx)" v-html="formatText(moduleListContent(item))"></div>
+        <div v-for="(item, idx) in moduleListValues('research_interests', data.research_interests)" :key="`print-research-${idx}`" :class="moduleListClasses('research_interests', item)" :data-marker="moduleListMarker('research_interests', item, idx)" v-html="formatText(moduleListContent(item))"></div>
       </template>
 
-      <template v-if="data.honors?.length">
+      <template v-if="moduleListValues('honors', data.honors).length">
         <h2 class="section-title" v-html="formatText(displayTitle('honors', t.honors))"></h2>
-        <div v-for="(item, idx) in data.honors" :key="`print-honor-${idx}`" :class="moduleListClasses('honors', item)" :data-marker="moduleListMarker('honors', item, idx)" v-html="formatText(moduleListContent(item))"></div>
+        <div v-for="(item, idx) in moduleListValues('honors', data.honors)" :key="`print-honor-${idx}`" :class="moduleListClasses('honors', item)" :data-marker="moduleListMarker('honors', item, idx)" v-html="formatText(moduleListContent(item))"></div>
       </template>
 
       <!-- {{ t.workExperience }} -->
@@ -2092,7 +2130,7 @@ const getItemIndex = (type, dataIndex) => {
             <span class="work-period" v-html="formatText(`${item.date_range?.[0] || ''} - ${item.date_range?.[1] || '至今'}`)"></span>
           </div>
             <div v-for="(block, bIdx) in projectContentBlocks(item, 'work')" :key="bIdx" class="project-content-block" :class="contentBlockClasses(block)">
-            <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(block.text)"></span></p>
+            <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(paragraphText(block.text))"></span></p>
             <template v-else>
               <div v-if="contentBlockLabel(block, 'separate')" class="project-block-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'separate') }" v-html="`${formatText(contentBlockLabel(block, 'separate'))}：`"></div>
               <ol v-if="block.type === 'numbered_list'" class="project-numbered-list">
@@ -2119,7 +2157,7 @@ const getItemIndex = (type, dataIndex) => {
             </div>
           </div>
             <div v-for="(block, blockIndex) in projectContentBlocks(item)" :key="blockIndex" class="project-content-block" :class="contentBlockClasses(block)">
-            <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(block.text)"></span></p>
+            <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(paragraphText(block.text))"></span></p>
             <template v-else>
               <div v-if="contentBlockLabel(block, 'separate')" class="project-block-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'separate') }" v-html="`${formatText(contentBlockLabel(block, 'separate'))}：`"></div>
               <ol v-if="block.type === 'numbered_list'" class="project-numbered-list"><li v-for="(detail, dIdx) in block.items" :key="dIdx" :class="{ 'marker-bold': isFullyBoldText(detail) }" v-html="formatText(detail)"></li></ol>
@@ -2132,7 +2170,7 @@ const getItemIndex = (type, dataIndex) => {
       <template v-for="(custom, sectionIndex) in (data.custom_sections || [])" :key="`print-custom-${sectionIndex}`">
         <template v-if="custom.title && custom.items?.length">
           <h2 class="section-title" v-html="formatText(custom.title)"></h2>
-          <div v-for="(item, itemIndex) in custom.items" :key="`print-custom-${sectionIndex}-${itemIndex}`" :class="moduleListClasses('custom_sections', item)" :data-marker="moduleListMarker('custom_sections', item, itemIndex)" v-html="formatText(moduleListContent(item))"></div>
+          <div v-for="(item, itemIndex) in customSectionListValues(custom)" :key="`print-custom-${sectionIndex}-${itemIndex}`" :class="listClassesForStyle(customSectionListStyle(custom), item)" :data-marker="listMarkerForStyle(customSectionListStyle(custom), itemIndex)" v-html="formatText(moduleListContent(item))"></div>
         </template>
       </template>
 
@@ -2154,9 +2192,9 @@ const getItemIndex = (type, dataIndex) => {
       </template>
 
       <!-- {{ t.selfEvaluation }} -->
-      <template v-if="data.self_evaluation && data.self_evaluation.length">
+      <template v-if="selfEvaluationValues.length">
         <h2 class="section-title" v-html="formatText(displayTitle('self_evaluation', t.selfEvaluation))"></h2>
-        <template v-for="(item, idx) in data.self_evaluation">
+        <template v-for="(item, idx) in selfEvaluationValues">
           <div v-if="item" :key="'self-eval-'+idx" class="self-eval-item" v-html="formatText(item)"></div>
         </template>
       </template>
@@ -2214,19 +2252,19 @@ const getItemIndex = (type, dataIndex) => {
               <div v-for="(item, idx) in educationSupplementValues" v-show="isItemVisible({index: getItemIndex('education-supplement-item', idx)}, page - 1)" :key="`page-${page}-education-supplement-${idx}`" :class="educationSupplementClasses(item)" :data-marker="educationSupplementMarker(item, idx)" :style="moduleOrder('education')" v-html="formatText(moduleListContent(item))"></div>
             </template>
 
-            <template v-if="data.others?.skills?.length && !hiddenSection('skills')">
+            <template v-if="moduleListValues('skills', data.others?.skills).length && !hiddenSection('skills')">
               <h2 v-if="isItemVisible({index: getItemIndex('skills-title', 0)}, page - 1)" class="section-title" :class="`title-${moduleTitleStyle('skills')}`" :style="moduleOrder('skills')" data-module="skills" v-html="formatText(displayTitle('skills', t.skillsSection))"></h2>
-              <div v-for="(item, idx) in data.others.skills" v-show="isItemVisible({index: getItemIndex('skills-item', idx)}, page - 1)" :key="`page-${page}-skill-${idx}`" :class="moduleListClasses('skills', item, 'skill-list-item')" :data-marker="moduleListMarker('skills', item, idx)" :style="moduleOrder('skills')" v-html="formatText(moduleListContent(item))"></div>
+              <div v-for="(item, idx) in moduleListValues('skills', data.others?.skills)" v-show="isItemVisible({index: getItemIndex('skills-item', idx)}, page - 1)" :key="`page-${page}-skill-${idx}`" :class="moduleListClasses('skills', item, 'skill-list-item')" :data-marker="moduleListMarker('skills', item, idx)" :style="moduleOrder('skills')" v-html="formatText(moduleListContent(item))"></div>
             </template>
 
-            <template v-if="data.research_interests?.length && !hiddenSection('research_interests') && !sectionMergedIntoEducation('research_interests')">
+            <template v-if="moduleListValues('research_interests', data.research_interests).length && !hiddenSection('research_interests') && !sectionMergedIntoEducation('research_interests')">
               <h2 v-if="isItemVisible({index: getItemIndex('research-title', 0)}, page - 1)" class="section-title" :class="`title-${moduleTitleStyle('research_interests')}`" :style="moduleOrder('research_interests')" data-module="research_interests" v-html="formatText(displayTitle('research_interests', t.researchInterests))"></h2>
-              <div v-for="(item, idx) in data.research_interests" v-show="isItemVisible({index: getItemIndex('research-item', idx)}, page - 1)" :key="`page-${page}-research-${idx}`" :class="moduleListClasses('research_interests', item)" :data-marker="moduleListMarker('research_interests', item, idx)" :style="moduleOrder('research_interests')" v-html="formatText(moduleListContent(item))"></div>
+              <div v-for="(item, idx) in moduleListValues('research_interests', data.research_interests)" v-show="isItemVisible({index: getItemIndex('research-item', idx)}, page - 1)" :key="`page-${page}-research-${idx}`" :class="moduleListClasses('research_interests', item)" :data-marker="moduleListMarker('research_interests', item, idx)" :style="moduleOrder('research_interests')" v-html="formatText(moduleListContent(item))"></div>
             </template>
 
-            <template v-if="data.honors?.length && !hiddenSection('honors') && !sectionMergedIntoEducation('honors')">
+            <template v-if="moduleListValues('honors', data.honors).length && !hiddenSection('honors') && !sectionMergedIntoEducation('honors')">
               <h2 v-if="isItemVisible({index: getItemIndex('honors-title', 0)}, page - 1)" class="section-title" :class="`title-${moduleTitleStyle('honors')}`" :style="moduleOrder('honors')" data-module="honors" v-html="formatText(displayTitle('honors', t.honors))"></h2>
-              <div v-for="(item, idx) in data.honors" v-show="isItemVisible({index: getItemIndex('honors-item', idx)}, page - 1)" :key="`page-${page}-honor-${idx}`" :class="moduleListClasses('honors', item)" :data-marker="moduleListMarker('honors', item, idx)" :style="moduleOrder('honors')" v-html="formatText(moduleListContent(item))"></div>
+              <div v-for="(item, idx) in moduleListValues('honors', data.honors)" v-show="isItemVisible({index: getItemIndex('honors-item', idx)}, page - 1)" :key="`page-${page}-honor-${idx}`" :class="moduleListClasses('honors', item)" :data-marker="moduleListMarker('honors', item, idx)" :style="moduleOrder('honors')" v-html="formatText(moduleListContent(item))"></div>
             </template>
 
             <!-- {{ t.workExperience }} -->
@@ -2245,7 +2283,7 @@ const getItemIndex = (type, dataIndex) => {
                 <!-- 工作详情（独立分页项） -->
                 <div v-if="projectContentBlocks(entry.item, 'work').length && isItemVisible({index: getItemIndex(`${workTypePrefix(section.id)}-details`, entry.dataIndex)}, page - 1)" class="work-details" :class="`details-${moduleLayout(section.id).detailsStyle}`" :style="moduleOrder(section.id)">
                   <div v-for="(block, bIdx) in projectContentBlocks(entry.item, 'work')" :key="bIdx" class="project-content-block" :class="contentBlockClasses(block)">
-                    <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(block.text)"></span></p>
+                    <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(paragraphText(block.text))"></span></p>
                     <template v-else>
                       <div v-if="contentBlockLabel(block, 'separate')" class="project-block-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'separate') }" v-html="`${formatText(contentBlockLabel(block, 'separate'))}：`"></div>
                       <ol v-if="block.type === 'numbered_list'" class="project-numbered-list">
@@ -2276,7 +2314,7 @@ const getItemIndex = (type, dataIndex) => {
                 <!-- 项目详情（独立分页项） -->
                 <div v-if="projectContentBlocks(item).length && isItemVisible({index: getItemIndex('project-details', idx)}, page - 1)" :key="'proj-details-'+idx" class="project-details" :style="moduleOrder('project_experience')">
                   <div v-for="(block, blockIndex) in projectContentBlocks(item)" :key="blockIndex" class="project-content-block" :class="contentBlockClasses(block)">
-                    <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(block.text)"></span></p>
+                    <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(paragraphText(block.text))"></span></p>
                     <template v-else>
                       <div v-if="contentBlockLabel(block, 'separate')" class="project-block-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'separate') }" v-html="`${formatText(contentBlockLabel(block, 'separate'))}：`"></div>
                       <ol v-if="block.type === 'numbered_list'" class="project-numbered-list">
@@ -2294,7 +2332,7 @@ const getItemIndex = (type, dataIndex) => {
             <template v-if="data.custom_sections?.length && !hiddenSection('custom_sections')">
               <template v-for="(custom, sectionIndex) in data.custom_sections" :key="`page-${page}-custom-${sectionIndex}`">
                 <h2 v-if="custom.title && custom.items?.length && isItemVisible({index: getItemIndex('custom-title', sectionIndex)}, page - 1)" class="section-title" :class="`title-${moduleTitleStyle('custom_sections')}`" :style="moduleOrder('custom_sections')" data-module="custom_sections" v-html="formatText(custom.title)"></h2>
-                <div v-for="(item, itemIndex) in (custom.items || [])" v-show="isItemVisible({index: getItemIndex('custom-item', `${sectionIndex}-${itemIndex}`)}, page - 1)" :key="`page-${page}-custom-${sectionIndex}-${itemIndex}`" :class="moduleListClasses('custom_sections', item)" :data-marker="moduleListMarker('custom_sections', item, itemIndex)" :style="moduleOrder('custom_sections')" v-html="formatText(moduleListContent(item))"></div>
+                <div v-for="(item, itemIndex) in customSectionListValues(custom)" v-show="isItemVisible({index: getItemIndex('custom-item', `${sectionIndex}-${itemIndex}`)}, page - 1)" :key="`page-${page}-custom-${sectionIndex}-${itemIndex}`" :class="listClassesForStyle(customSectionListStyle(custom), item)" :data-marker="listMarkerForStyle(customSectionListStyle(custom), itemIndex)" :style="moduleOrder('custom_sections')" v-html="formatText(moduleListContent(item))"></div>
               </template>
             </template>
 
@@ -2316,9 +2354,9 @@ const getItemIndex = (type, dataIndex) => {
               </div>
             </template>
 
-            <template v-if="data.publications?.length && !hiddenSection('publications') && !sectionMergedIntoEducation('publications')">
+            <template v-if="moduleListValues('publications', data.publications).length && !hiddenSection('publications') && !sectionMergedIntoEducation('publications')">
               <h2 v-if="isItemVisible({index: getItemIndex('publications-title', 0)}, page - 1)" class="section-title" :class="`title-${moduleTitleStyle('publications')}`" :style="moduleOrder('publications')" data-module="publications" v-html="formatText(displayTitle('publications', lang === 'en' ? 'Publications' : '论文'))"></h2>
-              <div v-for="(item, idx) in data.publications" v-show="isItemVisible({index: getItemIndex('publications-item', idx)}, page - 1)" :key="`page-${page}-publication-${idx}`" :class="moduleListClasses('publications', item)" :data-marker="moduleListMarker('publications', item, idx)" :style="moduleOrder('publications')" v-html="formatText(moduleListContent(item))"></div>
+              <div v-for="(item, idx) in moduleListValues('publications', data.publications)" v-show="isItemVisible({index: getItemIndex('publications-item', idx)}, page - 1)" :key="`page-${page}-publication-${idx}`" :class="moduleListClasses('publications', item)" :data-marker="moduleListMarker('publications', item, idx)" :style="moduleOrder('publications')" v-html="formatText(moduleListContent(item))"></div>
             </template>
 
             <!-- {{ t.selfEvaluation }} -->

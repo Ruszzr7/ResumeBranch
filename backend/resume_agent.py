@@ -139,16 +139,16 @@ class BasicInfo(BaseModel):
 
 class Thesis(BaseModel):
     """论文信息"""
-    title: str = Field(..., description="论文标题")
+    title: str = Field(default="", description="论文标题；原文没有时留空")
     details: List[str] = Field(default_factory=list, description="论文详细内容")
 
 
 class Education(BaseModel):
     """教育背景"""
-    school_name: str = Field(..., description="学校名称")
-    major: str = Field(..., description="专业")
-    degree: str = Field(..., description="学历")
-    date_range: List[str] = Field(..., description="就读时间")
+    school_name: str = Field(default="", description="学校名称；原文没有时留空")
+    major: str = Field(default="", description="专业；原文没有时留空")
+    degree: str = Field(default="", description="学历；原文没有时留空")
+    date_range: List[str] = Field(default_factory=list, description="就读时间；原文没有时留空")
     school_tags: List[str] = Field(default_factory=list, description="学校性质标签")
     gpa: str = Field(default="", description="平均绩点，例如 3.72")
     gpa_scale: str = Field(default="", description="绩点满分，例如 4.0")
@@ -158,17 +158,17 @@ class Education(BaseModel):
 
 class WorkExperience(BaseModel):
     """工作经历"""
-    company_name: str = Field(..., description="公司名称")
-    job_title: str = Field(..., description="职位名称")
-    date_range: List[str] = Field(..., description="就职时间")
-    job_type: str = Field(..., description="工作类型（实习/全职）")
+    company_name: str = Field(default="", description="公司名称；原文没有时留空")
+    job_title: str = Field(default="", description="职位名称；原文没有时留空")
+    date_range: List[str] = Field(default_factory=list, description="就职时间；原文没有时留空")
+    job_type: str = Field(default="", description="工作类型；原文没有明确标注时必须留空，不得推断")
     content_blocks: List[ProjectContentBlock] = Field(default_factory=list, description="项目简介、职责等语义内容块")
     details: List[str] = Field(default_factory=list, description="工作详细内容")
 
 
 class ProjectExperience(BaseModel):
     """项目经历"""
-    project_name: str = Field(..., description="项目名称")
+    project_name: str = Field(default="", description="项目名称；原文没有时留空")
     role: str = Field(default="", description="项目角色；原文未提供时必须留空")
     date_range: List[str] = Field(default_factory=list, description="项目时间")
     content_blocks: List[ProjectContentBlock] = Field(
@@ -193,7 +193,7 @@ class CustomSection(BaseModel):
 class Resume(BaseModel):
     """完整简历数据结构"""
     formatting_version: int = Field(default=0, description="内联文字格式协议版本；4 表示固定字段字重与大输入框局部粗体协议")
-    basics: BasicInfo = Field(..., description="基本信息")
+    basics: BasicInfo = Field(default_factory=BasicInfo, description="基本信息")
     education: List[Education] = Field(default_factory=list, description="教育背景")
     education_supplement: List[str] = Field(
         default_factory=list,
@@ -532,7 +532,7 @@ def build_resume_extract_prompt() -> str:
         "你是忠实、无损的简历文档解析器。完整读取所有页面；双栏或多栏页面必须先判断栏目边界，"
         "再按人类自然阅读顺序读取，不能把左右栏交叉拼接。\n"
         "【忠实性】逐字保留姓名、联系方式、学校、公司、职位、项目名、日期、数字、技术名词和每条可见描述；"
-        "禁止总结、润色、改写、补全、合并不同经历或猜测不可见内容。\n"
+        "禁止总结、润色、改写、补全、合并不同经历或猜测不可见内容；原文没有明确出现的字段必须保持空值，尤其是工作类型，不得为了补全模板而猜测‘全职’或‘实习’。\n"
         "【字段映射】出生年月进入 basics.birth_date；其他未预设的个人字段进入 basics.additional_fields；"
         "研究方向进入 research_interests；奖学金、竞赛奖项和主要荣誉进入 honors；"
         "字段映射必须先遵循原简历的可见栏目边界，而不是仅凭内容语义重新分类：专业技能、技能特长、技术栈栏目下的全部内容"

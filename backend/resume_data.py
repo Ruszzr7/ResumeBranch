@@ -199,7 +199,11 @@ def _normalize_custom_sections(value: Any) -> list[dict]:
         title = _text(section.get("title") or section.get("name") or section.get("section"))
         items = _string_list(section.get("items", section.get("lines", section.get("content"))))
         if title and items:
-            result.append({"title": title, "items": items})
+            normalized = {"title": title, "items": items}
+            list_style = section.get("list_style", section.get("listStyle"))
+            if list_style in {"paragraph", "bullet", "numbered"}:
+                normalized["list_style"] = list_style
+            result.append(normalized)
     return result
 
 

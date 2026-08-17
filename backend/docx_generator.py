@@ -41,6 +41,16 @@ def _is_fully_bold(value: object) -> bool:
     return bool(segments) and all(segment.bold for segment in segments)
 
 
+def _module_list_values(values: list[object], list_style: str) -> list[str]:
+    """Render paragraph mode as one paragraph while keeping source items intact."""
+    normalized = [str(value or '').strip() for value in values if str(value or '').strip()]
+    return [''.join(normalized)] if list_style == 'paragraph' and normalized else normalized
+
+
+def _paragraph_text(value: object) -> str:
+    return re.sub(r'\s*\r?\n\s*', '', str(value or '')).strip()
+
+
 def _photo_aspect_ratio(photo_bytes: bytes | None, resume_data: dict) -> float:
     """Return the imported photo's width/height ratio with a legacy fallback."""
     try:
@@ -959,12 +969,13 @@ def generate_docx(
         for section_id, values in merged_sections:
             if merged_into_education(section_id) and section_id not in hidden_sections:
                 supplement_values.extend(values)
-        for value_index, value in enumerate(supplement_values):
+        supplement_style = layout["education"].get("supplementListStyle", "bullet")
+        for value_index, value in enumerate(_module_list_values(supplement_values, supplement_style)):
             add_module_list_item(
                 "education",
                 value,
                 value_index,
-                list_style_override=layout["education"].get("supplementListStyle", "bullet"),
+                list_style_override=supplement_style,
             )
 
     def add_component_rows(module_id: str, values: dict[str, str], excluded: set[str]) -> None:
@@ -1103,7 +1114,7 @@ def generate_docx(
                     paragraph.paragraph_format.left_indent = Mm(module_indent_mm)
                 if label:
                     _add_markdown_runs(paragraph, f"{label}{colon}", body_font_size, fonts=font_spec, base_bold=label_bold and flow["labelBold"])
-                _add_markdown_runs(paragraph, block.get("text", ""), body_font_size, fonts=font_spec)
+                _add_markdown_runs(paragraph, _paragraph_text(block.get("text", "")), body_font_size, fonts=font_spec)
                 continue
             if flow["labelPlacement"] == "separate":
                 paragraph = document.add_paragraph(style="List Bullet") if flow["labelMarker"] == "bullet" else document.add_paragraph()
@@ -1175,7 +1186,7 @@ def generate_docx(
         if not skills or "skills" in hidden_sections:
             return
         title("skills", labels["skills"])
-        for index, value in enumerate(skills):
+        for index, value in enumerate(_module_list_values(skills, layout["skills"].get("listStyle", "bullet"))):
             add_module_list_item("skills", value, index)
 
     def render_others() -> None:
@@ -1202,9 +1213,8 @@ def generate_docx(
         cfg = layout["self_evaluation"]
         maybe_break("self_evaluation")
         title("self_evaluation", labels["selfEvaluation"])
-        if cfg["preset"] == "compact":
-            values = [" ".join(str(value) for value in values)]
-        for index, value in enumerate(values):
+        list_style = cfg.get("listStyle", "paragraph")
+        for index, value in enumerate(_module_list_values(values, list_style)):
             add_module_list_item("self_evaluation", value, index)
 
     def render_plain_section(section_id: str, fallback: str, values: list) -> None:
@@ -1212,7 +1222,8 @@ def generate_docx(
             return
         maybe_break(section_id)
         title(section_id, fallback)
-        for index, value in enumerate(values):
+        list_style = layout[section_id].get("listStyle", "bullet")
+        for index, value in enumerate(_module_list_values(values, list_style)):
             add_module_list_item(section_id, value, index)
 
     def render_research() -> None:
@@ -1232,8 +1243,9 @@ def generate_docx(
                 continue
             maybe_break(f"custom_sections:{index}")
             title("custom_sections", custom["title"])
-            for item_index, value in enumerate(custom["items"]):
-                add_module_list_item("custom_sections", value, item_index)
+            list_style = custom.get("list_style") if custom.get("list_style") in {"paragraph", "bullet", "numbered"} else layout["custom_sections"].get("listStyle", "bullet")
+            for item_index, value in enumerate(_module_list_values(custom["items"], list_style)):
+                add_module_list_item("custom_sections", value, item_index, list_style_override=list_style)
 
     renderers = {
         "education": render_education,

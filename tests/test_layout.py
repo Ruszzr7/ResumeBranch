@@ -504,6 +504,48 @@ class LayoutRuleTests(unittest.TestCase):
         for expected in ("段落内容", "分点内容", "编号内容"):
             self.assertIn(expected, combined)
 
+    def test_paragraph_mode_removes_authored_line_breaks_without_inserting_spaces(self):
+        data = resume_with_two_jobs()
+        data["project_experience"] = [{
+            "project_name": "换行语义",
+            "content_blocks": [{
+                "type": "paragraph",
+                "semantic_role": "introduction",
+                "label": "项目简介",
+                "text": "第一句\n第二句",
+                "items": [],
+            }],
+        }]
+
+        html = render_resume_to_html(data)
+        self.assertIn("第一句第二句", html)
+        self.assertNotIn("第一句 第二句", html)
+
+        document = Document(BytesIO(generate_docx(data)))
+        combined = "\n".join(paragraph.text for paragraph in document.paragraphs)
+        self.assertIn("第一句第二句", combined)
+        self.assertNotIn("第一句 第二句", combined)
+
+    def test_custom_sections_use_each_section_list_style_across_html_and_word(self):
+        data = resume_with_two_jobs()
+        data["custom_sections"] = [
+            {"title": "编号栏目", "items": ["第一项", "第二项"], "list_style": "numbered"},
+            {"title": "段落栏目", "items": ["第一句", "第二句"], "list_style": "paragraph"},
+        ]
+
+        html = render_resume_to_html(data)
+        self.assertIn("list-style-numbered", html)
+        self.assertIn("list-style-paragraph", html)
+        self.assertIn("第一句第二句", html)
+        self.assertNotIn("第一句 第二句", html)
+
+        document = Document(BytesIO(generate_docx(data)))
+        combined = "\n".join(paragraph.text for paragraph in document.paragraphs)
+        self.assertIn("(1)", combined)
+        self.assertIn("第一项", combined)
+        self.assertIn("第一句第二句", combined)
+        self.assertNotIn("第一句 第二句", combined)
+
     def test_forced_item_break_preserves_template_and_date_classes(self):
         data = resume_with_two_jobs()
         data["project_experience"] = [

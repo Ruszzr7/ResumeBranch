@@ -466,6 +466,20 @@ class ResumeDataNormalizationTests(unittest.TestCase):
         self.assertEqual(result["others"]["skills"], ["Python", "ROS2"])
         self.assertEqual(result["custom_sections"], [{"title": "校园经历", "items": ["学生干部"]}])
 
+    def test_preserves_custom_section_list_style_when_explicit(self):
+        result = normalize_resume_data({
+            "basics": {"name": "测试"},
+            "custom_sections": [
+                {"title": "段落栏目", "items": ["第一句", "第二句"], "list_style": "paragraph"},
+                {"title": "编号栏目", "items": ["第一项"], "listStyle": "numbered"},
+                {"title": "非法栏目", "items": ["普通内容"], "list_style": "unknown"},
+            ],
+        })
+
+        self.assertEqual(result["custom_sections"][0]["list_style"], "paragraph")
+        self.assertEqual(result["custom_sections"][1]["list_style"], "numbered")
+        self.assertNotIn("list_style", result["custom_sections"][2])
+
     def test_keeps_language_inside_original_skills_module(self):
         result = normalize_resume_data({
             "basics": {"name": "测试"},

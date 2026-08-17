@@ -183,17 +183,17 @@ test('imported source can be viewed read-only without replacing the structured r
 test('empty compact self evaluation never creates a heading-only section', () => {
   assert.ok(previewSource.includes('.map(value => String(value || \'\').trim())'))
   assert.ok(previewSource.includes('.filter(Boolean)'))
-  assert.ok(previewSource.includes('values.length && moduleLayout(\'self_evaluation\').preset === \'compact\''))
+  assert.ok(previewSource.includes("moduleListStyle('self_evaluation') === 'paragraph'"))
 })
 
-test('retired custom-template entry is absent and current-resume column settings are available', () => {
+test('retired custom-template entry and duplicate toolbar column settings are absent', () => {
   assert.equal(previewSource.includes('aria-label="打开模板管理"'), false)
   assert.equal(previewSource.includes('/layout-templates'), false)
-  assert.ok(previewSource.includes('>栏目设置</button>'))
-  assert.ok(previewSource.includes('并入教育经历'))
-  assert.ok(previewSource.includes('LIST_STYLE_LABELS'))
-  assert.ok(previewSource.includes('showSectionSettingsDialog.value ? sectionSettingsDraft.value : props.layoutConfig'))
+  assert.equal(previewSource.includes('>栏目设置</button>'), false)
   assert.equal(previewSource.includes('修改当前简历的栏目名称、段落标记，或将相关栏目并入教育经历。'), false)
+  assert.ok(appSource.includes('RESUME_LIST_STYLE_OPTIONS'))
+  assert.ok(appSource.includes('setResumeEditPlacement'))
+  assert.ok(appSource.includes('并入教育经历后将不显示模块标题'))
 })
 
 test('column settings are compact, explicit, and preview every draft selection', () => {
@@ -206,6 +206,41 @@ test('column settings are compact, explicit, and preview every draft selection',
   assert.ok(previewSource.includes('v-model="sectionSettingsDraft.education.supplementListStyle"'))
   assert.ok(previewSource.includes('height: min(480px, calc(100vh - 96px))'))
   assert.ok(previewSource.includes('box-sizing: border-box'))
+})
+
+test('edit-content selectors sit beside their titles without visible setting labels', () => {
+  assert.ok(appSource.includes('class="module-title-setting-row"'))
+  assert.ok(appSource.includes('class="module-title-setting-controls"'))
+  assert.ok(appSource.includes('grid-template-columns: minmax(220px, 33.333%) auto;'))
+  assert.equal(appSource.includes('<label>内容形式</label>'), false)
+  assert.equal(appSource.includes('<label>栏目位置</label>'), false)
+  assert.ok(previewSource.includes("values.join('')"))
+})
+
+test('resume content selectors keep their native dropdown arrows visible', () => {
+  assert.ok(appSource.includes('.resume-dialog .module-title-setting-row > select'))
+  assert.ok(appSource.includes('-webkit-appearance: menulist !important;'))
+  assert.ok(appSource.includes('appearance: auto !important;'))
+  assert.ok(appSource.includes('background-image: none !important;'))
+})
+
+test('education supplement reuses the same title-row select styling', () => {
+  assert.ok(appSource.includes('<div class="education-supplement-editor">'))
+  assert.equal(appSource.includes('<div class="field-group full-width education-supplement-editor">'), false)
+  assert.ok(appSource.includes('<div class="module-title-setting-row module-title-setting-row-label">'))
+})
+
+test('custom section list style belongs to each section content editor', () => {
+  assert.ok(appSource.includes('v-model="section._listStyle"'))
+  assert.ok(appSource.includes('aria-label="自定义栏目内容分点形式"'))
+  assert.ok(appSource.includes('list_style: normalizeResumeListStyle(section._listStyle || section.list_style)'))
+  assert.ok(previewSource.includes('function customSectionListStyle(custom)'))
+  assert.ok(previewSource.includes('customSectionListValues(custom)'))
+})
+
+test('paragraph content removes authored line boundaries in the preview', () => {
+  assert.ok(previewSource.includes('const paragraphText = value => String(value ?? \'\').replace(/\\s*\\r?\\n\\s*/g, \'\')'))
+  assert.ok(previewSource.includes('formatText(paragraphText(block.text))'))
 })
 
 test('closing live-preview settings restores saved values', () => {
@@ -253,7 +288,7 @@ test('edit content follows the default module order and saves live-editable titl
     'v-model="resumeModuleTitles.skills"',
     'v-model="resumeModuleTitles.work_experience"',
     'v-model="resumeModuleTitles.project_experience"',
-    '>自定义项目</h4>',
+    'class="module-title-inline-label">自定义项目</span>',
     'v-model="resumeModuleTitles.others"',
     'v-model="resumeModuleTitles.self_evaluation"'
   ]

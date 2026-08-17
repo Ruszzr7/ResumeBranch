@@ -1,248 +1,334 @@
 <template>
-  <div class="login-container">
-    <div class="login-card">
-      <div class="login-header">
-        <h1>登录</h1>
+  <main class="login-page">
+    <header class="login-topbar">
+      <router-link to="/" class="brand-link" aria-label="返回 ResumeBranch 首页">
+        <BrandLogo />
+      </router-link>
+
+      <span class="mode-label">
+        <i aria-hidden="true"></i>
+        多用户模式
+      </span>
+    </header>
+
+    <section class="login-stage" aria-labelledby="login-title">
+      <div class="login-card">
+        <header class="login-header">
+          <p class="login-kicker">ACCOUNT ACCESS</p>
+          <h1 id="login-title">登录</h1>
+          <p class="login-description">继续管理你的简历、岗位版本和求职记录。</p>
+        </header>
+
+        <form class="login-form" @submit.prevent="handleLogin">
+          <div class="form-group">
+            <label for="email">邮箱</label>
+            <input
+              id="email"
+              v-model.trim="email"
+              type="email"
+              name="email"
+              autocomplete="username"
+              placeholder="输入邮箱"
+              required
+            />
+          </div>
+
+          <div class="form-group">
+            <label for="password">密码</label>
+            <input
+              id="password"
+              v-model="password"
+              type="password"
+              name="password"
+              autocomplete="current-password"
+              placeholder="输入密码"
+              required
+            />
+          </div>
+
+          <p v-if="statusMessage" class="status-message" role="status">
+            {{ statusMessage }}
+          </p>
+
+          <div class="button-wrapper">
+            <div class="button-shadow" aria-hidden="true"></div>
+            <button type="submit" class="submit-btn">
+              登录
+            </button>
+          </div>
+        </form>
+
+        <footer class="login-footer">
+          <span>没有账号？</span>
+          <router-link to="/register" class="link-btn">注册</router-link>
+        </footer>
       </div>
-
-      <form @submit.prevent="handleLogin" class="login-form">
-        <div class="form-group">
-          <input
-            id="email"
-            v-model="email"
-            type="email"
-            placeholder="邮箱"
-            required
-          />
-        </div>
-
-        <div class="form-group">
-          <input
-            id="password"
-            v-model="password"
-            type="password"
-            placeholder="密码"
-            required
-          />
-        </div>
-
-        <div v-if="error" class="error-message">{{ error }}</div>
-
-        <div class="button-wrapper">
-          <div class="button-shadow"></div>
-          <button type="submit" class="submit-btn" :disabled="loading">
-            {{ loading ? '登录中...' : '登录' }}
-          </button>
-        </div>
-      </form>
-
-      <div class="login-footer">
-        <router-link to="/register" class="link-btn">没有账号？注册</router-link>
-      </div>
-    </div>
-  </div>
+    </section>
+  </main>
 </template>
 
 <script setup>
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import BrandLogo from '../components/BrandLogo.vue'
 
-const router = useRouter()
 const email = ref('')
 const password = ref('')
-const loading = ref(false)
-const error = ref('')
+const statusMessage = ref('')
 
-async function handleLogin() {
-  loading.value = true
-  error.value = ''
-
-  try {
-    const formData = new URLSearchParams()
-    formData.append('username', email.value)
-    formData.append('password', password.value)
-
-    const response = await fetch('/auth/login', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded'
-      },
-      body: formData
-    })
-
-    if (!response.ok) {
-      const errorData = await response.json()
-      throw new Error(errorData.detail || '登录失败')
-    }
-
-    const data = await response.json()
-
-    // 保存 token 到 localStorage
-    localStorage.setItem('access_token', data.access_token)
-    localStorage.setItem('user', JSON.stringify(data.user))
-
-    // 跳转到首页（由路由守卫和 watch 处理后续逻辑）
-    router.replace('/')
-  } catch (err) {
-    error.value = err.message
-  } finally {
-    loading.value = false
-  }
+// 登录接口暂不接入；保留表单状态和提交入口，后续接入 JWT 登录流程。
+function handleLogin() {
+  statusMessage.value = '登录接口待接入。'
 }
 </script>
 
 <style scoped>
-.login-container {
+.login-page {
   min-height: 100vh;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  color: #f5f5f7;
+  background:
+    radial-gradient(circle at 64% -20%, rgba(100, 130, 220, 0.12), transparent 36%),
+    #050506;
+  background-image:
+    radial-gradient(circle at 64% -20%, rgba(100, 130, 220, 0.12), transparent 36%),
+    url("data:image/svg+xml,%3Csvg viewBox='0 0 220 220' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='3.1' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='.16'/%3E%3C/svg%3E"),
+    #050506;
+  background-blend-mode: screen, soft-light, normal;
+}
+
+.login-topbar {
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.5rem 2rem;
+}
+
+.brand-link {
+  display: inline-flex;
+  color: inherit;
+  text-decoration: none;
+}
+
+.mode-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: #85858f;
+  font-family: 'GTPressuraMono-Light', monospace;
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.mode-label i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #78a6ff;
+  box-shadow: 0 0 8px rgba(120, 166, 255, 0.55);
+}
+
+.login-stage {
+  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  background-color: #e6e2dd;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='3.0' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
-  background-blend-mode: overlay;
-  background-repeat: repeat;
-  background-size: auto;
-  padding: 1.5rem;
+  box-sizing: border-box;
+  padding: 2rem 1.5rem 5rem;
 }
 
 .login-card {
-  background: white;
-  border: 1px solid #303030;
-  width: 100%;
-  max-width: 28rem;
+  width: min(100%, 28rem);
+  box-sizing: border-box;
+  background: rgba(18, 19, 23, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.17);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.28);
 }
 
 .login-header {
-  padding: 1.5rem;
-  border-bottom: 1px solid #303030;
+  padding: 2rem 2rem 1.7rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.11);
+}
+
+.login-kicker {
+  margin: 0 0 1rem;
+  color: #78a6ff;
+  font-family: 'GTPressuraMono-Light', monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.19em;
 }
 
 h1 {
   margin: 0;
+  color: #f5f5f7;
   font-family: 'Plaak-CondensedBold', sans-serif;
+  font-size: 2rem;
   font-weight: 400;
-  font-size: 1.5rem;
-  text-transform: uppercase;
   letter-spacing: 0.02em;
-  color: #303030;
-  text-align: center;
+}
+
+.login-description {
+  max-width: 19rem;
+  margin: 0.8rem 0 0;
+  color: #85858f;
+  font-family: 'GTPressuraMono-Light', monospace;
+  font-size: 0.72rem;
+  line-height: 1.7;
 }
 
 .login-form {
-  padding: 1.5rem;
+  padding: 2rem;
 }
 
 .form-group {
   margin-bottom: 1.25rem;
 }
 
+label {
+  display: block;
+  margin-bottom: 0.55rem;
+  color: #c9c9cf;
+  font-family: 'GTPressuraMono-Light', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+}
+
 input {
   width: 100%;
-  height: 4.0625rem;
-  padding: 1.125rem;
-  background-color: #c8cbc9;
-  border: 1px solid #303030;
-  font-family: 'GTPressuraMono-Light', sans-serif;
-  font-weight: 400;
-  font-size: 0.875rem;
-  color: #303030;
+  height: 3.6rem;
+  box-sizing: border-box;
+  padding: 0 1rem;
+  color: #f5f5f7;
+  background: #2b2c32;
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 0;
-  box-shadow: none;
   outline: none;
-  -webkit-appearance: none;
-  -moz-appearance: none;
-  appearance: none;
-  transition: all 0.2s ease;
+  font-family: 'GTPressuraMono-Light', monospace;
+  font-size: 0.8rem;
+  transition: border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
 }
 
 input::placeholder {
-  color: #666;
-}
-
-input:focus {
-  background-color: white;
+  color: #777983;
 }
 
 input:hover {
-  background-color: white;
+  background: #303139;
 }
 
-/* 按钮包装器 - 包含黑色底层和米色按钮 */
+input:focus {
+  background: #303139;
+  border-color: rgba(120, 166, 255, 0.72);
+  box-shadow: 0 0 0 3px rgba(120, 166, 255, 0.1);
+}
+
+.status-message {
+  margin: -0.15rem 0 1rem;
+  padding: 0.72rem 0.85rem;
+  color: #9ebdff;
+  background: rgba(120, 166, 255, 0.08);
+  border-left: 2px solid #78a6ff;
+  font-family: 'GTPressuraMono-Light', monospace;
+  font-size: 0.7rem;
+  line-height: 1.5;
+}
+
 .button-wrapper {
   position: relative;
   width: 100%;
-  height: 3.125rem;
-  margin-top: 0.5rem;
+  height: 3.15rem;
+  margin-top: 1.65rem;
 }
 
-/* 黑色底层 - 固定在右下方 */
 .button-shadow {
   position: absolute;
-  top: 0.125rem;
-  left: 0.125rem;
-  width: 100%;
-  height: 100%;
-  background-color: #000;
+  inset: 0;
+  transform: translate(3px, 3px);
+  background: #000;
 }
 
-/* 米色按钮 - 向左上偏移，露出右下角黑色 */
 .submit-btn {
-  position: absolute;
-  top: 0;
-  left: 0;
+  position: relative;
   width: 100%;
   height: 100%;
   padding: 0 3.125rem;
-  background-color: #e6e2dd;
-  border: 1px solid #303030;
-  font-family: 'GTPressuraMono-Light', sans-serif;
-  font-weight: 400;
-  font-size: 0.8125rem;
-  text-transform: uppercase;
-  letter-spacing: 0.25em;
-  color: #000;
-  cursor: pointer;
-  transition: background-color 0.3s;
+  color: #fff;
+  background: #5f8ff2;
+  border: 1px solid #78a6ff;
   border-radius: 0;
+  cursor: pointer;
+  font-family: 'GTPressuraMono-Light', monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.24em;
+  transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
 }
 
-.submit-btn:hover:not(:disabled) {
-  background-color: #5f8ff2;
+.submit-btn:hover {
+  background: #78a6ff;
+  border-color: #a9c5ff;
+  transform: translate(2px, 2px);
 }
 
-.submit-btn:disabled {
-  opacity: 0.7;
-  cursor: not-allowed;
+.submit-btn:active {
+  transform: translate(3px, 3px);
 }
 
-.error-message {
-  color: #ff6060;
-  font-family: 'GTPressuraMono', sans-serif;
-  font-size: 0.875rem;
-  padding: 0.75rem 1rem;
-  background-color: #fef2f2;
-  border: 1px solid #ff6060;
-  margin-top: 1rem;
+.submit-btn:focus-visible,
+.link-btn:focus-visible,
+.brand-link:focus-visible {
+  outline: 2px solid #78a6ff;
+  outline-offset: 4px;
 }
 
 .login-footer {
-  padding: 1.5rem;
-  border-top: 1px solid #303030;
-  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  padding: 1.35rem 2rem 1.5rem;
+  color: #85858f;
+  border-top: 1px solid rgba(255, 255, 255, 0.11);
+  font-family: 'GTPressuraMono-Light', monospace;
+  font-size: 0.68rem;
 }
 
 .link-btn {
-  font-family: 'GTPressuraMono-Light', sans-serif;
-  font-weight: 400;
-  font-size: 0.6875rem;
-  text-transform: uppercase;
-  letter-spacing: 0.25em;
-  color: #303030;
+  color: #78a6ff;
   text-decoration: none;
-  transition: color 0.2s ease;
+  transition: color 0.18s ease;
 }
 
 .link-btn:hover {
-  color: #78a6ff;
+  color: #b5cdff;
+}
+
+@media (max-width: 640px) {
+  .login-topbar {
+    padding: 1.2rem 1.1rem;
+  }
+
+  .mode-label {
+    font-size: 0.58rem;
+  }
+
+  .login-stage {
+    align-items: flex-start;
+    padding: 3.5rem 1rem 2.5rem;
+  }
+
+  .login-header,
+  .login-form {
+    padding-left: 1.3rem;
+    padding-right: 1.3rem;
+  }
+
+  .login-footer {
+    padding-left: 1.3rem;
+    padding-right: 1.3rem;
+  }
 }
 </style>
