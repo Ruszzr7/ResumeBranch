@@ -1,5 +1,5 @@
 <template>
-  <div class="rich-editor" :class="{ compact, 'default-bold-active': defaultBoldActive }">
+  <div class="rich-editor" :class="{ compact, 'allow-line-breaks': allowLineBreaks, 'default-bold-active': defaultBoldActive }">
     <!-- 编辑区域 -->
     <div
       ref="editorRef"
@@ -40,6 +40,10 @@ const props = defineProps({
     default: '请输入内容'
   },
   compact: {
+    type: Boolean,
+    default: false
+  },
+  allowLineBreaks: {
     type: Boolean,
     default: false
   },
@@ -196,8 +200,11 @@ function onFocus() {
 }
 
 function handleEnter(event) {
-  if (props.compact) event.preventDefault()
-  if (props.compact || !editorRef.value) return
+  if (props.compact && !props.allowLineBreaks) {
+    event.preventDefault()
+    return
+  }
+  if (!editorRef.value) return
   event.preventDefault()
   const selection = window.getSelection()
   if (!selection || selection.rangeCount === 0) return
@@ -285,7 +292,7 @@ function placeCaretAtOffset(targetOffset) {
 function handlePaste(e) {
   e.preventDefault()
   const raw = e.clipboardData.getData('text/plain')
-  const text = props.compact ? raw.replace(/[\r\n]+/g, ' ') : raw
+  const text = props.compact && !props.allowLineBreaks ? raw.replace(/[\r\n]+/g, ' ') : raw
   // 插入纯文本
   document.execCommand('insertText', false, text)
   // 更新行数
@@ -373,6 +380,13 @@ onMounted(() => {
   line-height: 1.2;
   white-space: nowrap;
   overflow: hidden;
+}
+
+.rich-editor.compact.allow-line-breaks .editor-content {
+  max-height: none;
+  white-space: pre-wrap;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .editor-content {

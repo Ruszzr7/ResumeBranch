@@ -123,7 +123,7 @@ class ConfirmationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("教育经历 1 · GPA", labels)
         self.assertEqual(result["resume_data"]["basics"]["name"], "原姓名")
 
-    async def test_complex_edit_uses_exactly_one_structured_model_call(self):
+    async def test_legacy_proposal_node_does_not_call_a_second_model(self):
         state = AgentState(
             messages=[HumanMessage(content="优化项目经历的描述，使其更突出后端性能提升")],
             resume_data=resume_payload("原姓名"),
@@ -131,32 +131,27 @@ class ConfirmationFlowTests(unittest.IsolatedAsyncioTestCase):
             user_id=7,
             task_id="task-1",
         )
-        after = resume_payload("原姓名")
-        after["project_experience"] = [{
-            "project_name": "测试项目", "role": "后端开发", "date_range": [],
-            "details": ["优化接口性能并降低响应时间"],
-        }]
-        fake_llm = SimpleNamespace(ainvoke=AsyncMock(
-            return_value=AIMessage(content=json.dumps(after, ensure_ascii=False))
-        ))
-        self.assertEqual(entry_router(state), "proposal_generator")
-        with patch("backend.resume_agent.conversation_llm", fake_llm):
+        self.assertEqual(entry_router(state), "conversation_llm")
+        with patch("backend.resume_agent.conversation_llm") as fake_llm:
             result = await proposal_generator_node(state)
-        fake_llm.ainvoke.assert_awaited_once()
+        fake_llm.ainvoke.assert_not_called()
+        self.assertIsNone(result["pending_confirmation"])
+        self.assertIn("无法安全生成", result["proposal_error"])
+
+    async def test_legacy_proposal_node_can_execute_structured_operations(self):
+        state = AgentState(
+            messages=[HumanMessage(content="执行已确认的修改")],
+            resume_data=resume_payload("原姓名"), jd_data={}, user_id=7, task_id="task-1",
+            context_metadata={
+                "resume_operations": [{"op": "set", "path": "basics.name", "value": "新姓名"}],
+                "layout_operations": [],
+            },
+        )
+        with patch("backend.resume_agent.conversation_llm") as fake_llm:
+            result = await proposal_generator_node(state)
+        fake_llm.ainvoke.assert_not_called()
         self.assertIsNone(result["proposal_error"])
         self.assertIsNotNone(result["pending_confirmation"])
-
-    async def test_structured_generator_fails_closed_without_retry_instruction(self):
-        state = AgentState(
-            messages=[HumanMessage(content="优化项目经历")],
-            resume_data=resume_payload("原姓名"), jd_data={}, user_id=7, task_id="task-1",
-        )
-        fake_llm = SimpleNamespace(ainvoke=AsyncMock(return_value=AIMessage(content="不是 JSON")))
-        with patch("backend.resume_agent.conversation_llm", fake_llm):
-            result = await proposal_generator_node(state)
-        fake_llm.ainvoke.assert_awaited_once()
-        self.assertIsNone(result["pending_confirmation"])
-        self.assertNotIn("重试", result["proposal_error"])
 
     async def test_same_local_value_finishes_without_confirmation(self):
         state = AgentState(
@@ -286,7 +281,7 @@ class ConfirmationFlowTests(unittest.IsolatedAsyncioTestCase):
             messages=[HumanMessage(content="把本科的GPA修改为前10%")],
             resume_data=resume_payload("测试用户", with_education=True),
         )
-        self.assertEqual(entry_router(state), "proposal_generator")
+        self.assertEqual(entry_router(state), "conversation_llm")
 
     def test_style_and_conversation_requests_do_not_trigger_data_fallback(self):
         self.assertFalse(is_explicit_resume_change_request("字体颜色改成白色"))

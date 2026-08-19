@@ -1,5 +1,7 @@
 """Persist one completed agent turn using the existing database contract."""
 
+import re
+
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from .memory import (
@@ -60,6 +62,22 @@ def serialize_compressed_messages(messages):
     return serialized
 
 
+def latest_numbered_recommendation(messages, *, max_chars: int = 6000) -> str:
+    """Keep a compact latest numbered advice snapshot for reference resolution."""
+    numbered_start = re.compile(
+        r"(?m)^\s*(?:\*{1,3}|_{1,3})?"
+        r"(?:(?:第\s*)?[1-9]\d*\s*[\.、．)）]|第\s*[一二三四五六七八九十百]+\s*[点条项])"
+    )
+    for message in reversed(messages or []):
+        if not isinstance(message, AIMessage):
+            continue
+        content = str(getattr(message, "content", "") or "").strip()
+        if not content or not numbered_start.search(content):
+            continue
+        return content[-max_chars:]
+    return ""
+
+
 async def persist_turn_state(
     db,
     user_id,
@@ -96,6 +114,7 @@ async def persist_turn_state(
     from ..database import (
         save_agent_memory_state,
         save_conversation_context,
+        update_conversation_context_metadata,
         save_user_jd,
         save_user_resume,
     )
@@ -137,6 +156,19 @@ async def persist_turn_state(
         legacy_context,
         pending_confirmation,
     )
+    recommendation = latest_numbered_recommendation(filtered_messages)
+    if recommendation:
+        try:
+            update_conversation_context_metadata(
+                db,
+                user_id,
+                session_id,
+                {"latest_recommendations": recommendation},
+            )
+        except Exception as exc:
+            # Recommendation metadata is an optimization for reference
+            # resolution; it must never make canonical turn persistence fail.
+            print(f"[SaveState] 编号建议快照保存失败，继续保留主对话: {exc}")
     return {
         "memory_version": new_version,
         "summary": summary,

@@ -5,6 +5,7 @@ SQLAlchemy 模型定义和数据库连接
 
 import os
 import uuid
+from copy import deepcopy
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, JSON, Text, inspect, text
 from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.engine import make_url
@@ -93,6 +94,27 @@ class Conversation(Base):
     last_accessed = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ConversationContext(Base):
+    """A lightweight mission context belonging to one resume version.
+
+    ``ProjectTask.session_id`` remains the legacy/main conversation id.  Mission
+    contexts get their own session id and keep their lifecycle metadata here so
+    the existing message and confirmation storage can be reused safely.
+    """
+    __tablename__ = "conversation_contexts"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(Integer, nullable=False, index=True)
+    task_id = Column(String(36), nullable=False, index=True)
+    context_type = Column(String(32), nullable=False)
+    title = Column(String(80), nullable=False, default="新任务")
+    status = Column(String(20), nullable=False, default="active")
+    session_id = Column(String(36), nullable=False, unique=True)
+    metadata_json = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    closed_at = Column(DateTime, nullable=True)
 
 
 class ResumeProject(Base):
@@ -371,6 +393,266 @@ def _active_task(db, user_id: int):
     if not task:
         raise ValueError("当前简历任务不存在或不属于该用户")
     return task
+
+
+CONTEXT_TYPES = frozenset({"main", "layout", "jd_review", "coaching"})
+CONTEXT_STATUSES = frozenset({"active", "closed"})
+CONTEXT_TITLES = {
+    "main": "主对话",
+    "layout": "排版建议",
+    "jd_review": "对照 JD",
+    "coaching": "深度打磨",
+}
+
+
+def _context_query(db, user_id: int, session_id: str):
+    """Return a context for the active task/session, if one exists."""
+    task = _active_task(db, user_id)
+    if not task or not session_id:
+        return None
+    return db.query(ConversationContext).filter(
+        ConversationContext.user_id == user_id,
+        ConversationContext.task_id == task.id,
+        ConversationContext.session_id == str(session_id),
+    ).first()
+
+
+def ensure_main_context(db, user_id: int, task_id: str | None = None):
+    """Create the durable main context for a task without changing legacy data."""
+    task = get_resume_task(db, user_id, task_id) if task_id else _active_task(db, user_id)
+    if not task:
+        return None
+    context = db.query(ConversationContext).filter(
+        ConversationContext.user_id == user_id,
+        ConversationContext.task_id == task.id,
+        ConversationContext.context_type == "main",
+    ).first()
+    if context:
+        return context
+    context = ConversationContext(
+        id=str(uuid.uuid4()),
+        user_id=user_id,
+        task_id=task.id,
+        context_type="main",
+        title=CONTEXT_TITLES["main"],
+        status="active",
+        session_id=task.session_id,
+        metadata_json={},
+    )
+    db.add(context)
+    db.commit()
+    db.refresh(context)
+    return context
+
+
+def list_conversation_contexts(db, user_id: int, task_id: str):
+    """List the main context and active/closed mission records for a task."""
+    task = get_resume_task(db, user_id, task_id)
+    if not task:
+        return []
+    ensure_main_context(db, user_id, task.id)
+    return db.query(ConversationContext).filter(
+        ConversationContext.user_id == user_id,
+        ConversationContext.task_id == task.id,
+    ).order_by(
+        (ConversationContext.context_type == "main").desc(),
+        ConversationContext.updated_at.desc(),
+    ).all()
+
+
+def list_conversation_context_sessions(db, user_id: int, task_ids):
+    """Return mission session ids grouped by task for workflow cleanup.
+
+    The main context deliberately uses the legacy task workflow thread, so
+    callers only receive mission sessions here. Keeping this lookup in the
+    data layer makes project/task deletion independent from the HTTP routes.
+    """
+    normalized_task_ids = [str(task_id) for task_id in (task_ids or []) if task_id]
+    if not normalized_task_ids:
+        return {}
+    rows = db.query(ConversationContext).filter(
+        ConversationContext.user_id == user_id,
+        ConversationContext.task_id.in_(normalized_task_ids),
+        ConversationContext.context_type != "main",
+    ).all()
+    grouped = {task_id: [] for task_id in normalized_task_ids}
+    for row in rows:
+        grouped.setdefault(row.task_id, []).append(row.session_id)
+    return grouped
+
+
+def get_conversation_context_record(db, user_id: int, context_id: str):
+    """Get a context record with ownership validation."""
+    return db.query(ConversationContext).filter(
+        ConversationContext.id == str(context_id or ""),
+        ConversationContext.user_id == user_id,
+    ).first()
+
+
+def get_context_by_session(db, user_id: int, task_id: str, session_id: str):
+    return db.query(ConversationContext).filter(
+        ConversationContext.user_id == user_id,
+        ConversationContext.task_id == task_id,
+        ConversationContext.session_id == str(session_id or ""),
+    ).first()
+
+
+def create_or_resume_conversation_context(
+    db,
+    user_id: int,
+    task_id: str,
+    context_type: str,
+    *,
+    title: str | None = None,
+):
+    """Resume the single active context of a command type or create one.
+
+    A closed context is never reopened; starting the command again creates a
+    fresh session while preserving the closed record for audit/history.
+    """
+    normalized_type = str(context_type or "").strip().lower()
+    if normalized_type not in CONTEXT_TYPES - {"main"}:
+        raise ValueError("不支持的任务类型")
+    task = get_resume_task(db, user_id, task_id)
+    if not task:
+        return None
+    ensure_main_context(db, user_id, task.id)
+    context = db.query(ConversationContext).filter(
+        ConversationContext.user_id == user_id,
+        ConversationContext.task_id == task.id,
+        ConversationContext.context_type == normalized_type,
+        ConversationContext.status == "active",
+    ).order_by(ConversationContext.updated_at.desc()).first()
+    if context:
+        context.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(context)
+        return context
+    context = ConversationContext(
+        id=str(uuid.uuid4()),
+        user_id=user_id,
+        task_id=task.id,
+        context_type=normalized_type,
+        title=(title or CONTEXT_TITLES.get(normalized_type, "新任务"))[:80],
+        status="active",
+        session_id=str(uuid.uuid4()),
+        metadata_json={"command": normalized_type},
+    )
+    db.add(context)
+    db.commit()
+    db.refresh(context)
+    return context
+
+
+def close_conversation_context(db, user_id: int, context_id: str):
+    """Close a mission and clear its mutable conversation state."""
+    context = get_conversation_context_record(db, user_id, context_id)
+    if not context:
+        return None
+    if context.context_type == "main":
+        raise ValueError("主对话不能关闭")
+    context.status = "closed"
+    context.closed_at = datetime.utcnow()
+    context.updated_at = datetime.utcnow()
+    db.query(Conversation).filter(
+        Conversation.user_id == user_id,
+        Conversation.session_id == context.session_id,
+    ).delete(synchronize_session=False)
+    db.query(AgentMemoryState).filter(
+        AgentMemoryState.user_id == user_id,
+        AgentMemoryState.scope_id == f"task:{context.task_id}:context:{context.session_id}",
+    ).delete(synchronize_session=False)
+    db.commit()
+    return context
+
+
+def serialize_conversation_context(context):
+    return {
+        "id": context.id,
+        "task_id": context.task_id,
+        "context_type": context.context_type,
+        "title": context.title,
+        "status": context.status,
+        "session_id": context.session_id,
+        "created_at": context.created_at.isoformat() if context.created_at else None,
+        "updated_at": context.updated_at.isoformat() if context.updated_at else None,
+        "closed_at": context.closed_at.isoformat() if context.closed_at else None,
+    }
+
+
+def update_conversation_context_metadata(
+    db,
+    user_id: int,
+    session_id: str,
+    updates: dict | None,
+):
+    """Merge small, non-authoritative context metadata without storing transcripts."""
+    if not isinstance(updates, dict) or not updates:
+        return None
+    task = _active_task(db, user_id)
+    context = _context_query(db, user_id, session_id) if task else None
+    if not context:
+        return None
+    metadata = dict(context.metadata_json or {})
+    metadata.update(updates)
+    context.metadata_json = metadata
+    context.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(context)
+    return context
+
+
+def append_context_event(db, user_id: int, task_id: str, context, action: str = "started"):
+    """Record a short mission lifecycle event in the task's main chat."""
+    task = get_resume_task(db, user_id, task_id)
+    if not task or not context:
+        return None
+    messages = list(task.messages or [])
+    # A mission has one lifecycle record in the main conversation.  Closing it
+    # updates the opening record instead of appending a second, still-looking
+    # active card.  This keeps the audit trail visible while allowing the UI to
+    # render the same record as closed/grey.
+    if action == "closed":
+        matching_indexes = [
+            index for index, item in enumerate(messages)
+            if (
+                isinstance(item, dict)
+                and item.get("type") == "context_event"
+                and item.get("context_id") == context.id
+            )
+        ]
+        if matching_indexes:
+            messages = deepcopy(messages)
+            closed_at = datetime.utcnow().isoformat()
+            for index in matching_indexes:
+                item = messages[index]
+                item["action"] = "closed"
+                item["status"] = "closed"
+                item["closed_at"] = closed_at
+                item["content"] = f"已结束“{context.title}”任务。"
+            task.messages = messages
+            task.updated_at = datetime.utcnow()
+            db.commit()
+            return messages[matching_indexes[-1]]
+    content = {
+        "id": str(uuid.uuid4()),
+        "type": "context_event",
+        "role": "system",
+        "context_id": context.id,
+        "context_type": context.context_type,
+        "title": context.title,
+        "action": action,
+        "status": "active" if action == "started" else "closed",
+        "content": (
+            f"已开启“{context.title}”任务。"
+            if action == "started" else f"已结束“{context.title}”任务。"
+        ),
+        "created_at": datetime.utcnow().isoformat(),
+    }
+    task.messages = messages + [content]
+    task.updated_at = datetime.utcnow()
+    db.commit()
+    return content
 
 
 def get_active_task(db, user_id: int):
@@ -805,10 +1087,12 @@ def delete_resume_project(db, user_id: int, project_id: str) -> bool:
     project = get_resume_project(db, user_id, project_id)
     if not project:
         return False
-    task_ids = [row[0] for row in db.query(ProjectTask.id).filter(
+    task_rows = db.query(ProjectTask.id, ProjectTask.session_id).filter(
         ProjectTask.project_id == project_id,
         ProjectTask.user_id == user_id,
-    ).all()]
+    ).all()
+    task_ids = [row[0] for row in task_rows]
+    task_session_ids = [row[1] for row in task_rows]
     if task_ids:
         db.query(ResumeRevision).filter(
             ResumeRevision.user_id == user_id,
@@ -817,6 +1101,21 @@ def delete_resume_project(db, user_id: int, project_id: str) -> bool:
         db.query(AgentMemoryState).filter(
             AgentMemoryState.user_id == user_id,
             AgentMemoryState.task_id.in_(task_ids),
+        ).delete(synchronize_session=False)
+        context_rows = db.query(ConversationContext).filter(
+            ConversationContext.user_id == user_id,
+            ConversationContext.task_id.in_(task_ids),
+        ).all()
+        context_session_ids = [row.session_id for row in context_rows]
+        conversation_session_ids = task_session_ids + context_session_ids
+        if conversation_session_ids:
+            db.query(Conversation).filter(
+                Conversation.user_id == user_id,
+                Conversation.session_id.in_(conversation_session_ids),
+            ).delete(synchronize_session=False)
+        db.query(ConversationContext).filter(
+            ConversationContext.user_id == user_id,
+            ConversationContext.task_id.in_(task_ids),
         ).delete(synchronize_session=False)
     db.query(ProjectTask).filter(
         ProjectTask.project_id == project_id,
@@ -840,6 +1139,19 @@ def delete_resume_task(db, user_id: int, task_id: str) -> str:
     db.query(AgentMemoryState).filter(
         AgentMemoryState.user_id == user_id,
         AgentMemoryState.task_id == task_id,
+    ).delete(synchronize_session=False)
+    context_rows = db.query(ConversationContext).filter(
+        ConversationContext.user_id == user_id,
+        ConversationContext.task_id == task_id,
+    ).all()
+    conversation_session_ids = [task.session_id] + [row.session_id for row in context_rows]
+    db.query(Conversation).filter(
+        Conversation.user_id == user_id,
+        Conversation.session_id.in_(conversation_session_ids),
+    ).delete(synchronize_session=False)
+    db.query(ConversationContext).filter(
+        ConversationContext.user_id == user_id,
+        ConversationContext.task_id == task_id,
     ).delete(synchronize_session=False)
     db.delete(task)
     db.commit()
@@ -1093,7 +1405,8 @@ def save_user_jd(db, user_id: int, data: dict, company: str = "", position: str 
 def save_conversation(db, user_id: int, session_id: str, messages: list):
     """保存对话历史"""
     task = _active_task(db, user_id)
-    if task:
+    context = _context_query(db, user_id, session_id) if task else None
+    if task and (not context or context.context_type == "main"):
         task.messages = messages
         task.last_accessed = datetime.utcnow()
         task.updated_at = datetime.utcnow()
@@ -1115,7 +1428,8 @@ def save_conversation(db, user_id: int, session_id: str, messages: list):
 def get_conversation(db, user_id: int, session_id: str) -> list:
     """获取对话历史"""
     task = _active_task(db, user_id)
-    if task:
+    context = _context_query(db, user_id, session_id) if task else None
+    if task and (not context or context.context_type == "main"):
         task.last_accessed = datetime.utcnow()
         db.commit()
         return task.messages or []
@@ -1155,7 +1469,17 @@ def create_invite_code(db, code: str):
 def _agent_memory_scope(db, user_id: int, session_id: str) -> tuple[str, str | None]:
     task = _active_task(db, user_id)
     if task:
-        return f"task:{task.id}", task.id
+        normalized_session = str(session_id or "")
+        # Keep the legacy main-task scope stable so existing summaries remain
+        # readable. Mission sessions are isolated by their own session id.
+        if normalized_session in {"", str(task.session_id)}:
+            return f"task:{task.id}", task.id
+        context = get_context_by_session(db, user_id, task.id, normalized_session)
+        if context:
+            return f"task:{task.id}:context:{context.session_id}", task.id
+        # A caller that has not created a context yet must not fall back to the
+        # active task's shared scope. This keeps arbitrary session ids isolated.
+        return f"conversation:{user_id}:{normalized_session}", None
     return f"conversation:{user_id}:{session_id}", None
 
 
@@ -1189,7 +1513,8 @@ def get_agent_memory_state(db, user_id: int, session_id: str) -> dict:
         }
 
     task = _active_task(db, user_id)
-    if task:
+    context = _context_query(db, user_id, session_id) if task else None
+    if task and (not context or context.context_type == "main"):
         legacy_context = task.compressed_context or []
     else:
         conversation = db.query(Conversation).filter(
@@ -1274,7 +1599,8 @@ def save_conversation_context(
 ):
     """保存压缩后的上下文到数据库"""
     task = _active_task(db, user_id)
-    if task:
+    context = _context_query(db, user_id, session_id) if task else None
+    if task and (not context or context.context_type == "main"):
         task.compressed_context = compressed_context
         if pending_confirmation is not _PENDING_CONFIRMATION_UNSET:
             task.pending_confirmation = pending_confirmation
@@ -1311,7 +1637,8 @@ def save_conversation_context(
 def get_pending_confirmation(db, user_id: int, session_id: str) -> dict:
     """获取待确认状态"""
     task = _active_task(db, user_id)
-    if task:
+    context = _context_query(db, user_id, session_id) if task else None
+    if task and (not context or context.context_type == "main"):
         return task.pending_confirmation
     conv = db.query(Conversation).filter(
         Conversation.user_id == user_id,
@@ -1323,7 +1650,8 @@ def get_pending_confirmation(db, user_id: int, session_id: str) -> dict:
 def clear_pending_confirmation(db, user_id: int, session_id: str):
     """清除待确认状态"""
     task = _active_task(db, user_id)
-    if task:
+    context = _context_query(db, user_id, session_id) if task else None
+    if task and (not context or context.context_type == "main"):
         task.pending_confirmation = None
         task.updated_at = datetime.utcnow()
         db.commit()
@@ -1340,7 +1668,8 @@ def clear_pending_confirmation(db, user_id: int, session_id: str):
 def get_conversation_context(db, user_id: int, session_id: str) -> list:
     """获取压缩后的上下文（用于性能优化）"""
     task = _active_task(db, user_id)
-    if task:
+    context = _context_query(db, user_id, session_id) if task else None
+    if task and (not context or context.context_type == "main"):
         task.last_accessed = datetime.utcnow()
         db.commit()
         return task.compressed_context or []
@@ -1372,11 +1701,27 @@ def cleanup_old_contexts(db, days: int = 7):
 def delete_conversation_context(db, user_id: int, session_id: str):
     """删除指定会话的上下文"""
     task = _active_task(db, user_id)
-    if task:
+    context = _context_query(db, user_id, session_id) if task else None
+    if task and (not context or context.context_type == "main"):
         task.compressed_context = []
         task.updated_at = datetime.utcnow()
         db.query(AgentMemoryState).filter(
             AgentMemoryState.scope_id == f"task:{task.id}",
+            AgentMemoryState.user_id == user_id,
+        ).delete(synchronize_session=False)
+        db.commit()
+        return
+    if context:
+        db.query(Conversation).filter(
+            Conversation.user_id == user_id,
+            Conversation.session_id == context.session_id,
+        ).update({
+            "messages": [],
+            "compressed_context": [],
+            "pending_confirmation": None,
+        })
+        db.query(AgentMemoryState).filter(
+            AgentMemoryState.scope_id == f"task:{context.task_id}:context:{context.session_id}",
             AgentMemoryState.user_id == user_id,
         ).delete(synchronize_session=False)
         db.commit()

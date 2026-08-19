@@ -42,23 +42,24 @@ const assistantActions = [
     prompt: '请修改【模块或字段】：将【原内容】调整为【目标内容或具体要求】。'
   },
   {
-    label: '排版建议',
-    prompt: '请分析当前简历排版是否清晰、紧凑、重点突出，并给出可执行的排版建议。请说明建议涉及字号、间距、模块样式还是模块顺序；本轮只分析，不修改简历。'
-  },
-  {
     label: '全面诊断',
-    mode: 'diagnosis',
-    action: 'start',
     prompt: '请先对当前简历做一次全面诊断：指出最影响通过率的不足，按优先级给出具体改进建议；先不要修改简历，诊断后只追问我一个最关键的问题。'
   },
   {
+    label: '排版建议',
+    contextType: 'layout',
+    prompt: '根据当前简历数据与快照，检查当前简历存在的排版问题，按对简历影响程度从高到低编号列出可执行建议。每条自然说明问题、原因或证据、建议方向。如果没有需要处理的问题，直接说明没有可执行的排版问题。本轮只分析，不修改简历。'
+  },
+  {
     label: '深度打磨',
+    contextType: 'coaching',
     mode: 'coaching',
     action: 'start',
     prompt: '请以严格面试官视角深度打磨我的简历：从最薄弱、最影响求职结果的一项经历开始，每次只问一个问题，持续追问到能形成真实、具体、可量化的简历表述；先不要修改简历。'
   },
   {
     label: '对照 JD',
+    contextType: 'jd_review',
     mode: 'jd_review',
     action: 'start',
     prompt: '请结合当前目标岗位 JD 分析简历匹配度：区分已经证明的匹配项、简历尚未证明的能力和确实缺失的条件，按优先级给建议；先不要修改简历，最后只问我一个最关键的问题。'
@@ -403,6 +404,9 @@ const workflowStatusLabel = computed(() => ({
   error: '需重试'
 }[workflowState.value?.status] || '就绪'))
 const previewLayoutConfig = ref(null)
+// Ephemeral browser-rendered pagination/style shared with visual analysis.
+// It is request-scoped and never persisted as resume data.
+const activeRenderStyle = ref(null)
 const activeLayoutConfig = computed(() => normalizeLayoutConfig(
   previewLayoutConfig.value || currentTask.value?.layout_config || {}
 ))
@@ -456,6 +460,9 @@ const taskActionMenu = ref(null)
 const taskToSetBase = ref(null)
 const isSettingBaseTask = ref(false)
 const setBaseError = ref('')
+const conversationContexts = ref([])
+const activeContextId = ref('')
+const isSwitchingContext = ref(false)
 const uiNotice = ref({ visible: false, type: 'error', message: '' })
 let uiNoticeTimer = null
 
@@ -862,6 +869,133 @@ watch(() => route.fullPath, async () => {
   }
 })
 
+function contextDisplayTitle(context) {
+  return context?.context_type === 'main' ? '主对话' : (context?.title || '任务')
+}
+
+async function loadTaskContexts({ preserveActive = true } = {}) {
+  if (!currentTaskId.value) {
+    conversationContexts.value = []
+    activeContextId.value = ''
+    return
+  }
+  const response = await fetch(`/tasks/${currentTaskId.value}/contexts`, {
+    headers: getAuthorizationHeaders()
+  })
+  if (!response.ok) throw new Error('无法加载任务会话')
+  const data = await response.json()
+  conversationContexts.value = Array.isArray(data.contexts) ? data.contexts : []
+  const main = conversationContexts.value.find(context => context.context_type === 'main')
+  const selected = preserveActive
+    ? conversationContexts.value.find(context => context.session_id === activeContextId.value)
+    : null
+  const context = selected || main
+  if (context) {
+    activeContextId.value = context.session_id
+    sessionId.value = context.session_id
+  }
+}
+
+async function loadContextConversation(context, { welcome = false } = {}) {
+  const response = await fetch('/load_conversation', {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ session_id: context.session_id })
+  })
+  if (!response.ok) throw new Error('无法加载任务会话内容')
+  const loaded = await response.json()
+  const hasHistory = Array.isArray(loaded) && loaded.length > 0
+  messages.value = hasHistory
+    ? loaded
+    : (welcome ? [{
+      id: Date.now(),
+      role: 'assistant',
+      content: `${contextDisplayTitle(context)}已开启。可以继续描述你的需求。`,
+      localOnly: true
+    }] : [])
+}
+
+async function selectConversationContext(context) {
+  if (!context || context.status !== 'active' || isSwitchingContext.value) return
+  if (context.session_id === activeContextId.value && messages.value.length) return
+  isSwitchingContext.value = true
+  try {
+    activeContextId.value = context.session_id
+    sessionId.value = context.session_id
+    hasConfirmArea.value = false
+    previewResumeData.value = null
+    previewLayoutConfig.value = null
+    updateWorkflowState(null)
+    await loadContextConversation(context, { welcome: context.context_type !== 'main' })
+    await loadWorkflowState(context.context_type === 'main' ? '' : context.session_id)
+  } catch (error) {
+    showNotice(error.message || '切换任务会话失败，请重试')
+  } finally {
+    isSwitchingContext.value = false
+  }
+}
+
+async function startMissionContext(contextType, title = '') {
+  if (!currentTaskId.value || isSwitchingContext.value) return null
+  isSwitchingContext.value = true
+  try {
+    const response = await fetch(`/tasks/${currentTaskId.value}/contexts`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ context_type: contextType, title: title || undefined })
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok || !data.context) throw new Error(data.detail || '无法开启任务会话')
+    const context = data.context
+    const existing = conversationContexts.value.find(item => item.id === context.id)
+    conversationContexts.value = existing
+      ? conversationContexts.value.map(item => item.id === context.id ? context : item)
+      : [...conversationContexts.value, context]
+    activeContextId.value = context.session_id
+    sessionId.value = context.session_id
+    hasConfirmArea.value = false
+    previewResumeData.value = null
+    previewLayoutConfig.value = null
+    updateWorkflowState(null)
+    await loadContextConversation(context, { welcome: true })
+    await loadWorkflowState(context.session_id)
+    return context
+  } catch (error) {
+    showNotice(error.message || '无法开启任务会话，请重试')
+    return null
+  } finally {
+    isSwitchingContext.value = false
+  }
+}
+
+async function closeMissionContext(context) {
+  if (!context || context.context_type === 'main' || isSwitchingContext.value) return
+  isSwitchingContext.value = true
+  try {
+    const response = await fetch(`/tasks/${currentTaskId.value}/contexts/${context.id}`, {
+      method: 'DELETE',
+      headers: getAuthorizationHeaders()
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(data.detail || '关闭任务会话失败')
+    conversationContexts.value = conversationContexts.value.filter(item => item.id !== context.id)
+    const main = conversationContexts.value.find(item => item.context_type === 'main')
+    if (main) {
+      isSwitchingContext.value = false
+      await selectConversationContext(main)
+    }
+  } catch (error) {
+    showNotice(error.message || '关闭任务会话失败，请重试')
+  } finally {
+    isSwitchingContext.value = false
+  }
+}
+
+function openContextFromEvent({ context_id: contextId } = {}) {
+  const context = conversationContexts.value.find(item => item.id === contextId)
+  if (context) selectConversationContext(context)
+}
+
 async function loadWorkspace() {
   currentLang.value = 'zh'
   showTranslateConfirm.value = false
@@ -873,7 +1007,10 @@ async function loadWorkspace() {
   jdData.value = null
   showStartDialog.value = false
   hasConfirmArea.value = false
+  conversationContexts.value = []
+  activeContextId.value = ''
   previewLayoutConfig.value = null
+  activeRenderStyle.value = null
   previewResumeData.value = null
 
   const response = await fetch(`/projects/${route.params.projectId}`, {
@@ -891,6 +1028,8 @@ async function loadWorkspace() {
     return
   }
   sessionId.value = task.session_id
+  activeContextId.value = task.session_id
+  await loadTaskContexts({ preserveActive: false })
   await loadInitialData()
   await loadWorkflowState()
   restoreTranslationSession()
@@ -1096,8 +1235,12 @@ function useLayoutPrompt(prompt) {
   nextTick(() => document.querySelector('.textarea-container textarea:not(:disabled)')?.focus())
 }
 
-function runAssistantAction(action) {
+async function runAssistantAction(action) {
   if (isLoading.value || isResponding.value) return
+  if (action.contextType && action.contextType !== 'main') {
+    const context = await startMissionContext(action.contextType)
+    if (!context) return
+  }
   pendingAssistantAction.value = action.mode ? { mode: action.mode, action: action.action } : null
   userInput.value = action.prompt
   if (action.prefillOnly) {
@@ -1124,13 +1267,14 @@ function runWorkflowAction(action) {
   nextTick(() => sendMessage())
 }
 
-async function loadWorkflowState() {
+async function loadWorkflowState(contextSessionId = '') {
   if (!currentTaskId.value) {
     updateWorkflowState(null)
     return
   }
   try {
-    const response = await fetch(`/tasks/${currentTaskId.value}/workflow`, {
+    const query = contextSessionId ? `?context_id=${encodeURIComponent(contextSessionId)}` : ''
+    const response = await fetch(`/tasks/${currentTaskId.value}/workflow${query}`, {
       headers: getAuthorizationHeaders()
     })
     if (!response.ok) return
@@ -1145,6 +1289,12 @@ async function loadWorkflowState() {
 function handleLayoutUpdated(layoutConfig) {
   if (currentTask.value) currentTask.value.layout_config = normalizeLayoutConfig(layoutConfig)
   previewLayoutConfig.value = null
+}
+
+function handleRenderStyleUpdated(style) {
+  activeRenderStyle.value = style && typeof style === 'object'
+    ? { ...style }
+    : null
 }
 
 // 加载初始数据的函数（同时检查首次访问）
@@ -1460,6 +1610,9 @@ async function sendMessage() {
     formData.append('request_id', requestId)
     if (structuredAction?.mode) formData.append('interaction_mode', structuredAction.mode)
     if (structuredAction?.action) formData.append('interaction_action', structuredAction.action)
+    if (activeRenderStyle.value) {
+      formData.append('render_style', JSON.stringify(activeRenderStyle.value))
+    }
 
     // 添加上传的文件
     // 注意：uploadedFiles 在函数开头已被清空，这里附件信息已保存在 currentAttachments 中
@@ -4073,15 +4226,40 @@ watch(
             <strong>简历助手</strong>
             <span>{{ displayTaskTitle(currentTask) }}</span>
           </div>
+          <nav v-if="isLoggedIn && isWorkspaceRoute" class="mission-tabs" aria-label="简历助手任务">
+            <div class="mission-tabs-scroll">
+              <div
+                v-for="context in conversationContexts.filter(item => item.context_type === 'main' || item.status === 'active')"
+                :key="context.id"
+                :class="['mission-tab', { active: context.session_id === activeContextId }]"
+                role="button"
+                tabindex="0"
+                @click.stop="selectConversationContext(context)"
+                @keydown.enter.prevent="selectConversationContext(context)"
+              >
+                <span class="mission-tab-dot" aria-hidden="true"></span>
+                <span class="mission-tab-label">{{ contextDisplayTitle(context) }}</span>
+                <button
+                  v-if="context.context_type !== 'main'"
+                  type="button"
+                  class="mission-tab-close"
+                  aria-label="关闭任务"
+                  title="关闭任务"
+                  @click.stop="closeMissionContext(context)"
+                >×</button>
+              </div>
+            </div>
+          </nav>
         </div>
         <div class="chat-container">
           <div class="messages-container" ref="messagesContainer" @scroll="handleScroll">
             <ChatMessage
-              v-for="message in messages"
-              :key="message.id + '_' + (message.content?.length || 0)"
+              v-for="(message, index) in messages"
+              :key="(message.id || message.created_at || index) + '_' + (message.content?.length || 0)"
               :message="message"
               @optionClick="handleOptionClick"
               @undoClick="handleUndoClick"
+              @contextClick="openContextFromEvent"
             />
             <!-- 只有当没有过程消息且正在加载时才显示默认加载指示器 -->
           <div v-if="isLoading" class="loading-indicator">
@@ -4235,7 +4413,7 @@ watch(
       <!-- 右侧简历预览区 -->
       <div class="resume-section">
         <div class="resume-content">
-          <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :has-source-document="!!currentTask?.has_source_document" :highlighted-module="highlightedModule" :jd-data="jdData" :lang="currentLang" :translation-busy="isTranslating" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @open-resume-import="showUploadResumeDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @layout-updated="handleLayoutUpdated" />
+          <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :has-source-document="!!currentTask?.has_source_document" :highlighted-module="highlightedModule" :jd-data="jdData" :lang="currentLang" :translation-busy="isTranslating" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @open-resume-import="showUploadResumeDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @layout-updated="handleLayoutUpdated" @render-style-updated="handleRenderStyleUpdated" />
         </div>
       </div>
       </template>
@@ -4245,14 +4423,46 @@ watch(
         <!-- 聊天 Tab 内容 -->
         <Transition name="tab-content" mode="out-in">
           <div v-if="currentTab === 'chat'" class="mobile-chat-view" key="chat">
+            <div class="chat-panel-header mobile-chat-panel-header">
+              <div class="assistant-orb" aria-hidden="true"></div>
+              <div class="chat-panel-title">
+                <strong>简历助手</strong>
+                <span>{{ displayTaskTitle(currentTask) }}</span>
+              </div>
+              <nav v-if="isLoggedIn && isWorkspaceRoute" class="mission-tabs" aria-label="简历助手任务">
+                <div class="mission-tabs-scroll">
+                  <div
+                    v-for="context in conversationContexts.filter(item => item.context_type === 'main' || item.status === 'active')"
+                    :key="context.id"
+                    :class="['mission-tab', { active: context.session_id === activeContextId }]"
+                    role="button"
+                    tabindex="0"
+                    @click.stop="selectConversationContext(context)"
+                    @keydown.enter.prevent="selectConversationContext(context)"
+                  >
+                    <span class="mission-tab-dot" aria-hidden="true"></span>
+                    <span class="mission-tab-label">{{ contextDisplayTitle(context) }}</span>
+                    <button
+                      v-if="context.context_type !== 'main'"
+                      type="button"
+                      class="mission-tab-close"
+                      aria-label="关闭任务"
+                      title="关闭任务"
+                      @click.stop="closeMissionContext(context)"
+                    >×</button>
+                  </div>
+                </div>
+              </nav>
+            </div>
             <div class="chat-container">
               <div class="messages-container" ref="messagesContainer" @scroll="handleScroll">
                 <ChatMessage
-                  v-for="message in messages"
-                  :key="message.id + '_' + (message.content?.length || 0)"
+                  v-for="(message, index) in messages"
+                  :key="(message.id || message.created_at || index) + '_' + (message.content?.length || 0)"
                   :message="message"
                   @optionClick="handleOptionClick"
                   @undoClick="handleUndoClick"
+                  @contextClick="openContextFromEvent"
                 />
                 <div v-if="isLoading" class="loading-indicator">
                   <div class="loading-spinner">
@@ -4349,7 +4559,7 @@ watch(
 
           <!-- 简历 Tab 内容 -->
           <div v-else-if="currentTab === 'resume'" class="mobile-resume-view" key="resume">
-            <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :has-source-document="!!currentTask?.has_source_document" :highlighted-module="highlightedModule" :jd-data="jdData" :is-mobile-view="isMobileView" :lang="currentLang" :translation-busy="isTranslating" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @open-resume-import="showUploadResumeDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @layout-updated="handleLayoutUpdated" />
+            <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :has-source-document="!!currentTask?.has_source_document" :highlighted-module="highlightedModule" :jd-data="jdData" :is-mobile-view="isMobileView" :lang="currentLang" :translation-busy="isTranslating" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @open-resume-import="showUploadResumeDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @layout-updated="handleLayoutUpdated" @render-style-updated="handleRenderStyleUpdated" />
           </div>
         </Transition>
 
@@ -4829,10 +5039,10 @@ watch(
                     @dragend="endOtherItemDrag"
                   >
                     <span class="sortable-handle" aria-hidden="true">⋮⋮</span>
-                    <RichTextEditor v-model="resumeFormData.others.skills[i]" class="sortable-item-editor" placeholder="例如 Python、Vue、FastAPI" compact />
+                    <RichTextEditor v-model="resumeFormData.others.skills[i]" class="sortable-item-editor skill-item-editor" placeholder="例如 Python、Vue、FastAPI" compact allow-line-breaks />
                     <button @click="resumeFormData.others.skills.splice(i, 1)" class="tag-remove">×</button>
                   </div>
-                  <RichTextEditor v-model="newResumeSkill" class="sortable-item-editor" placeholder="例如 Python、Vue、FastAPI" compact />
+                  <RichTextEditor v-model="newResumeSkill" class="sortable-item-editor skill-item-editor" placeholder="例如 Python、Vue、FastAPI" compact allow-line-breaks />
                   <button type="button" class="tag-add-btn" @click="addResumeSkill">添加</button>
                 </div>
               </div>
@@ -5110,6 +5320,101 @@ watch(
 </template>
 
 <style scoped>
+.mission-tabs {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: stretch;
+  background: transparent;
+  border: 0;
+  overflow: visible;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  padding-left: 8px;
+}
+
+.mission-tabs-scroll {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 0;
+  scrollbar-width: none;
+}
+
+.mission-tabs-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.mission-tab {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 74px;
+  max-width: 140px;
+  padding: 0 6px;
+  color: #aeb0b8;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.7rem;
+  text-align: left;
+  transition: color 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+}
+
+.mission-tab:hover {
+  color: #f4f5f8;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.mission-tab.active {
+  color: #f5f5f7;
+  border-bottom-color: #78a6ff;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.mission-tab-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #7d8490;
+}
+
+.mission-tab.active .mission-tab-dot {
+  background: #78a6ff;
+  box-shadow: 0 0 7px rgba(120, 166, 255, 0.55);
+}
+
+.mission-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-tab-close {
+  margin-left: auto;
+  padding: 1px 2px;
+  border: 0;
+  color: #989ba5;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.mission-tab-close:hover {
+  color: #ff9a9a;
+}
+
 .app-container {
   display: flex;
   flex-direction: column;
@@ -5537,11 +5842,14 @@ watch(
 .chat-panel-header {
   height: 54px;
   min-height: 54px;
+  position: relative;
+  z-index: 20;
+  overflow: visible;
   box-sizing: border-box;
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 0.65rem;
+  gap: 0.45rem;
   padding: 0.45rem 0.9rem;
   border-bottom: 1px solid rgba(255, 255, 255, 0.055);
   background: rgba(12, 12, 14, 0.76);
@@ -5560,9 +5868,18 @@ watch(
 }
 
 .chat-panel-title {
+  flex: 0 0 84px;
   min-width: 0;
   display: grid;
   gap: 0.08rem;
+}
+
+.chat-panel-header .mission-tabs {
+  margin-left: 0;
+}
+
+.mobile-chat-panel-header {
+  flex: 0 0 54px;
 }
 
 .chat-panel-title strong {
@@ -8358,8 +8675,7 @@ watch(
   min-width: 120px;
 }
 
-/* 技能、证书、语言条目使用两行高度且可换行的编辑框。内容变长时
-   允许自然增高，避免横向溢出或被截断。 */
+/* 技能条目允许在同一条内容内换行；证书、语言保持单条单行输入。 */
 .resume-dialog .tags-input.sortable-list .sortable-item-editor.rich-editor,
 .resume-dialog .tags-input.sortable-list > .sortable-item-editor.rich-editor {
   width: 100%;

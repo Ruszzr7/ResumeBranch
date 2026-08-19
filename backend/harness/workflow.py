@@ -57,18 +57,21 @@ WORKFLOW_STATUSES = frozenset({
 })
 
 
-def build_workflow_thread_id(user_id: int, task_id: str) -> str:
-    """Build the only supported checkpoint isolation key."""
+def build_workflow_thread_id(user_id: int, task_id: str, context_id: str | None = None) -> str:
+    """Build a checkpoint key isolated by resume task and optional mission."""
     normalized_task_id = str(task_id or "").strip()
     if not normalized_task_id:
         raise ValueError("task_id is required for workflow checkpoint isolation")
+    normalized_context_id = str(context_id or "").strip()
+    if normalized_context_id:
+        return f"user:{int(user_id)}:task:{normalized_task_id}:context:{normalized_context_id}"
     return f"user:{int(user_id)}:task:{normalized_task_id}"
 
 
-def workflow_config(user_id: int, task_id: str) -> dict:
+def workflow_config(user_id: int, task_id: str, context_id: str | None = None) -> dict:
     return {
         "configurable": {
-            "thread_id": build_workflow_thread_id(user_id, task_id),
+            "thread_id": build_workflow_thread_id(user_id, task_id, context_id),
         }
     }
 
@@ -188,23 +191,25 @@ class WorkflowCheckpointManager:
         if self.enabled and self._graph is None:
             self.start_sync()
 
-    def load_state_sync(self, user_id: int, task_id: str) -> WorkflowState:
+    def load_state_sync(self, user_id: int, task_id: str, context_id: str | None = None) -> WorkflowState:
         if not self.enabled:
             return {}
         self._ensure_started()
         with self._lock:
-            snapshot = self._graph.get_state(workflow_config(user_id, task_id))
+            snapshot = self._graph.get_state(workflow_config(user_id, task_id, context_id))
             return dict(snapshot.values or {})
 
-    async def load_state(self, user_id: int, task_id: str) -> WorkflowState:
-        return await asyncio.to_thread(self.load_state_sync, user_id, task_id)
+    async def load_state(self, user_id: int, task_id: str, context_id: str | None = None) -> WorkflowState:
+        return await asyncio.to_thread(self.load_state_sync, user_id, task_id, context_id)
 
-    def update_state_sync(self, user_id: int, task_id: str, **updates) -> WorkflowState:
+    def update_state_sync(
+        self, user_id: int, task_id: str, *, context_id: str | None = None, **updates
+    ) -> WorkflowState:
         if not self.enabled:
             return {}
         self._ensure_started()
         normalized = _normalize_updates(updates)
-        config = workflow_config(user_id, task_id)
+        config = workflow_config(user_id, task_id, context_id)
         with self._lock:
             current = dict(self._graph.get_state(config).values or {})
             payload = _base_payload(current, user_id, task_id)
@@ -212,8 +217,8 @@ class WorkflowCheckpointManager:
             result = self._graph.invoke(payload, config=config)
             return dict(result)
 
-    async def update_state(self, user_id: int, task_id: str, **updates) -> WorkflowState:
-        return await asyncio.to_thread(self.update_state_sync, user_id, task_id, **updates)
+    async def update_state(self, user_id: int, task_id: str, *, context_id: str | None = None, **updates) -> WorkflowState:
+        return await asyncio.to_thread(self.update_state_sync, user_id, task_id, context_id=context_id, **updates)
 
     def record_turn_sync(
         self,
@@ -223,11 +228,12 @@ class WorkflowCheckpointManager:
         session_id: str,
         request_id: str,
         interaction_mode: str | None = None,
+        context_id: str | None = None,
     ) -> WorkflowState:
         if not self.enabled:
             return {}
         self._ensure_started()
-        config = workflow_config(user_id, task_id)
+        config = workflow_config(user_id, task_id, context_id)
         with self._lock:
             current = dict(self._graph.get_state(config).values or {})
             if request_id and current.get("last_request_id") == request_id:
@@ -248,18 +254,18 @@ class WorkflowCheckpointManager:
     async def record_turn(self, user_id: int, task_id: str, **kwargs) -> WorkflowState:
         return await asyncio.to_thread(self.record_turn_sync, user_id, task_id, **kwargs)
 
-    def pause_sync(self, user_id: int, task_id: str) -> WorkflowState:
-        return self.update_state_sync(user_id, task_id, status="paused")
+    def pause_sync(self, user_id: int, task_id: str, context_id: str | None = None) -> WorkflowState:
+        return self.update_state_sync(user_id, task_id, context_id=context_id, status="paused")
 
-    def resume_sync(self, user_id: int, task_id: str) -> WorkflowState:
-        return self.update_state_sync(user_id, task_id, status="active")
+    def resume_sync(self, user_id: int, task_id: str, context_id: str | None = None) -> WorkflowState:
+        return self.update_state_sync(user_id, task_id, context_id=context_id, status="active")
 
-    def delete_thread_sync(self, user_id: int, task_id: str):
+    def delete_thread_sync(self, user_id: int, task_id: str, context_id: str | None = None):
         if not self.enabled:
             return
         self._ensure_started()
         with self._lock:
-            self._saver.delete_thread(build_workflow_thread_id(user_id, task_id))
+            self._saver.delete_thread(build_workflow_thread_id(user_id, task_id, context_id))
 
     def cleanup_stale_sync(
         self,
@@ -304,5 +310,5 @@ class WorkflowCheckpointManager:
     async def cleanup_stale(self, retention_days: int | None = None) -> int:
         return await asyncio.to_thread(self.cleanup_stale_sync, retention_days)
 
-    async def delete_thread(self, user_id: int, task_id: str):
-        await asyncio.to_thread(self.delete_thread_sync, user_id, task_id)
+    async def delete_thread(self, user_id: int, task_id: str, context_id: str | None = None):
+        await asyncio.to_thread(self.delete_thread_sync, user_id, task_id, context_id)

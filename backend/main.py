@@ -61,6 +61,11 @@ from .database import (
     list_resume_projects, create_resume_project, get_resume_project,
     list_project_tasks, list_user_resume_sources, create_resume_task, get_resume_task,
     rename_resume_project, rename_resume_task, switch_base_resume_task,
+    CONTEXT_TYPES, create_or_resume_conversation_context,
+    list_conversation_contexts, list_conversation_context_sessions,
+    get_conversation_context_record,
+    close_conversation_context, serialize_conversation_context,
+    append_context_event, get_context_by_session,
     delete_resume_project, delete_resume_task, undo_latest_resume_revision,
     get_task_layout_config, save_task_layout_config, attach_source_document,
     delete_unreferenced_source_documents, discard_pending_source_document,
@@ -123,6 +128,55 @@ def _resume_export_filename(resume_data: dict, extension: str) -> str:
     display_name = plain_inline_text((basics or {}).get("name", "")).strip() or "简历"
     display_name = re.sub(r'[\\/:*?"<>|\r\n]+', "_", display_name).strip(" .")[:80] or "简历"
     return f"resume_{display_name}.{extension}"
+
+
+_RENDER_STYLE_KEYS = frozenset({
+    "marginTop", "marginBottom", "marginLeft", "marginRight",
+    "moduleMargin", "lineHeight", "fontSize", "pageMode",
+    "sourcePageCount", "pageBreakBefore",
+})
+_RENDER_STYLE_NUMERIC_KEYS = frozenset({
+    "marginTop", "marginBottom", "marginLeft", "marginRight",
+    "moduleMargin", "lineHeight", "fontSize", "sourcePageCount",
+})
+
+
+def _parse_render_style(raw_style: str | dict | None) -> dict:
+    """Parse the ephemeral preview style sent with a visual chat request.
+
+    Only the fields used by the shared PDF/DOCX renderer are accepted. The
+    value is request-scoped and never persisted as resume content.
+    """
+    if isinstance(raw_style, dict):
+        candidate = raw_style
+    elif isinstance(raw_style, str) and raw_style.strip():
+        try:
+            candidate = json.loads(raw_style)
+        except (TypeError, ValueError):
+            return {}
+    else:
+        return {}
+    if not isinstance(candidate, dict):
+        return {}
+
+    parsed = {}
+    for key in _RENDER_STYLE_KEYS:
+        if key not in candidate:
+            continue
+        value = candidate[key]
+        if key in _RENDER_STYLE_NUMERIC_KEYS:
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                continue
+            if number != number or number in (float("inf"), float("-inf")):
+                continue
+            parsed[key] = int(number) if key == "sourcePageCount" else number
+        elif key == "pageMode":
+            parsed[key] = "auto"
+        elif key == "pageBreakBefore" and isinstance(value, str):
+            parsed[key] = value[:80]
+    return parsed
 
 # PDF 生成器 - 懒加载（在 API 调用时才导入）
 # =============================================================================
@@ -231,6 +285,11 @@ class CreateTaskRequest(BaseModel):
 class RenameTitleRequest(BaseModel):
     """Rename a project or task without changing its resume content."""
     title: str
+
+
+class ConversationContextRequest(BaseModel):
+    context_type: str
+    title: str | None = None
 
 
 class SaveLayoutRequest(BaseModel):
@@ -697,6 +756,7 @@ async def delete_project(
     current_user = Depends(get_current_user),
 ):
     task_ids = [task.id for task in list_project_tasks(db, current_user.id, project_id)]
+    mission_sessions = list_conversation_context_sessions(db, current_user.id, task_ids)
     if not delete_resume_project(db, current_user.id, project_id):
         raise HTTPException(status_code=404, detail="主简历不存在")
     for storage_key in delete_unreferenced_source_documents(db, current_user.id):
@@ -706,6 +766,8 @@ async def delete_project(
         for task_id in task_ids:
             try:
                 await manager.delete_thread(current_user.id, task_id)
+                for session_id in mission_sessions.get(task_id, []):
+                    await manager.delete_thread(current_user.id, task_id, context_id=session_id)
             except Exception as exc:
                 print(f"[WorkflowCheckpoint] 项目删除后清理失败 task={task_id}: {exc}")
     return {"success": True}
@@ -742,6 +804,83 @@ async def get_task(
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     return serialize_task(task)
+
+
+@app.get("/tasks/{task_id}/contexts")
+async def get_task_contexts(
+    task_id: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    """List the main conversation and mission contexts for one resume version."""
+    task = get_resume_task(db, current_user.id, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="简历版本不存在")
+    contexts = list_conversation_contexts(db, current_user.id, task_id)
+    return {"contexts": [serialize_conversation_context(context) for context in contexts]}
+
+
+@app.post("/tasks/{task_id}/contexts")
+async def start_task_context(
+    task_id: str,
+    request: ConversationContextRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    """Resume the active command context or create a fresh mission."""
+    normalized_type = str(request.context_type or "").strip().lower()
+    if normalized_type not in CONTEXT_TYPES - {"main"}:
+        raise HTTPException(status_code=400, detail="不支持的任务类型")
+    task = get_resume_task(db, current_user.id, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="简历版本不存在")
+    previous = next(
+        (
+            context for context in list_conversation_contexts(db, current_user.id, task_id)
+            if context.context_type == normalized_type and context.status == "active"
+        ),
+        None,
+    )
+    context = create_or_resume_conversation_context(
+        db,
+        current_user.id,
+        task_id,
+        normalized_type,
+        title=request.title,
+    )
+    if not context:
+        raise HTTPException(status_code=404, detail="简历版本不存在")
+    if previous is None:
+        append_context_event(db, current_user.id, task_id, context, "started")
+    return {"context": serialize_conversation_context(context), "resumed": previous is not None}
+
+
+@app.delete("/tasks/{task_id}/contexts/{context_id}")
+async def close_task_context(
+    task_id: str,
+    context_id: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    """Close a mission context and clear its pending mutable state."""
+    task = get_resume_task(db, current_user.id, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="简历版本不存在")
+    context = get_conversation_context_record(db, current_user.id, context_id)
+    if not context or context.task_id != task_id:
+        raise HTTPException(status_code=404, detail="任务会话不存在")
+    try:
+        closed = close_conversation_context(db, current_user.id, context_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    manager = get_workflow_checkpoint_manager()
+    if manager:
+        try:
+            await manager.delete_thread(current_user.id, task_id, context_id=context.session_id)
+        except Exception as exc:
+            print(f"[WorkflowCheckpoint] 会话关闭后清理失败 context={context.id}: {exc}")
+    append_context_event(db, current_user.id, task_id, context, "closed")
+    return {"success": True, "context": serialize_conversation_context(closed)}
 
 
 @app.patch("/tasks/{task_id}")
@@ -811,6 +950,7 @@ async def get_task_source_document_endpoint(
 @app.get("/tasks/{task_id}/workflow")
 async def get_task_workflow(
     task_id: str,
+    context_id: str = "",
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user),
 ):
@@ -819,10 +959,22 @@ async def get_task_workflow(
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     manager = get_workflow_checkpoint_manager()
-    state = await manager.load_state(current_user.id, task_id) if manager else {}
+    context = None
+    if context_id:
+        context = get_conversation_context_record(db, current_user.id, context_id)
+        if not context:
+            context = get_context_by_session(db, current_user.id, task_id, context_id)
+        if not context or context.task_id != task_id:
+            raise HTTPException(status_code=404, detail="任务会话不存在")
+    workflow_context_id = context.session_id if context and context.context_type != "main" else None
+    state = await manager.load_state(current_user.id, task_id, workflow_context_id) if manager else {}
     from .database import AgentMemoryState
+    memory_scope = (
+        f"task:{task_id}:context:{workflow_context_id}"
+        if workflow_context_id else f"task:{task_id}"
+    )
     memory_row = db.query(AgentMemoryState).filter(
-        AgentMemoryState.scope_id == f"task:{task_id}",
+        AgentMemoryState.scope_id == memory_scope,
         AgentMemoryState.user_id == current_user.id,
     ).first()
     interview_memory = memory_row.interview_memory if memory_row else {}
@@ -838,6 +990,7 @@ async def delete_task(
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user),
 ):
+    mission_sessions = list_conversation_context_sessions(db, current_user.id, [task_id])
     result = delete_resume_task(db, current_user.id, task_id)
     if result == "not_found":
         raise HTTPException(status_code=404, detail="岗位版本不存在")
@@ -849,6 +1002,8 @@ async def delete_task(
     if manager:
         try:
             await manager.delete_thread(current_user.id, task_id)
+            for session_id in mission_sessions.get(task_id, []):
+                await manager.delete_thread(current_user.id, task_id, context_id=session_id)
         except Exception as exc:
             print(f"[WorkflowCheckpoint] 任务删除后清理失败 task={task_id}: {exc}")
     return {"success": True}
@@ -1492,6 +1647,7 @@ async def chat_endpoint(
     request_id: str = Form(""),
     interaction_mode: str = Form(""),
     interaction_action: str = Form(""),
+    render_style: str = Form(""),
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -1507,6 +1663,21 @@ async def chat_endpoint(
         task_id = db.info.get("task_id")
         if not task_id:
             return JSONResponse(content={"error": "请先选择一个简历任务"}, status_code=400)
+        context_record = None
+        if hasattr(db, "query") and session_id:
+            context_record = get_context_by_session(db, current_user.id, task_id, session_id)
+            if context_record and context_record.status != "active":
+                return JSONResponse(content={"error": "该任务会话已关闭，请重新开启命令"}, status_code=409)
+            task_record = get_resume_task(db, current_user.id, task_id)
+            if task_record and session_id != task_record.session_id and context_record is None:
+                return JSONResponse(content={"error": "无效的任务会话"}, status_code=409)
+        workflow_context_id = (
+            context_record.session_id
+            if context_record and context_record.context_type != "main"
+            else None
+        )
+        context_type = context_record.context_type if context_record else "main"
+        context_metadata = dict(getattr(context_record, "metadata_json", {}) or {}) if context_record else {}
         # 生成会话 ID
         if not session_id:
             session_id = generate_session_id()
@@ -1516,6 +1687,7 @@ async def chat_endpoint(
                 status_code=400,
             )
         request_id = (request_id or str(uuid.uuid4())).strip()[:64]
+        render_style_data = _parse_render_style(render_style)
         requested_mode = interaction_mode.strip().lower() if isinstance(interaction_mode, str) else ""
         requested_action = interaction_action.strip().lower() if isinstance(interaction_action, str) else ""
         if requested_mode and requested_mode not in INTERVIEW_MODES:
@@ -1526,7 +1698,7 @@ async def chat_endpoint(
         # 执行图本身不持久化业务载荷；配置与工作流检查点统一使用 user + task 隔离键。
         config = {
             "configurable": {
-                "thread_id": build_workflow_thread_id(current_user.id, task_id),
+                "thread_id": build_workflow_thread_id(current_user.id, task_id, workflow_context_id),
             }
         }
 
@@ -1624,7 +1796,12 @@ async def chat_endpoint(
         if workflow_manager:
             try:
                 if hasattr(workflow_manager, "load_state"):
-                    workflow_state = await workflow_manager.load_state(current_user.id, task_id)
+                    if workflow_context_id:
+                        workflow_state = await workflow_manager.load_state(
+                            current_user.id, task_id, workflow_context_id,
+                        )
+                    else:
+                        workflow_state = await workflow_manager.load_state(current_user.id, task_id)
                 active_interview = is_active_interview_workflow(workflow_state)
                 explicit_legacy_change = (
                     resume_agent.is_explicit_resume_change_request(message)
@@ -1651,28 +1828,34 @@ async def chat_endpoint(
                     elif resume_agent.is_resume_coaching_request(message):
                         legacy_workflow_mode = "jd_review" if "jd" in message.lower() else "coaching"
 
-                workflow_state = await workflow_manager.record_turn(
-                    current_user.id,
-                    task_id,
-                    session_id=session_id,
-                    request_id=request_id,
-                    interaction_mode=(
+                record_kwargs = {
+                    "session_id": session_id,
+                    "request_id": request_id,
+                    "interaction_mode": (
                         selected_interview_mode
                         if selected_interview_action == "start"
                         else legacy_workflow_mode
                     ),
+                }
+                if workflow_context_id:
+                    record_kwargs["context_id"] = workflow_context_id
+                workflow_state = await workflow_manager.record_turn(
+                    current_user.id, task_id, **record_kwargs,
                 )
                 if selected_interview_action in {"start", "answer"}:
-                    workflow_state = await workflow_manager.update_state(
-                        current_user.id,
-                        task_id,
-                        interaction_mode=selected_interview_mode,
-                        status="active",
-                        phase=(
+                    workflow_updates = {
+                        "interaction_mode": selected_interview_mode,
+                        "status": "active",
+                        "phase": (
                             "diagnosing" if selected_interview_action == "start"
                             else "synthesizing"
                         ),
-                        last_node="interview_coach_pending",
+                        "last_node": "interview_coach_pending",
+                    }
+                    if workflow_context_id:
+                        workflow_updates["context_id"] = workflow_context_id
+                    workflow_state = await workflow_manager.update_state(
+                        current_user.id, task_id, **workflow_updates,
                     )
                 if feature_config["shadow"]:
                     print(
@@ -1686,6 +1869,14 @@ async def chat_endpoint(
                 workflow_start_error = str(exc)
                 harness_metrics.increment("workflow_errors_total")
                 print(f"[WorkflowCheckpoint] 回合恢复/登记失败: {exc}")
+
+        # 证件照单独存储在任务记录中；在真实数据库会话中一并带入快照渲染。
+        # 轻量测试替身可能没有 query 接口，此时沿用无照片快照即可。
+        initial_photo = (
+            get_user_photo(db, current_user.id) or ""
+            if hasattr(db, "query")
+            else ""
+        )
 
         # 创建初始状态。确认点击仍保留完整消息历史；结构化深度打磨仅通过显式
         # 模式或已恢复的活动状态进入，不改变普通聊天/修改请求的入口。
@@ -1706,6 +1897,11 @@ async def chat_endpoint(
             "interaction_mode": selected_interview_mode,
             "interaction_action": selected_interview_action,
             "request_id": request_id,
+            "context_id": workflow_context_id or session_id,
+            "context_type": context_type,
+            "context_metadata": context_metadata,
+            "photo": initial_photo,
+            "render_style": render_style_data,
         }
         print(f"[InitState] initial_state 创建完成: {len(all_messages)} 条消息, pending_confirmation={initial_state.get('pending_confirmation') is not None}")
         for i, msg in enumerate(all_messages):
@@ -1836,7 +2032,7 @@ async def chat_endpoint(
 
                         proposal_error = (
                             output.get("proposal_error")
-                            if node_name == "proposal_generator"
+                            if node_name in {"proposal_generator", "tool_node"}
                             else None
                         )
                         if proposal_error and proposal_error != proposal_error_result:
@@ -1973,6 +2169,8 @@ async def chat_endpoint(
                             workflow_updates["status"] = "ready"
                     elif proposal_error_result:
                         workflow_updates["status"] = "error"
+                    if workflow_context_id:
+                        workflow_updates["context_id"] = workflow_context_id
                     workflow_state_result = await workflow_manager.update_state(
                         current_user.id,
                         task_id,

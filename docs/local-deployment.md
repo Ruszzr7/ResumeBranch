@@ -6,6 +6,7 @@
 - 后端：FastAPI/Uvicorn，`http://127.0.0.1:8000`
 - 数据库：本机 MySQL 8.4，数据库 `resume_assistant`
 - PDF：优先调用本机 Chrome/Edge 的无界面打印；WeasyPrint 69 + 隔离的 MSYS2/Pango 作为兼容回退
+- 视觉审查：按需复用导出 PDF，并在内存中由 pdf2image/Poppler 渲染最多两页 PNG；图片不写入对话历史
 - LLM：默认禁用，配置密钥后启用
 
 PDF 导出会依次查找 Chrome、Edge 或 Chromium。通常无需配置；如需指定浏览器，可将

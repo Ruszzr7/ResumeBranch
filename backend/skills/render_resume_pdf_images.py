@@ -1,0 +1,136 @@
+"""On-demand visual inspection of the current rendered resume.
+
+This capability deliberately has no persistence side effects.  It renders the
+same PDF source used by the export endpoint, rasterizes at most two pages in
+memory, and returns OpenAI-compatible image message parts for a vision-capable
+conversation model.
+"""
+
+from __future__ import annotations
+
+import base64
+import os
+import shutil
+import sys
+from io import BytesIO
+from pathlib import Path
+from typing import Any
+
+
+DEFAULT_MAX_PAGES = 2
+DEFAULT_DPI = 144
+
+
+def _find_poppler_bin() -> str | None:
+    """Resolve a Poppler directory containing real pdfinfo/pdftoppm binaries.
+
+    The local desktop runtime exposes Poppler through ``.cmd`` shims.  The
+    backend can be started by a detached process whose PATH does not contain
+    those shims, so resolution also checks the runtime cache and the Python
+    executable's nearby dependency tree without requiring a machine-specific
+    absolute path.
+    """
+    configured = str(os.environ.get("POPPLER_PATH", "") or "").strip()
+    candidates: list[Path] = [Path(configured)] if configured else []
+    for command in ("pdfinfo", "pdftoppm"):
+        resolved = shutil.which(command)
+        if not resolved:
+            continue
+        path = Path(resolved)
+        candidates.append(path.parent)
+        # The bundled Windows runtime exposes .cmd shims one level above the
+        # native Poppler binaries; resolve that layout without hard-coding a
+        # workspace path.
+        if path.suffix.lower() in {".cmd", ".bat"} and len(path.parents) >= 3:
+            candidates.append(path.parents[2] / "native" / "poppler" / "Library" / "bin")
+            candidates.append(path.parents[2] / "native" / "poppler" / "bin")
+
+    # When the detached backend does not inherit the desktop runtime PATH,
+    # locate the same bundled runtime relative to the current user or Python
+    # executable.  These are narrow, deterministic paths rather than a broad
+    # recursive filesystem scan.
+    runtime_roots = {
+        Path.home() / ".cache" / "codex-runtimes",
+        Path(sys.executable).resolve().parent.parent / ".cache" / "codex-runtimes",
+    }
+    for runtime_root in runtime_roots:
+        if not runtime_root.is_dir():
+            continue
+        for runtime_dir in runtime_root.iterdir():
+            candidates.extend([
+                runtime_dir / "dependencies" / "native" / "poppler" / "Library" / "bin",
+                runtime_dir / "dependencies" / "native" / "poppler" / "bin",
+            ])
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+        candidate = candidate.expanduser()
+        if (candidate / "pdfinfo.exe").is_file() and (candidate / "pdftoppm.exe").is_file():
+            return str(candidate)
+        if os.name != "nt" and (candidate / "pdfinfo").is_file() and (candidate / "pdftoppm").is_file():
+            return str(candidate)
+    return None
+
+
+def _pdf_pages_to_png_parts(pdf_bytes: bytes, *, max_pages: int, dpi: int) -> list[dict[str, Any]]:
+    """Rasterize PDF bytes without creating a user-visible file."""
+    if not pdf_bytes:
+        return []
+
+    try:
+        from pdf2image import convert_from_bytes
+    except ImportError as exc:  # pragma: no cover - exercised only in minimal deployments
+        raise RuntimeError("当前运行环境缺少 PDF 图片渲染依赖，请安装 pdf2image") from exc
+
+    images = convert_from_bytes(
+        pdf_bytes,
+        dpi=max(72, int(dpi)),
+        first_page=1,
+        last_page=max(1, int(max_pages)),
+        fmt="png",
+        thread_count=1,
+        poppler_path=_find_poppler_bin(),
+    )
+    parts: list[dict[str, Any]] = []
+    for image in images[: max(1, int(max_pages))]:
+        buffer = BytesIO()
+        image.save(buffer, format="PNG", optimize=True)
+        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+        parts.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/png;base64,{encoded}"},
+        })
+        image.close()
+    return parts
+
+
+def render_resume_pdf_images(
+    resume_data: dict,
+    layout_config: dict | None = None,
+    *,
+    photo: str | None = None,
+    render_style: dict | None = None,
+    max_pages: int = DEFAULT_MAX_PAGES,
+    dpi: int = DEFAULT_DPI,
+) -> list[dict[str, Any]]:
+    """Render the current resume PDF and return at most ``max_pages`` PNG parts.
+
+    The function is intentionally synchronous because the PDF renderer and
+    rasterizer are blocking libraries.  Callers in the async agent should use
+    ``asyncio.to_thread``.  No files, database rows, messages, or logs are
+    created by this skill.
+    """
+    from ..pdf_generator import generate_pdf
+
+    page_limit = max(1, min(int(max_pages or DEFAULT_MAX_PAGES), DEFAULT_MAX_PAGES))
+    pdf_bytes = generate_pdf(
+        resume_data or {},
+        style=render_style,
+        photo=photo,
+        layout_config=layout_config,
+    )
+    return _pdf_pages_to_png_parts(pdf_bytes, max_pages=page_limit, dpi=dpi)
+
+
+__all__ = ["render_resume_pdf_images"]

@@ -4,7 +4,7 @@
 
 核心设计原则：
 1. 状态驱动：单次执行状态通过 AgentState 传递，跨请求状态由应用数据库持久化
-2. 工具调用：只在必要时调用工具（save_resume_tool）
+2. 工具调用：只在必要时调用预览优先的修改技能
 3. 消息过滤：只传递 HumanMessage/AIMessage/SystemMessage 给 LLM，跳过 ToolMessage
 4. 无硬编码回复：所有 AI 回复由 LLM 生成，不使用硬编码内容
 5. 单LLM节点架构：conversation_llm 负责对话和工具调用决策
@@ -55,6 +55,8 @@ from .harness.interview import (
     run_interview_turn,
 )
 from .harness.observability import harness_metrics
+from .skills.resume_edit import ResumeEditOperationError, ResumeEditRequest, run_resume_edit
+from .skills.render_resume_pdf_images import render_resume_pdf_images
 
 
 def record_assistant_revision(
@@ -250,8 +252,14 @@ LLM_ENABLED = bool(LLM_API_KEY)
 # non-AI parts of the application bootable until a real key is configured.
 llm_client_api_key = LLM_API_KEY or "local-llm-disabled"
 
+# A complete candidate JSON can take longer than a normal conversational turn,
+# especially for long resumes. Keep one explicit request budget for both the
+# HTTP client and the skill boundary so the inner request is not cancelled by
+# a shorter transport timeout first.
+LLM_REQUEST_TIMEOUT_SECONDS = 180.0
+
 httpx_client = httpx.Client(
-    timeout=httpx.Timeout(90.0),
+    timeout=httpx.Timeout(LLM_REQUEST_TIMEOUT_SECONDS),
     limits=httpx.Limits(max_connections=20),
 )
 
@@ -270,6 +278,7 @@ def create_llm_for_config(
         "model": model,
         "http_client": httpx_client,
         "max_retries": 3,
+        "timeout": LLM_REQUEST_TIMEOUT_SECONDS,
     }
     effective_temperature = role_temperature(provider, model, temperature)
     if effective_temperature is not None:
@@ -404,14 +413,21 @@ CONVERSATION_PROMPT = """
 # 对话逻辑规则与输出风格
 1. **单点质询原则**：每次对话只输出一个核心问题的提问或一个具体的修改点，严禁一次性抛出多个问题分散用户注意力。
 2. **引导式提问**：若描述简略，严禁说“很棒”，应通过提问启发细节。例：“这个项目方向很有意思。你能细说下当时遇到最难的技术点是什么吗？或者你用什么指标衡量它的成功？”
-3. **确认修改**：当你给出了完整的优化建议、可以达到修改标准时，调用 `save_resume_tool`。此时，你的回复内容应包含完整的修改建议（用自然语言描述），然后调用工具。
+3. **确认修改**：当用户明确要求执行、应用或修改某个已经讨论清楚的方案时，调用 `request_resume_edit`；只分析、提问或给建议时不要调用修改工具。
 
 # 工具调用规则
-- **save_resume_tool**：当你给出了完整的优化建议、可以达到修改标准时，需要输出完整的修改建议（不要只输出部分的改动点，而是要输出要修改的部分的前后对比），且调用此工具。你需要将完整的简历JSON作为参数传入。调用后，系统会自动在前端显示确认框，**用户点击确认后才会实际保存到简历库**。
+- **save_resume_tool**：仅为旧版完整 JSON 保存链路保留。正常的内容或排版修改不要调用它，统一调用 `request_resume_edit`，避免主模型直接构造并保存候选。
+- **request_resume_edit**：这是通用的预览优先修改技能入口。你必须先结合当前简历、当前布局、当前任务上下文和此前建议，解析用户的真实意图与指代，再传入结构化操作；技能不会再次调用模型，也不会猜测自然语言。参数必须是：
+  - `resume_operations`：对简历内容的操作列表；`layout_operations`：对排版配置的操作列表。没有对应修改时传空列表。
+  - 每项操作使用 `{"op":"set|replace|append|insert|remove|move", "path":"字段路径", ...}`。`set/replace` 需要 `value`；`append` 需要列表路径和 `value`；`insert` 还需要 `index`；`remove` 使用目标路径，或使用列表路径加 `index`；`move` 使用列表路径、`from_index` 和 `to_index`。必要时加 `expected` 做并发保护。
+  - 路径只使用当前简历/布局中已存在的字段，例如 `basics.name`、`education[0].major`、`project_experience[0].content_blocks[1].items`、`global.sectionOrder`。只发送本次明确要求的操作，其他内容不得重写；不要发送完整简历或完整布局 JSON。
+  - 字号和字体仍由专用排版设置管理，不要生成相关操作；不得生成 CSS、坐标或任意新字段。
+  - 主模型负责解析“第 1 点”等上下文指代。若指代或目标仍不明确，先向用户澄清，不要调用工具；不要把原始短句、混合咨询内容或整段聊天传给技能。
+- 用户一次消息同时包含“执行某点”和新的咨询问题时，只把明确执行的部分整理进对应的操作列表，其余咨询保留在当前对话中，不要顺手修改。
 - **输出措辞注意**：当你调用 `save_resume_tool` 时，你的回复内容应该说"上述修改方案已准备好，请在下方确认框中确认是否应用（确认框可能稍有延迟，请耐心等待，确认框出现前不要离开或刷新当前页面以免丢失聊天记录）"或"以上是我对你的简历的修改建议，请在下方确认框中确认是否修改到简历库？（确认框显示可能稍有延迟，请耐心等待）"之类的话术，**绝对不能说"已保存"、"已同步"、"已修改"、"已经更新到简历库"等**，因为此时还需要用户确认，简历还没有实际被修改。
 - **内容一致性约束**：你调用 `save_resume_tool` 时传入的JSON参数内容，必须与你的文字回复中描述的修改内容保持一致。文字描述是修改建议的展示形式，JSON是修改建议的数据形式，两者描述的是同一份修改。如果发现不一致，以JSON中的内容为准修正你的文字回复。
 - **教育成绩字段约束**：用户提到“GPA”“绩点”“平均绩点”时写入 `gpa`，满分写入 `gpa_scale`；“专业排名/年级排名”写入 `ranking`。这些内容绝对不能写入 `theses`。
-- 当调用工具时，传入的JSON格式如下：
+- 当调用旧版 `save_resume_tool` 时，传入的JSON格式如下（正常修改不要使用该工具）：
 ```json
 {
   "basics": {
@@ -643,7 +659,9 @@ def normalize_and_validate_resume(data: dict, *, include_defaults: bool = False)
 @tool
 def save_resume_tool(content: str = "", user_id: int = None, task_id: str = None) -> str:
     """
-    将格式化后的简历数据保存到数据库
+    旧版兼容工具：不要在正常对话中主动调用，正常修改必须交给 request_resume_edit。
+
+    将格式化后的简历数据保存到数据库。
 
     Args:
         content: JSON 格式的简历数据
@@ -697,8 +715,25 @@ def save_resume_tool(content: str = "", user_id: int = None, task_id: str = None
         return f"保存失败：{str(e)}"
 
 
-# 工具列表 - conversation_llm 只能调用 save_resume_tool
-conversation_tools = [save_resume_tool]
+@tool
+def request_resume_edit(
+    resume_operations: list[dict] | None = None,
+    layout_operations: list[dict] | None = None,
+) -> str:
+    """把主对话模型已解析的结构化修改操作交给预览优先的修改技能。
+
+    该工具只接受结构化操作，不接受自然语言指令；技能会生成候选并
+    等待用户确认，确认前不会写入简历。
+    """
+    # The graph intercepts this tool before invocation.  Returning a stable
+    # message keeps direct/unit invocations safe and makes accidental execution
+    # without an AgentState a no-op.
+    return "已收到结构化修改指令，系统将先生成确认预览。"
+
+
+# conversation_llm may either answer normally or delegate a resolved edit to
+# the preview-only skill.  Persistence remains exclusively behind confirmation.
+conversation_tools = [save_resume_tool, request_resume_edit]
 
 
 # =============================================================================
@@ -736,6 +771,11 @@ class AgentState:
     interaction_mode: str = ""  # diagnosis/coaching/jd_review；空值沿用旧链路
     interaction_action: str = ""  # start/answer/pause/resume/end/apply
     request_id: str = ""
+    context_id: str = ""
+    context_type: str = "main"
+    context_metadata: dict = None  # 小型任务元数据，不保存图片或完整对话
+    photo: str = ""  # 证件照独立存储时仍需参与当前 PDF 快照渲染
+    render_style: dict = None  # 当前浏览器预览的临时导出样式，仅用于视觉快照
 
 
 # =============================================================================
@@ -793,6 +833,12 @@ def extract_user_intent(state: AgentState) -> str:
 _CHANGE_ACTION_RE = re.compile(
     r"(?:修改|更改|改为|改成|替换|更新|填写|写入|新增|添加|删除|移除|补充|优化|调整|设置|设为|变更)"
 )
+_MISSION_POINT_RE = re.compile(
+    r"(?:第\s*[0-9一二三四五六七八九十百]+\s*[点条项]|问题\s*[0-9一二三四五六七八九十百]+|上述|前面|这(?:一|几)点|该建议|这些建议)"
+)
+_MISSION_ACTION_RE = re.compile(
+    r"(?:执行|应用|采纳|落实|采用|按(?:照)?|根据|修改|调整|改写|重写|改成|更新|删除|移除|补充|新增|恢复|移动|放到|并入)"
+)
 _COACHING_INTENT_RE = re.compile(
     r"(?:诊断|点评|评估|审阅|审查|分析|拷打|追问|模拟面试官|修改建议|优化建议|"
     r"不足之处|不足|短板|问题在哪里|匹配度|怎么改|如何改|怎样改|如何修改|"
@@ -824,6 +870,52 @@ _FONT_SIZE_CHANGE_RE = re.compile(
     r"(?:字号|字体大小).{0,10}(?:修改|更改|调整|设置|改成|改为|调到|设为|\d+(?:\.5)?\s*(?:磅|pt)))",
     re.I,
 )
+
+_VISUAL_RESUME_REQUEST_RE = re.compile(
+    r"(?:排版|布局|视觉|页面|预览|截图|照片|图片|空白|对齐|溢出|重叠|分割线|间距|边距|换行|分页|位置|效果|看起来)",
+    re.I,
+)
+
+
+def should_render_resume_pdf_images(message: str, context_type: str = "main") -> bool:
+    """Decide whether the conversation actually needs a rendered visual view."""
+    text = str(message or "").strip()
+    if not text or "[CONFIRM_REPLY:" in text:
+        return False
+    if str(context_type or "main").strip().lower() == "layout":
+        return True
+    return bool(_VISUAL_RESUME_REQUEST_RE.search(text))
+
+
+def _attach_visual_resume_parts(messages: list, image_parts: list[dict]) -> list:
+    """Attach ephemeral PDF page images to the latest human message."""
+    if not image_parts:
+        return messages
+    result = list(messages)
+    for index in range(len(result) - 1, -1, -1):
+        message = result[index]
+        if not isinstance(message, HumanMessage):
+            continue
+        content = getattr(message, "content", "") or ""
+        if isinstance(content, str):
+            parts = [{"type": "text", "text": content}]
+        elif isinstance(content, list):
+            parts = list(content)
+        else:
+            parts = [{"type": "text", "text": str(content)}]
+        parts.append({
+            "type": "text",
+            "text": "以下是当前简历由同一份简历数据、排版配置和证件照渲染出的 PDF 页面图片，仅用于回答本轮视觉问题；不要把图片内容当作新增简历事实。",
+        })
+        for page_index, image_part in enumerate(image_parts, start=1):
+            parts.append({
+                "type": "text",
+                "text": f"当前简历 PDF 第 {page_index} 页：",
+            })
+            parts.append(image_part)
+        result[index] = HumanMessage(content=parts)
+        break
+    return result
 
 
 def is_resume_coaching_request(message: str) -> bool:
@@ -883,6 +975,24 @@ def is_explicit_resume_change_request(message: str) -> bool:
     # path. Mixed data + presentation requests may still produce a data preview.
     data_without_style = _STYLE_ONLY_RE.sub("", text)
     return bool(_RESUME_DATA_FIELD_RE.search(data_without_style))
+
+
+def is_mission_resume_edit_request(message: str, context_type: str = "main") -> bool:
+    """Route a clear mission follow-up to the preview-first edit capability.
+
+    A mission can contain analysis and recommendations as ordinary chat. Only
+    an action verb paired with a point reference or a concrete resume field is
+    treated as an edit request; this prevents a recommendation such as
+    “分析第 1 点” from opening a confirmation preview.
+    """
+    text = str(message or "").strip()
+    if not text or context_type in {"", "main"} or "[CONFIRM_REPLY:" in text:
+        return False
+    if not _MISSION_ACTION_RE.search(text):
+        return False
+    if _MISSION_POINT_RE.search(text):
+        return True
+    return bool(_RESUME_DATA_FIELD_RE.search(text))
 
 
 def is_inline_format_request(message: str) -> bool:
@@ -1397,69 +1507,28 @@ async def direct_edit_node(state: AgentState) -> dict:
 
 
 async def proposal_generator_node(state: AgentState) -> dict:
-    """Generate one structured candidate for a complex explicit edit request."""
+    """Legacy graph entry kept for compatibility; normal routing uses the tool path."""
     start_time = time.time()
-    request_text = latest_human_text(state)
     current = normalize_resume_data(state.resume_data or {})
     current_layout = normalize_layout_config(state.layout_data)
-    prompt = f"""你是简历内容与排版配置生成器。请根据用户的明确要求输出一个 JSON 对象，包含 resume_data 和 layout_config。
-
-严格规则：
-1. 只输出一个完整 JSON 对象，不要输出解释、Markdown 或代码块；格式必须是 {{"resume_data": 完整简历, "layout_config": 完整布局配置}}。
-2. 未被用户要求修改的内容必须原样保留，不得编造经历或事实。
-3. GPA 数值写入 gpa，满分写入 gpa_scale，排名写入 ranking；论文写入顶层 publications。
-4. 如果用户同时提出多项修改，必须一次性体现在同一份完整简历中。
-5. 排版只能修改给定 layout_config 已存在的键和值；禁止输出 CSS、HTML、坐标或新增字段。
-6. 回复用户时必须把 paragraph、bullet_list、numbered_list 分别称为“段落、分点、编号”，不得展示这些内部英文值。
-7. 可选值：density=compact/standard/comfortable；titleStyle=underline/plain；basics.preset=centered/left-aligned；contactLayout=inline/stacked；education.preset=classic/compact/three-column；schoolTagStyle=filled/outline/text/hidden；metricsPlacement=below/with-degree/info-column；work/project preset=classic/compact；detailsStyle=bullets/paragraph；datePosition=right/inline；others.preset=inline/tags/stacked；self_evaluation.preset=paragraphs/bullets/compact。
-8. 字号只能由用户在字号设置弹窗中选择；必须原样保留 global.fontSize 和 typography.fontSizes，不得根据对话修改字号。
-
-当前简历：
-{json.dumps(current, ensure_ascii=False, indent=2)}
-
-当前布局配置：
-{json.dumps(current_layout, ensure_ascii=False, indent=2)}
-
-{CONTENT_STRUCTURE_GUIDANCE}
-
-{build_layout_context(current_layout)}
-
-当前目标岗位 JD：
-{json.dumps(state.jd_data or {}, ensure_ascii=False, indent=2)}
-
-用户要求：
-{request_text}
-"""
 
     try:
-        async with asyncio.timeout(90.0):
-            response = await conversation_llm.ainvoke([
-                SystemMessage(content="你只负责生成严格、完整、可校验的简历与受控布局 JSON。"),
-                HumanMessage(content=prompt),
-            ])
-        candidate, layout_candidate = parse_edit_candidate(response.content, current, current_layout)
-        # Font sizes are modal-only. Even a drifting proposal model cannot
-        # smuggle size changes into an unrelated content/layout confirmation.
-        layout_candidate["global"]["fontSize"] = current_layout["global"]["fontSize"]
-        layout_candidate["typography"]["fontSizes"] = deepcopy(current_layout["typography"]["fontSizes"])
-        layout_candidate = normalize_layout_config(layout_candidate)
-        changes = build_resume_changes(current, candidate) + build_layout_changes(current_layout, layout_candidate)
-        if not changes:
-            pending = None
-            assistant_message = AIMessage(content="当前简历已经符合这项要求，没有需要应用的修改。")
-        else:
-            pending = make_pending_confirmation(state, candidate, layout_candidate)
-            assistant_message = AIMessage(content=_preview_summary(changes))
+        metadata = state.context_metadata or {}
+        preview = await _generate_resume_edit_preview(
+            state,
+            metadata.get("resume_operations", ()),
+            metadata.get("layout_operations", ()),
+        )
         print(
             f"[proposal_generator] 完成, 耗时={time.time() - start_time:.2f}s, "
-            f"changes={len(changes)}"
+            f"pending={bool(preview.get('pending_confirmation'))}"
         )
         return {
-            "messages": list(state.messages) + [assistant_message],
+            "messages": list(state.messages) + [AIMessage(content=preview.get("message", ""))],
             "resume_data": current,
             "jd_data": state.jd_data or {},
             "layout_data": current_layout,
-            "pending_confirmation": pending,
+            "pending_confirmation": preview.get("pending_confirmation"),
             "proposal_error": None,
             "just_saved": False,
             "user_id": state.user_id,
@@ -1478,6 +1547,59 @@ async def proposal_generator_node(state: AgentState) -> dict:
             "user_id": state.user_id,
             "task_id": state.task_id,
         }
+
+
+def _coerce_resume_edit_operations(value, *, field_name: str) -> tuple[dict, ...]:
+    """Accept only JSON-shaped operation lists from the tool call."""
+    if value in (None, "", []):
+        return ()
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ResumeEditOperationError(f"{field_name} 必须是结构化操作列表") from exc
+    if isinstance(value, dict):
+        value = [value]
+    if not isinstance(value, (list, tuple)) or not all(isinstance(item, dict) for item in value):
+        raise ResumeEditOperationError(f"{field_name} 必须是结构化操作列表")
+    return tuple(deepcopy(item) for item in value)
+
+
+async def _generate_resume_edit_preview(
+    state: AgentState,
+    resume_operations=(),
+    layout_operations=(),
+) -> dict:
+    """Run the generic edit skill with model-resolved operations only."""
+    current = normalize_resume_data(state.resume_data or {})
+    current_layout = normalize_layout_config(state.layout_data)
+    edit_result = await run_resume_edit(
+        ResumeEditRequest(
+            resume_data=current,
+            layout_config=current_layout,
+            resume_operations=tuple(resume_operations or ()),
+            layout_operations=tuple(layout_operations or ()),
+            target_paths=(),
+            base_revision=resume_digest(current),
+        ),
+    )
+    candidate = edit_result.resume_data
+    layout_candidate = edit_result.layout_config
+    changes = build_resume_changes(current, candidate) + build_layout_changes(current_layout, layout_candidate)
+    if not changes:
+        return {
+            "pending_confirmation": None,
+            "message": "当前简历已经符合这项要求，没有需要应用的修改。",
+            "resume_data": current,
+            "layout_data": current_layout,
+        }
+    pending = make_pending_confirmation(state, candidate, layout_candidate)
+    return {
+        "pending_confirmation": pending,
+        "message": _preview_summary(changes),
+        "resume_data": current,
+        "layout_data": current_layout,
+    }
 
 
 async def interview_coach_node(state: AgentState) -> dict:
@@ -1622,7 +1744,32 @@ async def conversation_node(state: AgentState) -> dict:
         coaching_mode=coaching_mode,
         just_saved=getattr(state, "just_saved", False),
         memory_summary=getattr(state, "memory_summary", "") or "",
+        context_type=getattr(state, "context_type", "main") or "main",
+        context_metadata=getattr(state, "context_metadata", None) or {},
     )
+    base_messages = messages
+    visual_attached = False
+    if should_render_resume_pdf_images(
+        latest_request,
+        getattr(state, "context_type", "main") or "main",
+    ):
+        try:
+            image_parts = await asyncio.to_thread(
+                render_resume_pdf_images,
+                state.resume_data or {},
+                state.layout_data,
+                photo=getattr(state, "photo", "") or None,
+                render_style=getattr(state, "render_style", None) or None,
+                max_pages=2,
+            )
+        except Exception as exc:
+            image_parts = []
+            print(f"[conversation_llm] 当前简历视觉渲染失败，继续使用文字上下文: {exc}")
+            harness_metrics.increment("resume_visual_render_fallbacks_total")
+        if image_parts:
+            messages = _attach_visual_resume_parts(messages, image_parts)
+            visual_attached = True
+            print(f"[conversation_llm] 已按需附加 {len(image_parts)} 页 PDF PNG 视觉上下文")
     
     # 计算实际发送给 LLM 的 tokens 总数
     llm_input_tokens = 0
@@ -1648,7 +1795,18 @@ async def conversation_node(state: AgentState) -> dict:
         # 不要添加 stop 序列，否则可能导致工具名称被截断
         # 增加超时时间到120秒，因为上下文可能较大
         async with asyncio.timeout(120.0):
-            response = await model.ainvoke(messages)
+            try:
+                response = await model.ainvoke(messages)
+            except Exception:
+                if not visual_attached:
+                    raise
+                # A configured chat model may not support image inputs.  Retry
+                # once with the exact text context so ordinary conversation
+                # remains usable instead of turning visual inspection into a
+                # hard failure.
+                print("[conversation_llm] 视觉输入未被当前模型接受，回退到纯文字上下文")
+                harness_metrics.increment("resume_visual_model_fallbacks_total")
+                response = await model.ainvoke(base_messages)
     except asyncio.TimeoutError:
         print(f"[conversation_llm] LLM 调用超时! messages 数量: {len(messages)}")
         raise TimeoutError("LLM 调用超时，请稍后重试")
@@ -1750,8 +1908,8 @@ async def tool_node(state: AgentState) -> dict:
     """
     工具执行节点
 
-    执行 LLM 调用的工具（如 save_resume_tool）
-    支持延迟确认流程：当调用 save_resume_tool 时，不立即保存，而是触发前端确认
+    执行 LLM 调用的工具并生成预览
+    支持延迟确认流程：修改工具不会立即保存，而是触发前端确认
     """
     print(f"\n=== [Node] tool_node [被调用] ===")
     print(f"state.messages 数量: {len(state.messages)}")
@@ -2021,6 +2179,7 @@ async def tool_node(state: AgentState) -> dict:
     new_messages = []
     updated_resume_data = None  # 用于保存从工具参数中提取的简历数据
     pending_confirmation = None  # 用于触发确认按钮
+    proposal_error = None
 
     for tool_call in last_message.tool_calls:
         # 兼容不同版本的 tool_call 格式
@@ -2036,6 +2195,13 @@ async def tool_node(state: AgentState) -> dict:
         elif isinstance(tool_call, dict) and 'args' in tool_call:
             tool_args = tool_call['args']
         else:
+            tool_args = {}
+        if isinstance(tool_args, str):
+            try:
+                tool_args = json.loads(tool_args)
+            except (TypeError, json.JSONDecodeError):
+                tool_args = {}
+        if not isinstance(tool_args, dict):
             tool_args = {}
 
         # 查找工具函数
@@ -2074,6 +2240,43 @@ async def tool_node(state: AgentState) -> dict:
                         }
                         result = f"[CONFIRM_MARKER:{json.dumps(marker)}]"
                         print(f"[Tool] 生成确认标记，confirm_id={confirm_id}")
+                elif tool_name == 'request_resume_edit':
+                    try:
+                        nested_operations = tool_args.get("operations")
+                        if isinstance(nested_operations, dict):
+                            nested_resume = nested_operations.get("resume_operations", ())
+                            nested_layout = nested_operations.get("layout_operations", ())
+                        else:
+                            nested_resume = nested_layout = ()
+                        resume_operations = _coerce_resume_edit_operations(
+                            tool_args.get("resume_operations", nested_resume),
+                            field_name="resume_operations",
+                        )
+                        layout_operations = _coerce_resume_edit_operations(
+                            tool_args.get("layout_operations", nested_layout),
+                            field_name="layout_operations",
+                        )
+                        # Legacy natural-language arguments are intentionally
+                        # rejected rather than sent to another model.
+                        if not resume_operations and not layout_operations and tool_args.get("instruction"):
+                            raise ResumeEditOperationError(
+                                "主模型未提供结构化修改操作，不能把自然语言直接交给修改技能"
+                            )
+                        preview = await _generate_resume_edit_preview(
+                            state,
+                            resume_operations,
+                            layout_operations,
+                        )
+                    except Exception as exc:
+                        print(
+                            "[Tool] resume_edit 预览生成失败: "
+                            f"{type(exc).__name__}: {exc}"
+                        )
+                        proposal_error = "本次修改无法安全生成确认预览，系统未对简历做任何更改。"
+                        result = proposal_error
+                    else:
+                        pending_confirmation = preview.get("pending_confirmation")
+                        result = preview.get("message", "已生成修改预览。")
                 else:
                     # 其他工具直接执行
                     result = tool_func.invoke(tool_args)
@@ -2114,6 +2317,7 @@ async def tool_node(state: AgentState) -> dict:
         "resume_data": updated_resume_data if updated_resume_data else (state.resume_data or {}),
         "jd_data": state.jd_data or {},
         "pending_confirmation": pending_confirmation,
+        "proposal_error": proposal_error,
         "just_saved": saved_resume,
         "user_id": state.user_id,
         "task_id": state.task_id,
@@ -2193,10 +2397,9 @@ def entry_router(state: AgentState) -> str:
     START 节点的路由决策
 
     Returns:
-        'conversation_llm': 普通对话
+        'conversation_llm': 普通对话或由主模型解析后调用修改技能
         'tool_node': 确认按钮点击
         'direct_edit': 可确定解析的字段赋值
-        'proposal_generator': 复杂的明确修改请求
     """
     if not state.messages:
         return "conversation_llm"
@@ -2212,6 +2415,11 @@ def entry_router(state: AgentState) -> str:
         return "tool_node"
 
     user_request = latest_human_text(state)
+    if is_mission_resume_edit_request(
+        user_request,
+        getattr(state, "context_type", "main") or "main",
+    ):
+        return "conversation_llm"
     if is_font_size_chat_change_request(user_request):
         return "direct_edit"
     if is_inline_format_request(user_request):
@@ -2226,7 +2434,7 @@ def entry_router(state: AgentState) -> str:
                 return "direct_edit"
         except Exception as exc:
             print(f"[Route] 本地解析不可用，转入结构化生成: {exc}")
-        return "proposal_generator"
+        return "conversation_llm"
 
     return "conversation_llm"
 
@@ -2239,6 +2447,9 @@ graph_builder.set_conditional_entry_point(entry_router)
 def tool_node_router(state: AgentState) -> str:
     # 如果有待确认状态，返回 END（等待前端确认）
     if getattr(state, 'pending_confirmation', None):
+        return END
+
+    if getattr(state, "proposal_error", None):
         return END
 
     # 所有确认结果都是确定性操作，不再调用 LLM。否则模型可能错误总结

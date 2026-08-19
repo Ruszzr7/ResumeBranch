@@ -170,7 +170,7 @@ const educationSupplementValues = computed(() => {
     ...manual
   ]
   return educationSupplementStyle.value === 'paragraph' && values.length
-    ? [values.join('')]
+    ? [values.join('\n')]
     : values
 })
 const educationSupplementStyle = computed(() => moduleLayout('education').supplementListStyle || 'bullet')
@@ -190,7 +190,7 @@ const selfEvaluationValues = computed(() => {
   const values = (props.data?.self_evaluation || [])
     .map(value => String(value || '').trim())
     .filter(Boolean)
-  return moduleListStyle('self_evaluation') === 'paragraph' && values.length ? [values.join('')] : values
+  return moduleListStyle('self_evaluation') === 'paragraph' && values.length ? [values.join('\n')] : values
 })
 
 const showSourceDocument = ref(false)
@@ -399,7 +399,7 @@ function listValuesForStyle(values, listStyle) {
     .map(value => String(value || '').trim())
     .filter(Boolean)
   return listStyle === 'paragraph' && normalized.length
-    ? [normalized.join('')]
+    ? [normalized.join('\n')]
     : normalized
 }
 
@@ -452,7 +452,7 @@ function visibleOtherComponentRows() {
   })).filter(row => row.cells.length)
 }
 
-const emit = defineEmits(['open-jd-dialog', 'open-resume-edit', 'open-resume-import', 'toggle-lang', 'use-layout-prompt', 'layout-updated'])
+const emit = defineEmits(['open-jd-dialog', 'open-resume-edit', 'open-resume-import', 'toggle-lang', 'use-layout-prompt', 'layout-updated', 'render-style-updated'])
 
 const SECTION_LABELS = {
   education: '教育经历', skills: '专业技能', research_interests: '研究方向', honors: '主要荣誉',
@@ -707,6 +707,26 @@ const fontSizeSaveError = ref('')
 const overflowBeyondPageLimit = ref(false)
 const pageBreakBefore = ref('')
 const spacingSnapshot = ref(null)
+
+// Keep the exact browser pagination/style payload used by document export
+// available to visual analysis. Without this, the snapshot renderer falls
+// back to its default pagination and can disagree with the visible preview.
+const currentRenderStyle = () => ({
+  marginTop: marginVertical.value,
+  marginBottom: marginVertical.value,
+  marginLeft: marginHorizontal.value,
+  marginRight: marginHorizontal.value,
+  moduleMargin: moduleMargin.value,
+  lineHeight: lineHeight.value,
+  fontSize: fontSize.value,
+  pageMode: 'auto',
+  sourcePageCount: Number(props.sourcePageCount || 1),
+  pageBreakBefore: pageBreakBefore.value
+})
+
+const emitCurrentRenderStyle = () => {
+  emit('render-style-updated', currentRenderStyle())
+}
 
 function layoutStorageKey() {
   return props.taskId ? `resume-layout:${props.taskId}` : ''
@@ -1197,6 +1217,7 @@ function applyAutomaticPagination(elementHeights, capacity) {
   pageCount.value = Math.max(1, visibleRanges.length)
   const secondPageItem = visibleRanges.length > 1 ? allItems.value[visibleRanges[1].start] : null
   pageBreakBefore.value = secondPageItem?.breakKey || ''
+  emitCurrentRenderStyle()
 }
 
 const isInternship = item => /实习|intern/i.test(String(item?.job_type || ''))
@@ -1359,6 +1380,8 @@ const calculatePagination = async () => {
   if (!props.data || !contentRef.value) {
     pageRanges.value = []
     pageCount.value = 1
+    pageBreakBefore.value = ''
+    emitCurrentRenderStyle()
     return
   }
 
@@ -1380,6 +1403,8 @@ const calculatePagination = async () => {
 
   if (children.length === 0) {
     pageCount.value = 1
+    pageBreakBefore.value = ''
+    emitCurrentRenderStyle()
     return
   }
 
@@ -1430,6 +1455,7 @@ watch([() => props.data, () => props.sourcePageCount, renderLayout, marginVertic
   }, { deep: true })
 
 watch([marginVertical, marginHorizontal, moduleMargin, lineHeight, fontSize], saveLayoutSettings)
+watch([marginVertical, marginHorizontal, moduleMargin, lineHeight, fontSize, pageBreakBefore, () => props.sourcePageCount], emitCurrentRenderStyle, { immediate: true })
 watch(() => props.layoutConfig, () => {
   syncingLayoutProps = true
   localSectionOrder.value = [...normalizeLayoutConfig(props.layoutConfig).global.sectionOrder]
@@ -1548,10 +1574,10 @@ const formatText = (text) => {
   return formatInlineHtml(text)
 }
 
-// Paragraph mode treats authored line boundaries as editor-only separators.
-// Remove the boundary and surrounding whitespace at render time so HTML does
-// not collapse it into a visible space; the source text remains unchanged.
-const paragraphText = value => String(value ?? '').replace(/\s*\r?\n\s*/g, '')
+// Paragraph mode keeps authored line boundaries as left-aligned line breaks.
+// The source text remains unchanged so switching back to a list can split it
+// into the original items again.
+const paragraphText = value => String(value ?? '').replace(/\r\n?/g, '\n')
 
 // ========== 导出PDF（调用后端API，使用WeasyPrint生成矢量PDF）============
 const showSuccessDialog = ref(false)
@@ -1572,19 +1598,8 @@ const exportDocument = async (format) => {
   if (isPDF) isExportingPDF.value = true
   else isExportingDOCX.value = true
   try {
-    // 构建样式参数
-    const style = {
-      marginTop: marginVertical.value,
-      marginBottom: marginVertical.value,
-      marginLeft: marginHorizontal.value,
-      marginRight: marginHorizontal.value,
-      moduleMargin: moduleMargin.value,
-      lineHeight: lineHeight.value,
-      fontSize: fontSize.value,
-      pageMode: 'auto',
-      sourcePageCount: Number(props.sourcePageCount || 1),
-      pageBreakBefore: pageBreakBefore.value
-    }
+    // Export and visual analysis use the same style payload.
+    const style = currentRenderStyle()
 
     // 调用后端API
     const response = await fetch(isPDF ? '/export_pdf' : '/export_docx', {
@@ -3468,6 +3483,16 @@ const getItemIndex = (type, dataIndex) => {
 .generic-list-item.list-style-bullet::before { width: 0.9em; text-align: center; }
 .generic-list-item.list-style-numbered { padding-left: calc(var(--module-indent) + 2em); }
 .generic-list-item.list-style-paragraph::before { content: none; }
+.generic-list-item.list-style-paragraph,
+.project-paragraph,
+.self-eval-item.list-style-paragraph {
+  text-align: left;
+  text-justify: auto;
+  white-space: pre-line;
+}
+.generic-list-item.skill-list-item {
+  white-space: pre-line;
+}
 .page-content .section-title,
 .content-source .section-title,
 .print-container .section-title {
@@ -3517,6 +3542,12 @@ const getItemIndex = (type, dataIndex) => {
 .self-eval-item {
   text-align: justify;
   text-justify: inter-ideograph;
+}
+.project-paragraph,
+.self-eval-item.list-style-paragraph {
+  text-align: left;
+  text-justify: auto;
+  white-space: pre-line;
 }
 .project-numbered-list {
   list-style: none;

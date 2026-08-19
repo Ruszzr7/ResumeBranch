@@ -76,7 +76,7 @@ const closePreview = () => {
 }
 
 // 确认按钮事件
-const emit = defineEmits(['optionClick', 'undoClick'])
+const emit = defineEmits(['optionClick', 'undoClick', 'contextClick'])
 
 const changes = computed(() => props.message.changes || [])
 const selectedChangeIds = ref([])
@@ -94,6 +94,17 @@ const handleOptionClick = (option) => {
 }
 
 const handleUndoClick = () => emit('undoClick', { message_id: props.message.id })
+
+const isContextClosed = computed(() => (
+  props.message.type === 'context_event'
+  && (props.message.action === 'closed' || props.message.status === 'closed')
+))
+
+const handleContextClick = () => {
+  if (!isContextClosed.value) {
+    emit('contextClick', { context_id: props.message.context_id })
+  }
+}
 </script>
 
 <template>
@@ -105,9 +116,22 @@ const handleUndoClick = () => emit('undoClick', { message_id: props.message.id }
     :class="{
       'chat-message--user': props.message.role === 'user' && props.message.role !== '',
       'chat-message--assistant': props.message.role === 'assistant' || props.message.role === '',
-      'chat-message--confirm': props.message.type === 'confirm'
+    'chat-message--confirm': props.message.type === 'confirm'
     }"
   >
+    <div
+      v-if="props.message.type === 'context_event'"
+      :class="['context-event-card', { 'context-event-card--closed': isContextClosed }]"
+      @click="handleContextClick"
+    >
+      <span class="context-event-dot" aria-hidden="true"></span>
+      <span class="context-event-copy">
+        <strong>{{ props.message.title || '任务会话' }}</strong>
+        <span>{{ props.message.content }}</span>
+      </span>
+      <span class="context-event-link">{{ isContextClosed ? '已关闭' : '打开' }}</span>
+    </div>
+
     <!-- 确认按钮区域（独立渲染，不在消息气泡内） -->
     <!-- 只有当消息未被处理过时才显示 -->
     <div v-if="props.message.type === 'confirm' && props.message.confirm_id && !props.message.handled" class="confirm-area">
@@ -168,7 +192,7 @@ const handleUndoClick = () => emit('undoClick', { message_id: props.message.id }
 
     <!-- 消息内容 - 无头像（confirm 类型不显示） -->
     <div
-      v-if="props.message.type !== 'confirm' && props.message.type !== 'undo'"
+      v-if="props.message.type !== 'confirm' && props.message.type !== 'undo' && props.message.type !== 'context_event'"
       class="chat-message__content"
       :class="{
         'chat-message__content--user': props.message.role === 'user' && props.message.role !== '',
@@ -251,6 +275,86 @@ const handleUndoClick = () => emit('undoClick', { message_id: props.message.id }
   min-width: 0;
   margin-bottom: 12px;
   align-items: flex-start;
+}
+
+.context-event-card {
+  width: min(100%, 520px);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 12px;
+  border: 1px solid rgba(120, 166, 255, 0.18);
+  border-radius: 10px;
+  background: rgba(120, 166, 255, 0.065);
+  color: #cdd4e7;
+  cursor: pointer;
+}
+
+.context-event-card:hover {
+  border-color: rgba(120, 166, 255, 0.42);
+  background: rgba(120, 166, 255, 0.1);
+}
+
+.context-event-card--closed {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.035);
+  color: #949aaa;
+  cursor: default;
+  opacity: 0.72;
+}
+
+.context-event-card--closed:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.context-event-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #78a6ff;
+  box-shadow: 0 0 7px rgba(120, 166, 255, 0.55);
+}
+
+.context-event-card--closed .context-event-dot {
+  background: #878d9a;
+  box-shadow: none;
+}
+
+.context-event-copy {
+  min-width: 0;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.context-event-copy strong {
+  color: #f0f2f8;
+  font-size: 0.78rem;
+}
+
+.context-event-card--closed .context-event-copy strong {
+  color: #b0b5c1;
+}
+
+.context-event-copy span {
+  overflow: hidden;
+  color: #aeb6ca;
+  font-size: 0.72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-event-link {
+  color: #8eb5ff;
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+
+.context-event-card--closed .context-event-link {
+  color: #858b99;
 }
 
 /* 用户消息样式 - 右对齐 */

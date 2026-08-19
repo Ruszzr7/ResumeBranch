@@ -6,7 +6,7 @@ from langchain_core.runnables import RunnableLambda
 
 from backend.harness.context import build_system_content
 from backend.harness.memory import CompressionState, build_layered_memory, partition_memory_window
-from backend.harness.persistence import persist_turn_state
+from backend.harness.persistence import latest_numbered_recommendation, persist_turn_state
 from backend.layout_config import default_layout_config
 
 
@@ -60,6 +60,41 @@ class HarnessModuleTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("项目简介", content)
         self.assertIn("项目职责", content)
         self.assertIn('"lineHeight": 1.25', content)
+
+    def test_layout_advice_uses_current_content_and_latest_numbered_snapshot(self):
+        content = build_system_content(
+            "简历：{{resume_data}}\nJD：{{jd_data}}",
+            {"basics": {"name": "张三"}, "education": []},
+            {},
+            layout_data=default_layout_config(),
+            coaching_mode=False,
+            context_type="layout",
+            context_metadata={"latest_recommendations": "1. 只处理当前简历真实存在的问题。"},
+        )
+        self.assertIn("当前任务最近一次编号建议", content)
+        self.assertIn("根据当前简历数据与快照", content)
+        self.assertIn("只处理当前简历真实存在的问题", content)
+        self.assertNotIn("三端导出一致性", content)
+
+    def test_latest_numbered_recommendation_ignores_non_numbered_chat(self):
+        self.assertEqual(
+            latest_numbered_recommendation([
+                AIMessage(content="当前排版整体清晰，没有需要处理的问题。"),
+            ]),
+            "",
+        )
+        self.assertIn(
+            "1. 只处理",
+            latest_numbered_recommendation([
+                AIMessage(content="1. 只处理当前简历真实存在的问题。\n2. 再看间距。"),
+            ]),
+        )
+        self.assertIn(
+            "**1.",
+            latest_numbered_recommendation([
+                AIMessage(content="**1. 先处理分页问题。**\n**2. 再看间距。**"),
+            ]),
+        )
 
     async def test_summary_failure_keeps_all_uncompressed_messages(self):
         messages = [

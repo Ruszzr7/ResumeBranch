@@ -47,6 +47,7 @@ orjson==3.11.9
 ormsgpack==1.12.2
 packaging==26.2
 pillow==12.3.0
+pdf2image==1.17.0
 propcache==0.5.2
 pyasn1==0.6.4
 pycparser==3.0

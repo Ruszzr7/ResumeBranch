@@ -504,7 +504,7 @@ class LayoutRuleTests(unittest.TestCase):
         for expected in ("段落内容", "分点内容", "编号内容"):
             self.assertIn(expected, combined)
 
-    def test_paragraph_mode_removes_authored_line_breaks_without_inserting_spaces(self):
+    def test_paragraph_mode_preserves_authored_line_breaks(self):
         data = resume_with_two_jobs()
         data["project_experience"] = [{
             "project_name": "换行语义",
@@ -518,12 +518,12 @@ class LayoutRuleTests(unittest.TestCase):
         }]
 
         html = render_resume_to_html(data)
-        self.assertIn("第一句第二句", html)
+        self.assertIn("第一句\n第二句", html)
         self.assertNotIn("第一句 第二句", html)
 
         document = Document(BytesIO(generate_docx(data)))
         combined = "\n".join(paragraph.text for paragraph in document.paragraphs)
-        self.assertIn("第一句第二句", combined)
+        self.assertIn("第一句\n第二句", combined)
         self.assertNotIn("第一句 第二句", combined)
 
     def test_custom_sections_use_each_section_list_style_across_html_and_word(self):
@@ -536,14 +536,14 @@ class LayoutRuleTests(unittest.TestCase):
         html = render_resume_to_html(data)
         self.assertIn("list-style-numbered", html)
         self.assertIn("list-style-paragraph", html)
-        self.assertIn("第一句第二句", html)
+        self.assertIn("第一句\n第二句", html)
         self.assertNotIn("第一句 第二句", html)
 
         document = Document(BytesIO(generate_docx(data)))
         combined = "\n".join(paragraph.text for paragraph in document.paragraphs)
         self.assertIn("(1)", combined)
         self.assertIn("第一项", combined)
-        self.assertIn("第一句第二句", combined)
+        self.assertIn("第一句\n第二句", combined)
         self.assertNotIn("第一句 第二句", combined)
 
     def test_forced_item_break_preserves_template_and_date_classes(self):
@@ -590,7 +590,7 @@ class LayoutRuleTests(unittest.TestCase):
         self.assertNotIn("保留但隐藏的职责", combined)
         self.assertIn("仍然显示的普通内容", combined)
 
-    def test_semantic_label_weight_and_body_justification_match_pdf_and_word(self):
+    def test_semantic_label_weight_and_body_line_break_alignment_match_pdf_and_word(self):
         data = resume_with_two_jobs()
         data["project_experience"] = [{
             "project_name": "机器人控制",
@@ -604,13 +604,13 @@ class LayoutRuleTests(unittest.TestCase):
         html = render_resume_to_html(data)
         self.assertIn('<span class="project-inline-label">项目简介：</span>', html)
         self.assertNotIn('project-inline-label is-bold">项目简介', html)
-        self.assertIn("text-align: justify", html)
+        self.assertIn("text-align: left", html)
 
         document = Document(BytesIO(generate_docx(data)))
         paragraph = next(p for p in document.paragraphs if "项目简介" in p.text)
         label_run = next(run for run in paragraph.runs if "项目简介" in run.text)
         self.assertFalse(label_run.bold)
-        self.assertEqual(paragraph.alignment, WD_ALIGN_PARAGRAPH.JUSTIFY)
+        self.assertEqual(paragraph.alignment, WD_ALIGN_PARAGRAPH.LEFT)
 
     def test_skill_list_style_replaces_imported_markers_and_marker_weight_follows_content(self):
         data = resume_with_two_jobs()
@@ -623,6 +623,7 @@ class LayoutRuleTests(unittest.TestCase):
         self.assertIn('<ul class="list-items module-list list-style-numbered">', html)
         self.assertIn('<li class="list-item skill-list-item">Python 与 FastAPI</li>', html)
         self.assertIn('<li class="list-item skill-list-item marker-bold"><strong>沟通协作</strong></li>', html)
+
         self.assertNotIn('native-marker', html)
         self.assertIn('.list-item::before', html)
         self.assertIn('font-weight: 400', html)
@@ -642,6 +643,18 @@ class LayoutRuleTests(unittest.TestCase):
             places=1,
         )
         self.assertAlmostEqual(numbered.paragraph_format.left_indent.mm, 6.1, places=1)
+
+    def test_skill_item_preserves_authored_line_breaks_across_renderers(self):
+        data = resume_with_two_jobs()
+        data["others"]["skills"] = ["第一行技能\n第二行技能"]
+
+        html = render_resume_to_html(data)
+        self.assertIn("第一行技能\n第二行技能", html)
+        self.assertIn(".skill-list-item", html)
+
+        document = Document(BytesIO(generate_docx(data)))
+        combined = "\n".join(paragraph.text for paragraph in document.paragraphs)
+        self.assertIn("第一行技能\n第二行技能", combined)
 
     def test_word_numbered_semantic_blocks_use_real_hanging_indent(self):
         data = resume_with_two_jobs()

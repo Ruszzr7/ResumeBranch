@@ -1,9 +1,9 @@
 """Deterministic resume diff and selective-apply helpers.
 
-The LLM still produces the same complete candidate resume as before.  This
-module compares that candidate with the persisted resume so confirmation UI can
-preview and selectively apply changes without asking the model to make another
-decision.
+The edit executor returns a complete normalized candidate assembled from
+validated operations.  This module compares that candidate with the persisted
+resume so the existing confirmation UI can preview and selectively apply
+changes without asking the model to make another decision.
 """
 
 from __future__ import annotations

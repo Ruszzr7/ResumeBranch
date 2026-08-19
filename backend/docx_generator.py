@@ -42,13 +42,13 @@ def _is_fully_bold(value: object) -> bool:
 
 
 def _module_list_values(values: list[object], list_style: str) -> list[str]:
-    """Render paragraph mode as one paragraph while keeping source items intact."""
+    """Render paragraph mode with authored line breaks while keeping source items intact."""
     normalized = [str(value or '').strip() for value in values if str(value or '').strip()]
-    return [''.join(normalized)] if list_style == 'paragraph' and normalized else normalized
+    return ['\n'.join(normalized)] if list_style == 'paragraph' and normalized else normalized
 
 
 def _paragraph_text(value: object) -> str:
-    return re.sub(r'\s*\r?\n\s*', '', str(value or '')).strip()
+    return re.sub(r'\r\n?', '\n', str(value or '')).strip()
 
 
 def _photo_aspect_ratio(photo_bytes: bytes | None, resume_data: dict) -> float:
@@ -1029,7 +1029,7 @@ def generate_docx(
         marker_bold = _is_fully_bold(value)
         if list_style == "paragraph":
             paragraph = document.add_paragraph()
-            paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
             paragraph.paragraph_format.left_indent = Mm(base_indent_mm)
             _paragraph_spacing(paragraph, after=after, line=Pt(body_line_height))
             _add_markdown_runs(paragraph, content, body_font_size, fonts=font_spec)
@@ -1106,7 +1106,7 @@ def generate_docx(
             label = flow["label"]
             if block_type == "paragraph":
                 paragraph = document.add_paragraph(style="List Bullet") if flow["labelMarker"] == "bullet" else document.add_paragraph()
-                paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
                 _paragraph_spacing(paragraph, after=module_tokens["contentBlockSpacingPt"], line=Pt(body_line_height))
                 if flow["labelMarker"] == "bullet":
                     _set_hanging_indent(paragraph, left=semantic_indent_mm, hanging=min(3.0, list_text_indent_mm))

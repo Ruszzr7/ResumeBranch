@@ -214,7 +214,7 @@ test('edit-content selectors sit beside their titles without visible setting lab
   assert.ok(appSource.includes('grid-template-columns: minmax(220px, 33.333%) auto;'))
   assert.equal(appSource.includes('<label>内容形式</label>'), false)
   assert.equal(appSource.includes('<label>栏目位置</label>'), false)
-  assert.ok(previewSource.includes("values.join('')"))
+  assert.ok(previewSource.includes("values.join('\\n')"))
 })
 
 test('resume content selectors keep their native dropdown arrows visible', () => {
@@ -238,9 +238,10 @@ test('custom section list style belongs to each section content editor', () => {
   assert.ok(previewSource.includes('customSectionListValues(custom)'))
 })
 
-test('paragraph content removes authored line boundaries in the preview', () => {
-  assert.ok(previewSource.includes('const paragraphText = value => String(value ?? \'\').replace(/\\s*\\r?\\n\\s*/g, \'\')'))
+test('paragraph content preserves authored line boundaries in the preview', () => {
+  assert.ok(previewSource.includes("const paragraphText = value => String(value ?? '').replace(/\\r\\n?/g, '\\n')"))
   assert.ok(previewSource.includes('formatText(paragraphText(block.text))'))
+  assert.ok(previewSource.includes('white-space: pre-line'))
 })
 
 test('closing live-preview settings restores saved values', () => {

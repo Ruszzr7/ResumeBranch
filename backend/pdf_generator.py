@@ -41,14 +41,14 @@ def _is_fully_bold(value: object) -> bool:
 
 
 def _module_list_values(values: list[object], list_style: str) -> list[str]:
-    """Keep source items recoverable while rendering paragraph mode as one block."""
+    """Keep source items recoverable while rendering paragraph line breaks."""
     normalized = [str(value or '').strip() for value in values if str(value or '').strip()]
-    return [''.join(normalized)] if list_style == 'paragraph' and normalized else normalized
+    return ['\n'.join(normalized)] if list_style == 'paragraph' and normalized else normalized
 
 
 def _paragraph_text(value: object) -> str:
-    """Paragraph mode removes editor line boundaries at render time."""
-    return re.sub(r'\s*\r?\n\s*', '', str(value or '')).strip()
+    """Normalize authored paragraph line endings without deleting them."""
+    return re.sub(r'\r\n?', '\n', str(value or '')).strip()
 
 
 def _photo_aspect_ratio(photo: str | None, resume_data: dict) -> float:
@@ -1244,6 +1244,15 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     .project-numbered-list > li, .self-eval-item {{
         text-align: justify;
         text-justify: inter-ideograph;
+    }}
+    .module-list.list-style-paragraph > .list-item,
+    .generic-list-item.list-style-paragraph,
+    .skill-list-item,
+    .project-paragraph,
+    .self-eval-item.list-style-paragraph {{
+        text-align: left;
+        text-justify: auto;
+        white-space: pre-line;
     }}
     .project-content-block {{ margin: 0 0 var(--content-block-spacing); font-size: var(--body-font-size); color: #111111; }}
     .project-paragraph {{ margin: 0; }}

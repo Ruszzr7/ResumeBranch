@@ -10,9 +10,10 @@ const appSource = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8
 
 test('single-line resume fields hide storage markers behind the rich editor', () => {
   assert.ok(editorSource.includes("compact: {"))
+  assert.ok(editorSource.includes("allowLineBreaks: {"))
   assert.ok(editorSource.includes("if (props.compact) syncValue()"))
-  assert.ok(editorSource.includes("if (props.compact) event.preventDefault()"))
-  assert.ok(editorSource.includes("raw.replace(/[\\r\\n]+/g, ' ')"))
+  assert.ok(editorSource.includes("if (props.compact && !props.allowLineBreaks) {"))
+  assert.ok(editorSource.includes("props.compact && !props.allowLineBreaks ? raw.replace(/[\\r\\n]+/g, ' ') : raw"))
   assert.ok(appSource.includes('v-model="work.company_name" placeholder="例如 某某科技有限公司" compact'))
   assert.ok(appSource.includes('v-model="proj.project_name" placeholder="例如 智能调度平台" compact'))
   assert.equal(/<RichTextEditor[^>]*class="element-input"[^>]*compact/.test(appSource), false)
@@ -145,4 +146,11 @@ test('certificate and language sortable editors use the same full-width row cont
   assert.ok(appSource.includes('.resume-dialog .certificate-language-field > .field-label-editor.rich-editor'))
   assert.ok(appSource.includes('v-model="resumeFormData.others.certificates[i]"'))
   assert.ok(appSource.includes('v-model="resumeFormData.others.languages[i]"'))
+})
+
+test('skills allow authored line breaks while certificate and language entries remain single-line', () => {
+  assert.ok(appSource.includes('class="sortable-item-editor skill-item-editor" placeholder="例如 Python、Vue、FastAPI" compact allow-line-breaks'))
+  assert.equal(appSource.includes('class="sortable-item-editor" placeholder="例如 软件设计师" compact allow-line-breaks'), false)
+  assert.equal(appSource.includes('class="sortable-item-editor" placeholder="例如 英语 CET-6" compact allow-line-breaks'), false)
+  assert.ok(editorSource.includes("'allow-line-breaks': allowLineBreaks"))
 })

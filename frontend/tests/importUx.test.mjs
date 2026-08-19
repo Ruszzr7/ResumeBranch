@@ -9,6 +9,8 @@ const logoSource = normalizeNewlines(readFileSync(new URL('../src/components/Bra
 const indexSource = normalizeNewlines(readFileSync(new URL('../index.html', import.meta.url), 'utf8'))
 const iconSource = normalizeNewlines(readFileSync(new URL('../public/icon.svg', import.meta.url), 'utf8'))
 const faviconSource = normalizeNewlines(readFileSync(new URL('../public/favicon.svg', import.meta.url), 'utf8'))
+const chatMessageSource = normalizeNewlines(readFileSync(new URL('../src/components/ChatMessage.vue', import.meta.url), 'utf8'))
+const resumePreviewSource = normalizeNewlines(readFileSync(new URL('../src/components/ResumePreview.vue', import.meta.url), 'utf8'))
 
 test('ResumeBranch uses the restored branch logo and adaptive favicon', () => {
   assert.ok(logoSource.includes('/icon.svg?v=5'))
@@ -31,6 +33,23 @@ test('resume import does not trigger an unsolicited LLM reply', () => {
   const importFlow = appSource.slice(start, end)
   assert.equal(importFlow.includes('first_message_from_resume'), false)
   assert.equal(importFlow.includes("fetch('/api/chat'"), false)
+})
+
+test('layout advice uses the concise analysis prompt', () => {
+  assert.ok(appSource.includes('根据当前简历数据与快照，检查当前简历存在的排版问题，按对简历影响程度从高到低编号列出可执行建议。'))
+  assert.equal(appSource.includes('不要把默认状态、已符合规则、赞扬或无操作建议列为问题'), false)
+})
+
+test('visual analysis receives the same browser pagination style as export', () => {
+  assert.ok(resumePreviewSource.includes("'render-style-updated'"))
+  assert.ok(resumePreviewSource.includes('pageBreakBefore: pageBreakBefore.value'))
+  assert.ok(appSource.includes('@render-style-updated="handleRenderStyleUpdated"'))
+  assert.ok(appSource.includes("formData.append('render_style', JSON.stringify(activeRenderStyle.value))"))
+})
+
+test('closed task lifecycle records render as grey non-open cards', () => {
+  assert.ok(chatMessageSource.includes("context-event-card--closed"))
+  assert.ok(chatMessageSource.includes("isContextClosed ? '已关闭' : '打开'"))
 })
 
 test('all resume upload entry points share the same draft parser and confirmation helpers', () => {
@@ -84,7 +103,7 @@ test('assistant actions follow the resume improvement workflow', () => {
   const start = appSource.indexOf('const assistantActions = [')
   const end = appSource.indexOf('\n]', start)
   const actions = appSource.slice(start, end)
-  const labels = ['修改简历', '排版建议', '全面诊断', '深度打磨', '对照 JD']
+  const labels = ['修改简历', '全面诊断', '排版建议', '深度打磨', '对照 JD']
   const positions = labels.map(label => actions.indexOf(`label: '${label}'`))
   assert.ok(positions.every(position => position >= 0))
   assert.deepEqual([...positions].sort((a, b) => a - b), positions)

@@ -58,7 +58,7 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
             resume_data=resume_payload(), layout_data=default_layout_config(),
         )
         self.assertFalse(is_resume_coaching_request(request))
-        self.assertEqual(entry_router(state), "proposal_generator")
+        self.assertEqual(entry_router(state), "conversation_llm")
 
     async def test_coaching_turn_does_not_expose_save_tool(self):
         fake_llm = SimpleNamespace(
@@ -129,24 +129,26 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("layout", kinds)
 
     async def test_complex_combined_request_uses_exactly_one_model_call(self):
+        layout = default_layout_config()
+        project_index = layout["global"]["sectionOrder"].index("project_experience")
         state = AgentState(
             messages=[HumanMessage(content="重新组织项目经历描述，并将它放到教育经历前面")],
-            resume_data=resume_payload(), layout_data=default_layout_config(),
+            resume_data=resume_payload(), layout_data=layout,
             user_id=7, task_id="task-1",
+            context_metadata={
+                "resume_operations": [{
+                    "op": "append", "path": "project_experience",
+                    "value": {"project_name": "项目A", "role": "开发", "date_range": [], "details": ["完成接口优化"]},
+                }],
+                "layout_operations": [{
+                    "op": "move", "path": "global.sectionOrder",
+                    "from_index": project_index, "to_index": 0,
+                }],
+            },
         )
-        resume_after = resume_payload()
-        resume_after["project_experience"] = [{
-            "project_name": "项目A", "role": "开发", "date_range": [], "details": ["完成接口优化"]
-        }]
-        layout_after = default_layout_config()
-        order = layout_after["global"]["sectionOrder"]
-        order.remove("project_experience")
-        order.insert(0, "project_experience")
-        response = {"resume_data": resume_after, "layout_config": layout_after}
-        fake_llm = SimpleNamespace(ainvoke=AsyncMock(return_value=AIMessage(content=json.dumps(response, ensure_ascii=False))))
-        with patch("backend.resume_agent.conversation_llm", fake_llm):
+        with patch("backend.resume_agent.conversation_llm") as fake_llm:
             result = await proposal_generator_node(state)
-        fake_llm.ainvoke.assert_awaited_once()
+        fake_llm.ainvoke.assert_not_called()
         ids = [item["id"] for item in result["pending_confirmation"]["changes"]]
         self.assertIn("layout-global", ids)
         self.assertTrue(any(not value.startswith("layout-") for value in ids))
@@ -157,29 +159,19 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
             messages=[HumanMessage(content="重新组织项目经历描述并应用")],
             resume_data=resume_payload(), layout_data=before_layout,
             user_id=7, task_id="task-1",
+            context_metadata={
+                "resume_operations": [{
+                    "op": "append", "path": "project_experience",
+                    "value": {"project_name": "项目A", "role": "开发", "date_range": [], "details": ["完成接口优化"]},
+                }],
+                "layout_operations": [{"op": "set", "path": "global.fontSize", "value": 11.5}],
+            },
         )
-        resume_after = resume_payload()
-        resume_after["project_experience"] = [{
-            "project_name": "项目A", "role": "开发", "date_range": [],
-            "details": ["完成接口优化"],
-        }]
-        model_layout = default_layout_config()
-        model_layout["global"]["fontSize"] = 11.5
-        model_layout["typography"]["fontSizes"] = {
-            "name": 20, "sectionTitle": 16, "entryTitle": 14,
-            "meta": 11.5, "body": 11.5, "label": 12,
-        }
-        response = {"resume_data": resume_after, "layout_config": model_layout}
-        fake_llm = SimpleNamespace(ainvoke=AsyncMock(
-            return_value=AIMessage(content=json.dumps(response, ensure_ascii=False))
-        ))
-
-        with patch("backend.resume_agent.conversation_llm", fake_llm):
+        with patch("backend.resume_agent.conversation_llm") as fake_llm:
             result = await proposal_generator_node(state)
-        candidate = result["pending_confirmation"]["layout_candidate"]
-        self.assertEqual(candidate["global"]["fontSize"], before_layout["global"]["fontSize"])
-        self.assertEqual(candidate["typography"]["fontSizes"], before_layout["typography"]["fontSizes"])
-        self.assertNotIn("layout-global", {change["id"] for change in result["pending_confirmation"]["changes"]})
+        fake_llm.ainvoke.assert_not_called()
+        self.assertIsNone(result["pending_confirmation"])
+        self.assertIn("无法安全生成", result["proposal_error"])
 
     async def test_selecting_layout_group_persists_only_that_group(self):
         before_layout = default_layout_config()
