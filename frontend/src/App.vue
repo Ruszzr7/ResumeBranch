@@ -1,11 +1,12 @@
 <script setup>
-import { ref, onMounted, watch, nextTick, computed, onUnmounted } from 'vue'
+import { ref, reactive, onMounted, watch, nextTick, computed, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ChatMessage from './components/ChatMessage.vue'
 import ResumePreview from './components/ResumePreview.vue'
 import RichTextEditor from './components/RichTextEditor.vue'
 import MobileTabBar from './components/MobileTabBar.vue'
 import BrandLogo from './components/BrandLogo.vue'
+import AccountMenu from './components/AccountMenu.vue'
 import { labels } from './utils/labels.js'
 import { buildAuthorizationHeaders, loadAppConfig } from './config/appMode.js'
 import { normalizeLayoutConfig, resolveContentBlockFlow, resolveLayoutTokens } from './utils/layoutConfig.js'
@@ -33,13 +34,21 @@ const isTranslating = ref(false)
 const TRANSLATION_SESSION_PREFIX = 'resumeTranslationSession:'
 const TRANSLATION_CACHE_PREFIX = 'resumeTranslationCache:'
 const WELCOME_MESSAGE = '你好！我是你的简历助手。你可以让我检查简历中的不足、进行深度打磨、结合 JD 分析匹配度，也可以直接修改简历内容和排版。告诉我你的目标岗位或具体需求，或者从下方选择一项开始。如原简历含头像，建议在“编辑简历”中自行上传清晰原图，避免自动裁剪造成模糊。'
-const conversationMessagesForSave = () => messages.value.filter(message => !message.localOnly)
+const conversationMessagesForSave = (sourceMessages = messages.value) => sourceMessages.filter(message => (
+  !message.localOnly
+  && message.streaming !== true
+  && !(
+    message.role === 'assistant'
+    && message.type !== 'confirm'
+    && !String(message.content ?? '').trim()
+  )
+))
 const plainDisplayText = value => plainInlineText(String(value ?? ''))
 const assistantActions = [
   {
-    label: '修改简历',
-    prefillOnly: true,
-    prompt: '请修改【模块或字段】：将【原内容】调整为【目标内容或具体要求】。'
+    label: '直接修改',
+    directEdit: true,
+    prompt: '通过确定字段直接替换简历文字，不调用大模型。'
   },
   {
     label: '全面诊断',
@@ -65,6 +74,26 @@ const assistantActions = [
     prompt: '请结合当前目标岗位 JD 分析简历匹配度：区分已经证明的匹配项、简历尚未证明的能力和确实缺失的条件，按优先级给建议；先不要修改简历，最后只问我一个最关键的问题。'
   }
 ]
+
+const showDirectEditDialog = ref(false)
+const RESUME_SETTINGS_DIALOG_EVENT = 'resume-settings-dialog-open'
+const directEditForm = reactive({ scope: 'all', original_text: '', target_text: '' })
+const directEditError = ref('')
+const isBuildingDirectPreview = ref(false)
+const directEditScopeOptions = Object.freeze([
+  { value: 'all', label: '整份简历' },
+  { value: 'basics', label: '基本信息' },
+  { value: 'education', label: '教育经历' },
+  { value: 'honors', label: '主要荣誉' },
+  { value: 'publications', label: '论文' },
+  { value: 'research_interests', label: '研究方向' },
+  { value: 'skills', label: '专业技能' },
+  { value: 'work_experience', label: '工作经历' },
+  { value: 'project_experience', label: '项目经历' },
+  { value: 'custom_sections', label: '自定义项目' },
+  { value: 'certificates_languages', label: '证书与语言' },
+  { value: 'self_evaluation', label: '自我评价' }
+])
 
 // 检测是否为移动端视图
 function checkMobileView() {
@@ -324,10 +353,47 @@ const currentTaskId = computed(() => isWorkspaceRoute.value ? String(route.param
 const currentProject = ref(null)
 const projectTasks = ref([])
 const currentTask = computed(() => projectTasks.value.find(task => task.id === currentTaskId.value) || null)
-const workflowState = ref(null)
-const workflowCompletedVisible = ref(false)
-let workflowCompletedTimer = null
-const pendingAssistantAction = ref(null)
+const activeContextId = ref('')
+const sessionId = ref('default')
+const contextUiStates = reactive({})
+
+function createContextUiState() {
+  return {
+    messages: [],
+    userInput: '',
+    uploadedFiles: [],
+    previewResumeData: null,
+    previewLayoutConfig: null,
+    isLoading: false,
+    isResponding: false,
+    hasConfirmArea: false,
+    loadingText: '正在处理中...',
+    loadingTimer: null,
+    processingRequestId: '',
+    processingPhase: '',
+    processingText: '',
+    workflowState: null,
+    workflowCompletedVisible: false,
+    workflowCompletedTimer: null,
+    pendingAssistantAction: null,
+    loaded: false
+  }
+}
+
+function ensureContextUiState(contextSessionId = '') {
+  const key = String(contextSessionId || activeContextId.value || sessionId.value || 'default')
+  if (!contextUiStates[key]) contextUiStates[key] = createContextUiState()
+  return contextUiStates[key]
+}
+
+const activeContextUiState = computed(() => ensureContextUiState())
+const contextField = key => computed({
+  get: () => activeContextUiState.value[key],
+  set: value => { activeContextUiState.value[key] = value }
+})
+const workflowState = contextField('workflowState')
+const workflowCompletedVisible = contextField('workflowCompletedVisible')
+const pendingAssistantAction = contextField('pendingAssistantAction')
 const WORKFLOW_FOCUS_LABELS = Object.freeze({
   basics: '基本信息',
   'basics.name': '姓名',
@@ -364,19 +430,19 @@ function formatWorkflowFocus(value) {
   return /^[A-Za-z_][A-Za-z0-9_.]*$/.test(normalized) ? '简历内容' : focus
 }
 
-function updateWorkflowState(nextState, { showCompletedBriefly = false } = {}) {
-  if (workflowCompletedTimer) {
-    clearTimeout(workflowCompletedTimer)
-    workflowCompletedTimer = null
+function updateWorkflowState(nextState, { showCompletedBriefly = false } = {}, targetState = activeContextUiState.value) {
+  if (targetState.workflowCompletedTimer) {
+    clearTimeout(targetState.workflowCompletedTimer)
+    targetState.workflowCompletedTimer = null
   }
-  workflowState.value = nextState || null
-  const completed = workflowState.value?.phase === 'completed'
-    || workflowState.value?.status === 'completed'
-  workflowCompletedVisible.value = Boolean(completed && showCompletedBriefly)
-  if (workflowCompletedVisible.value) {
-    workflowCompletedTimer = setTimeout(() => {
-      workflowCompletedVisible.value = false
-      workflowCompletedTimer = null
+  targetState.workflowState = nextState || null
+  const completed = targetState.workflowState?.phase === 'completed'
+    || targetState.workflowState?.status === 'completed'
+  targetState.workflowCompletedVisible = Boolean(completed && showCompletedBriefly)
+  if (targetState.workflowCompletedVisible) {
+    targetState.workflowCompletedTimer = setTimeout(() => {
+      targetState.workflowCompletedVisible = false
+      targetState.workflowCompletedTimer = null
     }, 2000)
   }
 }
@@ -403,7 +469,7 @@ const workflowStatusLabel = computed(() => ({
   completed: '已结束',
   error: '需重试'
 }[workflowState.value?.status] || '就绪'))
-const previewLayoutConfig = ref(null)
+const previewLayoutConfig = contextField('previewLayoutConfig')
 // Ephemeral browser-rendered pagination/style shared with visual analysis.
 // It is request-scoped and never persisted as resume data.
 const activeRenderStyle = ref(null)
@@ -461,7 +527,6 @@ const taskToSetBase = ref(null)
 const isSettingBaseTask = ref(false)
 const setBaseError = ref('')
 const conversationContexts = ref([])
-const activeContextId = ref('')
 const isSwitchingContext = ref(false)
 const uiNotice = ref({ visible: false, type: 'error', message: '' })
 let uiNoticeTimer = null
@@ -490,34 +555,33 @@ const selectedTaskSource = computed(() => taskResumeSources.value.find(
 ) || null)
 
 // 聊天消息列表
-const messages = ref([])
+const messages = contextField('messages')
 // 消息容器引用，用于自动滚动
 const messagesContainer = ref(null)
 // 文件输入引用
 const fileInput = ref(null)
 // 用户输入
-const userInput = ref('')
+const userInput = contextField('userInput')
 // 上传的文件列表
-const uploadedFiles = ref([])
+const uploadedFiles = contextField('uploadedFiles')
 // 简历数据
 const resumeData = ref(null)
 // 确认框出现期间使用的未保存简历候选，仅用于右侧临时预览
-const previewResumeData = ref(null)
+const previewResumeData = contextField('previewResumeData')
 const activeResumeData = computed(() => previewResumeData.value || resumeData.value)
 // JD数据（新增）
 const jdData = ref(null)
 // 加载状态
-const isLoading = ref(false)
+const isLoading = contextField('isLoading')
 // 响应中状态（流式输出时）
-const isResponding = ref(false)
+const isResponding = contextField('isResponding')
 // 确认区域状态（当有 confirm area 时，禁用输入）
-const hasConfirmArea = ref(false)
+const hasConfirmArea = contextField('hasConfirmArea')
 // 加载文案状态
-const loadingText = ref('正在处理中...')
-let loadingTextInterval = null
-const processingRequestId = ref('')
-const processingPhase = ref('')
-const processingText = ref('')
+const loadingText = contextField('loadingText')
+const processingRequestId = contextField('processingRequestId')
+const processingPhase = contextField('processingPhase')
+const processingText = contextField('processingText')
 const confirmationProgressPhases = new Set(['building_preview', 'validating', 'ready'])
 const showProcessingBar = computed(() => (
   isResponding.value
@@ -525,31 +589,30 @@ const showProcessingBar = computed(() => (
   && Boolean(processingText.value)
 ))
 
-function beginProcessing(requestId) {
-  processingRequestId.value = requestId
-  processingPhase.value = ''
-  processingText.value = ''
+function beginProcessing(requestId, targetState = activeContextUiState.value) {
+  targetState.processingRequestId = requestId
+  targetState.processingPhase = ''
+  targetState.processingText = ''
 }
 
-function updateProcessing(data) {
-  if (data.request_id && data.request_id !== processingRequestId.value) return
+function updateProcessing(data, targetState = activeContextUiState.value) {
+  if (data.request_id && data.request_id !== targetState.processingRequestId) return
   if (!confirmationProgressPhases.has(data.phase)) return
-  isLoading.value = false
-  processingPhase.value = data.phase
-  processingText.value = '正在生成确认框，请勿离开或刷新当前页面…'
+  targetState.isLoading = false
+  targetState.processingPhase = data.phase
+  targetState.processingText = '正在生成确认框，请勿离开或刷新当前页面…'
 }
 
-function finishProcessing(requestId = '') {
-  if (requestId && processingRequestId.value && requestId !== processingRequestId.value) return
-  processingRequestId.value = ''
-  processingPhase.value = ''
-  processingText.value = ''
+function finishProcessing(requestId = '', targetState = activeContextUiState.value) {
+  if (requestId && targetState.processingRequestId && requestId !== targetState.processingRequestId) return
+  targetState.processingRequestId = ''
+  targetState.processingPhase = ''
+  targetState.processingText = ''
 }
 // 全屏弹窗状态
 const isFullscreenDialogOpen = ref(false)
 const dialogUserInput = ref('')
 // 会话ID - 用于保存对话历史（固定为 default，确保跨会话持久化）
-const sessionId = ref('default')
 
 // 图片预览状态
 const showImagePreview = ref(false)
@@ -780,10 +843,32 @@ async function checkLoginStatus() {
   const savedUser = localStorage.getItem('user')
 
   if (savedToken && savedUser) {
-    token.value = savedToken
-    currentUser.value = JSON.parse(savedUser)
-    isLoggedIn.value = true
-    console.log('✅ 用户已登录:', currentUser.value?.email)
+    try {
+      token.value = savedToken
+      currentUser.value = JSON.parse(savedUser)
+      isLoggedIn.value = true
+    } catch (error) {
+      console.warn('用户状态读取失败:', error)
+      logout()
+      return
+    }
+    try {
+      const response = await fetch('/auth/me', {
+        headers: buildAuthorizationHeaders(savedToken)
+      })
+      if (response.status === 401 || response.status === 403) {
+        logout()
+        return
+      }
+      if (response.ok) {
+        currentUser.value = await response.json()
+        localStorage.setItem('user', JSON.stringify(currentUser.value))
+      }
+      console.log('✅ 用户已登录:', currentUser.value?.email)
+    } catch (error) {
+      // A temporary network failure should not destroy a still-valid session.
+      console.warn('暂时无法刷新用户状态:', error)
+    }
   } else {
     isLoggedIn.value = false
     currentUser.value = null
@@ -797,6 +882,16 @@ function handleStorageChange(event) {
     console.log('📦 检测到登录状态变化，重新检查...')
     checkLoginStatus()
   }
+}
+
+function activateResumeSettingsDialog(dialogId) {
+  window.dispatchEvent(new CustomEvent(RESUME_SETTINGS_DIALOG_EVENT, { detail: dialogId }))
+}
+
+function handleResumeSettingsDialogOpen(event) {
+  const activeDialog = String(event.detail || '')
+  if (activeDialog !== 'direct-edit' && showDirectEditDialog.value) closeDirectEditDialog()
+  if (activeDialog !== 'resume-edit' && isResumeEditDialogOpen.value) closeResumeEditDialog()
 }
 
 // 初始化简历数据
@@ -821,6 +916,7 @@ onMounted(() => {
 
   // 监听 localStorage 变化
   window.addEventListener('storage', handleStorageChange)
+  window.addEventListener(RESUME_SETTINGS_DIALOG_EVENT, handleResumeSettingsDialogOpen)
 
   // 使用 ResizeObserver 监听窗口大小变化
   if (typeof ResizeObserver !== 'undefined') {
@@ -844,9 +940,13 @@ onMounted(() => {
 // 清理监听器
 onUnmounted(() => {
   window.removeEventListener('storage', handleStorageChange)
+  window.removeEventListener(RESUME_SETTINGS_DIALOG_EVENT, handleResumeSettingsDialogOpen)
   stopParsingStatusPoll()
   if (uiNoticeTimer) clearTimeout(uiNoticeTimer)
-  if (workflowCompletedTimer) clearTimeout(workflowCompletedTimer)
+  Object.values(contextUiStates).forEach(state => {
+    if (state.workflowCompletedTimer) clearTimeout(state.workflowCompletedTimer)
+    if (state.loadingTimer) clearTimeout(state.loadingTimer)
+  })
   if (resizeObserver) {
     resizeObserver.disconnect()
   } else {
@@ -873,6 +973,13 @@ function contextDisplayTitle(context) {
   return context?.context_type === 'main' ? '主对话' : (context?.title || '任务')
 }
 
+function invalidateMainConversation() {
+  const main = conversationContexts.value.find(context => context.context_type === 'main')
+  if (!main) return
+  const mainState = contextUiStates[main.session_id]
+  if (mainState) mainState.loaded = false
+}
+
 async function loadTaskContexts({ preserveActive = true } = {}) {
   if (!currentTaskId.value) {
     conversationContexts.value = []
@@ -897,6 +1004,7 @@ async function loadTaskContexts({ preserveActive = true } = {}) {
 }
 
 async function loadContextConversation(context, { welcome = false } = {}) {
+  const targetState = ensureContextUiState(context.session_id)
   const response = await fetch('/load_conversation', {
     method: 'POST',
     headers: getAuthHeaders(),
@@ -905,7 +1013,7 @@ async function loadContextConversation(context, { welcome = false } = {}) {
   if (!response.ok) throw new Error('无法加载任务会话内容')
   const loaded = await response.json()
   const hasHistory = Array.isArray(loaded) && loaded.length > 0
-  messages.value = hasHistory
+  targetState.messages = hasHistory
     ? loaded
     : (welcome ? [{
       id: Date.now(),
@@ -913,20 +1021,20 @@ async function loadContextConversation(context, { welcome = false } = {}) {
       content: `${contextDisplayTitle(context)}已开启。可以继续描述你的需求。`,
       localOnly: true
     }] : [])
+  targetState.loaded = true
 }
 
 async function selectConversationContext(context) {
   if (!context || context.status !== 'active' || isSwitchingContext.value) return
-  if (context.session_id === activeContextId.value && messages.value.length) return
+  const targetState = ensureContextUiState(context.session_id)
+  if (context.session_id === activeContextId.value && targetState.loaded) return
   isSwitchingContext.value = true
   try {
     activeContextId.value = context.session_id
     sessionId.value = context.session_id
-    hasConfirmArea.value = false
-    previewResumeData.value = null
-    previewLayoutConfig.value = null
-    updateWorkflowState(null)
-    await loadContextConversation(context, { welcome: context.context_type !== 'main' })
+    if (!targetState.loaded) {
+      await loadContextConversation(context, { welcome: context.context_type !== 'main' })
+    }
     await loadWorkflowState(context.context_type === 'main' ? '' : context.session_id)
   } catch (error) {
     showNotice(error.message || '切换任务会话失败，请重试')
@@ -947,19 +1055,18 @@ async function startMissionContext(contextType, title = '') {
     const data = await response.json().catch(() => ({}))
     if (!response.ok || !data.context) throw new Error(data.detail || '无法开启任务会话')
     const context = data.context
+    const resumed = Boolean(data.resumed)
     const existing = conversationContexts.value.find(item => item.id === context.id)
     conversationContexts.value = existing
       ? conversationContexts.value.map(item => item.id === context.id ? context : item)
       : [...conversationContexts.value, context]
     activeContextId.value = context.session_id
     sessionId.value = context.session_id
-    hasConfirmArea.value = false
-    previewResumeData.value = null
-    previewLayoutConfig.value = null
-    updateWorkflowState(null)
-    await loadContextConversation(context, { welcome: true })
+    const targetState = ensureContextUiState(context.session_id)
+    if (!targetState.loaded) await loadContextConversation(context, { welcome: true })
     await loadWorkflowState(context.session_id)
-    return context
+    if (!resumed) invalidateMainConversation()
+    return { context, resumed }
   } catch (error) {
     showNotice(error.message || '无法开启任务会话，请重试')
     return null
@@ -979,6 +1086,10 @@ async function closeMissionContext(context) {
     const data = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(data.detail || '关闭任务会话失败')
     conversationContexts.value = conversationContexts.value.filter(item => item.id !== context.id)
+    invalidateMainConversation()
+    const closingState = contextUiStates[context.session_id]
+    if (closingState?.loadingTimer) clearTimeout(closingState.loadingTimer)
+    delete contextUiStates[context.session_id]
     const main = conversationContexts.value.find(item => item.context_type === 'main')
     if (main) {
       isSwitchingContext.value = false
@@ -1009,6 +1120,11 @@ async function loadWorkspace() {
   hasConfirmArea.value = false
   conversationContexts.value = []
   activeContextId.value = ''
+  Object.values(contextUiStates).forEach(state => {
+    if (state.workflowCompletedTimer) clearTimeout(state.workflowCompletedTimer)
+    if (state.loadingTimer) clearTimeout(state.loadingTimer)
+  })
+  Object.keys(contextUiStates).forEach(key => delete contextUiStates[key])
   previewLayoutConfig.value = null
   activeRenderStyle.value = null
   previewResumeData.value = null
@@ -1235,11 +1351,83 @@ function useLayoutPrompt(prompt) {
   nextTick(() => document.querySelector('.textarea-container textarea:not(:disabled)')?.focus())
 }
 
+function openDirectEditDialog() {
+  activateResumeSettingsDialog('direct-edit')
+  directEditForm.scope = 'all'
+  directEditForm.original_text = ''
+  directEditForm.target_text = ''
+  directEditError.value = ''
+  showDirectEditDialog.value = true
+}
+
+function closeDirectEditDialog() {
+  if (isBuildingDirectPreview.value) return
+  showDirectEditDialog.value = false
+  directEditError.value = ''
+}
+
+async function buildDirectEditPreview() {
+  if (!directEditForm.original_text.trim()) {
+    directEditError.value = '请填写原内容'
+    return
+  }
+  const targetState = activeContextUiState.value
+  const targetSessionId = sessionId.value
+  isBuildingDirectPreview.value = true
+  directEditError.value = ''
+  try {
+    const response = await fetch(`/tasks/${currentTaskId.value}/direct-replace-preview`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        session_id: targetSessionId,
+        scope: directEditForm.scope,
+        original_text: directEditForm.original_text,
+        target_text: directEditForm.target_text
+      })
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(data.detail || data.error || '无法生成修改预览')
+    targetState.messages = targetState.messages.map(message => (
+      message.type === 'confirm' && !message.handled ? { ...message, handled: true } : message
+    ))
+    targetState.messages.push({
+      id: Date.now() * 1000 + 4,
+      role: 'assistant',
+      type: 'confirm',
+      content: data.content,
+      options: data.options,
+      changes: data.changes || [],
+      confirm_id: data.confirm_id,
+      source: 'direct_replace',
+      handled: false,
+      streaming: false,
+      localOnly: true
+    })
+    targetState.previewResumeData = data.resume_candidate || null
+    targetState.previewLayoutConfig = data.layout_candidate
+      ? normalizeLayoutConfig(data.layout_candidate)
+      : null
+    targetState.hasConfirmArea = true
+    showDirectEditDialog.value = false
+    nextTick(() => scrollToBottom('auto'))
+  } catch (error) {
+    directEditError.value = error.message || '无法生成修改预览'
+  } finally {
+    isBuildingDirectPreview.value = false
+  }
+}
+
 async function runAssistantAction(action) {
   if (isLoading.value || isResponding.value) return
+  if (action.directEdit) {
+    openDirectEditDialog()
+    return
+  }
   if (action.contextType && action.contextType !== 'main') {
-    const context = await startMissionContext(action.contextType)
-    if (!context) return
+    const mission = await startMissionContext(action.contextType)
+    if (!mission) return
+    if (mission.resumed) return
   }
   pendingAssistantAction.value = action.mode ? { mode: action.mode, action: action.action } : null
   userInput.value = action.prompt
@@ -1268,8 +1456,10 @@ function runWorkflowAction(action) {
 }
 
 async function loadWorkflowState(contextSessionId = '') {
+  const targetSessionId = contextSessionId || sessionId.value
+  const targetState = ensureContextUiState(targetSessionId)
   if (!currentTaskId.value) {
-    updateWorkflowState(null)
+    updateWorkflowState(null, {}, targetState)
     return
   }
   try {
@@ -1280,7 +1470,7 @@ async function loadWorkflowState(contextSessionId = '') {
     if (!response.ok) return
     const data = await response.json()
     // 已结束的历史工作流不在刷新后重新闪现；仅实时结束动作短暂展示。
-    updateWorkflowState(data.state || null)
+    updateWorkflowState(data.state || null, {}, targetState)
   } catch (error) {
     console.warn('恢复深度打磨状态失败:', error)
   }
@@ -1399,6 +1589,7 @@ async function loadInitialData() {
           localOnly: true
         }]
       }
+      activeContextUiState.value.loaded = true
     } catch (convError) {
       messages.value = [{
         id: Date.now(),
@@ -1406,6 +1597,7 @@ async function loadInitialData() {
         content: WELCOME_MESSAGE,
         localOnly: true
       }]
+      activeContextUiState.value.loaded = true
     }
   } catch (error) {
     console.error('加载数据失败:', error)
@@ -1518,12 +1710,30 @@ function logout() {
   token.value = ''
   currentUser.value = null
   isLoggedIn.value = false
-  // 刷新页面
-  window.location.reload()
+  router.replace('/login')
 }
 
 // 发送消息
 async function sendMessage() {
+  const requestSessionId = sessionId.value
+  const requestState = ensureContextUiState(requestSessionId)
+  const stateRef = key => ({
+    get value() { return requestState[key] },
+    set value(value) { requestState[key] = value }
+  })
+  // All asynchronous updates remain attached to the conversation that sent
+  // the request, even if the user switches tabs while the model is working.
+  const messages = stateRef('messages')
+  const userInput = stateRef('userInput')
+  const uploadedFiles = stateRef('uploadedFiles')
+  const previewResumeData = stateRef('previewResumeData')
+  const previewLayoutConfig = stateRef('previewLayoutConfig')
+  const isLoading = stateRef('isLoading')
+  const isResponding = stateRef('isResponding')
+  const hasConfirmArea = stateRef('hasConfirmArea')
+  const loadingText = stateRef('loadingText')
+  const pendingAssistantAction = stateRef('pendingAssistantAction')
+  let loadingTextInterval = requestState.loadingTimer
   // 检查登录状态
   if (!isLoggedIn.value) {
     showNotice('请先登录')
@@ -1582,7 +1792,7 @@ async function sendMessage() {
 
   isLoading.value = true
   isResponding.value = true
-  beginProcessing(requestId)
+  beginProcessing(requestId, requestState)
   // 启动加载文案切换
   loadingText.value = '正在处理中...'
   let textIndex = 0
@@ -1606,7 +1816,7 @@ async function sendMessage() {
     // 创建FormData对象
     const formData = new FormData()
     formData.append('message', input)
-    formData.append('session_id', sessionId.value)
+    formData.append('session_id', requestSessionId)
     formData.append('request_id', requestId)
     if (structuredAction?.mode) formData.append('interaction_mode', structuredAction.mode)
     if (structuredAction?.action) formData.append('interaction_action', structuredAction.action)
@@ -1662,7 +1872,7 @@ async function sendMessage() {
               const data = JSON.parse(jsonData)
 
               if (data.type === 'progress') {
-                updateProcessing(data)
+                updateProcessing(data, requestState)
               } else if (data.type === 'stream') {
                 // 停止加载文案切换
                 if (loadingTextInterval) {
@@ -1701,10 +1911,9 @@ async function sendMessage() {
                 }
                 // 收到第一个流式输出后，隐藏加载指示器
                 isLoading.value = false
-                finishProcessing(data.request_id)
+                finishProcessing(data.request_id, requestState)
                 // 更新会话ID并保存到localStorage
                 if (data.session_id) {
-                  sessionId.value = data.session_id
                   localStorage.setItem('resumeAssistantSessionId', data.session_id)
                 }
               } else if (data.type === 'tool_call') {
@@ -1732,7 +1941,7 @@ async function sendMessage() {
                 }
                 isLoading.value = false
                 isResponding.value = false
-                finishProcessing(data.request_id)
+                finishProcessing(data.request_id, requestState)
                 // 一个任务同时只能有一个活动确认框。先失效旧确认，再按
                 // confirm_id 更新或插入，避免重复 SSE 事件生成双确认框。
                 messages.value = messages.value.map(message => (
@@ -1782,24 +1991,23 @@ async function sendMessage() {
                 }
                 isLoading.value = false
                 isResponding.value = false
-                finishProcessing(data.request_id)
+                finishProcessing(data.request_id, requestState)
               } else if (data.type === 'persistence_error') {
                 showNotice(data.message || '对话状态未能安全保存，请重新发送上一条消息。')
               } else if (data.type === 'workflow_error') {
                 showNotice(data.message || '工作流进度未能保存，本轮对话内容仍已处理。')
               } else if (data.type === 'workflow_state') {
-                updateWorkflowState(data.state || null, { showCompletedBriefly: true })
+                updateWorkflowState(data.state || null, { showCompletedBriefly: true }, requestState)
               } else if (data.type === 'end') {
                 console.log('[前端] 收到 end 事件, isResponding before:', isResponding.value, 'isLoading:', isLoading.value)
                 // 结束信号，关闭连接
                 isResponding.value = false
-                finishProcessing(data.request_id)
+                finishProcessing(data.request_id, requestState)
                 console.log('[前端] isResponding 已设置为 false')
                 // 只在流式响应结束时调用一次updateResumeData()
                 updateResumeData()
                 // 更新会话ID并保存到localStorage
                 if (data.session_id) {
-                  sessionId.value = data.session_id
                   localStorage.setItem('resumeAssistantSessionId', data.session_id)
                 }
                 break
@@ -1832,12 +2040,12 @@ async function sendMessage() {
 
     // 保存对话历史（过滤掉未处理的 confirm 消息，已处理的 confirm 消息保留 handled 状态）
     try {
-      const messagesToSave = conversationMessagesForSave().filter(m => !(m.type === 'confirm' && m.confirm_id && !m.handled))
+      const messagesToSave = conversationMessagesForSave(requestState.messages).filter(m => !(m.type === 'confirm' && m.confirm_id && !m.handled))
       await fetch('/save_conversation', {
         method: 'POST',
         headers: getAuthHeaders(),
         body: JSON.stringify({
-          session_id: sessionId.value,
+          session_id: requestSessionId,
           messages: messagesToSave
         })
       })
@@ -1848,7 +2056,19 @@ async function sendMessage() {
 }
 
 // 处理确认按钮点击
-async function handleOptionClick({ confirm_id, value, selected_change_ids = [] }) {
+async function handleOptionClick({ confirm_id, value, source = '', selected_change_ids = [] }) {
+  const targetSessionId = sessionId.value
+  const targetState = ensureContextUiState(targetSessionId)
+  const stateRef = key => ({
+    get value() { return targetState[key] },
+    set value(nextValue) { targetState[key] = nextValue }
+  })
+  const messages = stateRef('messages')
+  const hasConfirmArea = stateRef('hasConfirmArea')
+  const previewResumeData = stateRef('previewResumeData')
+  const previewLayoutConfig = stateRef('previewLayoutConfig')
+  const isLoading = stateRef('isLoading')
+  const isResponding = stateRef('isResponding')
   const confirmMsgIndex = messages.value.findIndex(m => m.type === 'confirm' && m.confirm_id === confirm_id)
   if (confirmMsgIndex !== -1) {
     messages.value[confirmMsgIndex] = {
@@ -1860,6 +2080,48 @@ async function handleOptionClick({ confirm_id, value, selected_change_ids = [] }
   if (value === 'cancel') {
     previewResumeData.value = null
     previewLayoutConfig.value = null
+  }
+
+  if (source === 'direct_replace') {
+    try {
+      targetState.isLoading = true
+      const formData = new FormData()
+      formData.append('confirm_id', confirm_id)
+      formData.append('action', value === 'cancel' ? 'cancel' : 'confirm')
+      formData.append('session_id', targetSessionId)
+      const response = await fetch('/confirm', {
+        method: 'POST',
+        headers: getAuthorizationHeaders(),
+        body: formData
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.error || data.detail || '处理确认请求失败')
+      targetState.previewResumeData = null
+      targetState.previewLayoutConfig = null
+      if (value !== 'cancel') {
+        await updateResumeData()
+        targetState.messages.push({
+          id: Date.now() * 1000 + 9,
+          role: 'assistant',
+          type: 'undo',
+          content: '本次修改已应用。',
+          handled: false,
+          localOnly: true
+        })
+      }
+    } catch (error) {
+      if (confirmMsgIndex !== -1) {
+        targetState.messages[confirmMsgIndex] = {
+          ...targetState.messages[confirmMsgIndex],
+          handled: false
+        }
+      }
+      targetState.hasConfirmArea = true
+      showNotice(error.message || '处理确认请求失败')
+    } finally {
+      targetState.isLoading = false
+    }
+    return
   }
 
   const selectedSuffix = selected_change_ids.length ? `:${selected_change_ids.join(',')}` : ''
@@ -1889,7 +2151,7 @@ async function handleOptionClick({ confirm_id, value, selected_change_ids = [] }
 
     const formData = new FormData()
     formData.append('message', confirmMessage)
-    formData.append('session_id', sessionId.value)
+    formData.append('session_id', targetSessionId)
     formData.append('request_id', requestId)
 
     // 恢复原版确认链路：确认回复进入 /chat，由 LangGraph tool_node 处理。
@@ -1940,7 +2202,7 @@ async function handleOptionClick({ confirm_id, value, selected_change_ids = [] }
           if (index !== -1) {
             messages.value[index] = { ...messages.value[index], content: data.content, streaming: false }
           }
-          if (data.session_id) sessionId.value = data.session_id
+          if (data.session_id) localStorage.setItem('resumeAssistantSessionId', data.session_id)
           if (isAccepting && confirmationSucceeded) {
             await updateResumeData()
             resumeRefreshed = true
@@ -1952,7 +2214,7 @@ async function handleOptionClick({ confirm_id, value, selected_change_ids = [] }
         } else if (data.type === 'end') {
           confirmationProcessed = confirmationProcessed || Boolean(data.confirmation_processed)
           confirmationSucceeded = confirmationSucceeded || Boolean(data.confirmation_success)
-          if (data.session_id) sessionId.value = data.session_id
+          if (data.session_id) localStorage.setItem('resumeAssistantSessionId', data.session_id)
           if (isAccepting && confirmationSucceeded && !resumeRefreshed) {
             await updateResumeData()
             resumeRefreshed = true
@@ -2003,7 +2265,9 @@ async function handleOptionClick({ confirm_id, value, selected_change_ids = [] }
 }
 
 async function handleUndoClick({ message_id }) {
-  const index = messages.value.findIndex(message => message.id === message_id)
+  const targetSessionId = sessionId.value
+  const targetState = ensureContextUiState(targetSessionId)
+  const index = targetState.messages.findIndex(message => message.id === message_id)
   try {
     const response = await fetch(`/tasks/${currentTaskId.value}/undo`, {
       method: 'POST',
@@ -2012,22 +2276,22 @@ async function handleUndoClick({ message_id }) {
     const data = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(data.detail || '撤回失败，请重试')
     if (index !== -1) {
-      messages.value[index] = { ...messages.value[index], handled: true, content: '已撤回本次修改。' }
+      targetState.messages[index] = { ...targetState.messages[index], handled: true, content: '已撤回本次修改。' }
     }
-    messages.value = messages.value.map(message => (
+    targetState.messages = targetState.messages.map(message => (
       message.type === 'confirm' && !message.handled
         ? { ...message, handled: true }
         : message
     ))
-    hasConfirmArea.value = false
-    previewResumeData.value = null
-    previewLayoutConfig.value = null
+    targetState.hasConfirmArea = false
+    targetState.previewResumeData = null
+    targetState.previewLayoutConfig = null
     await updateResumeData()
     showNotice('已撤回本次修改', 'success')
     await fetch('/save_conversation', {
       method: 'POST',
       headers: getAuthHeaders(),
-      body: JSON.stringify({ session_id: sessionId.value, messages: conversationMessagesForSave() })
+      body: JSON.stringify({ session_id: targetSessionId, messages: conversationMessagesForSave(targetState.messages) })
     })
   } catch (error) {
     showNotice(error.message || '撤回失败，请重试')
@@ -2520,6 +2784,7 @@ function migrateEditableDefaultBold(data) {
 
 // 打开简历编辑弹窗
 function openResumeEditDialog() {
+  activateResumeSettingsDialog('resume-edit')
   resumeEditorPreviousResumeData = cloneResumeData(resumeData.value)
   resumeEditorPreviousPreviewLayout = previewLayoutConfig.value
     ? JSON.parse(JSON.stringify(previewLayoutConfig.value))
@@ -3692,10 +3957,45 @@ watch(
     </Transition>
   </Teleport>
 
+  <!-- 不经过 LLM 的确定文字替换 -->
+  <Teleport to="body">
+    <Transition name="dialog-fade">
+      <div v-if="showDirectEditDialog" class="workspace-modal-mask preview-visible-modal-mask">
+        <form class="workspace-modal compact" @submit.prevent="buildDirectEditPreview">
+          <div class="workspace-modal-header">
+            <div><h2>直接修改</h2></div>
+            <button type="button" class="modal-close-btn" aria-label="关闭" @click="closeDirectEditDialog">×</button>
+          </div>
+          <label class="workspace-field">
+            <span>作用区域</span>
+            <select v-model="directEditForm.scope">
+              <option v-for="option in directEditScopeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+            </select>
+          </label>
+          <label class="workspace-field">
+            <span>原内容</span>
+            <textarea v-model="directEditForm.original_text" rows="3" placeholder="填写需要替换的原文"></textarea>
+          </label>
+          <label class="workspace-field">
+            <span>目标内容</span>
+            <textarea v-model="directEditForm.target_text" rows="3" placeholder="填写替换后的文字；留空表示删除"></textarea>
+          </label>
+          <p v-if="directEditError" class="workspace-modal-error">{{ directEditError }}</p>
+          <div class="workspace-modal-footer">
+            <button type="button" class="workspace-btn secondary" :disabled="isBuildingDirectPreview" @click="closeDirectEditDialog">取消</button>
+            <button type="submit" class="workspace-btn primary" :disabled="isBuildingDirectPreview || !directEditForm.original_text.trim()">
+              {{ isBuildingDirectPreview ? '生成中…' : '确认' }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </Transition>
+  </Teleport>
+
   <!-- 新建岗位版本弹窗 -->
   <Teleport to="body">
     <Transition name="dialog-fade">
-      <div v-if="showTaskCreateDialog" class="workspace-modal-mask" @click.self="closeTaskCreateDialog">
+      <div v-if="showTaskCreateDialog" class="workspace-modal-mask">
         <form class="workspace-modal" @submit.prevent="confirmCreateProjectTask">
           <div class="workspace-modal-header">
             <div>
@@ -3836,7 +4136,7 @@ watch(
   <!-- 重命名简历版本弹窗 -->
   <Teleport to="body">
     <Transition name="dialog-fade">
-      <div v-if="taskToRename" class="workspace-modal-mask" @click.self="closeTaskRenameDialog">
+      <div v-if="taskToRename" class="workspace-modal-mask">
         <form class="workspace-modal compact" @submit.prevent="confirmRenameTask">
           <div class="workspace-modal-header">
             <div>
@@ -4164,6 +4464,8 @@ watch(
       </h1>
       <div class="header-info">
         <span class="workspace-project-title">{{ plainDisplayText(currentProject?.title || '主简历') }}</span>
+        <span v-if="isLocalMode" class="workspace-mode-pill"><i></i>本地模式</span>
+        <AccountMenu v-else-if="currentUser" :user="currentUser" @logout="logout" />
       </div>
     </div>
   </header>
@@ -4231,7 +4533,7 @@ watch(
               <div
                 v-for="context in conversationContexts.filter(item => item.context_type === 'main' || item.status === 'active')"
                 :key="context.id"
-                :class="['mission-tab', { active: context.session_id === activeContextId }]"
+                :class="['mission-tab', { active: context.session_id === activeContextId, busy: contextUiStates[context.session_id]?.isResponding }]"
                 role="button"
                 tabindex="0"
                 @click.stop="selectConversationContext(context)"
@@ -4295,20 +4597,6 @@ watch(
           <div v-if="showProcessingBar" class="processing-status" role="status" aria-live="polite">
             <span class="processing-track" aria-hidden="true"><span></span></span>
             <span>{{ processingText }}</span>
-          </div>
-          <div v-if="workflowVisible" class="workflow-status" aria-live="polite">
-            <div class="workflow-status-main">
-              <strong>{{ workflowModeLabel }}</strong>
-              <span>{{ workflowStatusLabel }}</span>
-              <span v-if="workflowFocusLabel">聚焦：{{ workflowFocusLabel }}</span>
-              <span>已确认 {{ workflowState.fact_count || 0 }} 条补充信息</span>
-            </div>
-            <div class="workflow-status-actions">
-              <button v-if="workflowState.status === 'active'" type="button" :disabled="isLoading || isResponding" @click="runWorkflowAction('pause')">暂停</button>
-              <button v-if="workflowState.status === 'paused'" type="button" :disabled="isLoading || isResponding" @click="runWorkflowAction('resume')">继续</button>
-              <button v-if="workflowState.has_suggestion && workflowState.status !== 'completed'" type="button" :disabled="isLoading || isResponding" @click="runWorkflowAction('apply')">应用建议</button>
-              <button v-if="workflowState.status !== 'completed'" type="button" :disabled="isLoading || isResponding" @click="runWorkflowAction('end')">结束</button>
-            </div>
           </div>
           <div class="assistant-actions" aria-label="简历分析快捷操作">
             <button
@@ -4413,7 +4701,7 @@ watch(
       <!-- 右侧简历预览区 -->
       <div class="resume-section">
         <div class="resume-content">
-          <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :has-source-document="!!currentTask?.has_source_document" :highlighted-module="highlightedModule" :jd-data="jdData" :lang="currentLang" :translation-busy="isTranslating" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @open-resume-import="showUploadResumeDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @layout-updated="handleLayoutUpdated" @render-style-updated="handleRenderStyleUpdated" />
+          <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :project-name="currentProject?.title || ''" :version-name="currentTask?.title || ''" :local-mode="isLocalMode" :source-page-count="currentTask?.source_page_count || 1" :has-source-document="!!currentTask?.has_source_document" :highlighted-module="highlightedModule" :jd-data="jdData" :lang="currentLang" :translation-busy="isTranslating" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @open-resume-import="showUploadResumeDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @layout-updated="handleLayoutUpdated" @render-style-updated="handleRenderStyleUpdated" />
         </div>
       </div>
       </template>
@@ -4434,7 +4722,7 @@ watch(
                   <div
                     v-for="context in conversationContexts.filter(item => item.context_type === 'main' || item.status === 'active')"
                     :key="context.id"
-                    :class="['mission-tab', { active: context.session_id === activeContextId }]"
+                    :class="['mission-tab', { active: context.session_id === activeContextId, busy: contextUiStates[context.session_id]?.isResponding }]"
                     role="button"
                     tabindex="0"
                     @click.stop="selectConversationContext(context)"
@@ -4498,20 +4786,6 @@ watch(
                 <span class="processing-track" aria-hidden="true"><span></span></span>
                 <span>{{ processingText }}</span>
               </div>
-              <div v-if="workflowVisible" class="workflow-status" aria-live="polite">
-                <div class="workflow-status-main">
-                  <strong>{{ workflowModeLabel }}</strong>
-                  <span>{{ workflowStatusLabel }}</span>
-                  <span v-if="workflowFocusLabel">聚焦：{{ workflowFocusLabel }}</span>
-                  <span>已确认 {{ workflowState.fact_count || 0 }} 条补充信息</span>
-                </div>
-                <div class="workflow-status-actions">
-                  <button v-if="workflowState.status === 'active'" type="button" :disabled="isLoading || isResponding" @click="runWorkflowAction('pause')">暂停</button>
-                  <button v-if="workflowState.status === 'paused'" type="button" :disabled="isLoading || isResponding" @click="runWorkflowAction('resume')">继续</button>
-                  <button v-if="workflowState.has_suggestion && workflowState.status !== 'completed'" type="button" :disabled="isLoading || isResponding" @click="runWorkflowAction('apply')">应用建议</button>
-                  <button v-if="workflowState.status !== 'completed'" type="button" :disabled="isLoading || isResponding" @click="runWorkflowAction('end')">结束</button>
-                </div>
-              </div>
               <div class="assistant-actions" aria-label="简历分析快捷操作">
                 <button
                   v-for="action in assistantActions"
@@ -4559,7 +4833,7 @@ watch(
 
           <!-- 简历 Tab 内容 -->
           <div v-else-if="currentTab === 'resume'" class="mobile-resume-view" key="resume">
-            <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :source-page-count="currentTask?.source_page_count || 1" :has-source-document="!!currentTask?.has_source_document" :highlighted-module="highlightedModule" :jd-data="jdData" :is-mobile-view="isMobileView" :lang="currentLang" :translation-busy="isTranslating" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @open-resume-import="showUploadResumeDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @layout-updated="handleLayoutUpdated" @render-style-updated="handleRenderStyleUpdated" />
+            <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :project-name="currentProject?.title || ''" :version-name="currentTask?.title || ''" :local-mode="isLocalMode" :source-page-count="currentTask?.source_page_count || 1" :has-source-document="!!currentTask?.has_source_document" :highlighted-module="highlightedModule" :jd-data="jdData" :is-mobile-view="isMobileView" :lang="currentLang" :translation-busy="isTranslating" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @open-resume-import="showUploadResumeDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @layout-updated="handleLayoutUpdated" @render-style-updated="handleRenderStyleUpdated" />
           </div>
         </Transition>
 
@@ -4601,7 +4875,7 @@ watch(
   <!-- 全屏输入弹窗 -->
   <Teleport to="body">
     <Transition name="dialog-fade">
-      <div v-if="isFullscreenDialogOpen" class="fullscreen-dialog-overlay" @click.self="closeFullscreenDialog">
+      <div v-if="isFullscreenDialogOpen" class="fullscreen-dialog-overlay">
         <div class="fullscreen-dialog" @keydown="handleDialogKeydown">
           <div class="dialog-header">
             <h3>输入你的请求</h3>
@@ -4810,7 +5084,7 @@ watch(
   <!-- 简历编辑弹窗（新增） -->
   <Teleport to="body">
     <Transition name="dialog-fade">
-      <div v-if="isResumeEditDialogOpen" class="resume-dialog-overlay">
+      <div v-if="isResumeEditDialogOpen" class="resume-dialog-overlay preview-visible-resume-overlay">
         <div class="resume-dialog">
           <div class="dialog-header">
             <h3>编辑简历</h3>
@@ -5391,6 +5665,16 @@ watch(
 .mission-tab.active .mission-tab-dot {
   background: #78a6ff;
   box-shadow: 0 0 7px rgba(120, 166, 255, 0.55);
+}
+
+.mission-tab.busy .mission-tab-dot {
+  background: #78a6ff;
+  box-shadow: 0 0 7px rgba(120, 166, 255, 0.55);
+  animation: mission-tab-pulse 1s ease-in-out infinite;
+}
+
+@keyframes mission-tab-pulse {
+  50% { opacity: 0.35; transform: scale(0.78); }
 }
 
 .mission-tab-label {
@@ -7506,6 +7790,23 @@ watch(
   align-items: center;
 }
 
+.workspace-mode-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: #8f8f98;
+  font: 0.66rem 'GTPressuraMono-Light', monospace;
+  letter-spacing: 0.08em;
+}
+
+.workspace-mode-pill i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #6ed69b;
+  box-shadow: 0 0 9px rgba(110, 214, 155, 0.65);
+}
+
 .module-title-inline-label {
   display: flex;
   align-items: center;
@@ -8251,7 +8552,7 @@ watch(
 
 :is(.fullscreen-dialog, .translate-dialog, .jd-dialog, .resume-dialog) {
   color: #ededf1;
-  background: #15161a;
+  background: #25262c;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 18px;
   box-shadow: 0 30px 90px rgba(0, 0, 0, 0.55);
@@ -8879,7 +9180,7 @@ watch(
   width: min(520px, 100%);
   padding: 26px;
   color: #f4f4f5;
-  background: #23242a;
+  background: #25262c;
   border: 1px solid rgba(255, 255, 255, 0.11);
   border-radius: 20px;
   box-shadow: 0 28px 80px rgba(0, 0, 0, 0.42);
@@ -8916,21 +9217,21 @@ watch(
 }
 
 .modal-close-btn {
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
   padding: 0;
-  color: #a6a6ae;
-  font-size: 23px;
-  line-height: 28px;
+  color: #d8dbe2;
+  font-size: 24px;
+  line-height: 34px;
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 50%;
+  border: 0;
+  border-radius: 0;
   cursor: pointer;
 }
 
 .modal-close-btn:hover {
   color: #fff;
-  background: rgba(255, 255, 255, 0.07);
+  background: transparent;
 }
 
 .modal-close-btn:focus-visible {
@@ -8960,7 +9261,9 @@ watch(
   font-size: 13px;
 }
 
-.workspace-field input {
+.workspace-field input,
+.workspace-field select,
+.workspace-field textarea {
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
@@ -8972,9 +9275,16 @@ watch(
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 11px;
   outline: none;
+  resize: vertical;
 }
 
-.workspace-field input:focus {
+.workspace-field select {
+  appearance: auto;
+}
+
+.workspace-field input:focus,
+.workspace-field select:focus,
+.workspace-field textarea:focus {
   border-color: #7fa8ff;
   box-shadow: 0 0 0 3px rgba(90, 137, 238, 0.14);
 }
@@ -9199,15 +9509,16 @@ watch(
 }
 
 .workspace-btn {
-  min-width: 92px;
-  padding: 10px 15px;
+  min-width: 76px;
+  height: 34px;
+  padding: 0 12px;
   color: #ececf0;
   font: inherit;
-  font-size: 13px;
+  font-size: 0.78rem;
   font-weight: 600;
-  background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
+  background: #343740;
+  border: 0;
+  border-radius: 7px;
   cursor: pointer;
 }
 
@@ -9217,14 +9528,12 @@ watch(
 
 .workspace-btn.primary {
   color: #fff;
-  background: #5f8ff2;
-  border-color: #78a6ff;
+  background: #4d6fb8;
 }
 
 .workspace-btn.danger {
   color: #fff;
   background: #a64649;
-  border-color: #b9565a;
 }
 
 .workspace-btn:disabled {
@@ -9243,7 +9552,7 @@ watch(
 
 .modal-container {
   color: #f2f2f4;
-  background: #23242a;
+  background: #25262c;
   border: 1px solid rgba(255, 255, 255, 0.11);
   border-radius: 20px;
   box-shadow: 0 28px 80px rgba(0, 0, 0, 0.42);
@@ -9487,5 +9796,103 @@ watch(
   appearance: auto !important;
   background-image: none !important;
   padding-right: 9px !important;
+}
+
+/* 输入型弹窗停靠在对话区，编辑时保留右侧简历预览。 */
+.preview-visible-modal-mask,
+.preview-visible-resume-overlay {
+  inset: 52px auto 0 156px;
+  width: calc((100vw - 156px) * 0.39);
+  box-sizing: border-box;
+  justify-content: flex-end;
+  place-items: center end;
+  padding: 24px 0;
+  background: rgba(7, 8, 11, 0.16);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.preview-visible-modal-mask .workspace-modal.compact {
+  width: min(400px, 100%);
+  max-width: 400px;
+  justify-self: end;
+}
+
+.preview-visible-modal-mask {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.preview-visible-modal-mask .modal-close-btn {
+  font-size: 20px;
+}
+
+.preview-visible-resume-overlay .resume-dialog {
+  width: 100%;
+  max-width: none;
+  max-height: calc(100vh - 76px);
+  border-radius: 14px;
+}
+
+/* 关闭键与排版设置弹窗一致：融入背景，不显示独立方框。 */
+:is(.fullscreen-dialog, .translate-dialog, .jd-dialog, .resume-dialog) .dialog-close-btn {
+  width: 34px;
+  height: 34px;
+  padding: 7px;
+  color: #d8dbe2;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+:is(.fullscreen-dialog, .translate-dialog, .jd-dialog, .resume-dialog) .dialog-close-btn:hover,
+:is(.fullscreen-dialog, .translate-dialog, .jd-dialog, .resume-dialog) .dialog-close-btn:focus-visible {
+  color: #fff;
+  background: transparent;
+  outline: none;
+}
+
+:is(.fullscreen-dialog, .translate-dialog, .jd-dialog, .resume-dialog)
+  :is(.dialog-save-btn, .dialog-submit-btn, .cancel-btn, .save-btn, .confirm-btn, .parse-btn) {
+  min-width: 76px;
+  height: 34px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: normal;
+  box-shadow: none;
+}
+
+:is(.fullscreen-dialog, .translate-dialog, .jd-dialog, .resume-dialog)
+  :is(.dialog-submit-btn, .save-btn, .confirm-btn, .parse-btn) {
+  color: #fff;
+  background: #4d6fb8;
+}
+
+:is(.fullscreen-dialog, .translate-dialog, .jd-dialog, .resume-dialog)
+  :is(.dialog-save-btn, .cancel-btn) {
+  color: #e8eaf0;
+  background: #343740;
+}
+
+@media (max-width: 1199px) {
+  .preview-visible-modal-mask,
+  .preview-visible-resume-overlay {
+    inset: 52px 0 0;
+    width: 100%;
+    justify-content: center;
+    place-items: center;
+    padding: 16px;
+    background: rgba(7, 8, 11, 0.62);
+  }
+
+  .preview-visible-resume-overlay .resume-dialog {
+    width: min(700px, 100%);
+    max-height: calc(100vh - 84px);
+  }
 }
 </style>

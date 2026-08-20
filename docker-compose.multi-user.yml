@@ -1,0 +1,67 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: resumebranch-mysql
+    env_file:
+      - ${MULTI_USER_ENV_FILE:-.env.multi_user}
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - multi_user_mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: resumebranch-backend:multi-user
+    container_name: resumebranch-backend
+    env_file:
+      - ${MULTI_USER_ENV_FILE:-.env.multi_user}
+    environment:
+      APP_MODE: multi_user
+      HOST: 0.0.0.0
+      DATABASE_URL: mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE}?charset=utf8mb4
+    command: >-
+      sh -c "python -m backend.create_admin &&
+      exec gunicorn backend.main:app -k uvicorn.workers.UvicornWorker
+      --bind 0.0.0.0:8000 --workers 1 --access-logfile - --error-logfile -"
+    volumes:
+      - multi_user_app_data:/app/data
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -X POST -f http://127.0.0.1:8000/health || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: resumebranch-frontend:multi-user
+    container_name: resumebranch-frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  multi_user_mysql:
+  multi_user_app_data:

@@ -70,11 +70,46 @@ class HarnessModuleTests(unittest.IsolatedAsyncioTestCase):
             coaching_mode=False,
             context_type="layout",
             context_metadata={"latest_recommendations": "1. 只处理当前简历真实存在的问题。"},
+            mission_initial_turn=True,
         )
         self.assertIn("当前任务最近一次编号建议", content)
         self.assertIn("根据当前简历数据与快照", content)
         self.assertIn("只处理当前简历真实存在的问题", content)
         self.assertNotIn("三端导出一致性", content)
+
+        follow_up = build_system_content(
+            "简历：{{resume_data}}\nJD：{{jd_data}}",
+            {"basics": {"name": "张三"}},
+            {},
+            layout_data=default_layout_config(),
+            coaching_mode=False,
+            context_type="layout",
+            mission_initial_turn=False,
+        )
+        self.assertNotIn("本轮只分析，不修改简历", follow_up)
+
+    def test_layout_capability_context_is_full_only_when_requested(self):
+        compact = build_system_content(
+            "简历：{{resume_data}}\nJD：{{jd_data}}",
+            {"basics": {"name": "张三"}},
+            {},
+            layout_data=default_layout_config(),
+            coaching_mode=False,
+            context_type="main",
+        )
+        full = build_system_content(
+            "简历：{{resume_data}}\nJD：{{jd_data}}",
+            {"basics": {"name": "张三"}},
+            {},
+            layout_data=default_layout_config(),
+            coaching_mode=False,
+            context_type="layout",
+        )
+        self.assertIn("排版能力契约", compact)
+        self.assertIn("componentRows", full)
+        self.assertNotIn("【当前完整归一化排版配置】", compact)
+        self.assertIn("【当前完整归一化排版配置】", full)
+        self.assertIn("照片位于基本信息右上方", full)
 
     def test_latest_numbered_recommendation_ignores_non_numbered_chat(self):
         self.assertEqual(
@@ -153,6 +188,38 @@ class HarnessModuleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored[0]["content"], [{"type": "text", "text": "保留文本"}])
         self.assertNotIn("SECRET", str(stored))
         self.assertEqual(stored[1]["content"], "助手回答")
+
+    async def test_persistence_merges_visual_revision_with_latest_recommendations(self):
+        messages = [
+            HumanMessage(content="检查排版"),
+            AIMessage(content="1. 调整模块间距。"),
+        ]
+        with (
+            patch("backend.database.save_user_resume"),
+            patch("backend.database.save_user_jd"),
+            patch("backend.database.save_agent_memory_state", return_value=1),
+            patch("backend.database.save_conversation_context"),
+            patch("backend.database.update_conversation_context_metadata") as update_metadata,
+        ):
+            await persist_turn_state(
+                object(),
+                7,
+                "task-1",
+                messages,
+                {},
+                {},
+                None,
+                conversation_llm=None,
+                compression_state=CompressionState(),
+                context_metadata_updates={
+                    "last_visual_revision": "abc123",
+                    "initial_analysis_completed": True,
+                },
+            )
+        updates = update_metadata.call_args.args[3]
+        self.assertEqual(updates["last_visual_revision"], "abc123")
+        self.assertTrue(updates["initial_analysis_completed"])
+        self.assertIn("1. 调整模块间距", updates["latest_recommendations"])
 
     async def test_persistence_compacts_complete_turns_and_checks_version(self):
         messages = []

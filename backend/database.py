@@ -6,7 +6,8 @@ SQLAlchemy 模型定义和数据库连接
 import os
 import uuid
 from copy import deepcopy
-from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, JSON, Text, inspect, text
+from pathlib import Path
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, JSON, Text, event, func, inspect, text
 from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError
@@ -24,12 +25,29 @@ database_backend = make_url(DATABASE_URL).get_backend_name()
 engine_options = {}
 
 if database_backend == "sqlite":
-    engine_options["connect_args"] = {"check_same_thread": False}
+    sqlite_database = make_url(DATABASE_URL).database
+    if sqlite_database and sqlite_database != ":memory:":
+        Path(sqlite_database).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
+    engine_options["connect_args"] = {"check_same_thread": False, "timeout": 30}
 elif database_backend == "mysql":
     # Detect stale pooled connections and recycle them before MySQL's idle timeout.
     engine_options.update(pool_pre_ping=True, pool_recycle=3600)
 
 engine = create_engine(DATABASE_URL, **engine_options)
+
+
+if database_backend == "sqlite":
+    @event.listens_for(engine, "connect")
+    def _configure_sqlite_connection(dbapi_connection, _connection_record):
+        """Improve local durability and tolerate short concurrent write bursts."""
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 _PENDING_CONFIRMATION_UNSET = object()
@@ -47,6 +65,7 @@ class User(Base):
     invite_code = Column(String(50), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     is_active = Column(Boolean, default=True)
+    is_admin = Column(Boolean, default=False, nullable=False)
 
 
 class InviteCode(Base):
@@ -253,6 +272,7 @@ def init_db():
     migrate_project_task_source_document()
     migrate_layout_config_fields()
     migrate_agent_memory_interview_fields()
+    migrate_user_admin_field()
     migrate_resume_academic_fields()
 
 
@@ -313,6 +333,25 @@ def migrate_agent_memory_interview_fields():
             ))
 
 
+def migrate_user_admin_field():
+    """Add explicit server-side administrator authorization to old databases."""
+    inspector = inspect(engine)
+    if "users" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("users")}
+    if "is_admin" in columns:
+        return
+    with engine.begin() as connection:
+        if database_backend == "mysql":
+            connection.execute(text(
+                "ALTER TABLE users ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT FALSE"
+            ))
+        else:
+            connection.execute(text(
+                "ALTER TABLE users ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT 0"
+            ))
+
+
 def migrate_resume_academic_fields():
     """Migrate legacy GPA-in-thesis records into explicit education fields."""
     db = SessionLocal()
@@ -365,7 +404,8 @@ def migrate_resume_academic_fields():
 
 def get_user_by_email(db, email: str):
     """根据邮箱获取用户"""
-    return db.query(User).filter(User.email == email).first()
+    normalized = str(email or "").strip().lower()
+    return db.query(User).filter(func.lower(User.email) == normalized).first()
 
 
 def get_user_by_id(db, user_id: int):
@@ -373,12 +413,26 @@ def get_user_by_id(db, user_id: int):
     return db.query(User).filter(User.id == user_id).first()
 
 
-def create_user(db, email: str, hashed_password: str, invite_code: str):
+def create_user(
+    db,
+    email: str,
+    hashed_password: str,
+    invite_code: str,
+    *,
+    is_admin: bool = False,
+    commit: bool = True,
+):
     """创建用户"""
-    user = User(email=email, hashed_password=hashed_password, invite_code=invite_code)
+    user = User(
+        email=str(email or "").strip().lower(),
+        hashed_password=hashed_password,
+        invite_code=invite_code,
+        is_admin=bool(is_admin),
+    )
     db.add(user)
-    db.commit()
-    db.refresh(user)
+    if commit:
+        db.commit()
+        db.refresh(user)
     return user
 
 
@@ -1446,16 +1500,48 @@ def get_conversation(db, user_id: int, session_id: str) -> list:
 
 def check_invite_code(db, code: str) -> bool:
     """检查邀请码是否有效"""
-    invite = db.query(InviteCode).filter(InviteCode.code == code).first()
+    invite = db.query(InviteCode).filter(InviteCode.code == str(code or "").strip()).first()
     return invite and not invite.is_used
 
 
-def use_invite_code(db, code: str):
+def use_invite_code(db, code: str, *, commit: bool = True):
     """使用邀请码"""
     invite = db.query(InviteCode).filter(InviteCode.code == code).first()
     if invite:
         invite.is_used = True
+        if commit:
+            db.commit()
+
+
+def register_user_with_invite(db, email: str, hashed_password: str, invite_code: str):
+    """Atomically consume one invite code and create its user."""
+    normalized_email = str(email or "").strip().lower()
+    normalized_code = str(invite_code or "").strip()
+    try:
+        invite = (
+            db.query(InviteCode)
+            .filter(InviteCode.code == normalized_code)
+            .with_for_update()
+            .first()
+        )
+        if not invite or invite.is_used:
+            raise ValueError("邀请码无效或已使用")
+        if get_user_by_email(db, normalized_email):
+            raise ValueError("邮箱已注册")
+        user = create_user(
+            db,
+            normalized_email,
+            hashed_password,
+            normalized_code,
+            commit=False,
+        )
+        invite.is_used = True
         db.commit()
+        db.refresh(user)
+        return user
+    except Exception:
+        db.rollback()
+        raise
 
 
 def create_invite_code(db, code: str):
@@ -1645,6 +1731,40 @@ def get_pending_confirmation(db, user_id: int, session_id: str) -> dict:
         Conversation.session_id == session_id
     ).first()
     return conv.pending_confirmation if conv else None
+
+
+def find_task_pending_confirmation(
+    db,
+    user_id: int,
+    task_id: str,
+    exclude_session_id: str = "",
+) -> tuple[str, dict] | None:
+    """Return any pending edit owned by a conversation of one resume task."""
+    task = get_resume_task(db, user_id, task_id)
+    if not task:
+        return None
+    if task.session_id != exclude_session_id and isinstance(task.pending_confirmation, dict):
+        return task.session_id, task.pending_confirmation
+    session_ids = [
+        item.session_id
+        for item in db.query(ConversationContext).filter(
+            ConversationContext.user_id == user_id,
+            ConversationContext.task_id == task_id,
+            ConversationContext.status == "active",
+            ConversationContext.session_id != task.session_id,
+        ).all()
+        if item.session_id != exclude_session_id
+    ]
+    if not session_ids:
+        return None
+    conv = db.query(Conversation).filter(
+        Conversation.user_id == user_id,
+        Conversation.session_id.in_(session_ids),
+        Conversation.pending_confirmation.isnot(None),
+    ).order_by(Conversation.updated_at.desc()).first()
+    if conv and isinstance(conv.pending_confirmation, dict):
+        return conv.session_id, conv.pending_confirmation
+    return None
 
 
 def clear_pending_confirmation(db, user_id: int, session_id: str):

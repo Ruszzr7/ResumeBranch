@@ -5,14 +5,18 @@
 # Local secrets
 .env
 .env.local
+.env.multi_user
 !.env.example
+!.env.multi_user.example
 
 # Database files
 data/*.db
+data/*.db-*
 data/deepagents.db
 data/llm_profiles.json
 data/*.sqlite*
 /data/source_documents/
+/output/resumes/
 
 # Local resume/JD data
 /resume*.json

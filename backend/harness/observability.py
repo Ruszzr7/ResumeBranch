@@ -10,6 +10,7 @@ METRIC_NAMES = frozenset({
     "persistence_errors_total",
     "workflow_errors_total",
     "workflow_cleanup_threads_total",
+    "resume_visual_render_failures_total",
     "resume_visual_render_fallbacks_total",
     "resume_visual_model_fallbacks_total",
 })

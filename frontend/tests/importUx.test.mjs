@@ -35,6 +35,12 @@ test('resume import does not trigger an unsolicited LLM reply', () => {
   assert.equal(importFlow.includes("fetch('/api/chat'"), false)
 })
 
+test('conversation persistence excludes empty streaming assistant placeholders', () => {
+  assert.ok(appSource.includes('message.streaming !== true'))
+  assert.ok(appSource.includes("message.role === 'assistant'"))
+  assert.ok(appSource.includes("!String(message.content ?? '').trim()"))
+})
+
 test('layout advice uses the concise analysis prompt', () => {
   assert.ok(appSource.includes('根据当前简历数据与快照，检查当前简历存在的排版问题，按对简历影响程度从高到低编号列出可执行建议。'))
   assert.equal(appSource.includes('不要把默认状态、已符合规则、赞扬或无操作建议列为问题'), false)
@@ -94,8 +100,9 @@ test('assistant actions use clear, professional wording', () => {
   assert.ok(appSource.includes('本轮只分析，不修改简历'))
   assert.equal(appSource.includes("label: '开始拷打'"), false)
   assert.equal(appSource.includes("label: '优化排版'"), false)
-  assert.ok(appSource.includes("label: '修改简历'"))
-  assert.ok(appSource.includes('prefillOnly: true'))
+  assert.ok(appSource.includes("label: '直接修改'"))
+  assert.ok(appSource.includes('directEdit: true'))
+  assert.ok(appSource.includes('/direct-replace-preview'))
   assert.ok(appSource.includes('也可以直接修改简历内容和排版'))
 })
 
@@ -103,10 +110,55 @@ test('assistant actions follow the resume improvement workflow', () => {
   const start = appSource.indexOf('const assistantActions = [')
   const end = appSource.indexOf('\n]', start)
   const actions = appSource.slice(start, end)
-  const labels = ['修改简历', '全面诊断', '排版建议', '深度打磨', '对照 JD']
+  const labels = ['直接修改', '全面诊断', '排版建议', '深度打磨', '对照 JD']
   const positions = labels.map(label => actions.indexOf(`label: '${label}'`))
   assert.ok(positions.every(position => position >= 0))
   assert.deepEqual([...positions].sort((a, b) => a - b), positions)
+})
+
+test('mission commands only send their initial prompt when a context is newly created', () => {
+  const start = appSource.indexOf('async function startMissionContext')
+  const end = appSource.indexOf('function runWorkflowAction', start)
+  const missionFlow = appSource.slice(start, end)
+  assert.ok(missionFlow.includes('const resumed = Boolean(data.resumed)'))
+  assert.ok(missionFlow.includes('if (!resumed) invalidateMainConversation()'))
+  assert.ok(missionFlow.includes('if (mission.resumed) return'))
+})
+
+test('editing dialogs keep the resume preview visible and require an explicit close action', () => {
+  assert.ok(appSource.includes('class="workspace-modal-mask preview-visible-modal-mask"'))
+  assert.ok(appSource.includes('class="resume-dialog-overlay preview-visible-resume-overlay"'))
+  assert.ok(appSource.includes('.preview-visible-modal-mask'))
+  assert.ok(appSource.includes('width: min(400px, 100%)'))
+  assert.ok(appSource.includes('grid-template-columns: minmax(0, 1fr)'))
+  assert.ok(appSource.includes('.preview-visible-resume-overlay .resume-dialog'))
+  assert.ok(appSource.includes('width: 100%'))
+  assert.equal(appSource.includes('showDirectEditDialog" class="workspace-modal-mask" @click.self'), false)
+  assert.equal(resumePreviewSource.includes('showSectionOrderDialog" class="success-dialog-overlay section-order-overlay" @click.self'), false)
+})
+
+test('single-change confirmation uses concise accept and reject labels', () => {
+  assert.ok(chatMessageSource.includes("changes.length > 1 ? '全部接受' : '接受'"))
+  assert.ok(chatMessageSource.includes("changes.length > 1 ? '全部拒绝' : '拒绝'"))
+})
+
+test('undo keeps the originating conversation session in scope through persistence', () => {
+  const start = appSource.indexOf('async function handleUndoClick')
+  const end = appSource.indexOf('// 检测哪个模块发生了变化', start)
+  const undoFlow = appSource.slice(start, end)
+  assert.ok(undoFlow.includes('const targetSessionId = sessionId.value'))
+  assert.ok(undoFlow.includes('const targetState = ensureContextUiState(targetSessionId)'))
+  assert.ok(undoFlow.includes('session_id: targetSessionId'))
+  assert.ok(undoFlow.includes('conversationMessagesForSave(targetState.messages)'))
+})
+
+test('resume setting dialogs share one mutually exclusive group and surface color', () => {
+  assert.ok(appSource.includes("const RESUME_SETTINGS_DIALOG_EVENT = 'resume-settings-dialog-open'"))
+  assert.ok(appSource.includes("activateResumeSettingsDialog('direct-edit')"))
+  assert.ok(appSource.includes("activateResumeSettingsDialog('resume-edit')"))
+  assert.ok(resumePreviewSource.includes("activateResumeSettingsDialog('section-order')"))
+  assert.ok(resumePreviewSource.includes("activateResumeSettingsDialog('font-size')"))
+  assert.ok(appSource.includes('background: #25262c'))
 })
 
 test('resume translation uses a dedicated endpoint and reusable cache', () => {

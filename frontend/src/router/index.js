@@ -9,12 +9,14 @@ const routes = [
   {
     path: '/',
     name: 'Home',
-    component: Homepage
+    component: Homepage,
+    meta: { requiresAuth: true }
   },
   {
     path: '/home',
     name: 'Homepage',
-    component: Homepage
+    component: Homepage,
+    meta: { requiresAuth: true }
   },
   {
     path: '/projects/:projectId/tasks/:taskId',
@@ -59,15 +61,19 @@ router.beforeEach(async (to) => {
 
   const token = localStorage.getItem('access_token')
   const userStr = localStorage.getItem('user')
-  const user = userStr ? JSON.parse(userStr) : null
+  let user = null
+  try {
+    user = userStr ? JSON.parse(userStr) : null
+  } catch {
+    localStorage.removeItem('user')
+  }
 
   if (to.meta.requiresAuth && !token) {
     return '/login'
   } else if (to.meta.guest && token) {
     return '/'
   } else if (to.meta.requiresAdmin) {
-    // Check if user is admin (admin@qq.com)
-    if (user && user.email === 'admin@qq.com') {
+    if (user?.is_admin === true) {
       return true
     } else {
       return '/'

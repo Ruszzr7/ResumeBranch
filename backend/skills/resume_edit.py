@@ -15,6 +15,7 @@ import re
 from typing import Any
 
 from ..layout_config import normalize_layout_config
+from ..layout_capabilities import validate_layout_operations
 from ..resume_changes import resume_digest
 from ..resume_data import normalize_resume_data
 
@@ -302,6 +303,15 @@ async def run_resume_edit(
     current_layout = normalize_layout_config(request.layout_config or {})
     if request.base_revision and request.base_revision != resume_digest(current_resume):
         raise ResumeEditOperationError("简历在生成预览前已发生变化，请重新生成修改建议")
+
+    # The generic path applicator only knows whether a key exists.  Validate
+    # the semantic layout capability separately so a model cannot request a
+    # normalized-but-uneditable field (for example component coordinates,
+    # per-module line heights, or arbitrary typography values).
+    try:
+        validate_layout_operations(layout_operations, current_layout)
+    except ValueError as exc:
+        raise ResumeEditOperationError(str(exc)) from exc
 
     candidate_resume = _apply_operations(
         current_resume,

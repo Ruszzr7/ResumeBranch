@@ -91,7 +91,7 @@ def exercise_business_endpoints(
     loaded = client.post(f"{API_URL}/load_resume", headers=base_headers)
     require(loaded, 200, "load resume")
     if loaded.json().get("basics", {}).get("name") != "Local Smoke Test":
-        raise RuntimeError("resume did not round-trip through MySQL")
+        raise RuntimeError("resume did not round-trip through the configured database")
 
     task_response = client.post(
         f"{API_URL}/projects/{project['id']}/tasks",
@@ -138,7 +138,7 @@ def exercise_business_endpoints(
     loaded_jd = client.post(f"{API_URL}/load_jd", headers=task_headers)
     require(loaded_jd, 200, "load JD")
     if loaded_jd.json().get("company") != "Local Test":
-        raise RuntimeError("JD did not round-trip through MySQL")
+        raise RuntimeError("JD did not round-trip through the configured database")
 
     llm_response = client.post(
         f"{API_URL}/chat",
@@ -169,6 +169,8 @@ def authenticate_multi_user(
         data={"username": admin_email, "password": admin_password},
     )
     require(admin_login, 200, "admin login")
+    if not admin_login.json().get("user", {}).get("is_admin"):
+        raise RuntimeError("configured administrator does not have server-side admin permission")
     admin_headers = {
         "Authorization": f"Bearer {admin_login.json()['access_token']}"
     }
@@ -179,7 +181,12 @@ def authenticate_multi_user(
         headers=admin_headers,
     )
     require(invite, 200, "create invite")
-    invite_code = invite.json()["code"]
+    invite_payload = invite.json()
+    invite_code = (
+        invite_payload[0]["code"]
+        if isinstance(invite_payload, list)
+        else invite_payload["code"]
+    )
 
     register = client.post(
         f"{API_URL}/auth/register",

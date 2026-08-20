@@ -61,9 +61,11 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(entry_router(state), "conversation_llm")
 
     async def test_coaching_turn_does_not_expose_save_tool(self):
-        fake_llm = SimpleNamespace(
+        bound = SimpleNamespace(
             ainvoke=AsyncMock(return_value=AIMessage(content="诊断结果")),
-            bind_tools=MagicMock(),
+        )
+        fake_llm = SimpleNamespace(
+            bind_tools=MagicMock(return_value=bound),
         )
         state = AgentState(
             messages=[HumanMessage(content="请全面诊断简历并给出修改建议")],
@@ -71,11 +73,32 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
         )
         with patch("backend.resume_agent.conversation_llm", fake_llm):
             result = await conversation_node(state)
-        fake_llm.bind_tools.assert_not_called()
-        fake_llm.ainvoke.assert_awaited_once()
-        system_prompt = fake_llm.ainvoke.await_args.args[0][0].content
+        exposed = fake_llm.bind_tools.call_args.args[0]
+        self.assertEqual([item.name for item in exposed], ["render_resume_pdf_images"])
+        bound.ainvoke.assert_awaited_once()
+        system_prompt = bound.ainvoke.await_args.args[0][0].content
         self.assertIn("本轮模式：只读诊断与简历教练", system_prompt)
         self.assertEqual(result["messages"][-1].content, "诊断结果")
+
+    async def test_mixed_mission_apply_and_consultation_still_exposes_edit_skill(self):
+        bound = SimpleNamespace(
+            ainvoke=AsyncMock(return_value=AIMessage(content="已处理明确修改，并继续回答咨询。")),
+        )
+        fake_llm = SimpleNamespace(bind_tools=MagicMock(return_value=bound))
+        state = AgentState(
+            messages=[
+                AIMessage(content="1. 调整模块间距。"),
+                HumanMessage(content="执行第一点，另外工作经历还有什么优化建议吗？"),
+            ],
+            resume_data=resume_payload(),
+            layout_data=default_layout_config(),
+            context_type="layout",
+            context_metadata={"initial_analysis_completed": True},
+        )
+        with patch("backend.resume_agent.conversation_llm", fake_llm):
+            await conversation_node(state)
+        exposed = {item.name for item in fake_llm.bind_tools.call_args.args[0]}
+        self.assertEqual(exposed, {"render_resume_pdf_images", "request_resume_edit"})
 
     async def test_common_layout_request_is_local_and_previews_without_llm(self):
         state = AgentState(

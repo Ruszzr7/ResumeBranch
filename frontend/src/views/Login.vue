@@ -46,14 +46,14 @@
             />
           </div>
 
-          <p v-if="statusMessage" class="status-message" role="status">
-            {{ statusMessage }}
+          <p v-if="errorMessage" class="status-message error" role="alert">
+            {{ errorMessage }}
           </p>
 
           <div class="button-wrapper">
             <div class="button-shadow" aria-hidden="true"></div>
-            <button type="submit" class="submit-btn">
-              登录
+            <button type="submit" class="submit-btn" :disabled="loading">
+              {{ loading ? '登录中…' : '登录' }}
             </button>
           </div>
         </form>
@@ -69,15 +69,38 @@
 
 <script setup>
 import { ref } from 'vue'
+import { useRouter } from 'vue-router'
 import BrandLogo from '../components/BrandLogo.vue'
 
+const router = useRouter()
 const email = ref('')
 const password = ref('')
-const statusMessage = ref('')
+const errorMessage = ref('')
+const loading = ref(false)
 
-// 登录接口暂不接入；保留表单状态和提交入口，后续接入 JWT 登录流程。
-function handleLogin() {
-  statusMessage.value = '登录接口待接入。'
+async function handleLogin() {
+  if (loading.value) return
+  loading.value = true
+  errorMessage.value = ''
+  try {
+    const body = new URLSearchParams()
+    body.set('username', email.value.trim().toLowerCase())
+    body.set('password', password.value)
+    const response = await fetch('/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(data.detail || '登录失败，请检查邮箱和密码')
+    localStorage.setItem('access_token', data.access_token)
+    localStorage.setItem('user', JSON.stringify(data.user))
+    await router.replace('/')
+  } catch (error) {
+    errorMessage.value = error.message || '登录失败，请稍后重试'
+  } finally {
+    loading.value = false
+  }
 }
 </script>
 
@@ -237,6 +260,12 @@ input:focus {
   line-height: 1.5;
 }
 
+.status-message.error {
+  color: #ffaaaa;
+  background: rgba(255, 96, 96, 0.08);
+  border-left-color: #ff6060;
+}
+
 .button-wrapper {
   position: relative;
   width: 100%;
@@ -275,6 +304,12 @@ input:focus {
 
 .submit-btn:active {
   transform: translate(3px, 3px);
+}
+
+.submit-btn:disabled {
+  opacity: 0.58;
+  cursor: wait;
+  transform: none;
 }
 
 .submit-btn:focus-visible,

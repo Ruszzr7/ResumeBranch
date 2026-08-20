@@ -89,6 +89,7 @@ const handleOptionClick = (option) => {
   emit('optionClick', {
     confirm_id: props.message.confirm_id,
     value: option.value,
+    source: props.message.source || '',
     selected_change_ids: option.value === 'confirm_selected' ? [...selectedChangeIds.value] : []
   })
 }
@@ -139,7 +140,7 @@ const handleContextClick = () => {
       <p class="preview-status">右侧已显示本次修改的临时预览，接受前不会保存。</p>
       <div v-if="changes.length" class="change-preview-list">
         <label v-for="change in changes" :key="change.id" class="change-preview-item">
-          <input v-model="selectedChangeIds" type="checkbox" :value="change.id" />
+          <input v-if="changes.length > 1" v-model="selectedChangeIds" type="checkbox" :value="change.id" />
           <span class="change-preview-copy">
             <strong>{{ userFacingFieldLabel(change.label) }}</strong>
             <span v-if="change.kind !== 'layout'" class="change-values">
@@ -160,9 +161,10 @@ const handleContextClick = () => {
       </div>
       <div v-if="changes.length" class="confirm-buttons change-actions">
         <button class="confirm-btn confirm-btn--primary" @click="handleOptionClick({ value: 'confirm_all' })">
-          全部接受
+          {{ changes.length > 1 ? '全部接受' : '接受' }}
         </button>
         <button
+          v-if="changes.length > 1"
           class="confirm-btn confirm-btn--default"
           :disabled="selectedChangeIds.length === 0"
           @click="handleOptionClick({ value: 'confirm_selected' })"
@@ -170,7 +172,7 @@ const handleContextClick = () => {
           应用已选（{{ selectedChangeIds.length }}）
         </button>
         <button class="confirm-btn confirm-btn--danger" @click="handleOptionClick({ value: 'cancel' })">
-          全部拒绝
+          {{ changes.length > 1 ? '全部拒绝' : '拒绝' }}
         </button>
       </div>
       <div v-else class="confirm-buttons">

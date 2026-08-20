@@ -1,7 +1,13 @@
 <template>
-  <div class="register-container">
+  <main class="register-page">
+    <header class="register-topbar">
+      <router-link to="/login" class="brand-link" aria-label="返回登录页"><BrandLogo /></router-link>
+      <span class="mode-label"><i></i>多用户模式</span>
+    </header>
+    <section class="register-container">
     <div class="register-card">
       <div class="register-header">
+        <p>ACCOUNT CREATION</p>
         <h1>注册</h1>
       </div>
       
@@ -21,9 +27,9 @@
             id="password"
             v-model="password"
             type="password"
-            placeholder="密码（至少6位）"
+            placeholder="密码（至少 8 位）"
             required
-            minlength="6"
+            minlength="8"
           />
         </div>
         
@@ -52,12 +58,16 @@
         <router-link to="/login" class="link-btn">已有账号？登录</router-link>
       </div>
     </div>
-  </div>
+    </section>
+  </main>
 </template>
 
 <script>
+import BrandLogo from '../components/BrandLogo.vue'
+
 export default {
   name: 'Register',
+  components: { BrandLogo },
   data() {
     return {
       email: '',
@@ -81,7 +91,7 @@ export default {
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            email: this.email,
+            email: this.email.trim().toLowerCase(),
             password: this.password,
             invite_code: this.inviteCode
           })
@@ -115,30 +125,47 @@ export default {
 </script>
 
 <style scoped>
-.register-container {
+.register-page {
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  color: #f5f5f7;
+  background: radial-gradient(circle at 64% -20%, rgba(100, 130, 220, 0.12), transparent 36%), #050506;
+}
+
+.register-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.5rem 2rem;
+}
+
+.brand-link { color: inherit; text-decoration: none; }
+.mode-label { display: inline-flex; align-items: center; gap: 0.45rem; color: #85858f; font: 0.66rem 'GTPressuraMono-Light', monospace; letter-spacing: 0.12em; }
+.mode-label i { width: 5px; height: 5px; border-radius: 50%; background: #78a6ff; box-shadow: 0 0 8px rgba(120, 166, 255, 0.55); }
+
+.register-container {
+  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  background-color: #e6e2dd;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='3.0' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
-  background-blend-mode: overlay;
-  background-repeat: repeat;
-  background-size: auto;
-  padding: 1.5rem;
+  padding: 2rem 1.5rem 5rem;
 }
 
 .register-card {
-  background: white;
-  border: 1px solid #303030;
+  background: rgba(18, 19, 23, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.17);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.28);
   width: 100%;
   max-width: 28rem;
 }
 
 .register-header {
-  padding: 1.5rem;
-  border-bottom: 1px solid #303030;
+  padding: 2rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.11);
 }
+
+.register-header p { margin: 0 0 1rem; color: #78a6ff; font: 0.62rem 'GTPressuraMono-Light', monospace; letter-spacing: 0.19em; }
 
 h1 {
   margin: 0;
@@ -147,12 +174,11 @@ h1 {
   font-size: 1.5rem;
   text-transform: uppercase;
   letter-spacing: 0.02em;
-  color: #303030;
-  text-align: center;
+  color: #f5f5f7;
 }
 
 .register-form {
-  padding: 1.5rem;
+  padding: 2rem;
 }
 
 .form-group {
@@ -163,12 +189,12 @@ input {
   width: 100%;
   height: 4.0625rem;
   padding: 1.125rem;
-  background-color: #c8cbc9;
-  border: 1px solid #303030;
+  background-color: #2b2c32;
+  border: 1px solid rgba(255, 255, 255, 0.14);
   font-family: 'GTPressuraMono-Light', sans-serif;
   font-weight: 400;
   font-size: 0.875rem;
-  color: #303030;
+  color: #f5f5f7;
   border-radius: 0;
   box-shadow: none;
   outline: none;
@@ -179,15 +205,16 @@ input {
 }
 
 input::placeholder {
-  color: #666;
+  color: #777983;
 }
 
 input:focus {
-  background-color: white;
+  background-color: #303139;
+  border-color: rgba(120, 166, 255, 0.72);
 }
 
 input:hover {
-  background-color: white;
+  background-color: #303139;
 }
 
 /* 按钮包装器 - 包含黑色底层和米色按钮 */
@@ -216,21 +243,21 @@ input:hover {
   width: 100%;
   height: 100%;
   padding: 0 3.125rem;
-  background-color: #e6e2dd;
-  border: 1px solid #303030;
+  background-color: #5f8ff2;
+  border: 1px solid #78a6ff;
   font-family: 'GTPressuraMono-Light', sans-serif;
   font-weight: 400;
   font-size: 0.8125rem;
   text-transform: uppercase;
   letter-spacing: 0.25em;
-  color: #000;
+  color: #fff;
   cursor: pointer;
   transition: background-color 0.3s;
   border-radius: 0;
 }
 
 .submit-btn:hover:not(:disabled) {
-  background-color: #5f8ff2;
+  background-color: #78a6ff;
 }
 
 .submit-btn:disabled {
@@ -243,8 +270,8 @@ input:hover {
   font-family: 'GTPressuraMono', sans-serif;
   font-size: 0.875rem;
   padding: 0.75rem 1rem;
-  background-color: #fef2f2;
-  border: 1px solid #ff6060;
+  background-color: rgba(255, 96, 96, 0.08);
+  border-left: 2px solid #ff6060;
   margin-top: 1rem;
 }
 
@@ -253,14 +280,14 @@ input:hover {
   font-family: 'GTPressuraMono', sans-serif;
   font-size: 0.875rem;
   padding: 0.75rem 1rem;
-  background-color: #f0fdf4;
-  border: 1px solid #16a34a;
+  background-color: rgba(22, 163, 74, 0.08);
+  border-left: 2px solid #16a34a;
   margin-top: 1rem;
 }
 
 .register-footer {
   padding: 1.5rem;
-  border-top: 1px solid #303030;
+  border-top: 1px solid rgba(255, 255, 255, 0.11);
   text-align: center;
 }
 
@@ -270,7 +297,7 @@ input:hover {
   font-size: 0.6875rem;
   text-transform: uppercase;
   letter-spacing: 0.25em;
-  color: #303030;
+  color: #78a6ff;
   text-decoration: none;
   transition: color 0.2s ease;
 }

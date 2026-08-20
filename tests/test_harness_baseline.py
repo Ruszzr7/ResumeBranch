@@ -9,6 +9,8 @@ from langchain_core.runnables import RunnableLambda
 
 from backend import main
 from backend.database import MemoryVersionConflict
+from backend.harness.context import filter_messages_for_llm
+from backend.harness.persistence import sanitize_messages_for_persistence, serialize_context_messages
 from backend.layout_config import default_layout_config
 from backend.resume_agent import AgentState, conversation_node, make_pending_confirmation
 
@@ -92,6 +94,51 @@ class FakeConfirmationGraph:
 
 
 class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
+    async def test_empty_tool_assistant_is_never_sent_or_persisted(self):
+        messages = [
+            HumanMessage(content="请查看当前简历"),
+            AIMessage(content="", tool_calls=[{
+                "name": "render_resume_pdf_images",
+                "args": {"reason": "查看分页"},
+                "id": "visual-empty-1",
+                "type": "tool_call",
+            }]),
+            ToolMessage(
+                content="已生成当前简历快照",
+                tool_call_id="visual-empty-1",
+                name="render_resume_pdf_images",
+            ),
+            AIMessage(content=""),
+            AIMessage(content=[]),
+            AIMessage(content=[{"type": "text", "text": ""}]),
+        ]
+
+        llm_messages = filter_messages_for_llm(messages, just_saved=False)
+        self.assertFalse(any(
+            isinstance(message, AIMessage) and not str(message.content or "").strip()
+            for message in llm_messages
+        ))
+        self.assertIn("已生成当前简历快照", llm_messages[-1].content)
+
+        durable = sanitize_messages_for_persistence(messages)
+        serialized = serialize_context_messages(durable)
+        self.assertEqual(serialized, [{
+            **HumanMessage(content="请查看当前简历").model_dump(),
+            "type": "human",
+        }])
+
+    async def test_http_conversation_sanitizer_drops_stream_and_legacy_empty_assistant(self):
+        messages = main.sanitize_conversation_message_dicts([
+            {"role": "user", "content": "当前问题"},
+            {"role": "assistant", "content": "", "streaming": True},
+            {"type": "ai", "content": ""},
+            {"role": "assistant", "content": "正常回复"},
+        ])
+        self.assertEqual(
+            [(item.get("role") or item.get("type"), item.get("content")) for item in messages],
+            [("user", "当前问题"), ("assistant", "正常回复")],
+        )
+
     async def test_conversation_context_order_and_filtering_contract(self):
         bound_model = SimpleNamespace(
             ainvoke=AsyncMock(return_value=AIMessage(content="本轮回答"))
@@ -228,6 +275,7 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
             }),
             patch("backend.database.get_conversation_context", return_value=[]),
             patch("backend.database.get_pending_confirmation", return_value=None),
+            patch("backend.database.find_task_pending_confirmation", return_value=None),
             patch("backend.database.save_agent_memory_state", return_value=1),
             patch("backend.database.save_conversation_context"),
         ):
@@ -306,6 +354,7 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
             }),
             patch("backend.database.get_conversation_context", return_value=[]),
             patch("backend.database.get_pending_confirmation", return_value=None),
+            patch("backend.database.find_task_pending_confirmation", return_value=None),
             patch("backend.database.save_agent_memory_state", return_value=1),
             patch("backend.database.save_conversation_context"),
         ):
@@ -323,20 +372,21 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
         events = decode_sse(chunks)
         self.assertEqual(
             [event["type"] for event in events],
-            ["progress", "progress", "progress", "confirm", "final", "end"],
+            ["progress", "stream", "progress", "progress", "confirm", "final", "end"],
         )
+        self.assertEqual(events[1]["content"], "修改预览已生成")
         self.assertEqual(
-            [event["phase"] for event in events[:3]],
+            [events[index]["phase"] for index in (0, 2, 3)],
             ["building_preview", "validating", "ready"],
         )
-        self.assertEqual(set(events[3]), {
+        self.assertEqual(set(events[4]), {
             "type", "request_id", "id", "content", "options", "changes",
             "resume_candidate", "layout_candidate", "confirm_id", "session_id",
         })
-        self.assertEqual(events[3]["confirm_id"], pending["confirm_id"])
-        self.assertEqual(events[3]["resume_candidate"]["basics"]["name"], "新姓名")
-        self.assertEqual(events[4]["content"], "修改预览已生成")
-        self.assertFalse(events[4]["confirmation_processed"])
+        self.assertEqual(events[4]["confirm_id"], pending["confirm_id"])
+        self.assertEqual(events[4]["resume_candidate"]["basics"]["name"], "新姓名")
+        self.assertEqual(events[5]["content"], "修改预览已生成")
+        self.assertFalse(events[5]["confirmation_processed"])
 
     async def test_chat_reports_persistence_conflict_before_final_and_end(self):
         db = SimpleNamespace(info={"task_id": "task-1"})
@@ -399,6 +449,10 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
             patch("backend.database.get_pending_confirmation", return_value=pending),
             patch("backend.database.clear_pending_confirmation") as clear_pending,
             patch("backend.tools.update_resume", return_value="简历已成功保存"),
+            patch("backend.main.get_resume_task", return_value=SimpleNamespace(
+                resume_data=before,
+                layout_config=default_layout_config(),
+            )),
         ):
             response = await main.confirm_endpoint(
                 confirm_id=pending["confirm_id"],
@@ -432,6 +486,38 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(undo_payload["message"], "已撤回本次修改")
         self.assertEqual(undo_payload["resume_data"], before)
         self.assertEqual(undo_payload["layout_config"], layout)
+
+    async def test_direct_replace_builds_one_literal_preview_without_llm(self):
+        before = resume_payload("广东工业大学")
+        task = SimpleNamespace(
+            session_id="task-1",
+            resume_data=before,
+            layout_config=default_layout_config(),
+        )
+        db = SimpleNamespace(info={"task_id": "task-1"})
+        user = SimpleNamespace(id=7)
+        request = main.DirectReplaceRequest(
+            session_id="task-1",
+            scope="basics",
+            original_text="广东工业大学",
+            target_text="暨南大学",
+        )
+
+        with (
+            patch("backend.main.get_resume_task", return_value=task),
+            patch("backend.database.find_task_pending_confirmation", return_value=None),
+            patch("backend.database.get_conversation_context", return_value=[]),
+            patch("backend.database.save_conversation_context") as save_pending,
+        ):
+            payload = await main.direct_replace_preview(
+                "task-1", request, db=db, current_user=user
+            )
+
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["source"], "direct_replace")
+        self.assertEqual(payload["resume_candidate"]["basics"]["name"], "暨南大学")
+        self.assertEqual(len(payload["changes"]), 1)
+        save_pending.assert_called_once()
 
 
 if __name__ == "__main__":

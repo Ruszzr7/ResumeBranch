@@ -65,6 +65,21 @@ const props = defineProps({
     required: false,
     default: ''
   },
+  projectName: {
+    type: String,
+    required: false,
+    default: ''
+  },
+  versionName: {
+    type: String,
+    required: false,
+    default: ''
+  },
+  localMode: {
+    type: Boolean,
+    required: false,
+    default: false
+  },
   sourcePageCount: {
     type: Number,
     required: false,
@@ -80,6 +95,7 @@ const props = defineProps({
 // 获取当前语言的标签
 const t = computed(() => labels[props.lang] || labels.zh)
 const localSectionOrder = ref(normalizeLayoutConfig(props.layoutConfig).global.sectionOrder)
+const RESUME_SETTINGS_DIALOG_EVENT = 'resume-settings-dialog-open'
 const showSectionSettingsDialog = ref(false)
 const isSavingSectionSettings = ref(false)
 const sectionSettingsError = ref('')
@@ -522,6 +538,7 @@ function openSectionSettingsDialog() {
   sectionSettingsDraft.value = normalizeLayoutConfig(layout.value)
   sectionSettingsError.value = ''
   closeToolbarMenu()
+  activateResumeSettingsDialog('section-settings')
   showSectionSettingsDialog.value = true
 }
 
@@ -612,6 +629,7 @@ function openSectionOrderDialog() {
   closeFontSizeDialog()
   closeSectionSettingsDialog()
   closeToolbarMenu()
+  activateResumeSettingsDialog('section-order')
   sectionOrderSnapshot.value = [...normalizeLayoutConfig(props.layoutConfig).global.sectionOrder]
   localSectionOrder.value = [...sectionOrderSnapshot.value]
   sectionOrderError.value = ''
@@ -835,6 +853,7 @@ function openFontSizeDialog() {
   fontSizeDraft.value = { ...fontSizes.value }
   fontSizeSaveError.value = ''
   closeToolbarMenu()
+  activateResumeSettingsDialog('font-size')
   showFontSizeDialog.value = true
   openFontSizeRole.value = ''
 }
@@ -1585,6 +1604,18 @@ const exportError = ref('')
 const isExportingPDF = ref(false)
 const isExportingDOCX = ref(false)
 const lastExportFormat = ref('PDF')
+const lastExportSavedLocally = ref(false)
+
+function downloadFilename(response, extension) {
+  const header = response.headers.get('Content-Disposition') || ''
+  const encoded = header.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
+  if (encoded) {
+    try { return decodeURIComponent(encoded) } catch { /* use fallback below */ }
+  }
+  const safeProject = plainInlineText(props.projectName || props.data?.basics?.name || '简历').replace(/[\\/:*?"<>|\r\n]+/g, '_').trim()
+  const safeVersion = plainInlineText(props.versionName || '基础版本').replace(/[\\/:*?"<>|\r\n]+/g, '_').trim()
+  return `${safeProject || '简历'}_${safeVersion || '基础版本'}_${new Date().toISOString().slice(0, 10)}.${extension}`
+}
 
 const exportDocument = async (format) => {
   if (!props.data) return
@@ -1613,7 +1644,9 @@ const exportDocument = async (format) => {
         resume_data: props.data,
         style: style,
         layout_config: renderLayout.value,
-        lang: props.lang
+        lang: props.lang,
+        project_name: props.projectName,
+        version_name: props.versionName
       })
     })
 
@@ -1629,8 +1662,7 @@ const exportDocument = async (format) => {
     const url = window.URL.createObjectURL(documentBlob)
     const a = document.createElement('a')
     a.href = url
-    const rawName = plainInlineText(props.data.basics?.name || '').replace(/[\\/:*?"<>|\r\n]+/g, '_').trim()
-    a.download = `resume_${rawName || '简历'}.${isPDF ? 'pdf' : 'docx'}`
+    a.download = downloadFilename(response, isPDF ? 'pdf' : 'docx')
     document.body.appendChild(a)
     a.click()
     window.URL.revokeObjectURL(url)
@@ -1638,6 +1670,8 @@ const exportDocument = async (format) => {
 
     // 显示成功提示弹窗
     lastExportFormat.value = isPDF ? 'PDF' : 'Word'
+    lastExportSavedLocally.value = props.localMode
+      && response.headers.get('X-Local-Export-Saved') === 'true'
     showSuccessDialog.value = true
 
   } catch (error) {
@@ -1651,6 +1685,17 @@ const exportDocument = async (format) => {
 
 const exportPDF = () => exportDocument('pdf')
 const exportWord = () => exportDocument('docx')
+
+function activateResumeSettingsDialog(dialogId) {
+  window.dispatchEvent(new CustomEvent(RESUME_SETTINGS_DIALOG_EVENT, { detail: dialogId }))
+}
+
+function handleResumeSettingsDialogOpen(event) {
+  const activeDialog = String(event.detail || '')
+  if (activeDialog !== 'section-order' && showSectionOrderDialog.value) closeSectionOrderDialog()
+  if (activeDialog !== 'font-size' && showFontSizeDialog.value) closeFontSizeDialog()
+  if (activeDialog !== 'section-settings' && showSectionSettingsDialog.value) closeSectionSettingsDialog()
+}
 
 // ========== 生命周期 ==========
 onMounted(async () => {
@@ -1676,6 +1721,7 @@ onMounted(async () => {
   if (contentRef.value) observer.value.observe(contentRef.value)
   observer.value.observe(document.body)
   window.addEventListener('resize', calculateScale)
+  window.addEventListener(RESUME_SETTINGS_DIALOG_EVENT, handleResumeSettingsDialogOpen)
   document.addEventListener('click', handleToolbarOutsideClick)
 })
 
@@ -1683,6 +1729,7 @@ onUnmounted(() => {
   closeSourceDocument()
   observer.value?.disconnect()
   window.removeEventListener('resize', calculateScale)
+  window.removeEventListener(RESUME_SETTINGS_DIALOG_EVENT, handleResumeSettingsDialogOpen)
   document.removeEventListener('click', handleToolbarOutsideClick)
   clearTimeout(window.scaleTimeout)
 })
@@ -2410,7 +2457,7 @@ const getItemIndex = (type, dataIndex) => {
     </div>
   </div>
 
-  <div v-if="showSectionOrderDialog" class="success-dialog-overlay section-order-overlay" @click.self="closeSectionOrderDialog">
+  <div v-if="showSectionOrderDialog" class="success-dialog-overlay section-order-overlay">
     <div class="section-order-dialog" role="dialog" aria-modal="true" aria-labelledby="section-order-title">
       <div class="layout-guide-header">
         <div>
@@ -2447,7 +2494,7 @@ const getItemIndex = (type, dataIndex) => {
     </div>
   </div>
 
-  <div v-if="showFontSizeDialog" class="success-dialog-overlay font-size-overlay" @click.self="closeFontSizeDialog">
+  <div v-if="showFontSizeDialog" class="success-dialog-overlay font-size-overlay">
     <div class="font-size-dialog" role="dialog" aria-modal="true" aria-labelledby="font-size-title">
       <div class="layout-guide-header">
         <div>
@@ -2479,7 +2526,7 @@ const getItemIndex = (type, dataIndex) => {
     </div>
   </div>
 
-  <div v-if="showSectionSettingsDialog" class="success-dialog-overlay section-settings-overlay" @click.self="closeSectionSettingsDialog">
+  <div v-if="showSectionSettingsDialog" class="success-dialog-overlay section-settings-overlay">
     <div class="section-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="section-settings-title">
       <div class="layout-guide-header">
         <div>
@@ -2531,7 +2578,11 @@ const getItemIndex = (type, dataIndex) => {
         </svg>
       </div>
       <h3>简历导出成功</h3>
-      <p>{{ lastExportFormat }} 文件已成功下载。<br><br>{{ lastExportFormat === 'Word' ? 'DOCX 中的文字、段落和列表均可在 Word 或 WPS 中继续编辑。' : '网页预览与实际 PDF 文件在排版上可能有细微差异；可调整样式参数后重新导出。' }}</p>
+      <p>
+        {{ lastExportFormat }} 文件已成功下载。
+        <template v-if="lastExportSavedLocally"><br>同时已保存到项目的 output/resumes 文件夹。</template>
+        <br><br>{{ lastExportFormat === 'Word' ? 'DOCX 中的文字、段落和列表均可在 Word 或 WPS 中继续编辑。' : '网页预览与实际 PDF 文件在排版上可能有细微差异；可调整样式参数后重新导出。' }}
+      </p>
       <button class="confirm-btn" @click="showSuccessDialog = false">我知道了</button>
     </div>
   </div>

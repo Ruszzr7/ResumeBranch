@@ -20,6 +20,9 @@ import os
 import sys
 import uuid
 import re
+import secrets
+import tempfile
+from copy import deepcopy
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -47,6 +50,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 # 导入 resume_agent 中的 graph 和 conversation_llm
 from . import resume_agent
 from .resume_agent import LLM_ENABLED, conversation_llm, graph
@@ -55,8 +59,9 @@ from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, System
 # 导入自定义模块
 from .database import (
     init_db, get_db, create_user, get_user_by_email,
+    database_backend, register_user_with_invite,
     save_user_resume, get_user_resume, save_user_jd, get_user_jd,
-    check_invite_code, use_invite_code, create_invite_code,
+    create_invite_code,
     get_parsing_status, set_parsing_status, set_source_page_count, get_user_photo,
     list_resume_projects, create_resume_project, get_resume_project,
     list_project_tasks, list_user_resume_sources, create_resume_task, get_resume_task,
@@ -74,9 +79,9 @@ from .database import (
 )
 from .auth import (
     verify_password, get_password_hash, create_access_token,
-    get_current_user, oauth2_scheme, require_multi_user_mode
+    get_current_admin, get_current_user, oauth2_scheme, require_multi_user_mode
 )
-from .config import APP_MODE, LOCAL_USER_EMAIL, is_local_mode
+from .config import APP_MODE, CORS_ALLOW_ORIGINS, LOCAL_USER_EMAIL, SERVER_HOST, is_local_mode
 from .llm_providers import (
     gateway_config,
     get_role_config,
@@ -122,12 +127,80 @@ from .docx_generator import generate_docx as _docx_generator
 resolve_layout_tokens()
 
 
-def _resume_export_filename(resume_data: dict, extension: str) -> str:
-    """Build the stable user-facing export name from the resume's display name."""
+def _safe_filename_part(value: object, fallback: str, max_length: int = 60) -> str:
+    """Return a Windows-safe, readable filename segment."""
+    cleaned = plain_inline_text(str(value or "")).strip()
+    cleaned = re.sub(r'[\\/:*?"<>|\r\n]+', "_", cleaned).strip(" .")
+    return cleaned[:max_length] or fallback
+
+
+def _resume_export_filename(
+    resume_data: dict,
+    extension: str,
+    project_name: str = "",
+    version_name: str = "",
+    exported_at: datetime | None = None,
+) -> str:
+    """Build ``简历组_版本_日期`` export names for both runtime profiles."""
     basics = resume_data.get("basics") if isinstance(resume_data, dict) else {}
-    display_name = plain_inline_text((basics or {}).get("name", "")).strip() or "简历"
-    display_name = re.sub(r'[\\/:*?"<>|\r\n]+', "_", display_name).strip(" .")[:80] or "简历"
-    return f"resume_{display_name}.{extension}"
+    display_name = _safe_filename_part((basics or {}).get("name", ""), "简历")
+    project = _safe_filename_part(project_name, display_name)
+    version = _safe_filename_part(version_name, "基础版本")
+    export_date = (exported_at or datetime.now()).strftime("%Y-%m-%d")
+    return f"{project}_{version}_{export_date}.{extension}"
+
+
+def _export_labels(db: Session, current_user, request_data: dict, resume_data: dict) -> tuple[str, str]:
+    """Resolve names from the authorized task, with request values as fallback."""
+    project_name = str(request_data.get("project_name") or "")
+    version_name = str(request_data.get("version_name") or "")
+    task_id = db.info.get("task_id")
+    if task_id:
+        task = get_resume_task(db, current_user.id, task_id)
+        if task:
+            version_name = task.title
+            project = get_resume_project(db, current_user.id, task.project_id)
+            if project:
+                project_name = project.title
+    if not project_name:
+        basics = resume_data.get("basics", {}) if isinstance(resume_data, dict) else {}
+        project_name = basics.get("name", "")
+    return project_name, version_name
+
+
+def _persist_local_export(content: bytes, filename: str) -> Path:
+    """Atomically persist a local export, adding a numeric collision suffix."""
+    output_dir = Path(os.getenv("LOCAL_EXPORT_DIR", "./output/resumes")).expanduser().resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    base = Path(filename)
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            prefix=".resume-export-",
+            suffix=".tmp",
+            dir=output_dir,
+            delete=False,
+        ) as temporary:
+            temporary.write(content)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+            temporary_path = Path(temporary.name)
+
+        for index in range(1000):
+            suffix = "" if index == 0 else f"_{index:02d}"
+            candidate = output_dir / f"{base.stem}{suffix}{base.suffix}"
+            try:
+                # A hard link publishes the completed temp file atomically and
+                # fails instead of overwriting an export created concurrently.
+                os.link(temporary_path, candidate)
+                return candidate
+            except FileExistsError:
+                continue
+        raise RuntimeError("同名导出文件过多，请整理 output/resumes 后重试")
+    finally:
+        if temporary_path:
+            temporary_path.unlink(missing_ok=True)
 
 
 _RENDER_STYLE_KEYS = frozenset({
@@ -240,9 +313,9 @@ def generate_session_id() -> str:
 
 class RegisterRequest(BaseModel):
     """注册请求"""
-    email: str
-    password: str
-    invite_code: str
+    email: str = Field(min_length=3, max_length=100)
+    password: str = Field(min_length=8, max_length=128)
+    invite_code: str = Field(min_length=1, max_length=50)
 
 
 class TokenResponse(BaseModel):
@@ -257,6 +330,8 @@ class UserResponse(BaseModel):
     id: int
     email: str
     created_at: datetime
+    is_active: bool
+    is_admin: bool
 
 
 class SaveResumeRequest(BaseModel):
@@ -298,6 +373,13 @@ class SaveLayoutRequest(BaseModel):
 
 class ResetLayoutRequest(BaseModel):
     section: str = "all"
+
+
+class DirectReplaceRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=36)
+    scope: str = Field(min_length=1, max_length=50)
+    original_text: str = Field(min_length=1, max_length=4000)
+    target_text: str = Field(max_length=4000)
 
 
 class LLMSettingsRequest(BaseModel):
@@ -402,6 +484,7 @@ async def app_lifespan(app_instance: FastAPI):
 
 
 app = FastAPI(title="ResumeBranch API", version="2.0.0", lifespan=app_lifespan)
+_edit_preview_guard = asyncio.Lock()
 
 
 def get_workflow_checkpoint_manager():
@@ -420,8 +503,8 @@ def require_llm_configured():
 # 添加 CORS 中间件
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 生产环境应该限制
-    allow_credentials=True,
+    allow_origins=CORS_ALLOW_ORIGINS,
+    allow_credentials=bool(CORS_ALLOW_ORIGINS),
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -442,6 +525,8 @@ async def get_app_config():
         "authentication_required": not is_local_mode(),
         "account_management_enabled": not is_local_mode(),
         "local_user_email": LOCAL_USER_EMAIL if is_local_mode() else None,
+        "local_export_enabled": is_local_mode(),
+        "database_backend": database_backend,
     }
 
 
@@ -567,20 +652,20 @@ async def register(request: RegisterRequest, db: Session = Depends(get_db)):
     - 邮箱+密码+邀请码
     - 返回 JWT Token
     """
-    # 检查邀请码
-    if not check_invite_code(db, request.invite_code):
-        raise HTTPException(status_code=400, detail="邀请码无效或已使用")
-
-    # 检查邮箱是否已存在
-    if get_user_by_email(db, request.email):
-        raise HTTPException(status_code=400, detail="邮箱已注册")
-
-    # 创建用户
-    hashed_password = get_password_hash(request.password)
-    user = create_user(db, request.email, hashed_password, request.invite_code)
-
-    # 使用邀请码
-    use_invite_code(db, request.invite_code)
+    email = request.email.strip().lower()
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        raise HTTPException(status_code=400, detail="邮箱格式不正确")
+    try:
+        user = register_user_with_invite(
+            db,
+            email,
+            get_password_hash(request.password),
+            request.invite_code,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except IntegrityError as exc:
+        raise HTTPException(status_code=409, detail="邮箱或邀请码已被使用") from exc
 
     # 生成 Token
     token = create_access_token({"sub": user.email})
@@ -588,7 +673,13 @@ async def register(request: RegisterRequest, db: Session = Depends(get_db)):
     return TokenResponse(
         access_token=token,
         token_type="bearer",
-        user={"id": user.id, "email": user.email, "created_at": user.created_at.isoformat()}
+        user={
+            "id": user.id,
+            "email": user.email,
+            "created_at": user.created_at.isoformat(),
+            "is_active": bool(user.is_active),
+            "is_admin": bool(user.is_admin),
+        }
     )
 
 
@@ -604,7 +695,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = 
     - 邮箱+密码
     - 返回 JWT Token
     """
-    user = get_user_by_email(db, form_data.username)
+    user = get_user_by_email(db, form_data.username.strip().lower())
     if not user:
         raise HTTPException(status_code=401, detail="邮箱或密码错误")
 
@@ -619,7 +710,13 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = 
     return TokenResponse(
         access_token=token,
         token_type="bearer",
-        user={"id": user.id, "email": user.email, "created_at": user.created_at.isoformat()}
+        user={
+            "id": user.id,
+            "email": user.email,
+            "created_at": user.created_at.isoformat(),
+            "is_active": bool(user.is_active),
+            "is_admin": bool(user.is_admin),
+        }
     )
 
 
@@ -631,12 +728,14 @@ async def get_me(current_user = Depends(get_current_user)):
     return UserResponse(
         id=current_user.id,
         email=current_user.email,
-        created_at=current_user.created_at
+        created_at=current_user.created_at,
+        is_active=bool(current_user.is_active),
+        is_admin=bool(current_user.is_admin),
     )
 
 
 @app.get("/auth/invite-codes", dependencies=[Depends(require_multi_user_mode)])
-async def list_invites(current_user = Depends(get_current_user), db: Session = Depends(get_db)):
+async def list_invites(current_user = Depends(get_current_admin), db: Session = Depends(get_db)):
     """
     获取邀请码列表（需要登录）
     """
@@ -649,24 +748,30 @@ async def list_invites(current_user = Depends(get_current_user), db: Session = D
 
 
 @app.post("/auth/invite-codes", dependencies=[Depends(require_multi_user_mode)])
-async def create_invite(request: Request, current_user = Depends(get_current_user), db: Session = Depends(get_db)):
+async def create_invite(request: Request, current_user = Depends(get_current_admin), db: Session = Depends(get_db)):
     """
     生成邀请码（需要登录）
     """
-    import random
     import string
 
     # 解析请求体
     try:
         body = await request.json()
-        count = min(int(body.get('count', 1)), 20)
-    except:
+        count = max(1, min(int(body.get('count', 1)), 20))
+    except (TypeError, ValueError, json.JSONDecodeError):
         count = 1
 
     codes = []
     for _ in range(count):
-        code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-        create_invite_code(db, code)
+        for _attempt in range(10):
+            code = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(8))
+            try:
+                create_invite_code(db, code)
+                break
+            except IntegrityError:
+                db.rollback()
+        else:
+            raise HTTPException(status_code=503, detail="邀请码生成失败，请重试")
         codes.append({"code": code, "is_used": False, "created_at": None})
 
     return codes if count > 1 else {"code": codes[0]["code"]}
@@ -1076,6 +1181,126 @@ async def reset_task_layout(
     return {"success": True, "layout_config": config}
 
 
+_DIRECT_REPLACE_SCOPES = {
+    "all": None,
+    "basics": "basics",
+    "education": "education",
+    "honors": "honors",
+    "publications": "publications",
+    "research_interests": "research_interests",
+    "skills": "others",
+    "work_experience": "work_experience",
+    "project_experience": "project_experience",
+    "custom_sections": "custom_sections",
+    "certificates_languages": "others",
+    "self_evaluation": "self_evaluation",
+}
+
+
+def _replace_unique_resume_text(value, original: str, target: str) -> tuple[object, int]:
+    if isinstance(value, str):
+        count = value.count(original)
+        return (value.replace(original, target), count) if count else (value, 0)
+    if isinstance(value, list):
+        result = []
+        total = 0
+        for item in value:
+            replaced, count = _replace_unique_resume_text(item, original, target)
+            result.append(replaced)
+            total += count
+        return result, total
+    if isinstance(value, dict):
+        result = {}
+        total = 0
+        for key, item in value.items():
+            replaced, count = _replace_unique_resume_text(item, original, target)
+            result[key] = replaced
+            total += count
+        return result, total
+    return value, 0
+
+
+@app.post("/tasks/{task_id}/direct-replace-preview")
+async def direct_replace_preview(
+    task_id: str,
+    request: DirectReplaceRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    """Build one deterministic literal-replacement preview without an LLM call."""
+    task = get_resume_task(db, current_user.id, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="简历版本不存在")
+    if request.session_id != task.session_id:
+        context = get_context_by_session(db, current_user.id, task_id, request.session_id)
+        if not context or context.status != "active":
+            raise HTTPException(status_code=409, detail="当前任务会话不可用")
+    scope_key = _DIRECT_REPLACE_SCOPES.get(request.scope)
+    if request.scope not in _DIRECT_REPLACE_SCOPES:
+        raise HTTPException(status_code=400, detail="不支持的作用区域")
+
+    original = request.original_text.strip()
+    target = request.target_text.strip()
+    if not original:
+        raise HTTPException(status_code=400, detail="原内容不能为空")
+    current = deepcopy(task.resume_data or {})
+    subtree = current if scope_key is None else current.get(scope_key)
+    if subtree is None:
+        raise HTTPException(status_code=400, detail="所选区域当前没有可修改内容")
+    replaced, count = _replace_unique_resume_text(subtree, original, target)
+    if count == 0:
+        raise HTTPException(status_code=400, detail="所选区域中未找到完全一致的原内容")
+    if count > 1:
+        raise HTTPException(status_code=409, detail="所选区域中找到多处相同内容，请缩小作用区域或补充更完整的原文")
+    if scope_key is None:
+        candidate = replaced
+    else:
+        candidate = deepcopy(current)
+        candidate[scope_key] = replaced
+
+    from .database import (
+        find_task_pending_confirmation,
+        get_conversation_context,
+        save_conversation_context,
+    )
+    async with _edit_preview_guard:
+        if find_task_pending_confirmation(db, current_user.id, task_id):
+            raise HTTPException(status_code=409, detail="当前简历存在正在处理的修改，请先完成或取消后再请求")
+        state = resume_agent.AgentState(
+            resume_data=current,
+            layout_data=task.layout_config or {},
+            user_id=current_user.id,
+            task_id=task_id,
+            request_id=str(uuid.uuid4()),
+            context_id=request.session_id,
+        )
+        try:
+            pending = resume_agent.make_pending_confirmation(state, candidate, task.layout_config or {})
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        pending["owner_session_id"] = request.session_id
+        pending["request_id"] = state.request_id
+        pending["source"] = "direct_replace"
+        compressed_context = get_conversation_context(db, current_user.id, request.session_id)
+        save_conversation_context(
+            db,
+            current_user.id,
+            request.session_id,
+            compressed_context,
+            pending,
+        )
+    return {
+        "success": True,
+        "content": pending["content"],
+        "options": pending["options"],
+        "changes": pending["changes"],
+        "resume_candidate": pending["resume_candidate"],
+        "layout_candidate": pending["layout_candidate"],
+        "confirm_id": pending["confirm_id"],
+        "source": "direct_replace",
+    }
+
+
 @app.post("/health")
 async def health_check():
     """健康检查"""
@@ -1286,7 +1511,8 @@ def filter_images_from_message_dict(msg_dict):
     if not isinstance(msg_dict, dict):
         return msg_dict
 
-    content = msg_dict.get('content', '')
+    filtered_message = dict(msg_dict)
+    content = filtered_message.get('content', '')
 
     # 如果 content 是列表（多模态内容），过滤掉图片
     if isinstance(content, list):
@@ -1296,11 +1522,40 @@ def filter_images_from_message_dict(msg_dict):
                 filtered.append(item)
             # 跳过 type == 'image_url' 的图片
         if filtered:
-            msg_dict['content'] = filtered
+            filtered_message['content'] = filtered
         else:
-            msg_dict['content'] = ''
+            filtered_message['content'] = ''
 
-    return msg_dict
+    return filtered_message
+
+
+def _message_dict_has_text(message: dict) -> bool:
+    content = message.get('content', '')
+    if isinstance(content, list):
+        return any(
+            isinstance(item, dict)
+            and item.get('type') == 'text'
+            and str(item.get('text', '') or '').strip()
+            for item in content
+        )
+    return bool(str(content or '').strip())
+
+
+def sanitize_conversation_message_dicts(messages):
+    """Keep durable visible messages and discard empty stream/tool artifacts."""
+    sanitized = []
+    for raw_message in messages or []:
+        if not isinstance(raw_message, dict):
+            continue
+        message = filter_images_from_message_dict(raw_message)
+        if message.get('streaming') is True:
+            continue
+        role = str(message.get('role') or message.get('type') or '').strip().lower()
+        if role in {'assistant', 'ai', 'human', 'user', 'system', 'systemmessage'}:
+            if not _message_dict_has_text(message):
+                continue
+        sanitized.append(message)
+    return sanitized
 
 
 @app.post("/save_conversation")
@@ -1313,8 +1568,8 @@ async def save_conversation_endpoint(request: Request, db: Session = Depends(get
         session_id = request_data.get('session_id', 'default')
         messages = request_data.get('messages', [])
 
-        # 过滤掉消息中的图片
-        filtered_messages = [filter_images_from_message_dict(msg) for msg in messages]
+        # 图片、流式占位符和空 assistant 都不是可持久化的对话历史。
+        filtered_messages = sanitize_conversation_message_dicts(messages)
 
         from .database import save_conversation
         save_conversation(db, current_user.id, session_id, filtered_messages)
@@ -1336,7 +1591,9 @@ async def load_conversation_endpoint(request: Request, db: Session = Depends(get
         session_id = request_data.get('session_id', 'default')
 
         from .database import get_conversation
-        messages = get_conversation(db, current_user.id, session_id)
+        messages = sanitize_conversation_message_dicts(
+            get_conversation(db, current_user.id, session_id)
+        )
 
         return JSONResponse(content=messages)
     except Exception as e:
@@ -1594,10 +1851,22 @@ async def export_pdf_endpoint(request: Request, db: Session = Depends(get_db), c
             resume_data, style, photo, lang, request_data.get("layout_config")
         )
 
+        project_name, version_name = _export_labels(db, current_user, request_data, resume_data)
+        filename = _resume_export_filename(
+            resume_data, "pdf", project_name, version_name
+        )
+        response_headers = {
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"
+        }
+        if is_local_mode():
+            saved_path = _persist_local_export(pdf_bytes, filename)
+            response_headers["X-Local-Export-Saved"] = "true"
+            response_headers["X-Local-Export-Name"] = quote(saved_path.name)
+
         return StreamingResponse(
             iter([pdf_bytes]),
             media_type="application/pdf",
-            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(_resume_export_filename(resume_data, 'pdf'))}"}
+            headers=response_headers,
         )
     except Exception as e:
         print(f"PDF 导出错误: {str(e)}")
@@ -1625,10 +1894,21 @@ async def export_docx_endpoint(request: Request, db: Session = Depends(get_db), 
             request_data.get("lang", "zh"),
             request_data.get("layout_config"),
         )
+        project_name, version_name = _export_labels(db, current_user, request_data, resume_data)
+        filename = _resume_export_filename(
+            resume_data, "docx", project_name, version_name
+        )
+        response_headers = {
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"
+        }
+        if is_local_mode():
+            saved_path = _persist_local_export(docx_bytes, filename)
+            response_headers["X-Local-Export-Saved"] = "true"
+            response_headers["X-Local-Export-Name"] = quote(saved_path.name)
         return StreamingResponse(
             iter([docx_bytes]),
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(_resume_export_filename(resume_data, 'docx'))}"},
+            headers=response_headers,
         )
     except HTTPException:
         raise
@@ -1761,6 +2041,10 @@ async def chat_endpoint(
             tool_calls = msg_dict.get("tool_calls", [])
             if tool_calls:
                 continue
+            if msg_type in {"ai", "assistant", "human", "user", "system", "systemmessage"}:
+                message_for_check = {"type": msg_type, "content": content}
+                if not _message_dict_has_text(message_for_check):
+                    continue
             if msg_type == "human":
                 historical_messages.append(HumanMessage(content=content))
             elif msg_type == "ai":
@@ -1902,6 +2186,11 @@ async def chat_endpoint(
             "context_metadata": context_metadata,
             "photo": initial_photo,
             "render_style": render_style_data,
+            "visual_snapshot_parts": [],
+            "visual_snapshot_calls": 0,
+            "visual_snapshot_revision": "",
+            "visual_snapshot_error": "",
+            "context_metadata_updates": {},
         }
         print(f"[InitState] initial_state 创建完成: {len(all_messages)} 条消息, pending_confirmation={initial_state.get('pending_confirmation') is not None}")
         for i, msg in enumerate(all_messages):
@@ -1910,6 +2199,7 @@ async def chat_endpoint(
         async def save_state_async(
             db, user_id, session_id, messages_list, resume_data_result,
             initial_jd_data, pending_confirmation=None, interview_memory=None,
+            context_metadata_updates=None,
         ):
             """Compatibility wrapper around the extracted turn persistence service."""
             await persist_turn_state(
@@ -1925,6 +2215,7 @@ async def chat_endpoint(
                 previous_summary=memory_summary,
                 expected_version=memory_version,
                 interview_memory=interview_memory or memory_state.get("interview_memory", {}),
+                context_metadata_updates=context_metadata_updates or {},
             )
 
         async def stream_response(config):
@@ -1951,6 +2242,7 @@ async def chat_endpoint(
             proposal_error_result = None
             interview_memory_result = memory_state.get("interview_memory", {})
             workflow_updates_result = None
+            context_metadata_updates_result = {}
 
             def progress_event(phase, text):
                 sent_progress_phases.add(phase)
@@ -2020,6 +2312,8 @@ async def chat_endpoint(
                         if node_name == "interview_coach":
                             interview_memory_result = output.get("interview_memory", interview_memory_result)
                             workflow_updates_result = output.get("workflow_updates")
+                        if isinstance(output.get("context_metadata_updates"), dict):
+                            context_metadata_updates_result.update(output["context_metadata_updates"])
 
                         output_messages = output.get("messages", [])
                         if node_name == "tool_node" and is_confirm_click and any(
@@ -2052,18 +2346,55 @@ async def chat_endpoint(
                         )
                         confirm_id = confirm_data.get("confirm_id") if isinstance(confirm_data, dict) else None
                         if confirm_id and confirm_id not in sent_confirm_ids and not confirmation_sent:
+                            # The assistant reply occupies the streaming
+                            # placeholder created before the request.  Emit it
+                            # before the confirmation event so a mixed
+                            # "answer + edit" turn never opens the modal first
+                            # and silently drops the answer.
+                            if not accumulated_content:
+                                for item in reversed(output_messages):
+                                    if not isinstance(item, AIMessage):
+                                        continue
+                                    reply = str(getattr(item, "content", "") or "").strip()
+                                    if not reply or getattr(item, "tool_calls", None):
+                                        continue
+                                    accumulated_content = reply
+                                    yield f'data: {json.dumps({"type": "stream", "content": accumulated_content, "request_id": request_id})}\n\n'
+                                    break
                             sent_confirm_ids.add(confirm_id)
                             confirmation_sent = True
                             if "validating" not in sent_progress_phases:
                                 yield progress_event("validating", "正在校验修改内容…")
                             try:
-                                from .database import get_conversation_context, save_conversation_context
-                                current_context = get_conversation_context(db, current_user.id, session_id)
-                                save_conversation_context(db, current_user.id, session_id, current_context, confirm_data)
+                                from .database import (
+                                    find_task_pending_confirmation,
+                                    get_conversation_context,
+                                    save_conversation_context,
+                                )
+                                async with _edit_preview_guard:
+                                    existing_edit = find_task_pending_confirmation(
+                                        db, current_user.id, task_id
+                                    )
+                                    if existing_edit:
+                                        raise RuntimeError("当前简历存在正在处理的修改，请先完成或取消后再请求。")
+                                    confirm_data["owner_session_id"] = session_id
+                                    confirm_data["request_id"] = request_id
+                                    current_context = get_conversation_context(db, current_user.id, session_id)
+                                    save_conversation_context(
+                                        db,
+                                        current_user.id,
+                                        session_id,
+                                        current_context,
+                                        confirm_data,
+                                    )
                                 print(f"[SSE] 同步保存 pending_confirmation: confirm_id={confirm_id}")
                             except Exception as exc:
                                 pending_confirmation_result = None
-                                proposal_error_result = "修改预览暂时无法保存，请重试。"
+                                proposal_error_result = (
+                                    str(exc)
+                                    if "正在处理的修改" in str(exc)
+                                    else "修改预览暂时无法保存，请重试。"
+                                )
                                 print(f"[Warning] 同步保存 pending_confirmation 失败: {exc}")
                                 yield 'data: ' + json.dumps({
                                     "type": "proposal_error",
@@ -2139,6 +2470,7 @@ async def chat_endpoint(
                     initial_jd_data,
                     pending_confirmation_result,
                     interview_memory_result,
+                    context_metadata_updates_result,
                 )
             except Exception as exc:
                 print(f"[Persistence] 回合状态保存失败: {exc}")
@@ -2272,6 +2604,20 @@ async def confirm_endpoint(
             if not content:
                 return JSONResponse(content={"error": "没有找到修改后的简历数据"}, status_code=400)
 
+            from .resume_changes import resume_digest
+            live_task = get_resume_task(db, current_user.id, task_id)
+            before_resume_data = deepcopy((live_task.resume_data if live_task else {}) or {})
+            base_hash = pending_confirmation.get("base_hash")
+            live_digests = {
+                resume_digest(before_resume_data),
+                resume_digest(resume_agent.normalize_and_validate_resume(before_resume_data)),
+            }
+            if base_hash and base_hash not in live_digests:
+                return JSONResponse(
+                    content={"error": "简历已发生其他修改，请重新生成修改预览"},
+                    status_code=409,
+                )
+
             # 解析 JSON
             import json as json_module
             try:
@@ -2293,6 +2639,19 @@ async def confirm_endpoint(
             print(f"[Confirm] 保存结果: {result}")
             if result.startswith("保存失败") or result.startswith("错误"):
                 return JSONResponse(content={"error": result}, status_code=400)
+
+            if pending_confirmation.get("source") == "direct_replace":
+                from .database import record_resume_revision
+                record_resume_revision(
+                    db,
+                    current_user.id,
+                    task_id,
+                    before_resume_data,
+                    updated_resume_data,
+                    [item.get("id") for item in pending_confirmation.get("changes", []) if item.get("id")],
+                    before_layout=(live_task.layout_config if live_task else None),
+                    after_layout=(live_task.layout_config if live_task else None),
+                )
 
             # 清除 pending_confirmation 状态
             clear_pending_confirmation(db, current_user.id, session_id)
@@ -2651,10 +3010,19 @@ if __name__ == "__main__":
             else:
                 existing_admin = get_user_by_email(db, admin_email)
                 if existing_admin:
+                    if not existing_admin.is_admin:
+                        existing_admin.is_admin = True
+                        db.commit()
                     print(f"[User] 管理员账号已存在: {admin_email}")
                 else:
                     hashed_pw = get_password_hash(admin_password)
-                    create_user(db, admin_email, hashed_pw, invite_code="admin")
+                    create_user(
+                        db,
+                        admin_email,
+                        hashed_pw,
+                        invite_code="admin",
+                        is_admin=True,
+                    )
                     print(f"[User] 已创建管理员账号: {admin_email}")
         db.close()
     except Exception as e:
@@ -2662,6 +3030,6 @@ if __name__ == "__main__":
 
     uvicorn.run(
         app,
-        host=os.getenv("HOST", "127.0.0.1"),
+        host=SERVER_HOST,
         port=int(os.getenv("PORT", "8000"))
     )

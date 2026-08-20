@@ -2,7 +2,9 @@ const fallbackConfig = {
   app_mode: 'multi_user',
   authentication_required: true,
   account_management_enabled: true,
-  local_user_email: null
+  local_user_email: null,
+  local_export_enabled: false,
+  database_backend: null
 }
 
 let configPromise = null

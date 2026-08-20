@@ -12,14 +12,17 @@ from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-import os
-
-from .config import LOCAL_USER_EMAIL, is_local_mode
+from .config import (
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES,
+    JWT_SECRET_KEY,
+    LOCAL_USER_EMAIL,
+    is_local_mode,
+)
 from .database import create_user, get_db, get_resume_task, get_user_by_email
 
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-super-secret-key-change-this-in-production")
+SECRET_KEY = JWT_SECRET_KEY or secrets.token_urlsafe(32)
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24小时
+ACCESS_TOKEN_EXPIRE_MINUTES = JWT_ACCESS_TOKEN_EXPIRE_MINUTES
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
 
@@ -150,3 +153,11 @@ def require_multi_user_mode() -> None:
     """Disable account-management endpoints while running locally."""
     if is_local_mode():
         raise HTTPException(status_code=404, detail="本地模式未启用账号管理功能")
+
+
+async def get_current_admin(current_user=Depends(get_current_user)):
+    """Require an active administrator in multi-user mode."""
+    require_multi_user_mode()
+    if not bool(getattr(current_user, "is_admin", False)):
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    return current_user

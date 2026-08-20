@@ -10,6 +10,21 @@ from .memory import (
 )
 
 
+def _content_has_text(content) -> bool:
+    if isinstance(content, str):
+        return bool(content.strip())
+    if isinstance(content, list):
+        return any(
+            (
+                isinstance(item, dict)
+                and str(item.get("text") or item.get("content") or "").strip()
+            )
+            or (not isinstance(item, dict) and str(item or "").strip())
+            for item in content
+        )
+    return bool(str(content or "").strip())
+
+
 def filter_attachments_from_content(content):
     """Keep only text blocks when persisting multimodal message content."""
     if isinstance(content, list):
@@ -33,12 +48,41 @@ def filter_attachments_from_message(message):
     return message
 
 
+def sanitize_messages_for_persistence(messages):
+    """Remove ephemeral tool turns and empty chat messages before storage."""
+    sanitized = []
+    for message in messages or []:
+        filtered = filter_attachments_from_message(message)
+        if not isinstance(filtered, (HumanMessage, AIMessage, SystemMessage)):
+            continue
+        if isinstance(filtered, AIMessage):
+            if not _content_has_text(getattr(filtered, "content", "")):
+                continue
+        elif isinstance(filtered, HumanMessage):
+            content = getattr(filtered, "content", "")
+            if isinstance(content, list):
+                has_text = any(
+                    isinstance(item, dict)
+                    and item.get("type") == "text"
+                    and str(item.get("text", "") or "").strip()
+                    for item in content
+                )
+                if not has_text:
+                    continue
+            elif not str(content or "").strip():
+                continue
+        sanitized.append(filtered)
+    return sanitized
+
+
 def serialize_context_messages(messages):
     serialized = []
     for message in messages:
         if isinstance(message, HumanMessage):
             message_type = "human"
         elif isinstance(message, AIMessage):
+            if not _content_has_text(getattr(message, "content", "")):
+                continue
             message_type = "ai"
         elif isinstance(message, SystemMessage):
             message_type = "system"
@@ -92,6 +136,7 @@ async def persist_turn_state(
     previous_summary="",
     expected_version=0,
     interview_memory=None,
+    context_metadata_updates=None,
     token_budget=MEMORY_TOKEN_BUDGET,
 ):
     """Persist canonical data plus versioned summary/recent-turn memory."""
@@ -100,7 +145,7 @@ async def persist_turn_state(
     else:
         print("[SaveState] 开始保存状态, pending_confirmation=None")
 
-    filtered_messages = [filter_attachments_from_message(message) for message in messages_list]
+    filtered_messages = sanitize_messages_for_persistence(messages_list)
     all_human = [message for message in filtered_messages if isinstance(message, HumanMessage)]
     all_ai = [message for message in filtered_messages if isinstance(message, AIMessage)]
     final_resume_data = resume_data_result if resume_data_result else {}
@@ -156,19 +201,22 @@ async def persist_turn_state(
         legacy_context,
         pending_confirmation,
     )
+    metadata_updates = dict(context_metadata_updates or {})
     recommendation = latest_numbered_recommendation(filtered_messages)
     if recommendation:
+        metadata_updates["latest_recommendations"] = recommendation
+    if metadata_updates:
         try:
             update_conversation_context_metadata(
                 db,
                 user_id,
                 session_id,
-                {"latest_recommendations": recommendation},
+                metadata_updates,
             )
         except Exception as exc:
-            # Recommendation metadata is an optimization for reference
-            # resolution; it must never make canonical turn persistence fail.
-            print(f"[SaveState] 编号建议快照保存失败，继续保留主对话: {exc}")
+            # Mission metadata is an optimization; it must never make
+            # canonical turn persistence fail.
+            print(f"[SaveState] 任务元数据保存失败，继续保留主对话: {exc}")
     return {
         "memory_version": new_version,
         "summary": summary,

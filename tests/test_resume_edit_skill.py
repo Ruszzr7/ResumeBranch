@@ -90,6 +90,37 @@ class ResumeEditSkillTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
 
+    async def test_layout_skill_rejects_renderer_only_fields_and_invalid_values(self):
+        for operation in (
+            {"op": "set", "path": "education.componentRows", "value": []},
+            {"op": "set", "path": "skills.paragraphSpacing", "value": 0.5},
+            {"op": "set", "path": "global.lineHeight", "value": 1.37},
+        ):
+            with self.assertRaises(ResumeEditOperationError):
+                await run_resume_edit(
+                    ResumeEditRequest(
+                        resume_data=resume_payload(),
+                        layout_config=default_layout_config(),
+                        layout_operations=(operation,),
+                    )
+                )
+
+    async def test_layout_skill_accepts_supported_content_forms_and_photo_height(self):
+        result = await run_resume_edit(
+            ResumeEditRequest(
+                resume_data=resume_payload(),
+                layout_config=default_layout_config(),
+                layout_operations=(
+                    {"op": "set", "path": "project_experience.detailsStyle", "value": "paragraph"},
+                    {"op": "set", "path": "education.supplementListStyle", "value": "numbered"},
+                    {"op": "set", "path": "basics.photoHeightMm", "value": 28},
+                ),
+            )
+        )
+        self.assertEqual(result.layout_config["project_experience"]["detailsStyle"], "paragraph")
+        self.assertEqual(result.layout_config["education"]["supplementListStyle"], "numbered")
+        self.assertEqual(result.layout_config["basics"]["photoHeightMm"], 28)
+
     async def test_raw_instruction_fails_closed_without_model_retry(self):
         llm = SimpleNamespace(ainvoke=AsyncMock())
         with self.assertRaises(ResumeEditOperationError):
@@ -131,6 +162,34 @@ class ResumeEditSkillTests(unittest.IsolatedAsyncioTestCase):
             "新姓名",
         )
         llm.ainvoke.assert_not_called()
+
+    async def test_structured_tool_call_keeps_reply_before_confirmation(self):
+        state = AgentState(
+            messages=[
+                HumanMessage(content="把姓名改为新姓名，并告诉我还可以怎么优化。"),
+                AIMessage(content="", tool_calls=[{
+                    "name": "request_resume_edit",
+                    "args": {
+                        "reply_text": "姓名修改已生成预览。还可以继续检查项目成果是否量化。",
+                        "resume_operations": [{
+                            "op": "set", "path": "basics.name", "value": "新姓名", "expected": "旧姓名",
+                        }],
+                        "layout_operations": [],
+                    },
+                    "id": "edit-with-reply-1",
+                }]),
+            ],
+            resume_data=resume_payload(),
+            layout_data=default_layout_config(),
+            user_id=1,
+            task_id="task-1",
+        )
+
+        result = await tool_node(state)
+
+        self.assertIsNotNone(result["pending_confirmation"])
+        self.assertIsInstance(result["messages"][-1], AIMessage)
+        self.assertIn("还可以继续检查", result["messages"][-1].content)
 
 
 if __name__ == "__main__":

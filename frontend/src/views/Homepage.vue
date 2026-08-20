@@ -8,6 +8,7 @@
           本地模式
         </span>
         <button v-if="isLocalMode" class="quiet-btn" @click="openSettings">设置</button>
+        <AccountMenu v-else-if="currentUser" :user="currentUser" @logout="logout" />
       </div>
     </header>
 
@@ -124,8 +125,8 @@
       </section>
 
       <footer class="home-footer">
-        <span>ResumeBranch · 本地简历工作台</span>
-        <span>数据仅保存在当前设备</span>
+        <span>ResumeBranch · {{ isLocalMode ? '本地简历工作台' : '多人简历工作台' }}</span>
+        <span>{{ isLocalMode ? '数据仅保存在当前设备' : '数据按登录账号隔离' }}</span>
       </footer>
     </main>
 
@@ -309,6 +310,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import BrandLogo from '../components/BrandLogo.vue'
+import AccountMenu from '../components/AccountMenu.vue'
 import { buildAuthorizationHeaders, loadAppConfig } from '../config/appMode.js'
 import { plainInlineText } from '../utils/inlineFormatting.js'
 
@@ -316,6 +318,8 @@ const router = useRouter()
 const projects = ref([])
 const isLoadingProjects = ref(false)
 const appConfig = ref(null)
+const token = ref(localStorage.getItem('access_token') || '')
+const currentUser = ref(readStoredUser())
 const showCreateDialog = ref(false)
 const newProjectTitle = ref('')
 const projectTitleInput = ref(null)
@@ -359,7 +363,41 @@ const settingsChecks = computed(() => {
 })
 
 const isLocalMode = computed(() => appConfig.value?.app_mode === 'local')
-const canUseProjects = computed(() => isLocalMode.value || !!localStorage.getItem('access_token'))
+const canUseProjects = computed(() => isLocalMode.value || !!token.value)
+
+function readStoredUser() {
+  try {
+    return JSON.parse(localStorage.getItem('user') || 'null')
+  } catch {
+    localStorage.removeItem('user')
+    return null
+  }
+}
+
+function logout() {
+  localStorage.removeItem('access_token')
+  localStorage.removeItem('user')
+  token.value = ''
+  currentUser.value = null
+  projects.value = []
+  router.replace('/login')
+}
+
+async function refreshCurrentUser() {
+  if (isLocalMode.value || !token.value) return
+  try {
+    const response = await fetch('/auth/me', { headers: buildAuthorizationHeaders(token.value) })
+    if (response.status === 401 || response.status === 403) {
+      logout()
+      return
+    }
+    if (!response.ok) return
+    currentUser.value = await response.json()
+    localStorage.setItem('user', JSON.stringify(currentUser.value))
+  } catch (error) {
+    console.warn('暂时无法刷新用户信息:', error)
+  }
+}
 
 function authHeaders() {
   return {
@@ -706,6 +744,7 @@ function handleKeydown(event) {
 
 onMounted(async () => {
   appConfig.value = await loadAppConfig()
+  await refreshCurrentUser()
   await loadProjects()
   window.addEventListener('keydown', handleKeydown)
 })

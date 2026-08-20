@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from .layout_config import normalize_layout_config
+from .layout_capabilities import build_layout_context_text
 
 
 CONTENT_STRUCTURE_GUIDANCE = """
@@ -23,8 +24,19 @@ CONTENT_STRUCTURE_GUIDANCE = """
 """.strip()
 
 
-def build_layout_context(layout_data: dict[str, Any] | None) -> str:
-    """Return a compact normalized layout snapshot plus invariants for the model."""
+def build_layout_context(
+    layout_data: dict[str, Any] | None,
+    *,
+    include_full_config: bool = False,
+) -> str:
+    """Return the capability contract and the current normalized layout.
+
+    ``include_full_config`` is deliberately opt-in.  Ordinary conversation
+    only needs the supported-path index and current editable values; a layout
+    mission or a visual layout request opts in to the complete renderer
+    configuration so the model can reason about the actual state rather than
+    guessing from historical messages.
+    """
     config = normalize_layout_config(layout_data or {})
     global_config = config["global"]
     summary = {
@@ -59,9 +71,17 @@ def build_layout_context(layout_data: dict[str, Any] | None) -> str:
         "全局行距和模块间距对所有模块生效，模块不能自行覆盖它们。\n"
         f"{json.dumps(summary, ensure_ascii=False, indent=2)}\n"
         "模块标题样式由 global.titleStyle 统一控制；sectionOrder 只影响模块顺序；"
-        "sectionPlacements 仅表示并入教育经历的子模块关系，不等于删除原数据。"
+        "sectionPlacements 仅表示并入教育经历的子模块关系，不等于删除原数据。\n"
+        f"{build_layout_context_text(layout_data, include_full_config=include_full_config)}"
     )
 
 
-def build_model_contract_context(layout_data: dict[str, Any] | None) -> str:
-    return f"{CONTENT_STRUCTURE_GUIDANCE}\n\n{build_layout_context(layout_data)}"
+def build_model_contract_context(
+    layout_data: dict[str, Any] | None,
+    *,
+    include_full_config: bool = False,
+) -> str:
+    return (
+        f"{CONTENT_STRUCTURE_GUIDANCE}\n\n"
+        f"{build_layout_context(layout_data, include_full_config=include_full_config)}"
+    )

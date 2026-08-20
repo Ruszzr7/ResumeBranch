@@ -1,47 +1,29 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
-title Resume Assistant - Stop All
+title Resume Assistant - Stop Local Profile
 cd /d "%~dp0.."
 
 set "PROJECT_ROOT=%CD%"
 set "RUN_DIR=%PROJECT_ROOT%\.local-run"
-set "SERVICE_FILE=%RUN_DIR%\database.service"
 set "NO_PAUSE=0"
 set "STOP_FAILED=0"
-set "ELEVATED=0"
-set "KEEP_DB=0"
 call :parse_args %*
-if defined MYSQL_SERVICE_NAME (
-  set "DB_SERVICE=%MYSQL_SERVICE_NAME%"
-) else (
-  set "DB_SERVICE=MySQL84"
-)
-if exist "%SERVICE_FILE%" set /p DB_SERVICE=<"%SERVICE_FILE%"
 
 echo ============================================================
-echo Resume Assistant - Stop Frontend, Backend and Database
+echo Resume Assistant - Stop Local SQLite Profile
 echo ============================================================
 echo.
 
 call :stop_port 5173 frontend
 call :stop_port 8000 backend
-if "%KEEP_DB%"=="0" (
-  call :stop_database
-) else (
-  echo [INFO] Database was left running because --keep-db was specified.
-)
 
 del /q "%RUN_DIR%\frontend.pid" "%RUN_DIR%\backend.pid" >nul 2>&1
-if "%STOP_FAILED%"=="0" if "%KEEP_DB%"=="0" del /q "%SERVICE_FILE%" >nul 2>&1
 
 echo.
 if "%STOP_FAILED%"=="0" (
   echo ============================================================
-  if "%KEEP_DB%"=="0" (
-    echo [OK] Frontend, backend and database are stopped.
-  ) else (
-    echo [OK] Frontend and backend are stopped. Database is still running.
-  )
+  echo [OK] Frontend and backend are stopped.
+  echo [OK] SQLite data remains in data\deepagents.db.
   echo ============================================================
 ) else (
   echo ============================================================
@@ -87,53 +69,6 @@ if !WAIT_COUNT! GEQ 10 (
 ping.exe -n 2 127.0.0.1 >nul
 goto wait_port_loop
 
-:stop_database
-sc.exe query "%DB_SERVICE%" >nul 2>&1
-if errorlevel 1 (
-  echo [ERROR] Database service "%DB_SERVICE%" was not found.
-  set "STOP_FAILED=1"
-  exit /b 1
-)
-sc.exe query "%DB_SERVICE%" | findstr /I "RUNNING" >nul 2>&1
-if errorlevel 1 (
-  echo [OK] Database service "%DB_SERVICE%" is already stopped.
-  exit /b 0
-)
-echo [INFO] Stopping database service "%DB_SERVICE%"...
-net.exe stop "%DB_SERVICE%" >nul 2>&1
-if errorlevel 1 (
-  if "%ELEVATED%"=="0" (
-    echo [INFO] Administrator approval is required to stop MySQL.
-    call :run_elevated
-    if errorlevel 1 (
-      echo [ERROR] Administrator approval was cancelled or MySQL could not stop.
-      set "STOP_FAILED=1"
-      exit /b 1
-    )
-    echo [OK] Database service "%DB_SERVICE%" stopped.
-    exit /b 0
-  ) else (
-    echo [ERROR] Windows could not stop "%DB_SERVICE%" with administrator rights.
-    set "STOP_FAILED=1"
-    exit /b 1
-  )
-)
-set /a DB_WAIT=0
-:wait_database_stop
-sc.exe query "%DB_SERVICE%" | findstr /I "STOPPED" >nul 2>&1
-if not errorlevel 1 (
-  echo [OK] Database service "%DB_SERVICE%" stopped.
-  exit /b 0
-)
-set /a DB_WAIT+=1
-if !DB_WAIT! GEQ 30 (
-  echo [ERROR] Database did not stop within 30 seconds.
-  set "STOP_FAILED=1"
-  exit /b 1
-)
-ping.exe -n 2 127.0.0.1 >nul
-goto wait_database_stop
-
 :maybe_pause
 if "%NO_PAUSE%"=="0" (
   echo.
@@ -145,11 +80,5 @@ exit /b 0
 :parse_args
 if "%~1"=="" exit /b 0
 if /I "%~1"=="--no-pause" set "NO_PAUSE=1"
-if /I "%~1"=="--elevated" set "ELEVATED=1"
-if /I "%~1"=="--keep-db" set "KEEP_DB=1"
 shift
 goto parse_args
-
-:run_elevated
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$p = Start-Process -FilePath $env:ComSpec -ArgumentList '/d','/c','\"%~f0\" --elevated --no-pause' -Verb RunAs -Wait -PassThru; exit $p.ExitCode"
-exit /b %errorlevel%

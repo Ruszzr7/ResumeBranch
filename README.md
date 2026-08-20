@@ -24,9 +24,21 @@ DeepAgents 是一个全栈 AI 简历优化工具，具有以下特点：
 
 - **对话式交互**：通过自然语言与 AI 对话，智能修改简历
 - **双运行模式**：本地单用户免登录，或 JWT 多用户隔离
-- **数据持久化**：SQLAlchemy 支持 MySQL，本地部署使用独立 MySQL 数据库
+- **数据持久化**：本地默认使用免服务的 SQLite，多人自托管推荐 MySQL 8.4
 - **AI 驱动**：基于 LangGraph 构建的智能 Agent
 - **PDF 导出**：服务端优先使用 Chromium 浏览器打印，缺少浏览器时兼容回退到 WeasyPrint
+
+### 两种部署入口
+
+| 配置 | 本地单用户（默认） | 多人自托管（可选） |
+|------|--------------------|--------------------|
+| `APP_MODE` | `local` | `multi_user` |
+| 推荐数据库 | SQLite 文件 | MySQL 8.4 |
+| 账号功能 | 免登录，账号接口关闭 | JWT 登录、注册、邀请码、管理员 |
+| 启动方式 | `scripts\start_local.cmd` | `docker-compose.multi-user.yml` |
+| 导出 | 浏览器下载 + `output/resumes/` | 默认仅浏览器下载 |
+
+两种入口复用同一套 Vue 界面、FastAPI 业务接口和 SQLAlchemy 模型。运行模式是部署配置，不是页面内开关；SQLite 与 MySQL 数据相互独立，不自动迁移或覆盖。
 
 ---
 
@@ -55,7 +67,7 @@ DeepAgents 是一个全栈 AI 简历优化工具，具有以下特点：
 | python-jose | 3.3+ | JWT 认证 |
 | bcrypt | 4.0+ | 密码加密 |
 
-> **注意**：默认使用 `gemini-3-flash-preview` 模型，需通过兼容的 LLM API（如 Google AI Studio 或自定义 BASE_URL）使用。
+> **注意**：解析API默认使用 `gemini-3.6-flash` 模型，需使用支持原生pdf上传的 LLM API（如 Google AI Studio 或自定义 BASE_URL）。对话API支持任意的 LLM API。两种API均可于设置中更改，保存前先测试连通。
 
 ---
 
@@ -102,6 +114,7 @@ DeepAgents 是一个全栈 AI 简历优化工具，具有以下特点：
 ### 导出功能
 - ✅ 服务端 Chromium PDF 导出，复用浏览器的中文换行与双端对齐规则
 - ✅ 未安装 Chromium 时自动回退到 WeasyPrint
+- ✅ PDF / DOCX 使用 `简历组名_版本名_导出日期` 命名，本地重复导出自动增加序号并保留到项目输出目录
 
 ### AI 特性
 - ✅ SSE 流式响应
@@ -254,8 +267,8 @@ DeepAgents 是一个全栈 AI 简历优化工具，具有以下特点：
 
 ## 🚀 快速开始
 
-> Windows 本机运行请优先参考 [本地部署说明](docs/local-deployment.md)。该方案使用
-> 项目专用 Python 虚拟环境、本机 MySQL 8.4、Chrome/Edge，以及作为回退的隔离 WeasyPrint/Pango，不依赖 Docker。
+> Windows 本机运行请优先参考 [本地部署说明](docs/local-deployment.md)。默认方案使用
+> 项目专用 Python 虚拟环境、SQLite、Chrome/Edge，以及作为回退的 WeasyPrint/Pango，不依赖 Docker 或数据库服务。
 
 ### 环境要求
 
@@ -284,9 +297,9 @@ cp .env.example .env
 # 本地单用户模式（免登录）
 APP_MODE=local
 LOCAL_USER_EMAIL=local@localhost
-
-# JWT 配置（必须修改）
-JWT_SECRET_KEY=your-super-secret-jwt-key-here
+DATABASE_URL=sqlite:///./data/deepagents.db
+LOCAL_EXPORT_DIR=./output/resumes
+HOST=127.0.0.1
 
 # LLM API 配置
 LLM_API_KEY=your-api-key
@@ -295,14 +308,9 @@ BASE_URL=https://api.bltcy.ai/v1
 # Tavily 搜索 API（可选）
 TAVILY_API_KEY=tvly-your-tavily-api-key
 
-# 服务器配置
-DOMAIN=your-domain.com
-
-# 数据库
-DATABASE_URL=mysql+pymysql://resume_app:password@127.0.0.1:3306/resume_assistant?charset=utf8mb4
 ```
 
-需要登录、注册、邀请码和多用户隔离时，将 `APP_MODE` 改为 `multi_user`。
+需要登录、注册、邀请码和多用户隔离时，不要修改本地脚本；复制 `.env.multi_user.example` 并使用 `docker-compose.multi-user.yml`。详见 [多人自托管部署](docs/deployment.md)。
 
 ### 3. 安装依赖
 
@@ -324,32 +332,27 @@ cd ..
 
 ### 4. 初始化数据库
 
-```bash
-# 数据库会在首次运行时自动创建表
-# 如需创建管理员账号（仅 multi_user 模式）
-.venv-win\Scripts\python.exe -m backend.create_admin
-```
+SQLite 文件和表会在本地后端首次运行时自动创建，无需初始化命令。多人 Compose 会等待 MySQL 健康后自动创建表，并创建或升级配置的管理员账号。
 
 ### 5. 启动服务
 
 **方式一：Windows 本地一键启动（推荐）**
 
 ```cmd
-# 启动数据库 + 后端 + 前端
+# 启动本地 SQLite 后端 + 前端
 scripts\start_local.cmd
 
 # 默认无交互连续启动；仅需让最终结果停留时使用
 scripts\start_local.cmd --pause
 
 # 分别启动（运行日志写入 .local-run）
-scripts\start_db_local.cmd
 scripts\start_backend_local.cmd
 scripts\start_frontend_local.cmd
 
 # 后端脚本会自动判断：未运行则启动，已运行则重启
 scripts\start_backend_local.cmd
 
-# 一键脚本同样会重启已运行的后端并检查全部服务
+# 一键脚本同样会重启已运行的后端并检查前后端
 scripts\start_local.cmd
 
 # 停止
@@ -368,10 +371,12 @@ cd frontend
 npm run dev
 ```
 
-**方式三：Docker 部署（推荐生产环境）**
+**方式三：Docker 多人自托管**
 
 ```bash
-docker-compose up -d --build
+cp .env.multi_user.example .env.multi_user
+# 修改 JWT、管理员和 MySQL 密码后：
+docker compose --env-file .env.multi_user -f docker-compose.multi-user.yml up -d --build
 ```
 
 ### 6. 访问应用
@@ -412,9 +417,12 @@ resume_assistant/
 │   └── testing.md
 ├── scripts/                           # Windows 本地启动、停止与冒烟测试
 ├── nginx/                             # Docker Nginx 配置
-├── data/                              # 本地运行数据（SQLite 回退模式）
-├── docker-compose.yml
-├── .env.example
+├── data/                              # 本地 SQLite、上传原件与工作流数据
+├── output/resumes/                    # 本地导出目录（运行时生成）
+├── docker-compose.yml                 # 旧部署入口（兼容保留）
+├── docker-compose.multi-user.yml      # 多人 MySQL 自托管入口
+├── .env.example                       # 本地配置模板
+├── .env.multi_user.example            # 多人配置模板
 └── README.md
 ```
 
@@ -495,22 +503,24 @@ resume_assistant/
 
 详细部署文档请参考 [部署指南](docs/deployment.md)。
 
-### Docker Compose 快速部署
+### Docker Compose 多人自托管
 
 ```bash
-# 1. 配置 .env
-cp .env.example .env
-# 编辑 .env 文件
+# 1. 配置多人环境
+cp .env.multi_user.example .env.multi_user
+# 编辑 .env.multi_user 中的 JWT、管理员和 MySQL 密码
 
 # 2. 构建并启动
-docker-compose up -d --build
+docker compose --env-file .env.multi_user -f docker-compose.multi-user.yml up -d --build
 
 # 3. 查看日志
-docker-compose logs -f
+docker compose --env-file .env.multi_user -f docker-compose.multi-user.yml logs -f
 
-# 4. 停止服务
-docker-compose down
+# 4. 停止服务（保留数据卷）
+docker compose --env-file .env.multi_user -f docker-compose.multi-user.yml down
 ```
+
+该配置适用于受控自托管环境；开放公网前仍需补充 HTTPS、限流、审计和备份运维。不要使用 `down -v` 停止已有数据的环境。
 
 ### Nginx 配置
 
@@ -578,7 +588,7 @@ docker-compose down
 
 ### 环境变量
 
-完整的环境变量配置参考 `.env.example`。
+本地配置参考 `.env.example`；多人配置参考 `.env.multi_user.example`。
 
 ### 创建管理员
 
@@ -588,14 +598,14 @@ docker-compose down
 python -m backend.create_admin
 ```
 
-管理员邮箱和密码必须通过 `.env` 中的 `ADMIN_EMAIL`、`ADMIN_PASSWORD` 设置。
+管理员邮箱和密码必须通过 `.env.multi_user` 中的 `ADMIN_EMAIL`、`ADMIN_PASSWORD` 设置。Compose 启动时会创建或升级该账号为管理员。
 
 ---
 
 ## 📚 相关文档
 
 - [本地部署说明](docs/local-deployment.md) - Windows 本地部署与启动说明
-- [部署指南](docs/deployment.md) - 完整部署指南
+- [多人自托管部署](docs/deployment.md) - JWT + MySQL + Docker Compose
 - [测试清单](docs/testing.md) - 功能回归检查项
 
 ---

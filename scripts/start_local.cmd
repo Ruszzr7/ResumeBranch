@@ -6,20 +6,17 @@ cd /d "%~dp0.."
 set "PROJECT_ROOT=%CD%"
 set "RUN_DIR=%PROJECT_ROOT%\.local-run"
 rem The all-in-one launcher is an orchestrator, not an interactive service shell.
-rem It must run database -> backend -> frontend -> health checks without waiting
+rem It must run backend -> frontend -> health checks without waiting
 rem for keyboard input. Use --pause only when the final summary should stay open.
 set "NO_PAUSE=1"
 set "RESTART=0"
 call :parse_args %*
 
 echo ============================================================
-echo Resume Assistant - Start Database, Backend and Frontend
+echo Resume Assistant - Start Local SQLite Profile
 echo ============================================================
 echo.
 
-call "%~dp0start_db_local.cmd" --no-pause
-if errorlevel 1 goto failed
-echo.
 if "%RESTART%"=="1" (
   call "%~dp0start_backend_local.cmd" --restart --no-pause
 ) else (
@@ -30,8 +27,6 @@ echo.
 call "%~dp0start_frontend_local.cmd" --no-pause
 if errorlevel 1 goto failed
 
-call :database_ready
-if errorlevel 1 goto failed
 call :backend_ready
 if errorlevel 1 goto failed
 call :frontend_ready
@@ -41,12 +36,13 @@ echo.
 echo ============================================================
 echo [OK] The complete project is running.
 echo ============================================================
-echo Database: 127.0.0.1:3306
+echo Database: %PROJECT_ROOT%\data\deepagents.db
 echo Backend:  http://127.0.0.1:8000
 echo Frontend: http://127.0.0.1:5173
 echo Logs:     %RUN_DIR%
 echo.
-echo Use scripts\stop_local.cmd to stop all three services.
+echo Exports:  %PROJECT_ROOT%\output\resumes
+echo Use scripts\stop_local.cmd to stop both services.
 call :maybe_pause
 exit /b 0
 
@@ -61,10 +57,6 @@ echo.
 echo Any service that did start can be stopped with scripts\stop_local.cmd.
 call :maybe_pause
 exit /b 1
-
-:database_ready
-netstat.exe -ano -p tcp | findstr /R /C:":3306 .*LISTENING" >nul 2>&1
-exit /b %errorlevel%
 
 :backend_ready
 curl.exe --silent --fail --max-time 2 -X POST http://127.0.0.1:8000/health >nul 2>&1

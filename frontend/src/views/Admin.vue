@@ -92,6 +92,10 @@ export default {
         })
         if (response.ok) {
           this.codes = await response.json()
+        } else if (response.status === 401) {
+          this.clearSession()
+        } else if (response.status === 403) {
+          this.$router.replace('/')
         } else {
           alert('获取邀请码列表失败')
         }
@@ -114,10 +118,15 @@ export default {
           body: JSON.stringify({ count: this.count || 5 })
         })
         if (response.ok) {
-          const newCodes = await response.json()
+          const result = await response.json()
+          const newCodes = Array.isArray(result) ? result : [result]
           // 合并到列表
           this.codes = [...newCodes, ...this.codes]
           alert(`成功创建 ${newCodes.length} 个邀请码`)
+        } else if (response.status === 401) {
+          this.clearSession()
+        } else if (response.status === 403) {
+          this.$router.replace('/')
         } else {
           const error = await response.json()
           alert(error.detail || '创建失败')
@@ -134,6 +143,12 @@ export default {
       if (!timeStr) return '-'
       const date = new Date(timeStr)
       return date.toLocaleString('zh-CN')
+    },
+
+    clearSession() {
+      localStorage.removeItem('access_token')
+      localStorage.removeItem('user')
+      this.$router.replace('/login')
     }
   }
 }

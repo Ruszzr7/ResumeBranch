@@ -29,12 +29,27 @@ COACHING_CONTEXT = """
 
 JUST_SAVED_CONTEXT = "[系统提示：简历已成功保存到数据库，请不要调用任何工具，直接回复用户]"
 
+
+def _content_has_text(content) -> bool:
+    if isinstance(content, str):
+        return bool(content.strip())
+    if isinstance(content, list):
+        return any(
+            (
+                isinstance(item, dict)
+                and str(item.get("text") or item.get("content") or "").strip()
+            )
+            or (not isinstance(item, dict) and str(item or "").strip())
+            for item in content
+        )
+    return bool(str(content or "").strip())
+
 MISSION_CONTEXT_GUIDANCE = {
     "layout": """
 【当前任务：排版建议】
-根据当前简历数据与快照，检查当前简历存在的排版问题，按对简历影响程度从高到低编号列出可执行建议。每条自然说明问题、原因或证据、建议方向。如果没有需要处理的问题，直接说明没有可执行的排版问题。本轮只分析，不修改简历。
-判断必须以当前简历 JSON 和当前排版配置为准：空字符串、空数组和空对象表示没有内容，模块顺序中的候选项不能证明模块存在；合并进教育经历的子模块也不是额外的顶层模块。不要为了凑数量生成默认状态、已符合规则或无操作建议。
-保留本任务内最近一次建议的编号与用户选择；用户说“第 N 点”时，只在本任务最近一次建议中解析，不跨到主对话或其他任务。若用户明确要求应用某一点，主对话模型先把指代解析成详细、准确的修改指令，再调用通用 resume_edit 生成预览；分析本身不直接保存。
+只报告当前简历实际存在、且能够通过【排版能力契约】处理的问题，不把默认状态、已经合理的设计或无须操作的描述列为建议。
+按以下通用优先级判断：先检查内容越界、遮挡、孤行标题等明确排版错误；再判断能否形成完整的一页或两页，以及分页是否均衡；随后检查局部信息是否过密或过疏；再检查标题、条目和正文的视觉层级；最后检查间距、对齐及较轻的视觉细节。优先解决高影响问题，不为了凑数量输出建议。
+当前简历 JSON 与完整排版配置是状态事实，快照用于核对实际视觉效果；没有快照证据时不要声称看到了具体页面位置。用户要求应用已讨论的建议时，根据本任务上下文理解其指代，整理成详细、准确且能力契约可执行的修改指令，再调用通用 resume_edit 生成确认预览。
 """,
     "jd_review": """
 【当前任务：对照 JD】
@@ -43,6 +58,14 @@ MISSION_CONTEXT_GUIDANCE = {
     "coaching": """
 【当前任务：深度打磨】
 本任务只围绕一项经历的事实追问与改写展开。保留本任务已核实事实；不得把其他任务中的建议或未经确认的数字带入本任务。用户要求应用改写时，调用通用 resume_edit 生成预览。
+""",
+}
+
+
+MISSION_INITIAL_GUIDANCE = {
+    "layout": """
+【排版建议首次分析】
+根据当前简历数据与快照，检查当前简历存在的排版问题，按对简历影响程度从高到低编号列出可执行建议。每条自然说明问题、原因或证据、建议方向。如果没有需要处理的问题，直接说明没有可执行的排版问题。本轮只分析，不修改简历。
 """,
 }
 
@@ -89,6 +112,8 @@ def build_system_content(
     memory_summary: str = "",
     context_type: str = "main",
     context_metadata: dict | None = None,
+    layout_context_mode: str = "auto",
+    mission_initial_turn: bool = False,
 ) -> str:
     """Inject the latest canonical resume/JD into the existing system prompt."""
     if resume_data:
@@ -104,7 +129,13 @@ def build_system_content(
     else:
         system_content = base_prompt.replace("{{resume_data}}", "\n（简历数据尚未加载）")
 
-    layout_contract = build_model_contract_context(layout_data)
+    normalized_mode = str(layout_context_mode or "auto").strip().lower()
+    if normalized_mode == "auto":
+        normalized_mode = "full" if str(context_type or "main").strip().lower() == "layout" else "capability"
+    layout_contract = build_model_contract_context(
+        layout_data,
+        include_full_config=normalized_mode == "full",
+    )
     if "{{layout_contract}}" in system_content:
         system_content = system_content.replace("{{layout_contract}}", f"\n{layout_contract}\n")
     else:
@@ -113,6 +144,8 @@ def build_system_content(
     if coaching_mode:
         system_content += COACHING_CONTEXT
     system_content += MISSION_CONTEXT_GUIDANCE.get(str(context_type or "main"), "")
+    if mission_initial_turn:
+        system_content += MISSION_INITIAL_GUIDANCE.get(str(context_type or "main"), "")
     system_content += _memory_data_block(memory_summary)
     system_content += _recommendation_data_block(context_metadata)
 
@@ -128,6 +161,17 @@ def filter_messages_for_llm(messages: list, *, just_saved: bool) -> list:
     for message in messages:
         if isinstance(message, ToolMessage):
             tool_result = str(getattr(message, "content", "") or "")
+            if getattr(message, "name", "") == "render_resume_pdf_images":
+                filtered.append(HumanMessage(
+                    content=f"[只读视觉工具结果]\n{tool_result}"
+                ))
+                continue
+            if (
+                getattr(message, "name", "") == "request_resume_edit"
+                and tool_result.startswith("本轮同时请求了视觉检查和修改")
+            ):
+                filtered.append(HumanMessage(content=f"[工具编排结果]\n{tool_result}"))
+                continue
             if tool_result.startswith("保存失败") or tool_result.startswith("错误"):
                 filtered.append(HumanMessage(
                     content=f"[系统工具错误：{tool_result}。请修正完整简历JSON后重新调用保存工具。]"
@@ -141,8 +185,15 @@ def filter_messages_for_llm(messages: list, *, just_saved: bool) -> list:
             continue
         if isinstance(message, AIMessage):
             if message.tool_calls:
-                filtered.append(AIMessage(content=message.content, tool_calls=[]))
+                # Internal tool-call turns are not conversation history.  An
+                # empty assistant message without its tool_calls is invalid
+                # for OpenAI-compatible chat APIs, while non-empty text that
+                # accompanied a tool call remains useful to the user.
+                if _content_has_text(getattr(message, "content", "")):
+                    filtered.append(AIMessage(content=message.content, tool_calls=[]))
             elif just_saved and message.content and str(message.content).strip().startswith("{"):
+                continue
+            elif not _content_has_text(getattr(message, "content", "")):
                 continue
             else:
                 filtered.append(message)
@@ -163,6 +214,8 @@ def build_conversation_context(
     memory_summary: str = "",
     context_type: str = "main",
     context_metadata: dict | None = None,
+    layout_context_mode: str = "auto",
+    mission_initial_turn: bool = False,
 ) -> list:
     """Return the exact ordered message list sent to the conversation model."""
     system_content = build_system_content(
@@ -174,6 +227,8 @@ def build_conversation_context(
         memory_summary=memory_summary,
         context_type=context_type,
         context_metadata=context_metadata,
+        layout_context_mode=layout_context_mode,
+        mission_initial_turn=mission_initial_turn,
     )
     messages = [SystemMessage(content=system_content)] + filter_messages_for_llm(
         state_messages,
