@@ -295,6 +295,8 @@ docker compose --env-file .env.docker \
 
 容器不依赖宿主机 Chrome；宿主机是否安装浏览器不会改变容器内 PDF 渲染。
 
+Docker 镜像中的后端以非 root 用户运行，但 Docker 默认 seccomp 配置会阻止 Chromium 创建 namespace，因此镜像通过 `RESUME_PDF_NO_SANDBOX=true` 为容器内 Chromium 启用 `--no-sandbox`。本地模式不会设置该变量，本地浏览器仍使用默认 sandbox。
+
 ### 数据丢失风险
 
 不要使用 `down -v`，也不要删除 Compose 项目对应的数据卷。生产环境还应定期执行 MySQL 备份，并保存应用数据卷。

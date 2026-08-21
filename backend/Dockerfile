@@ -9,7 +9,6 @@ WORKDIR /app
 # 安装 Chromium、PDF 页面转换工具、健康检查工具和中文字体
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
-    chromium-sandbox \
     curl \
     fonts-noto-cjk \
     poppler-utils \
@@ -25,12 +24,15 @@ RUN pip install --no-cache-dir -r backend/requirements.lock.txt
 # 复制应用代码
 COPY . .
 
-# Chromium 由非 root 用户运行，以保留浏览器沙箱。
+# 后端以非 root 用户运行，降低容器内应用权限。
 RUN useradd --create-home --uid 10001 resumeapp \
     && mkdir -p data output/resumes \
     && chown -R resumeapp:resumeapp /app
 
 ENV RESUME_PDF_BROWSER=/usr/bin/chromium
+# Docker's default seccomp profile blocks Chromium's namespace sandbox.
+# The container still runs the backend as the non-root resumeapp user.
+ENV RESUME_PDF_NO_SANDBOX=true
 ENV PYTHONUNBUFFERED=1
 USER resumeapp
 

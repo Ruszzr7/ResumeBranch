@@ -299,7 +299,7 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertNotIn("weasyprint", requirements)
         self.assertNotIn("weasyprint", lock)
         self.assertIn("chromium", dockerfile)
-        self.assertIn("chromium-sandbox", dockerfile)
+        self.assertIn("resume_pdf_no_sandbox=true", dockerfile)
         self.assertIn("poppler-utils", dockerfile)
         self.assertIn("requirements.lock.txt", dockerfile)
         self.assertNotIn("-r backend/requirements.txt", dockerfile)

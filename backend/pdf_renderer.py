@@ -12,6 +12,7 @@ from pathlib import Path
 
 LOGGER = logging.getLogger(__name__)
 PDF_BROWSER_ENV = "RESUME_PDF_BROWSER"
+PDF_NO_SANDBOX_ENV = "RESUME_PDF_NO_SANDBOX"
 
 
 def find_pdf_browser() -> str | None:
@@ -99,6 +100,10 @@ def render_html_with_chromium(
             "--timeout=5000",
             html_path.as_uri(),
         ]
+        if os.environ.get(PDF_NO_SANDBOX_ENV, "").strip().lower() in {
+            "1", "true", "yes", "on"
+        }:
+            command.insert(1, "--no-sandbox")
         creation_flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         try:
             completed = subprocess.run(

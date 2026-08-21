@@ -8,7 +8,12 @@ from unittest.mock import patch
 from pypdf import PdfReader, PdfWriter
 
 from backend.pdf_generator import generate_pdf, render_resume_to_html
-from backend.pdf_renderer import PDF_BROWSER_ENV, find_pdf_browser, render_html_with_chromium
+from backend.pdf_renderer import (
+    PDF_BROWSER_ENV,
+    PDF_NO_SANDBOX_ENV,
+    find_pdf_browser,
+    render_html_with_chromium,
+)
 
 
 def pdf_with_pages(count: int) -> bytes:
@@ -46,6 +51,24 @@ class PdfRendererTests(unittest.TestCase):
             self.assertIn("--headless=new", command)
             self.assertIn("--no-pdf-header-footer", command)
             self.assertTrue(any(value.startswith("--user-data-dir=") for value in command))
+
+    def test_no_sandbox_is_opted_into_by_the_docker_profile(self):
+        with TemporaryDirectory() as temp_dir:
+            browser = Path(temp_dir) / "browser.exe"
+            browser.touch()
+
+            def fake_run(command, **kwargs):
+                output = next(value.split("=", 1)[1] for value in command if value.startswith("--print-to-pdf="))
+                Path(output).write_bytes(pdf_with_pages(1))
+                return type("Completed", (), {"returncode": 0, "stderr": b""})()
+
+            with (
+                patch.dict(os.environ, {PDF_NO_SANDBOX_ENV: "true"}),
+                patch("backend.pdf_renderer.subprocess.run", side_effect=fake_run) as run,
+            ):
+                render_html_with_chromium("<html><body>test</body></html>", browser_path=str(browser))
+
+            self.assertIn("--no-sandbox", run.call_args.args[0])
 
     def test_missing_browser_fails_with_installation_guidance(self):
         with patch("backend.pdf_renderer.find_pdf_browser", return_value=None):
