@@ -866,7 +866,6 @@ async function checkLoginStatus() {
         currentUser.value = await response.json()
         localStorage.setItem('user', JSON.stringify(currentUser.value))
       }
-      console.log('✅ 用户已登录:', currentUser.value?.email)
     } catch (error) {
       // A temporary network failure should not destroy a still-valid session.
       console.warn('暂时无法刷新用户状态:', error)
@@ -874,14 +873,12 @@ async function checkLoginStatus() {
   } else {
     isLoggedIn.value = false
     currentUser.value = null
-    console.log('❌ 用户未登录')
   }
 }
 
 // 监听 localStorage 变化（用于跨标签页同步登录状态）
 function handleStorageChange(event) {
   if (event.key === 'access_token' || event.key === 'user') {
-    console.log('📦 检测到登录状态变化，重新检查...')
     checkLoginStatus()
   }
 }
@@ -1519,11 +1516,9 @@ function handleRenderStyleUpdated(style) {
 async function loadInitialData() {
   // 防止重复调用
   if (isLoadingInitialData.value) {
-    console.log('[DEBUG] loadInitialData: 已在加载中，跳过重复调用')
     return
   }
   isLoadingInitialData.value = true
-  console.log('[DEBUG] loadInitialData: 开始加载...')
 
   try {
     const response = await fetch('/load_resume', {
@@ -1543,11 +1538,9 @@ async function loadInitialData() {
 
     // 检查解析状态
     const parsingStatus = data.parsing_status || 'none'
-    console.log(`[DEBUG] loadInitialData: parsingStatus="${parsingStatus}"`)
 
     // 如果正在解析中，显示上传弹窗并启动轮询
     if (parsingStatus === 'parsing') {
-      console.log('📋 检测到简历正在解析中，启动轮询...')
       showUploadDialog.value = true
       isParsingResume.value = true
       resumeImagePreview.value = ''
@@ -1577,13 +1570,11 @@ async function loadInitialData() {
         jdData.value = jdResult
       }
     } catch (jdError) {
-      console.log('暂无岗位数据')
     }
 
     // 检查是否首次进入（无简历且无聊天记录）
     // 修正判断逻辑：检查basics中是否有有效字段
     const hasResume = hasMeaningfulResumeContent(data)
-    console.log(`[DEBUG] loadInitialData: hasResume=${hasResume}`)
 
     // 加载对话历史
     try {
@@ -1598,11 +1589,9 @@ async function loadInitialData() {
       }
       const convData = await convResponse.json()
       const hasChatHistory = Array.isArray(convData) && convData.length > 0
-      console.log(`[DEBUG] loadInitialData: hasChatHistory=${hasChatHistory}`)
 
       // 首次进入检测：无简历且无聊天记录
       if (!hasResume && (!hasChatHistory || route.query.new === '1')) {
-        console.log('[DEBUG] 首次进入，显示开始选择弹窗')
         showStartDialog.value = true
         return
       }
@@ -1636,7 +1625,6 @@ async function loadInitialData() {
     }]
   } finally {
     isLoadingInitialData.value = false
-    console.log('[DEBUG] loadInitialData: 完成')
   }
 }
 
@@ -1655,11 +1643,9 @@ async function pollParsingStatus() {
 
     const data = await response.json()
     const status = data.parsing_status || 'none'
-    console.log(`[DEBUG] pollParsingStatus: status="${status}"`)
 
     if (status === 'completed') {
       // 解析完成，重新加载简历数据
-      console.log('✅ 解析完成，重新加载数据...')
       stopParsingStatusPoll()
       isParsingResume.value = false
       showUploadDialog.value = false
@@ -1721,7 +1707,6 @@ async function loadResumeData() {
     // 更新简历内容
     const { parsing_status, ...resumeContent } = data
     if (resumeContent && Object.keys(resumeContent).length > 0) {
-      console.log('✅ 简历数据已加载')
     }
   } catch (error) {
     console.error('加载简历数据失败:', error)
@@ -1934,7 +1919,6 @@ async function sendMessage() {
                   }
                 }
               } else if (data.type === 'final') {
-                console.log('[前端] 收到 final 事件, isLoading before:', isLoading.value, 'isResponding:', isResponding.value)
                 // 停止加载文案切换
                 if (loadingTextInterval) {
                   clearTimeout(loadingTextInterval)
@@ -2047,11 +2031,9 @@ async function sendMessage() {
               } else if (data.type === 'workflow_state') {
                 updateWorkflowState(data.state || null, { showCompletedBriefly: true }, requestState)
               } else if (data.type === 'end') {
-                console.log('[前端] 收到 end 事件, isResponding before:', isResponding.value, 'isLoading:', isLoading.value)
                 // 结束信号，关闭连接
                 isResponding.value = false
                 finishProcessing(data.request_id, requestState)
-                console.log('[前端] isResponding 已设置为 false')
                 // 只在流式响应结束时调用一次updateResumeData()
                 updateResumeData()
                 // 更新会话ID并保存到localStorage

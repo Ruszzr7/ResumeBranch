@@ -31,7 +31,7 @@ class LocalLauncherTests(unittest.TestCase):
 
         self.assertIn('scripts\\run_local_backend.py', backend)
         self.assertIn('os.environ["APP_MODE"] = "local"', runner)
-        self.assertIn('os.environ["DATABASE_URL"] = "sqlite:///./data/deepagents.db"', runner)
+        self.assertIn('os.environ["DATABASE_URL"] = "sqlite:///./data/resumebranch.db"', runner)
         self.assertIn('os.environ["HOST"] = "127.0.0.1"', runner)
 
     def test_stop_launcher_does_not_manage_mysql(self):

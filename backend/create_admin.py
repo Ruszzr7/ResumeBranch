@@ -22,12 +22,12 @@ if existing:
     if not existing.is_admin:
         existing.is_admin = True
         db.commit()
-        print(f"用户 {admin_email} 已升级为管理员，id={existing.id}")
+        print("现有用户已升级为管理员")
     else:
-        print(f"管理员 {admin_email} 已存在，id={existing.id}")
+        print("管理员账号已存在")
 else:
     hashed_pw = get_password_hash(admin_password)
     user = create_user(db, admin_email, hashed_pw, invite_code="admin", is_admin=True)
-    print(f"用户 {admin_email} 创建成功，id={user.id}")
+    print("管理员账号创建成功")
 
 db.close()

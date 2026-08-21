@@ -3,6 +3,7 @@
 SQLAlchemy 模型定义和数据库连接
 """
 
+import logging
 import os
 import secrets
 import uuid
@@ -19,8 +20,10 @@ from dotenv import load_dotenv
 from .resume_data import normalize_resume_data
 from .layout_config import default_layout_config, normalize_layout_config
 
+LOGGER = logging.getLogger(__name__)
+
 load_dotenv()
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/deepagents.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/resumebranch.db")
 
 database_backend = make_url(DATABASE_URL).get_backend_name()
 engine_options = {}
@@ -383,7 +386,7 @@ def migrate_resume_academic_fields():
             try:
                 normalized = normalize_resume_data(resume.resume_data or {})
             except (TypeError, ValueError) as exc:
-                print(f"[Migration] 跳过 legacy resume {resume.id}: {exc}")
+                LOGGER.warning("跳过旧版简历数据迁移 id=%s: %s", resume.id, exc)
                 continue
             if normalized != (resume.resume_data or {}):
                 resume.resume_data = normalized
@@ -393,7 +396,7 @@ def migrate_resume_academic_fields():
             try:
                 normalized = normalize_resume_data(project.base_resume_data or {})
             except (TypeError, ValueError) as exc:
-                print(f"[Migration] 跳过 resume project {project.id}: {exc}")
+                LOGGER.warning("跳过简历项目迁移 id=%s: %s", project.id, exc)
                 continue
             if normalized != (project.base_resume_data or {}):
                 project.base_resume_data = normalized
@@ -403,7 +406,7 @@ def migrate_resume_academic_fields():
             try:
                 normalized = normalize_resume_data(task.resume_data or {})
             except (TypeError, ValueError) as exc:
-                print(f"[Migration] 跳过 resume task {task.id}: {exc}")
+                LOGGER.warning("跳过简历任务迁移 id=%s: %s", task.id, exc)
                 continue
             if normalized != (task.resume_data or {}):
                 task.resume_data = normalized
@@ -411,11 +414,11 @@ def migrate_resume_academic_fields():
 
         if changed:
             db.commit()
-            print(f"[Migration] 已规范化 {changed} 份简历的教育成绩字段")
+            LOGGER.info("已规范化 %s 份简历的教育成绩字段", changed)
     except Exception as exc:
         db.rollback()
         # A normalization issue should not prevent the application from starting.
-        print(f"[Migration] 教育成绩字段迁移跳过: {exc}")
+        LOGGER.warning("教育成绩字段迁移已跳过: %s", exc)
     finally:
         db.close()
 
@@ -1442,9 +1445,6 @@ def save_user_resume(db, user_id: int, data: dict, name: str = "默认简历", p
     )
     photo_argument_supplied = photo is not None
     data = normalize_resume_data(data)
-    print(f"[save_user_resume] 开始保存，用户ID={user_id}")
-    print(f"[save_user_resume] 传入 data keys: {list(data.keys()) if isinstance(data, dict) else 'not a dict'}")
-    
     task = _active_task(db, user_id)
     if task:
         existing_photo = task.photo or ""
@@ -1487,17 +1487,13 @@ def save_user_resume(db, user_id: int, data: dict, name: str = "默认简历", p
         data['basics'].pop('photo', None)
     
     if existing_resume:
-        print(f"[save_user_resume] 现有数据存在，basics.name: {existing_resume.resume_data.get('basics', {}).get('name', 'N/A')}")
-        print(f"[save_user_resume] 新数据 basics.name: {data.get('basics', {}).get('name', 'N/A')}")
         existing_resume.resume_data = data
         existing_resume.name = name
         existing_resume.photo = photo
     else:
-        print(f"[save_user_resume] 创建新简历")
         resume = Resume(user_id=user_id, resume_data=data, name=name, photo=photo)
         db.add(resume)
     db.commit()
-    print(f"[save_user_resume] 保存完成")
     return existing_resume if existing_resume else resume
 
 

@@ -6,7 +6,7 @@
 
 | 模式 | 数据库 | 登录 | 整体启动脚本 |
 |------|--------|------|--------------|
-| 本地版 | `data/deepagents.db` | 免登录 | `scripts\start_local.cmd` |
+| 本地版 | `data/resumebranch.db` | 免登录 | `scripts\start_local.cmd` |
 | 多用户版 | 本机 MySQL | 必须登录 | `scripts\start_multi_user.cmd` |
 
 同一时间只运行一种模式。两种模式共用同一个前端和页面代码，前端根据后端 `/app/config` 的运行配置显示登录界面或本地工作区。
@@ -24,10 +24,10 @@
 
 ```powershell
 python -m venv .venv-win
-.\.venv-win\Scripts\python.exe -m pip install -r backend\requirements.txt
+.\.venv-win\Scripts\python.exe -m pip install -r backend\requirements.lock.txt
 
 Set-Location frontend
-npm install
+npm ci
 Set-Location ..
 ```
 
@@ -112,7 +112,7 @@ scripts\start_multi_user.cmd
 
 - 前端：<http://127.0.0.1:5173>
 - 后端：<http://127.0.0.1:8000>
-- 健康检查：<http://127.0.0.1:8000/health>
+- 健康检查：使用下文的 `POST /health` 命令
 
 ### 分别启动
 
@@ -163,6 +163,8 @@ database_backend: mysql
 4. 普通用户使用邮箱登录。
 5. 管理员可以使用配置的账号名登录。
 6. 不同用户只能看到自己的简历、岗位版本和对话数据。
+7. 普通用户看不到 API 设置；管理员在账户菜单左侧可以打开“API 设置”。
+8. 同一账号在另一设备重新登录后，旧会话收到明确提示并返回登录页；同一浏览器多个标签页共享当前会话。
 
 ## 常见问题
 

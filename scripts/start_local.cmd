@@ -36,7 +36,7 @@ echo.
 echo ============================================================
 echo [OK] The complete project is running.
 echo ============================================================
-echo Database: %PROJECT_ROOT%\data\deepagents.db
+echo Database: %PROJECT_ROOT%\data\resumebranch.db
 echo Backend:  http://127.0.0.1:8000
 echo Frontend: http://127.0.0.1:5173
 echo Logs:     %RUN_DIR%

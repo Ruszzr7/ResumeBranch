@@ -1,5 +1,6 @@
 """Persist one completed agent turn using the existing database contract."""
 
+import logging
 import re
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -8,6 +9,8 @@ from .memory import (
     MEMORY_TOKEN_BUDGET,
     build_layered_memory,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _content_has_text(content) -> bool:
@@ -140,20 +143,17 @@ async def persist_turn_state(
     token_budget=MEMORY_TOKEN_BUDGET,
 ):
     """Persist canonical data plus versioned summary/recent-turn memory."""
-    if pending_confirmation:
-        print(f"[SaveState] 开始保存状态, confirm_id={pending_confirmation.get('confirm_id')}")
-    else:
-        print("[SaveState] 开始保存状态, pending_confirmation=None")
-
     filtered_messages = sanitize_messages_for_persistence(messages_list)
     all_human = [message for message in filtered_messages if isinstance(message, HumanMessage)]
     all_ai = [message for message in filtered_messages if isinstance(message, AIMessage)]
     final_resume_data = resume_data_result if resume_data_result else {}
     final_jd_data = jd_data if jd_data else {}
 
-    print(
-        f"[SaveState] 待保存: {len(all_human)} HumanMessage, {len(all_ai)} AIMessage, "
-        f"pending_confirmation={pending_confirmation is not None}"
+    LOGGER.debug(
+        "保存对话状态，人类消息=%s，AI 消息=%s，存在待确认=%s",
+        len(all_human),
+        len(all_ai),
+        pending_confirmation is not None,
     )
 
     from ..database import (
@@ -216,7 +216,7 @@ async def persist_turn_state(
         except Exception as exc:
             # Mission metadata is an optimization; it must never make
             # canonical turn persistence fail.
-            print(f"[SaveState] 任务元数据保存失败，继续保留主对话: {exc}")
+            LOGGER.warning("任务元数据保存失败，继续保留主对话: %s", exc)
     return {
         "memory_version": new_version,
         "summary": summary,

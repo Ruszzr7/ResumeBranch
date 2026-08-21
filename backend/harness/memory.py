@@ -1,10 +1,13 @@
 """Legacy-equivalent context compression primitives extracted from the API layer."""
 
 import asyncio
+import logging
 import os
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate
+
+LOGGER = logging.getLogger(__name__)
 
 
 MAX_HUMAN_MESSAGES = 20
@@ -117,11 +120,10 @@ async def compress_context_with_llm(messages, conversation_llm, max_summary_leng
         summary_chain = summary_prompt | conversation_llm
         summary_result = await summary_chain.ainvoke({})
         summary_content = summary_result.content.strip()
-        print(f"[Context] LLM 摘要生成成功: {len(summary_content)}字")
-        print(f"[Context] 摘要内容:\n{summary_content}")
+        LOGGER.debug("上下文摘要生成成功，长度=%s", len(summary_content))
         return [SystemMessage(content=summary_content)] + recent_messages
     except Exception as exc:
-        print(f"[Context] LLM 摘要生成失败: {exc}")
+        LOGGER.warning("上下文摘要生成失败: %s", exc)
         return list(messages[-10:])
 
 
@@ -238,10 +240,10 @@ async def summarize_incremental_memory(
         summary = str(result.content or "").strip()
         if not summary:
             raise ValueError("模型返回了空摘要")
-        print(f"[Memory] 增量摘要生成成功: {len(summary)}字")
+        LOGGER.debug("增量摘要生成成功，长度=%s", len(summary))
         return summary
     except Exception as exc:
-        print(f"[Memory] 增量摘要生成失败，保留未压缩对话: {exc}")
+        LOGGER.warning("增量摘要生成失败，保留未压缩对话: %s", exc)
         return None
 
 

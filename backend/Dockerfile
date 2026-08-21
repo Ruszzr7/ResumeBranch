@@ -1,4 +1,4 @@
-# DeepAgents Dockerfile
+# ResumeBranch Dockerfile
 # 多用户版 - 简历助手
 
 FROM python:3.11-slim
@@ -15,11 +15,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# 复制依赖文件
-COPY backend/requirements.txt ./backend/requirements.txt
+# 复制锁定依赖，保证不同时间和机器上的镜像依赖一致
+COPY backend/requirements.lock.txt ./backend/requirements.lock.txt
 
 # 安装 Python 依赖
-RUN pip install --no-cache-dir -r backend/requirements.txt
+RUN pip install --no-cache-dir -r backend/requirements.lock.txt
 
 # 复制应用代码
 COPY . .

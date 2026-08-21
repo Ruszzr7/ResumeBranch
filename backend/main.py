@@ -14,6 +14,7 @@ import json
 import asyncio
 import base64
 import hashlib
+import logging
 import subprocess
 import os
 import sys
@@ -42,6 +43,9 @@ def _configure_console_encoding():
 
 
 _configure_console_encoding()
+
+LOGGER = logging.getLogger(__name__)
+APP_VERSION = "1.0.0"
 
 
 def _public_error_response(code: str, message: str, status_code: int = 500):
@@ -497,10 +501,10 @@ async def app_lifespan(app_instance: FastAPI):
         removed = await manager.cleanup_stale()
         if removed:
             harness_metrics.increment("workflow_cleanup_threads_total", removed)
-            print(f"[WorkflowCheckpoint] 已清理 {removed} 个过期控制线程")
+            LOGGER.info("已清理 %s 个过期工作流控制线程", removed)
     except Exception as exc:
         # Checkpoint failure must not make existing resume operations unusable.
-        print(f"[WorkflowCheckpoint] 启动失败，本进程将保持无状态兼容运行: {exc}")
+        LOGGER.warning("工作流检查点启动失败，本进程保持无状态兼容运行: %s", exc)
         manager.enabled = False
     app_instance.state.workflow_checkpoints = manager
     try:
@@ -509,7 +513,7 @@ async def app_lifespan(app_instance: FastAPI):
         await manager.close()
 
 
-app = FastAPI(title="ResumeBranch API", version="2.0.0", lifespan=app_lifespan)
+app = FastAPI(title="ResumeBranch API", version=APP_VERSION, lifespan=app_lifespan)
 _edit_preview_guard = asyncio.Lock()
 
 
@@ -626,10 +630,10 @@ async def test_llm_settings(
     except asyncio.TimeoutError as exc:
         raise HTTPException(status_code=504, detail="连接超时，请检查接口地址或网络") from exc
     except ValueError as exc:
-        print(f"[Settings] LLM capability test rejected: {exc}")
+        LOGGER.warning("LLM 能力测试被拒绝: %s", exc)
         raise HTTPException(status_code=400, detail="当前模型或接口不支持所需能力") from exc
     except Exception as exc:
-        print(f"[Settings] LLM connection test failed: {exc}")
+        LOGGER.warning("LLM 连接测试失败: %s", exc)
         raise HTTPException(status_code=400, detail="连接失败，请检查模型、接口地址和密钥") from exc
     return {"model": model, **result}
 
@@ -938,7 +942,7 @@ async def delete_project(
                 for session_id in mission_sessions.get(task_id, []):
                     await manager.delete_thread(current_user.id, task_id, context_id=session_id)
             except Exception as exc:
-                print(f"[WorkflowCheckpoint] 项目删除后清理失败 task={task_id}: {exc}")
+                LOGGER.warning("项目删除后的工作流检查点清理失败: %s", exc)
     return {"success": True}
 
 
@@ -1050,7 +1054,7 @@ async def close_task_context(
         try:
             await manager.delete_thread(current_user.id, task_id, context_id=context.session_id)
         except Exception as exc:
-            print(f"[WorkflowCheckpoint] 会话关闭后清理失败 context={context.id}: {exc}")
+            LOGGER.warning("会话关闭后的工作流检查点清理失败: %s", exc)
     append_context_event(db, current_user.id, task_id, context, "closed")
     return {"success": True, "context": serialize_conversation_context(closed)}
 
@@ -1177,7 +1181,7 @@ async def delete_task(
             for session_id in mission_sessions.get(task_id, []):
                 await manager.delete_thread(current_user.id, task_id, context_id=session_id)
         except Exception as exc:
-            print(f"[WorkflowCheckpoint] 任务删除后清理失败 task={task_id}: {exc}")
+            LOGGER.warning("任务删除后的工作流检查点清理失败: %s", exc)
     return {"success": True}
 
 
@@ -1390,7 +1394,7 @@ async def health_check():
     """健康检查"""
     return {
         "status": "ok",
-        "version": "2.0.0",
+        "version": APP_VERSION,
         "app_mode": APP_MODE,
         "layout_schema_version": LAYOUT_SCHEMA_VERSION,
         "export_contract": "ready",
@@ -1403,15 +1407,7 @@ async def load_resume_endpoint(db: Session = Depends(get_db), current_user = Dep
     加载当前用户的简历数据
     """
     try:
-        print(f"[load_resume] user_id={current_user.id}, email={current_user.email}")
         resume_data = get_user_resume(db, current_user.id)
-
-        # 打印加载的数据
-        if resume_data and isinstance(resume_data, dict):
-            basics = resume_data.get('basics', {})
-            print(f"[load_resume] 加载简历: name={basics.get('name', 'N/A')}, target_position={basics.get('target_position', 'N/A')}")
-        else:
-            print(f"[load_resume] 未找到简历数据")
 
         # 获取证件照
         photo = get_user_photo(db, current_user.id)
@@ -1428,7 +1424,7 @@ async def load_resume_endpoint(db: Session = Depends(get_db), current_user = Dep
         try:
             parsing_status = get_parsing_status(db, current_user.id)
         except Exception as statusError:
-            print(f"[WARN] get_parsing_status failed: {statusError}, using default")
+            LOGGER.warning("读取解析状态失败，使用默认状态: %s", statusError)
             parsing_status = "none"
 
         if isinstance(resume_data, dict) and "error" in resume_data:
@@ -1437,10 +1433,8 @@ async def load_resume_endpoint(db: Session = Depends(get_db), current_user = Dep
             **resume_data,
             "parsing_status": parsing_status
         })
-    except Exception as e:
-        print(f"[ERROR] load_resume: {str(e)}")
-        import traceback
-        traceback.print_exc()
+    except Exception:
+        LOGGER.exception("读取简历失败")
         # 返回空简历数据，避免前端崩溃
         return JSONResponse(content={"parsing_status": "none"}, status_code=200)
 
@@ -1511,7 +1505,7 @@ async def translate_resume_endpoint(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         db.rollback()
-        print(f"[translate_resume] 翻译失败: {exc}")
+        LOGGER.warning("简历翻译失败: %s", exc)
         raise HTTPException(status_code=502, detail="简历翻译失败，请检查模型配置后重试") from exc
 
 
@@ -1553,7 +1547,7 @@ async def restore_resume_translation_endpoint(
         raise
     except Exception as exc:
         db.rollback()
-        print(f"[restore_resume_translation] 恢复失败: {exc}")
+        LOGGER.warning("恢复简历翻译失败: %s", exc)
         raise HTTPException(status_code=500, detail="中文简历恢复失败，请稍后重试") from exc
 
 
@@ -1951,7 +1945,7 @@ async def export_pdf_endpoint(request: Request, db: Session = Depends(get_db), c
             headers=response_headers,
         )
     except Exception as e:
-        print(f"PDF 导出错误: {str(e)}")
+        LOGGER.exception("PDF 导出失败")
         import traceback
         traceback.print_exc()
         return _public_error_response("PDF_EXPORT_FAILED", "PDF 导出失败，请稍后重试。")
@@ -1995,7 +1989,7 @@ async def export_docx_endpoint(request: Request, db: Session = Depends(get_db), 
     except HTTPException:
         raise
     except Exception as exc:
-        print(f"Word 导出错误: {exc}")
+        LOGGER.exception("Word 导出失败")
         import traceback
         traceback.print_exc()
         return _public_error_response("DOCX_EXPORT_FAILED", "Word 导出失败，请稍后重试。")
@@ -2073,9 +2067,6 @@ async def chat_endpoint(
             from .database import clear_pending_confirmation
             clear_pending_confirmation(db, current_user.id, session_id)
 
-        print(f"[DEBUG] session_id: {session_id}")
-        print(f"[DEBUG] is_confirm_click: {is_confirm_click}")
-        print(f"[DEBUG] message.strip(): {message.strip()[:100]}...")
 
         # 构建消息内容
         message_content = []
@@ -2136,7 +2127,7 @@ async def chat_endpoint(
 
         # 构建 all_messages：数据库中的历史消息 + 当前用户消息
         all_messages = list(historical_messages) + [current_message]
-        print(f"[InitState] 从数据库加载 {len(historical_messages)} 条历史消息 + 当前消息")
+        LOGGER.debug("从数据库加载 %s 条历史消息", len(historical_messages))
 
         # 使用数据库中的数据
         initial_resume_data = resume_data if resume_data else (get_user_resume(db, current_user.id) or {})
@@ -2147,13 +2138,10 @@ async def chat_endpoint(
         from .database import get_pending_confirmation
         initial_pending_confirmation = get_pending_confirmation(db, current_user.id, session_id)
         if initial_pending_confirmation:
-            print(f"[InitState] 从数据库加载 pending_confirmation: confirm_id={initial_pending_confirmation.get('confirm_id')}")
             if not is_confirm_click:
                 from .database import clear_pending_confirmation
                 clear_pending_confirmation(db, current_user.id, session_id)
                 initial_pending_confirmation = None
-        else:
-            print(f"[InitState] 从数据库加载 pending_confirmation: None")
 
         # 只把模式、阶段等控制状态写入 Checkpointer。简历、JD、消息、
         # 附件和确认候选仍只存在业务数据库/本次执行内存中。
@@ -2228,17 +2216,18 @@ async def chat_endpoint(
                         current_user.id, task_id, **workflow_updates,
                     )
                 if feature_config["shadow"]:
-                    print(
-                        "[InterviewShadow] "
-                        f"task={task_id} enabled={feature_config['enabled']} "
-                        f"mode={selected_interview_mode or 'legacy'} action={selected_interview_action or '-'}"
+                    LOGGER.debug(
+                        "访谈影子模式 enabled=%s mode=%s action=%s",
+                        feature_config["enabled"],
+                        selected_interview_mode or "legacy",
+                        selected_interview_action or "-",
                     )
                 if selected_interview_mode:
                     harness_metrics.increment("interview_turns_total")
             except Exception as exc:
                 workflow_start_error = str(exc)
                 harness_metrics.increment("workflow_errors_total")
-                print(f"[WorkflowCheckpoint] 回合恢复/登记失败: {exc}")
+                LOGGER.warning("工作流回合恢复或登记失败: %s", exc)
 
         # 证件照单独存储在任务记录中；在真实数据库会话中一并带入快照渲染。
         # 轻量测试替身可能没有 query 接口，此时沿用无照片快照即可。
@@ -2278,9 +2267,11 @@ async def chat_endpoint(
             "visual_snapshot_error": "",
             "context_metadata_updates": {},
         }
-        print(f"[InitState] initial_state 创建完成: {len(all_messages)} 条消息, pending_confirmation={initial_state.get('pending_confirmation') is not None}")
-        for i, msg in enumerate(all_messages):
-            print(f"  {i}: {type(msg).__name__}: {getattr(msg, 'content', '')[:30]}...")
+        LOGGER.debug(
+            "Agent 初始状态已创建，消息数=%s，存在待确认=%s",
+            len(all_messages),
+            initial_state.get("pending_confirmation") is not None,
+        )
 
         async def save_state_async(
             db, user_id, session_id, messages_list, resume_data_result,
@@ -2312,7 +2303,7 @@ async def chat_endpoint(
             # 累积所有消息，而不是每轮重置
             # 这样 save_state_async 才能获取完整的消息历史
             messages_list = list(all_messages)  # 从 initial_state 开始
-            print(f"[StreamResponse] messages_list 初始化: {len(messages_list)} 条消息")
+            LOGGER.debug("流式响应消息数=%s", len(messages_list))
             resume_data_result = {}
             layout_data_result = initial_layout_data
             pending_confirmation_result = None  # 保存待确认状态
@@ -2359,7 +2350,7 @@ async def chat_endpoint(
             try:
                 # 统一使用 graph.astream_events
                 # 入口路由会在 Graph 内部处理（通过 entry_router）
-                print(f"[SSE] 开始流式处理, 消息数量: {len(initial_state.get('messages', []))}")
+                LOGGER.debug("SSE 流式处理开始")
                 async for event in graph.astream_events(initial_state, config=config, version="v1"):
                     event_type = event.get("event", "")
                     node_name = event.get("name", "")
@@ -2367,7 +2358,7 @@ async def chat_endpoint(
                     if event_type == "on_chain_start":
                         current_node = node_name
                         node_start_time[node_name] = time.time()
-                        print(f"[SSE] 节点开始: {node_name}")
+                        LOGGER.debug("Agent 节点开始: %s", node_name)
                         preview_node = node_name in {"tool_node", "direct_edit", "proposal_generator"} or (
                             node_name == "interview_coach" and selected_interview_action == "apply"
                         )
@@ -2494,7 +2485,6 @@ async def chat_endpoint(
                                         db, current_user.id, task_id, session_id, request_id
                                     ):
                                         raise RuntimeError("修改预览状态未能安全保存")
-                                print(f"[SSE] 同步保存 pending_confirmation: confirm_id={confirm_id}")
                             except Exception as exc:
                                 if edit_lock_acquired:
                                     from .database import clear_pending_confirmation
@@ -2505,7 +2495,7 @@ async def chat_endpoint(
                                     if "正在处理的修改" in str(exc)
                                     else "修改预览暂时无法保存，请重试。"
                                 )
-                                print(f"[Warning] 同步保存 pending_confirmation 失败: {exc}")
+                                LOGGER.warning("同步保存待确认修改失败: %s", exc)
                                 yield 'data: ' + json.dumps({
                                     "type": "proposal_error",
                                     "request_id": request_id,
@@ -2554,9 +2544,7 @@ async def chat_endpoint(
                     final_content = accumulated_content
 
             except Exception as e:
-                import traceback
-                print(f"[Error] 执行错误: {str(e)}")
-                print(f"[Error] 异常堆栈: {traceback.format_exc()}")
+                LOGGER.exception("Agent 请求执行失败")
                 final_content = (
                     "当前简历存在正在处理的修改，请先完成或取消后再请求。"
                     if "正在处理的修改" in str(e)
@@ -2596,7 +2584,7 @@ async def chat_endpoint(
                     context_metadata_updates_result,
                 )
             except Exception as exc:
-                print(f"[Persistence] 回合状态保存失败: {exc}")
+                LOGGER.warning("回合状态保存失败: %s", exc)
                 harness_metrics.increment("persistence_errors_total")
                 yield 'data: ' + json.dumps({
                     "type": "persistence_error",
@@ -2634,7 +2622,7 @@ async def chat_endpoint(
                 except Exception as exc:
                     workflow_error = str(exc)
                     harness_metrics.increment("workflow_errors_total")
-                    print(f"[WorkflowCheckpoint] 回合控制状态保存失败: {exc}")
+                    LOGGER.warning("工作流回合控制状态保存失败: %s", exc)
             if workflow_error:
                 yield 'data: ' + json.dumps({
                     "type": "workflow_error",
@@ -2654,7 +2642,6 @@ async def chat_endpoint(
                     ),
                 }) + '\n\n'
 
-            print(f"[SSE] 准备发送 final 事件, pending_confirmation={pending_confirmation_result is not None}")
             yield 'data: ' + json.dumps({
                 "type": "final",
                 "content": final_content,
@@ -2665,7 +2652,6 @@ async def chat_endpoint(
                 "layout_config": layout_data_result,
             }) + '\n\n'
 
-            print(f"[SSE] 准备发送 end 事件")
             yield 'data: ' + json.dumps({
                 "type": "end",
                 "session_id": session_id,
@@ -2677,10 +2663,8 @@ async def chat_endpoint(
 
         return StreamingResponse(stream_response(config), media_type="text/event-stream")
 
-    except Exception as e:
-        print(f"聊天接口错误: {str(e)}")
-        import traceback
-        traceback.print_exc()
+    except Exception:
+        LOGGER.exception("聊天接口失败")
         return _public_error_response("CHAT_FAILED", "本次请求未能安全完成，请稍后重试。")
 
 
@@ -2748,7 +2732,6 @@ async def confirm_endpoint(
                 updated_resume_data = json_module.loads(content)
                 from .resume_agent import normalize_and_validate_resume
                 updated_resume_data = normalize_and_validate_resume(updated_resume_data)
-                print(f"[Confirm] 解析修改后的简历数据成功，包含 {len(updated_resume_data)} 个顶级字段")
             except (json_module.JSONDecodeError, TypeError, ValueError) as e:
                 return JSONResponse(content={"error": "简历数据格式不正确，请重新生成修改预览"}, status_code=400)
 
@@ -2760,7 +2743,6 @@ async def confirm_endpoint(
                 task_id=task_id,
                 db=db,
             )
-            print(f"[Confirm] 保存结果: {result}")
             if result.startswith("保存失败") or result.startswith("错误"):
                 return JSONResponse(content={"error": result}, status_code=400)
 
@@ -2798,7 +2780,7 @@ async def confirm_endpoint(
             })
 
     except Exception as e:
-        print(f"确认接口错误: {str(e)}")
+        LOGGER.exception("确认接口失败")
         import traceback
         traceback.print_exc()
         return _public_error_response("CONFIRM_FAILED", "确认操作处理失败，请重新加载后重试。")
@@ -2969,7 +2951,7 @@ async def first_message_endpoint(
         })
 
     except Exception as e:
-        print(f"首次提问接口错误: {str(e)}")
+        LOGGER.exception("首次提问接口失败")
         import traceback
         traceback.print_exc()
         return _public_error_response("FIRST_MESSAGE_FAILED", "首次提问生成失败，请稍后重试。")
@@ -3043,7 +3025,7 @@ async def first_message_from_resume_endpoint(
         })
 
     except Exception as e:
-        print(f"简历首次提问接口错误: {str(e)}")
+        LOGGER.exception("简历首次提问接口失败")
         import traceback
         traceback.print_exc()
         return _public_error_response("RESUME_QUESTION_FAILED", "简历提问生成失败，请稍后重试。")
@@ -3097,7 +3079,7 @@ async def save_ai_message_endpoint(
         })
 
     except Exception as e:
-        print(f"保存 AI 消息接口错误: {str(e)}")
+        LOGGER.exception("保存 AI 消息接口失败")
         import traceback
         traceback.print_exc()
         return _public_error_response("MESSAGE_SAVE_FAILED", "消息保存失败，请稍后重试。")
@@ -3108,36 +3090,35 @@ if __name__ == "__main__":
     from .auth import get_password_hash
     from .database import SessionLocal, cleanup_old_contexts, create_user, get_user_by_email
 
-    print("Resume Assistant 后端服务启动中...")
-    print("支持多用户认证和数据库持久化")
+    LOGGER.info("Resume Assistant 后端服务启动中")
 
     # 启动时清理 7 天未访问的上下文
     try:
         db = SessionLocal()
         deleted = cleanup_old_contexts(db, days=7)
         if deleted:
-            print(f"[Context] 已清理 {deleted} 条过期上下文")
+            LOGGER.info("已清理 %s 条过期上下文", deleted)
         db.close()
     except Exception as e:
-        print(f"[Context] 清理过期上下文失败: {e}")
+        LOGGER.warning("清理过期上下文失败: %s", e)
 
     # 创建本地管理员账号（凭据只从 .env 读取）
     try:
         db = SessionLocal()
         if is_local_mode():
-            print(f"[User] 本地模式已启用，使用本地用户: {LOCAL_USER_EMAIL}")
+            LOGGER.info("本地模式已启用")
         else:
             admin_email = os.getenv("ADMIN_EMAIL", "").strip()
             admin_password = os.getenv("ADMIN_PASSWORD", "")
             if not admin_email or not admin_password:
-                print("[User] 未配置 ADMIN_EMAIL/ADMIN_PASSWORD，跳过管理员初始化")
+                LOGGER.warning("未配置管理员凭据，跳过管理员初始化")
             else:
                 existing_admin = get_user_by_email(db, admin_email)
                 if existing_admin:
                     if not existing_admin.is_admin:
                         existing_admin.is_admin = True
                         db.commit()
-                    print(f"[User] 管理员账号已存在: {admin_email}")
+                    LOGGER.info("管理员账号已存在")
                 else:
                     hashed_pw = get_password_hash(admin_password)
                     create_user(
@@ -3147,10 +3128,10 @@ if __name__ == "__main__":
                         invite_code="admin",
                         is_admin=True,
                     )
-                    print(f"[User] 已创建管理员账号: {admin_email}")
+                    LOGGER.info("已创建管理员账号")
         db.close()
     except Exception as e:
-        print(f"[User] 创建管理员账号失败: {e}")
+        LOGGER.exception("创建管理员账号失败")
 
     uvicorn.run(
         app,

@@ -19,7 +19,7 @@ Docker Compose 不要求宿主机安装 MySQL、Python、Node.js、Chromium 或 
   ▼
 frontend 容器（Nginx，宿主机 8080）
   ├── Vue 静态文件
-  └── API/WebSocket 代理
+  └── HTTP API 与 SSE 代理
           │
           ▼
 backend 容器（FastAPI + Gunicorn + Chromium）
@@ -272,7 +272,7 @@ docker compose --env-file .env.docker \
 - MySQL 密码是否正确。
 - MySQL 密码是否包含未编码的 URL 特殊字符。
 - MySQL 健康检查是否通过。
-- LLM 配置是否缺少必要密钥。
+- `DATABASE_URL` 是否正确指向 Compose 内的 `mysql:3306`。
 
 ### 前端能打开但接口失败
 
@@ -281,7 +281,7 @@ docker compose --env-file .env.docker \
 - `backend` 健康检查为 `healthy`。
 - 浏览器访问的是前端 `8080`，不是后端 `8000`。
 - 没有修改 Nginx 中的 `proxy_pass http://backend:8000`。
-- WebSocket 路径仍然使用 `/ws/`。
+- API 请求是否通过前端同源地址发起，以及 Nginx 是否能解析 `backend` 服务名。
 
 ### PDF 导出失败
 

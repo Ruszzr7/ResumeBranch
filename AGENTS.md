@@ -24,13 +24,11 @@
 ## 关键文档
 
 - `README.md`：项目概览、功能、架构、启动方式和接口说明。
-- `功能拓展.md`：功能拓展阶段记录、实现约束、自动测试与人工验收标准。
 - `docs/README.md`：项目文档索引。
-- `docs/architecture/agent-optimization.md`：Agent 架构设计与演进参考；实际行为以当前代码为准。
+- `docs/agent-architecture.md`：Agent 架构与状态边界；实际行为以当前代码为准。
 - `docs/testing.md`：功能回归测试清单。
 - `docs/local-deployment.md`：Windows 本地部署与验活流程。
 - `docs/deployment.md`：生产环境部署与运维说明。
-- `docs/prompts/resume-scoring.md`：简历评分 Prompt 参考；是否接入以当前代码为准。
 - `.env.example`：环境变量示例，不得把真实密钥写入仓库。
 
 ## 必须遵循的执行流程

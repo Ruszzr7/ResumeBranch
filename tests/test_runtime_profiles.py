@@ -300,6 +300,8 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertNotIn("weasyprint", lock)
         self.assertIn("chromium", dockerfile)
         self.assertIn("poppler-utils", dockerfile)
+        self.assertIn("requirements.lock.txt", dockerfile)
+        self.assertNotIn("-r backend/requirements.txt", dockerfile)
         self.assertNotIn("langchain-tavily", requirements)
         self.assertNotIn("langchain-tavily", lock)
         self.assertNotRegex(lock, r"(?m)^langchain==")

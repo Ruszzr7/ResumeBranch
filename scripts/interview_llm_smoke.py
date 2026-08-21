@@ -98,7 +98,7 @@ async def main():
         assert fact["claim"] == fact["source_quote"]
 
     # Applying a suggestion is intentionally not part of this script; that path
-    # is verified through deterministic confirmation tests and browser E2E.
+    # is verified through deterministic confirmation tests and manual browser acceptance.
     assert SYNTHETIC_RESUME == original, "只读拷打错误地修改了输入简历"
     print({
         "success": True,

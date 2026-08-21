@@ -12,6 +12,7 @@
 
 import os
 import json
+import logging
 import re
 import uuid
 import asyncio
@@ -62,6 +63,8 @@ from .skills.render_resume_pdf_images import (
     render_resume_pdf_snapshot,
 )
 
+LOGGER = logging.getLogger(__name__)
+
 
 _edit_lock_acquirer: ContextVar[object | None] = ContextVar(
     "resume_edit_lock_acquirer", default=None
@@ -100,29 +103,6 @@ def record_assistant_revision(
         )
     finally:
         revision_db.close()
-
-
-def sanitize_for_log(content):
-    """清理内容中的 base64 图片数据，避免日志污染"""
-    if isinstance(content, str):
-        if len(content) > 200:
-            return content[:200] + "..."
-        return content
-    elif isinstance(content, list):
-        sanitized_items = []
-        for item in content:
-            if isinstance(item, dict):
-                if item.get("type") == "image_url":
-                    sanitized_items.append("[图片已过滤]")
-                elif item.get("type") == "text":
-                    text = item.get("text", "")
-                    sanitized_items.append(text[:100] + "..." if len(text) > 100 else text)
-                else:
-                    sanitized_items.append(str(item)[:50])
-            else:
-                sanitized_items.append(str(item)[:50])
-        return "\n".join(sanitized_items)
-    return str(content)[:200]
 
 
 def estimate_tokens(text):
@@ -720,13 +700,13 @@ def save_resume_tool(content: str = "", user_id: int = None, task_id: str = None
     try:
         resume_data = json.loads(content)
     except json.JSONDecodeError as e:
-        print(f"[save_resume_tool] 首次JSON解析失败，尝试修复: {e}")
+        LOGGER.debug("简历 JSON 首次解析失败，尝试兼容修复")
         fixed_content = fix_unquoted_json_strings(content)
         try:
             resume_data = json.loads(fixed_content)
-            print(f"[save_resume_tool] 修复后解析成功")
+            LOGGER.debug("简历 JSON 兼容修复成功")
         except json.JSONDecodeError as e2:
-            print(f"[save_resume_tool] 修复后仍然失败: {e2}")
+            LOGGER.warning("简历 JSON 兼容修复失败: %s", e2)
             return f"保存失败：JSON 解析错误 - {str(e)}"
 
     try:
@@ -736,13 +716,10 @@ def save_resume_tool(content: str = "", user_id: int = None, task_id: str = None
 
     # 保存到数据库
     try:
-        print(f"[save_resume_tool] 开始保存简历，用户ID={user_id}")
-        print(f"[save_resume_tool] resume_data keys: {list(resume_data.keys()) if isinstance(resume_data, dict) else 'not a dict'}")
         result = update_resume(resume_data, user_id=user_id, task_id=task_id)
-        print(f"[save_resume_tool] 保存结果: {result}")
         return result
     except Exception as e:
-        print(f"[save_resume_tool] 保存错误: {e}")
+        LOGGER.warning("简历保存工具执行失败: %s", e)
         return f"保存失败：{str(e)}"
 
 
@@ -828,30 +805,19 @@ class AgentState:
 
 
 # =============================================================================
-# DEBUG: 添加诊断日志
+# 仅记录不含用户内容的状态摘要
 # =============================================================================
 
 def debug_print_state(state: AgentState, location: str = ""):
-    """打印当前状态用于调试"""
-    import sys
-    print(f"\n{'='*60}", file=sys.stderr)
-    print(f"[DEBUG@{location}]", file=sys.stderr)
-    print(f"  messages count: {len(state.messages)}", file=sys.stderr)
-    print(f"  resume_data keys: {list((state.resume_data or {}).keys()) if state.resume_data else None}", file=sys.stderr)
-    print(f"  jd_data loaded: {bool(state.jd_data)}", file=sys.stderr)
-    print(f"  pending_confirmation: {bool(state.pending_confirmation)}", file=sys.stderr)
-    
-    # 打印最后几条消息
-    if state.messages:
-        print(f"  last 3 messages:", file=sys.stderr)
-        for i, msg in enumerate(state.messages[-3:]):
-            msg_type = type(msg).__name__
-            content = getattr(msg, 'content', '') or ''
-            content_str = sanitize_for_log(content)[:80]
-            print(f"    [{len(state.messages)-3+i}] {msg_type}: {content_str}...", file=sys.stderr)
-            if hasattr(msg, 'tool_calls') and msg.tool_calls:
-                print(f"       tool_calls: {[tc.name if hasattr(tc, 'name') else tc.get('name') for tc in msg.tool_calls]}", file=sys.stderr)
-    print(f"{'='*60}\n", file=sys.stderr)
+    """记录不包含简历或对话正文的调试摘要。"""
+    LOGGER.debug(
+        "Agent 状态 location=%s messages=%s resume=%s jd=%s pending=%s",
+        location,
+        len(state.messages),
+        bool(state.resume_data),
+        bool(state.jd_data),
+        bool(state.pending_confirmation),
+    )
 
 def extract_user_intent(state: AgentState) -> str:
     """
@@ -966,12 +932,7 @@ async def _render_current_visual_snapshot(state: AgentState) -> ResumeVisualSnap
     )
     if not snapshot.parts:
         raise RuntimeError("当前简历没有生成可查看的 PDF 页面")
-    print(
-        "[resume_visual] "
-        f"revision={snapshot.revision[:12]} pages={len(snapshot.parts)} "
-        f"sizes={snapshot.page_sizes} bytes={snapshot.page_bytes} "
-        f"total={snapshot.total_bytes}"
-    )
+    LOGGER.debug("简历视觉快照已生成，页数=%s，总字节=%s", len(snapshot.parts), snapshot.total_bytes)
     return snapshot
 
 
@@ -1610,7 +1571,7 @@ async def direct_edit_node(state: AgentState) -> dict:
             ))
         else:
             assistant_message = AIMessage(content=_preview_summary(changes))
-    print(f"[direct_edit] 本地生成完成, changes={len(changes)}")
+    LOGGER.debug("本地修改候选生成完成，变更数=%s", len(changes))
     return {
         "messages": list(state.messages) + [assistant_message],
         "resume_data": current,
@@ -1637,9 +1598,10 @@ async def proposal_generator_node(state: AgentState) -> dict:
             metadata.get("resume_operations", ()),
             metadata.get("layout_operations", ()),
         )
-        print(
-            f"[proposal_generator] 完成, 耗时={time.time() - start_time:.2f}s, "
-            f"pending={bool(preview.get('pending_confirmation'))}"
+        LOGGER.debug(
+            "修改候选生成完成，耗时=%.2fs，存在待确认=%s",
+            time.time() - start_time,
+            bool(preview.get("pending_confirmation")),
         )
         return {
             "messages": list(state.messages) + [AIMessage(content=preview.get("message", ""))],
@@ -1653,7 +1615,7 @@ async def proposal_generator_node(state: AgentState) -> dict:
             "task_id": state.task_id,
         }
     except Exception as exc:
-        print(f"[proposal_generator] 失败: {exc}")
+        LOGGER.warning("修改候选生成失败: %s", exc)
         return {
             "messages": list(state.messages),
             "resume_data": current,
@@ -1795,7 +1757,7 @@ async def interview_coach_node(state: AgentState) -> dict:
             layout_data=current_layout,
         )
     except Exception as exc:
-        print(f"[interview_coach] 结构化输出失败，安全回退: {exc}")
+        LOGGER.warning("访谈教练结构化输出失败，已安全回退: %s", exc)
         harness_metrics.increment("interview_fallbacks_total")
         fallback_question = "这段经历中，最能证明你个人贡献的一个具体结果是什么？"
         result = {
@@ -1837,21 +1799,17 @@ async def conversation_node(state: AgentState) -> dict:
     
     start_time = time.time()
     
-    # 计算总 tokens（用于日志显示）
+    # 只记录规模信息，不记录简历或对话正文。
     total_tokens = 0
     for msg in state.messages:
         content = getattr(msg, 'content', '')
         total_tokens += estimate_tokens(content)
     
-    print(f"\n=== [Node] conversation_llm [开始] ===")
-    print(f"Input: {len(state.messages)} messages")
-    print(f"Total tokens (估算): {total_tokens}")
-    for i, msg in enumerate(state.messages):
-        content = getattr(msg, 'content', '')
-        content_str = sanitize_for_log(content)
-        msg_type = type(msg).__name__
-        has_tool_calls = hasattr(msg, 'tool_calls') and msg.tool_calls
-        print(f"  [{i}] {msg_type}: {content_str[:80]}... (tool_calls: {bool(has_tool_calls)})")
+    LOGGER.debug(
+        "对话节点开始，消息数=%s，估算 token=%s",
+        len(state.messages),
+        total_tokens,
+    )
 
     latest_request = latest_human_text(state)
     coaching_mode = is_resume_coaching_request(latest_request)
@@ -1878,7 +1836,7 @@ async def conversation_node(state: AgentState) -> dict:
         except Exception as exc:
             visual_error = str(exc)
             harness_metrics.increment("resume_visual_render_failures_total")
-            print(f"[conversation_llm] 首次排版快照生成失败: {type(exc).__name__}: {exc}")
+            LOGGER.warning("首次排版快照生成失败: %s", exc)
             return {
                 "messages": list(state.messages) + [AIMessage(content=(
                     "当前简历快照生成失败，本轮没有进行排版分析，也没有修改简历。请稍后重试。"
@@ -1930,7 +1888,7 @@ async def conversation_node(state: AgentState) -> dict:
     )
     if visual_attached:
         messages = _attach_visual_resume_parts(messages, visual_parts)
-        print(f"[conversation_llm] 已附加 {len(visual_parts)} 页临时 PDF PNG 视觉上下文")
+        LOGGER.debug("已附加 %s 页临时视觉上下文", len(visual_parts))
     
     # 计算实际发送给 LLM 的 tokens 总数
     llm_input_tokens = 0
@@ -1939,11 +1897,10 @@ async def conversation_node(state: AgentState) -> dict:
         llm_input_tokens += estimate_tokens(msg_content)
     
     if getattr(state, 'just_saved', False):
-        print("[Debug] 已添加 just_saved 提示给 LLM")
+        LOGGER.debug("已向 LLM 添加本轮刚保存提示")
 
     # 调用 LLM
-    print(f"[conversation_llm] [{time.strftime('%H:%M:%S')}] 开始调用 LLM, messages 数量: {len(messages)}")
-    print(f"[conversation_llm] [{time.strftime('%H:%M:%S')}] total tokens (估算): {llm_input_tokens}")
+    LOGGER.debug("开始调用 LLM，消息数=%s，估算 token=%s", len(messages), llm_input_tokens)
     try:
         # The model owns both decisions. Read-only analysis can request a
         # snapshot but cannot mutate; after a snapshot has been supplied the
@@ -1967,44 +1924,23 @@ async def conversation_node(state: AgentState) -> dict:
         async with asyncio.timeout(120.0):
             response = await model.ainvoke(messages)
     except asyncio.TimeoutError:
-        print(f"[conversation_llm] LLM 调用超时! messages 数量: {len(messages)}")
+        LOGGER.warning("LLM 调用超时，消息数=%s", len(messages))
         if visual_attached:
             raise TimeoutError("视觉快照分析超时，请稍后重试")
         raise TimeoutError("LLM 调用超时，请稍后重试")
     except Exception as e:
-        print(f"[conversation_llm] LLM 调用失败: {str(e)}")
+        LOGGER.warning("LLM 调用失败: %s", e)
         if visual_attached:
             raise RuntimeError(f"视觉快照分析失败：{str(e)}")
         raise RuntimeError(f"LLM 调用失败: {str(e)}")
 
     elapsed_time = time.time() - start_time
-    # 打印 LLM 输出（完整信息）
-    print(f"[conversation_llm] [{time.strftime('%H:%M:%S')}] LLM 调用完成, 耗时: {elapsed_time:.2f}s")
-    print("LLM Output:")
-    print(f"  content: {repr(response.content)[:200]}")
-
-    # 检查 tool_calls
-    print(f"  === Tool Calls 检查 ===")
-    print(f"  hasattr(response, 'tool_calls'): {hasattr(response, 'tool_calls')}")
-    if hasattr(response, 'tool_calls'):
-        print(f"  response.tool_calls: {response.tool_calls}")
-        print(f"  bool(response.tool_calls): {bool(response.tool_calls)}")
-        if response.tool_calls:
-            print(f"  tool_calls 数量: {len(response.tool_calls)}")
-            for i, tc in enumerate(response.tool_calls):
-                print(f"    tool_call[{i}]: {tc}")
-                print(f"    tool_call[{i}] type: {type(tc)}")
-
-    # 检查 invalid_tool_calls
-    print(f"  hasattr(response, 'invalid_tool_calls'): {hasattr(response, 'invalid_tool_calls')}")
-    if hasattr(response, 'invalid_tool_calls'):
-        print(f"  response.invalid_tool_calls: {response.invalid_tool_calls}")
-
-    # 检查 additional_kwargs
-    print(f"  hasattr(response, 'additional_kwargs'): {hasattr(response, 'additional_kwargs')}")
-    if hasattr(response, 'additional_kwargs'):
-        print(f"  response.additional_kwargs: {response.additional_kwargs}")
-    print(f"=== [Node] conversation_llm [结束] 耗时: {elapsed_time:.2f}s ===\n")
+    LOGGER.debug(
+        "LLM 调用完成，耗时=%.2fs，工具调用数=%s，无效工具调用数=%s",
+        elapsed_time,
+        len(getattr(response, "tool_calls", None) or []),
+        len(getattr(response, "invalid_tool_calls", None) or []),
+    )
 
     if context_type == "layout" and mission_initial_turn:
         metadata_updates["initial_analysis_completed"] = True
@@ -2042,7 +1978,7 @@ async def conversation_node(state: AgentState) -> dict:
     
     # 如果用户发送了新消息但不是确认回复，清除 pending_confirmation
     if not user_is_confirming and state.pending_confirmation is not None:
-        print(f"[conversation_node] 用户发送了新消息，清除 pending_confirmation")
+        LOGGER.debug("用户发送新消息，清除原待确认状态")
         pending_conf = None
     
     output_state = {
@@ -2085,23 +2021,16 @@ async def tool_node(state: AgentState) -> dict:
     执行 LLM 调用的工具并生成预览
     支持延迟确认流程：修改工具不会立即保存，而是触发前端确认
     """
-    print(f"\n=== [Node] tool_node [被调用] ===")
-    print(f"state.messages 数量: {len(state.messages)}")
-    if state.messages:
-        last_msg = state.messages[-1]
-        print(f"最后一条消息类型: {type(last_msg).__name__}")
-        if hasattr(last_msg, 'tool_calls'):
-            print(f"最后一条消息 tool_calls: {last_msg.tool_calls}")
     debug_print_state(state, "tool_node_ENTER")
     
     start_time = time.time()
-    print(f"\n=== [Node] tool_node [开始] ===")
+    LOGGER.debug("工具节点开始")
     last_message = state.messages[-1]
     user_content = getattr(last_message, 'content', '') or ''
     
     # 处理确认回复
     if '[CONFIRM_REPLY:' in user_content:
-        print("[Tool] 检测到确认回复")
+        LOGGER.debug("检测到确认回复")
         updated_resume_data = None
         updated_layout_data = None
         import re
@@ -2111,13 +2040,7 @@ async def tool_node(state: AgentState) -> dict:
             user_confirm_id = match.group(1)
             value = match.group(2)
             selected_change_ids = [item for item in (match.group(3) or "").split(",") if item]
-            print(f"[Tool] 用户发送的 confirm_id={user_confirm_id}, value={value}")
-            print(f"[Tool] state.pending_confirmation confirm_id: {state.pending_confirmation.get('confirm_id') if state.pending_confirmation else None}")
-            if state.pending_confirmation:
-                db_confirm_id = state.pending_confirmation.get('confirm_id')
-                print(f"[Tool] 数据库中的 confirm_id={db_confirm_id}")
-                print(f"[Tool] ID匹配检查: {user_confirm_id == db_confirm_id}")
-            
+
             # 检查是否有待确认的请求
             pending_conf = state.pending_confirmation
             if pending_conf and pending_conf.get('confirm_id') == user_confirm_id:
@@ -2131,7 +2054,7 @@ async def tool_node(state: AgentState) -> dict:
                     saved_resume = False
                 elif value in {'confirm', 'confirm_all', 'confirm_selected'}:
                     # 执行保存
-                    print("[Tool] 用户确认，执行保存")
+                    LOGGER.debug("确认请求匹配，执行保存")
                     try:
                         # 直接从 pending_confirmation 获取修改后的数据并保存
                         tool_args = state.pending_confirmation.get("tool_args", {})
@@ -2146,7 +2069,7 @@ async def tool_node(state: AgentState) -> dict:
                             try:
                                 candidate_resume_data = json.loads(content)
                             except json.JSONDecodeError as e:
-                                print(f"[Tool] 首次JSON解析失败，尝试修复: {e}")
+                                LOGGER.debug("确认候选 JSON 首次解析失败，尝试兼容修复")
                                 fixed_content = fix_unquoted_json_strings(content)
                                 candidate_resume_data = json.loads(fixed_content)
 
@@ -2250,7 +2173,7 @@ async def tool_node(state: AgentState) -> dict:
                                                 updated_layout_data,
                                             )
                                         except Exception as revision_error:
-                                            print(f"[Tool] 修改已保存，但布局或撤回版本记录失败: {revision_error}")
+                                            LOGGER.warning("修改已保存，但布局或撤回版本记录失败: %s", revision_error)
                                         if changes:
                                             selected_changes = [
                                                 item for item in changes
@@ -2273,7 +2196,6 @@ async def tool_node(state: AgentState) -> dict:
                                             result = f"已应用 {len(selected_changes)} 项修改"
                                             if summaries:
                                                 result += "：\n- " + "\n- ".join(summaries)
-                                    print(f"[Tool] 保存结果: {result}")
                     except json.JSONDecodeError as e:
                         result = f"保存失败：JSON 解析错误 - {str(e)}"
                         saved_resume = False
@@ -2282,7 +2204,7 @@ async def tool_node(state: AgentState) -> dict:
                         saved_resume = False
                 elif value == 'cancel':
                     # 取消
-                    print("[Tool] 用户取消")
+                    LOGGER.debug("用户取消待确认修改")
                     result = "已取消保存"
                     saved_resume = False
                 else:
@@ -2291,21 +2213,17 @@ async def tool_node(state: AgentState) -> dict:
                 
                 # 清除 pending_confirmation
                 pending_confirmation = None
-                print("[Tool] 确认请求匹配成功，已执行保存/取消")
+                LOGGER.debug("确认请求已处理")
             else:
-                print("[Tool] 无匹配的待确认请求")
                 if pending_conf:
-                    print(f"[Tool] 数据库中的 confirm_id={pending_conf.get('confirm_id')}，用户发送的 confirm_id={user_confirm_id}")
-                    print(f"[Tool] 清除不匹配的 pending_confirmation")
                     # 清除不匹配的 pending_confirmation
                     pending_confirmation = None
                 else:
-                    print("[Tool] 无 pending_confirmation 数据")
                     pending_confirmation = None
                 result = "无效的确认请求或确认已过期，请重新发送修改请求"
                 saved_resume = False
         else:
-            print("[Tool] 确认回复格式错误")
+            LOGGER.warning("确认回复格式错误")
             result = "确认回复格式错误"
             saved_resume = False
             pending_confirmation = None
@@ -2314,8 +2232,7 @@ async def tool_node(state: AgentState) -> dict:
         new_messages = [ToolMessage(content=result, tool_call_id="confirm", name="confirmation_handler")]
 
         elapsed_time = time.time() - start_time
-        print(f"Tool results: {[m.content for m in new_messages]}")
-        print(f"=== [Node] tool_node [结束] 耗时: {elapsed_time:.2f}s ===\n")
+        LOGGER.debug("确认工具节点结束，耗时=%.2fs", elapsed_time)
 
         # 保存成功时使用 updated_resume_data，否则使用原来的 state.resume_data
         final_resume_data = updated_resume_data if (saved_resume and updated_resume_data) else (state.resume_data or {})
@@ -2335,7 +2252,7 @@ async def tool_node(state: AgentState) -> dict:
     # 普通工具调用处理
     # 检查是否有工具调用
     if not hasattr(last_message, 'tool_calls') or not last_message.tool_calls:
-        print("=== [End] tool_node (no tool_calls) 耗时: 0.00s ===\n")
+        LOGGER.debug("工具节点没有工具调用")
         # 没有工具调用时，返回原始消息（保持上下文）
         return {
             "messages": list(state.messages),
@@ -2345,9 +2262,6 @@ async def tool_node(state: AgentState) -> dict:
             "user_id": state.user_id,
             "task_id": state.task_id,
         }
-
-    # 打印工具调用信息
-    print(f"Tool calls: {[tc.name if hasattr(tc, 'name') else tc.get('name') for tc in last_message.tool_calls]}")
 
     # 执行工具调用
     new_messages = []
@@ -2403,7 +2317,7 @@ async def tool_node(state: AgentState) -> dict:
 
         if not tool_func:
             result = f"错误: 工具 {tool_name} 不存在"
-            print(f"[Tool] 工具 {tool_name} 调用失败: 工具不存在")
+            LOGGER.warning("模型请求了不存在的工具: %s", tool_name)
         else:
             try:
                 # 如果是保存简历工具
@@ -2429,7 +2343,7 @@ async def tool_node(state: AgentState) -> dict:
                             "options": pending_confirmation["options"]
                         }
                         result = f"[CONFIRM_MARKER:{json.dumps(marker)}]"
-                        print(f"[Tool] 生成确认标记，confirm_id={confirm_id}")
+                        LOGGER.debug("修改工具已生成确认标记")
                 elif tool_name == "render_resume_pdf_images":
                     if visual_calls >= 1 or visual_parts:
                         result = "本轮已经提供过当前简历快照，请直接使用现有视觉证据继续判断。"
@@ -2498,10 +2412,7 @@ async def tool_node(state: AgentState) -> dict:
                                 layout_operations,
                             )
                         except Exception as exc:
-                            print(
-                                "[Tool] resume_edit 预览生成失败: "
-                                f"{type(exc).__name__}: {exc}"
-                            )
+                            LOGGER.warning("简历修改预览生成失败: %s", exc)
                             proposal_error = "本次修改无法安全生成确认预览，系统未对简历做任何更改。"
                             result = proposal_error
                         else:
@@ -2536,10 +2447,8 @@ async def tool_node(state: AgentState) -> dict:
     if pending_confirmation and assistant_reply:
         new_messages.append(AIMessage(content=assistant_reply))
 
-    # 打印工具结果
     elapsed_time = time.time() - start_time
-    print(f"Tool results: {[m.content for m in new_messages]}")
-    print(f"=== [Node] tool_node [结束] 耗时: {elapsed_time:.2f}s ===\n")
+    LOGGER.debug("工具节点结束，耗时=%.2fs，结果数=%s", elapsed_time, len(new_messages))
 
     # 返回所有消息
     all_messages = list(state.messages) + new_messages
@@ -2583,24 +2492,18 @@ def route_after_conversation(state: AgentState) -> str:
         'tool_node': 需要执行工具
         END: 对话结束
     """
-    print(f"\n=== [Route] route_after_conversation [开始] ===")
     if not state.messages:
-        print("[Route] 无消息，返回 END")
+        LOGGER.debug("对话节点无消息，路由结束")
         return END
 
     last_message = state.messages[-1]
     has_tool_calls = hasattr(last_message, 'tool_calls') and last_message.tool_calls
-    print(f"[Route] last_message type: {type(last_message).__name__}")
-    print(f"[Route] has_tool_calls: {has_tool_calls}")
-    if has_tool_calls:
-        print(f"[Route] tool_calls: {[tc.name if hasattr(tc, 'name') else tc.get('name') for tc in last_message.tool_calls]}")
-
     # 检查是否有工具调用
     if has_tool_calls:
-        print("[Route] 路由到 tool_node")
+        LOGGER.debug("对话节点路由到工具节点")
         return "tool_node"
 
-    print("[Route] 路由到 END")
+    LOGGER.debug("对话节点路由结束")
     return END  # 无工具调用，结束对话
 
 
@@ -2677,7 +2580,7 @@ def entry_router(state: AgentState) -> str:
             if (not resume_change or local_resume is not None) and (not layout_change or local_layout is not None):
                 return "direct_edit"
         except Exception as exc:
-            print(f"[Route] 本地解析不可用，转入结构化生成: {exc}")
+            LOGGER.debug("本地解析不可用，转入结构化生成: %s", exc)
         return "conversation_llm"
 
     return "conversation_llm"
@@ -2720,7 +2623,7 @@ graph_builder.add_conditional_edges(
 
 # 编译图（不使用 checkpointer，状态由数据库管理）
 graph = graph_builder.compile()
-print("[Graph] 图编译完成（本地字段修改 + 单次复杂修改生成）")
+LOGGER.debug("Agent 图编译完成")
 # =============================================================================
 # 测试函数
 # =============================================================================

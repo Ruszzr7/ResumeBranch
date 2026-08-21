@@ -6,13 +6,14 @@
 .env
 .env.local
 .env.multi_user
+.env.docker
 !.env.example
 !.env.multi_user.example
+!.env.docker.example
 
 # Database files
 data/*.db
 data/*.db-*
-data/deepagents.db
 data/llm_profiles.json
 data/*.sqlite*
 /data/source_documents/
@@ -26,9 +27,17 @@ data/*.sqlite*
 __pycache__/
 *.pyc
 *.pyo
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
 
 # Node.js
 node_modules/
+frontend/dist/
+frontend/coverage/
 
 # IDE
 .vscode/

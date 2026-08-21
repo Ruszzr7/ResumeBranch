@@ -6,12 +6,12 @@
 
 - 前端：Vue/Vite，`http://127.0.0.1:5173`
 - 后端：FastAPI/Uvicorn，`http://127.0.0.1:8000`
-- 数据库：SQLite 文件 `data/deepagents.db`
+- 数据库：SQLite 文件 `data/resumebranch.db`
 - 导出：保存到 `output/resumes/`，成功后可在页面中直接打开该文件夹
 - PDF：统一使用 Chrome/Edge/Chromium；缺失或执行失败时明确报错
 - LLM：可选；未配置密钥时，简历编辑、版本管理和导出仍可使用
 
-SQLite 是嵌入式数据库，不需要单独启动。停止项目、重启电脑或升级依赖不会删除数据库文件；只要保留 `data/deepagents.db`，数据就会保留。
+SQLite 是嵌入式数据库，不需要单独启动。停止项目、重启电脑或升级依赖不会删除数据库文件；只要保留 `data/resumebranch.db`，数据就会保留。
 
 ## 配置
 
@@ -26,7 +26,7 @@ Copy-Item .env.example .env
 ```env
 APP_MODE=local
 LOCAL_USER_EMAIL=local@localhost
-DATABASE_URL=sqlite:///./data/deepagents.db
+DATABASE_URL=sqlite:///./data/resumebranch.db
 LOCAL_EXPORT_DIR=./output/resumes
 HOST=127.0.0.1
 ```
@@ -37,10 +37,10 @@ HOST=127.0.0.1
 
 ```powershell
 python -m venv .venv-win
-.\.venv-win\Scripts\python.exe -m pip install -r backend\requirements.txt
+.\.venv-win\Scripts\python.exe -m pip install -r backend\requirements.lock.txt
 
 Set-Location frontend
-npm install
+npm ci
 Set-Location ..
 ```
 
@@ -78,7 +78,7 @@ Set-Location ..
 本地数据主要位于：
 
 ```text
-data/deepagents.db
+data/resumebranch.db
 data/source_documents/
 data/langgraph_checkpoints.sqlite
 output/resumes/
@@ -128,6 +128,6 @@ npm run build
 
 ## 启用 AI
 
-在 `.env` 中配置对话与解析服务，或在本地首页右上角打开“设置”。密钥只保存在本机被 Git 忽略的配置/数据文件中。未配置时，AI 接口返回明确的 503，其他功能不受影响。
+在 `.env` 中配置对话与解析服务，或在本地首页右上角打开“API 设置”。密钥只保存在本机被 Git 忽略的配置/数据文件中。未配置对话模型时，相关 AI 接口会返回明确错误，简历编辑、版本管理和导出不受影响；导入解析还需要配置兼容的解析服务。
 
 需要测试注册、登录和用户隔离时，请使用 [本机多用户部署](multi-user-local.md)。Docker 服务器部署请参考 [Docker 多人自托管部署](deployment.md)。

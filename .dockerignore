@@ -17,4 +17,3 @@ output/
 *.sqlite-*
 *.pem
 *.key
-nginx/ssl/
