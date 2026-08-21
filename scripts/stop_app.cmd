@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
-title Resume Assistant - Stop Local Profile
+title Resume Assistant - Stop Application
 cd /d "%~dp0.."
 
 set "PROJECT_ROOT=%CD%"
@@ -10,7 +10,7 @@ set "STOP_FAILED=0"
 call :parse_args %*
 
 echo ============================================================
-echo Resume Assistant - Stop Local SQLite Profile
+echo Resume Assistant - Stop Frontend and Backend
 echo ============================================================
 echo.
 
@@ -23,7 +23,7 @@ echo.
 if "%STOP_FAILED%"=="0" (
   echo ============================================================
   echo [OK] Frontend and backend are stopped.
-  echo [OK] SQLite data remains in data\deepagents.db.
+  echo [OK] Application services are stopped; database data was not removed.
   echo ============================================================
 ) else (
   echo ============================================================
@@ -31,7 +31,7 @@ if "%STOP_FAILED%"=="0" (
   echo ============================================================
   echo Read the error above for details.
 )
-call :maybe_pause
+if "%NO_PAUSE%"=="0" pause
 if "%STOP_FAILED%"=="0" exit /b 0
 exit /b 1
 
@@ -68,14 +68,6 @@ if !WAIT_COUNT! GEQ 10 (
 )
 ping.exe -n 2 127.0.0.1 >nul
 goto wait_port_loop
-
-:maybe_pause
-if "%NO_PAUSE%"=="0" (
-  echo.
-  echo Press any key to close this window...
-  pause >nul
-)
-exit /b 0
 
 :parse_args
 if "%~1"=="" exit /b 0

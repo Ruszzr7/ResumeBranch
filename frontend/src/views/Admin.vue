@@ -15,6 +15,9 @@
 
     <main class="admin-container">
       <div class="admin-card">
+        <div v-if="notice.message" :class="['admin-notice', notice.type]" role="status">
+          {{ notice.message }}
+        </div>
         <!-- 创建邀请码 -->
         <div class="section">
           <h2>创建邀请码</h2>
@@ -74,7 +77,8 @@ export default {
     return {
       count: 5,
       loading: false,
-      codes: []
+      codes: [],
+      notice: { type: '', message: '' }
     }
   },
   mounted() {
@@ -97,11 +101,11 @@ export default {
         } else if (response.status === 403) {
           this.$router.replace('/')
         } else {
-          alert('获取邀请码列表失败')
+          this.showNotice('获取邀请码列表失败', 'error')
         }
       } catch (error) {
         console.error('获取邀请码列表失败:', error)
-        alert('获取邀请码列表失败')
+        this.showNotice('获取邀请码列表失败', 'error')
       }
     },
 
@@ -122,18 +126,18 @@ export default {
           const newCodes = Array.isArray(result) ? result : [result]
           // 合并到列表
           this.codes = [...newCodes, ...this.codes]
-          alert(`成功创建 ${newCodes.length} 个邀请码`)
+          this.showNotice(`成功创建 ${newCodes.length} 个邀请码`, 'success')
         } else if (response.status === 401) {
           this.clearSession()
         } else if (response.status === 403) {
           this.$router.replace('/')
         } else {
           const error = await response.json()
-          alert(error.detail || '创建失败')
+          this.showNotice(error.detail || '创建失败', 'error')
         }
       } catch (error) {
         console.error('创建邀请码失败:', error)
-        alert('创建邀请码失败')
+        this.showNotice('创建邀请码失败', 'error')
       } finally {
         this.loading = false
       }
@@ -143,6 +147,10 @@ export default {
       if (!timeStr) return '-'
       const date = new Date(timeStr)
       return date.toLocaleString('zh-CN')
+    },
+
+    showNotice(message, type = 'success') {
+      this.notice = { type, message }
     },
 
     clearSession() {
@@ -155,18 +163,20 @@ export default {
 </script>
 
 <style scoped>
-/* 页面布局 */
 .admin-page {
   min-height: 100vh;
-  background-color: rgb(254, 253, 251);
+  color-scheme: dark;
+  color: #f5f5f7;
+  background:
+    radial-gradient(circle at 18% 0%, rgba(120, 166, 255, 0.09), transparent 32rem),
+    #050506;
   display: flex;
   flex-direction: column;
 }
 
-/* 顶部导航 */
 .admin-header {
-  background-color: rgb(249, 245, 242);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  background: rgba(17, 18, 23, 0.96);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   padding: 0;
 }
 
@@ -181,8 +191,9 @@ export default {
 
 .admin-title {
   font-size: 1.1rem;
-  font-weight: 600;
-  color: var(--text-primary);
+  font-family: 'Plaak-CondensedBold', sans-serif;
+  font-weight: 400;
+  color: #f5f5f7;
   margin: 0;
   letter-spacing: -0.02em;
 }
@@ -191,17 +202,16 @@ export default {
   display: flex;
   align-items: center;
   gap: 4px;
-  color: var(--text-secondary);
+  color: #aeb0b8;
   font-size: 0.9rem;
   text-decoration: none;
   transition: color 0.2s;
 }
 
 .back-link:hover {
-  color: var(--primary-color);
+  color: #78a6ff;
 }
 
-/* 主容器 */
 .admin-container {
   flex: 1;
   display: flex;
@@ -209,11 +219,11 @@ export default {
   padding: 2rem 1.5rem;
 }
 
-/* 卡片样式 */
 .admin-card {
-  background: white;
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-md);
+  background: #121317;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 8px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.34);
   padding: 1.5rem;
   width: 100%;
   max-width: 700px;
@@ -230,13 +240,12 @@ export default {
 h2 {
   font-size: 0.95rem;
   font-weight: 600;
-  color: var(--text-primary);
+  color: #f5f5f7;
   margin: 0 0 1rem 0;
   padding-bottom: 0.75rem;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-/* 创建表单 */
 .create-form {
   display: flex;
   gap: 0.75rem;
@@ -245,22 +254,31 @@ h2 {
 .count-input {
   width: 80px;
   padding: 0.6rem 0.75rem;
-  border: 1px solid var(--border-color);
+  color: #f5f5f7;
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: var(--radius-md);
   font-size: 0.95rem;
-  background: white;
+  background: #2b2c32;
   transition: border-color 0.2s;
 }
 
 .count-input:focus {
   outline: none;
-  border-color: var(--primary-color);
+  border-color: #78a6ff;
+  box-shadow: 0 0 0 3px rgba(120, 166, 255, 0.1);
+}
+
+.count-input:-webkit-autofill,
+.count-input:-webkit-autofill:hover,
+.count-input:-webkit-autofill:focus {
+  -webkit-text-fill-color: #f5f5f7 !important;
+  -webkit-box-shadow: 0 0 0 1000px #2b2c32 inset !important;
 }
 
 .create-btn {
   flex: 1;
   padding: 0.6rem 1.25rem;
-  background-color: var(--primary-color);
+  background-color: #5f8ff2;
   color: white;
   border: none;
   border-radius: var(--radius-md);
@@ -271,7 +289,7 @@ h2 {
 }
 
 .create-btn:hover:not(:disabled) {
-  background-color: var(--primary-hover);
+  background-color: #78a6ff;
 }
 
 .create-btn:disabled {
@@ -279,13 +297,12 @@ h2 {
   cursor: not-allowed;
 }
 
-/* 刷新行 */
 .refresh-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 0.75rem;
-  color: var(--text-secondary);
+  color: #aeb0b8;
   font-size: 0.9rem;
 }
 
@@ -294,23 +311,22 @@ h2 {
   align-items: center;
   gap: 4px;
   padding: 0.4rem 0.8rem;
-  background: white;
-  border: 1px solid var(--border-color);
+  background: #202127;
+  border: 1px solid rgba(255, 255, 255, 0.13);
   border-radius: var(--radius-sm);
   font-size: 0.85rem;
-  color: var(--text-secondary);
+  color: #c6c7ce;
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .refresh-btn:hover {
-  background: var(--accent-color);
-  color: var(--text-primary);
+  background: #2b2c32;
+  color: #f5f5f7;
 }
 
-/* 表格容器 */
 .table-container {
-  border: 1px solid var(--border-color);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: var(--radius-md);
   overflow: hidden;
 }
@@ -318,21 +334,22 @@ h2 {
 .code-table {
   width: 100%;
   border-collapse: collapse;
-  background: white;
+  color: #d8d9df;
+  background: #17181d;
 }
 
 .code-table th,
 .code-table td {
   padding: 0.7rem 1rem;
   text-align: left;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .code-table th {
-  background: rgb(249, 245, 242);
+  background: #202127;
   font-weight: 600;
   font-size: 0.85rem;
-  color: var(--text-secondary);
+  color: #aeb0b8;
 }
 
 .code-table tr:last-child td {
@@ -340,14 +357,14 @@ h2 {
 }
 
 .code-table tr:hover td {
-  background: rgb(254, 253, 251);
+  background: #202127;
 }
 
 .code-cell {
   font-family: 'SF Mono', 'Fira Code', 'Courier New', monospace;
   font-size: 0.9rem;
   letter-spacing: 0.5px;
-  color: var(--text-primary);
+  color: #f5f5f7;
 }
 
 .status {
@@ -359,16 +376,33 @@ h2 {
 }
 
 .status.unused {
-  background: #ecfccb;
-  color: #3f6212;
+  background: rgba(76, 210, 146, 0.14);
+  color: #79d9a9;
 }
 
 .status.used {
-  background: #fef2f2;
-  color: #991b1b;
+  background: rgba(255, 108, 117, 0.14);
+  color: #ff9299;
 }
 
-/* 响应式 */
+.admin-notice {
+  margin-bottom: 1rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: #202127;
+  font-size: 0.88rem;
+}
+
+.admin-notice.success {
+  color: #79d9a9;
+  border-color: rgba(76, 210, 146, 0.3);
+}
+
+.admin-notice.error {
+  color: #ff9299;
+  border-color: rgba(255, 108, 117, 0.3);
+}
+
 @media (max-width: 600px) {
   .header-content {
     flex-direction: column;

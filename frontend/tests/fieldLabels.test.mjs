@@ -31,4 +31,8 @@ test('historical assistant text localizes embedded internal field names', () => 
     localizeInternalFieldReferences('项目职责使用 numbered_list，普通内容使用 bullet_list。'),
     '项目职责使用 编号，普通内容使用 分点。'
   )
+  assert.equal(
+    localizeInternalFieldReferences('request_resume_edit 返回了 layout_config。'),
+    '系统能力 返回了 内部信息。'
+  )
 })

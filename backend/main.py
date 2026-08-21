@@ -14,7 +14,6 @@ import json
 import asyncio
 import base64
 import hashlib
-import platform
 import subprocess
 import os
 import sys
@@ -43,6 +42,39 @@ def _configure_console_encoding():
 
 
 _configure_console_encoding()
+
+
+def _public_error_response(code: str, message: str, status_code: int = 500):
+    """Return a stable Chinese error contract without exposing diagnostics."""
+    return JSONResponse(
+        content={
+            "success": False,
+            "code": code,
+            "message": message,
+            # Compatibility keys for existing frontend callers.
+            "error": message,
+            "detail": message,
+        },
+        status_code=status_code,
+    )
+
+
+def _sanitize_user_visible_text(value: object) -> str:
+    """Last-line guard for protocol markers and known internal identifiers."""
+    text_value = str(value or "")
+    text_value = re.sub(r"\[CONFIRM_REPLY:[^\]]+\]", "确认操作", text_value)
+    text_value = re.sub(
+        r"\b(?:request_resume_edit|render_resume_pdf_images)\b",
+        "系统能力",
+        text_value,
+    )
+    text_value = re.sub(
+        r"\b(?:layout_config|resume_data|jd_data|session_id|confirm_id|request_id)\b",
+        "内部信息",
+        text_value,
+    )
+    text_value = re.sub(r"(?:Traceback[\s\S]*|[A-Za-z_]+Error:\s*[^\n]+)", "系统处理异常", text_value)
+    return text_value
 
 from fastapi import FastAPI, Request, UploadFile, File, Form, Depends, HTTPException, status
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -76,6 +108,9 @@ from .database import (
     delete_unreferenced_source_documents, discard_pending_source_document,
     get_source_document, get_task_source_document,
     get_resume_translation_state, save_resume_translation_state,
+    rotate_auth_session, revoke_auth_session,
+    acquire_resume_edit_lock, mark_resume_edit_awaiting_confirmation,
+    release_resume_edit_lock, get_resume_edit_state,
 )
 from .auth import (
     verify_password, get_password_hash, create_access_token,
@@ -170,8 +205,7 @@ def _export_labels(db: Session, current_user, request_data: dict, resume_data: d
 
 def _persist_local_export(content: bytes, filename: str) -> Path:
     """Atomically persist a local export, adding a numeric collision suffix."""
-    output_dir = Path(os.getenv("LOCAL_EXPORT_DIR", "./output/resumes")).expanduser().resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = _local_export_directory()
     base = Path(filename)
     temporary_path = None
     try:
@@ -201,6 +235,27 @@ def _persist_local_export(content: bytes, filename: str) -> Path:
     finally:
         if temporary_path:
             temporary_path.unlink(missing_ok=True)
+
+
+def _local_export_directory() -> Path:
+    """Return the configured local export directory and ensure it exists."""
+    output_dir = Path(os.getenv("LOCAL_EXPORT_DIR", "./output/resumes")).expanduser().resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir
+
+
+def _open_local_export_directory(output_dir: Path) -> None:
+    """Open the trusted local export directory with the operating-system shell."""
+    if os.name == "nt":
+        os.startfile(str(output_dir))
+        return
+    command = "open" if sys.platform == "darwin" else "xdg-open"
+    subprocess.Popen(
+        [command, str(output_dir)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
 
 
 _RENDER_STYLE_KEYS = frozenset({
@@ -268,40 +323,6 @@ def notify_compression_complete():
     _notify_compression_complete(compression_state)
 
 
-def _setup_weasyprint_env():
-    """Set platform-specific native library paths used by WeasyPrint."""
-    if platform.system() == "Darwin":
-        libs = ['pango', 'harfbuzz', 'cairo', 'fontconfig']
-        lib_paths = []
-
-        for lib in libs:
-            result = subprocess.run(['brew', '--prefix', lib], capture_output=True, text=True)
-            if result.returncode == 0:
-                lib_path = os.path.join(result.stdout.strip(), 'lib')
-                lib_paths.append(lib_path)
-
-        if lib_paths:
-            os.environ['DYLD_LIBRARY_PATH'] = ':'.join(lib_paths)
-            print(f"已设置 DYLD_LIBRARY_PATH={' '.join(lib_paths)}")
-    elif platform.system() == "Windows":
-        dll_directory = os.getenv(
-            "WEASYPRINT_DLL_DIRECTORIES",
-            r"C:\resume-tools\msys64\ucrt64\bin"
-        )
-        if os.path.isdir(dll_directory):
-            os.environ["WEASYPRINT_DLL_DIRECTORIES"] = dll_directory
-        else:
-            raise RuntimeError(
-                f"WeasyPrint DLL directory not found: {dll_directory}"
-            )
-
-
-def get_pdf_generator():
-    """懒加载 PDF 生成器"""
-    _setup_weasyprint_env()
-    return _pdf_generator
-
-
 def generate_session_id() -> str:
     """生成唯一会话 ID"""
     return str(uuid.uuid4())
@@ -316,6 +337,11 @@ class RegisterRequest(BaseModel):
     email: str = Field(min_length=3, max_length=100)
     password: str = Field(min_length=8, max_length=128)
     invite_code: str = Field(min_length=1, max_length=50)
+
+
+def _is_email_identifier(value: object) -> bool:
+    """Return whether an identifier satisfies the public user email contract."""
+    return bool(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", str(value or "").strip()))
 
 
 class TokenResponse(BaseModel):
@@ -536,7 +562,27 @@ def require_local_settings():
         raise HTTPException(status_code=404, detail="本地设置仅在本地模式可用")
 
 
-@app.get("/settings/llm", dependencies=[Depends(require_local_settings)])
+def require_llm_settings_access(current_user=Depends(get_current_user)):
+    """Allow machine-local configuration or a multi-user administrator."""
+    if not is_local_mode() and not bool(current_user.is_admin):
+        raise HTTPException(status_code=403, detail="仅管理员可以调整 API 设置")
+
+
+@app.post("/local/exports/open", dependencies=[Depends(require_local_settings)])
+async def open_local_exports(current_user=Depends(get_current_user)):
+    """Open the configured export folder on the machine running local mode."""
+    output_dir = _local_export_directory()
+    try:
+        _open_local_export_directory(output_dir)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="无法打开导出文件夹，请手动打开项目下的 output/resumes",
+        ) from exc
+    return {"opened": True, "path": str(output_dir)}
+
+
+@app.get("/settings/llm", dependencies=[Depends(require_llm_settings_access)])
 async def get_llm_settings(current_user=Depends(get_current_user)):
     """Return all provider profiles without exposing stored API keys."""
     return serialize_settings()
@@ -548,7 +594,7 @@ async def get_harness_metrics(current_user=Depends(get_current_user)):
     return harness_metrics.snapshot()
 
 
-@app.post("/settings/llm/test", dependencies=[Depends(require_local_settings)])
+@app.post("/settings/llm/test", dependencies=[Depends(require_llm_settings_access)])
 async def test_llm_settings(
     request: LLMSettingsRequest,
     current_user=Depends(get_current_user),
@@ -560,7 +606,7 @@ async def test_llm_settings(
     try:
         validate_role_config(request.role, model, base_url, request.adapter)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail="配置内容不完整或格式不正确") from exc
     if not api_key:
         raise HTTPException(status_code=400, detail="请填写该服务商的 API Key")
 
@@ -581,20 +627,20 @@ async def test_llm_settings(
         raise HTTPException(status_code=504, detail="连接超时，请检查接口地址或网络") from exc
     except ValueError as exc:
         print(f"[Settings] LLM capability test rejected: {exc}")
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail="当前模型或接口不支持所需能力") from exc
     except Exception as exc:
         print(f"[Settings] LLM connection test failed: {exc}")
         raise HTTPException(status_code=400, detail="连接失败，请检查模型、接口地址和密钥") from exc
     return {"model": model, **result}
 
 
-@app.post("/settings/llm/models", dependencies=[Depends(require_local_settings)])
+@app.post("/settings/llm/models", dependencies=[Depends(require_llm_settings_access)])
 async def list_llm_models(
     request: LLMModelsRequest,
     current_user=Depends(get_current_user),
 ):
     if request.role not in {"chat", "parser"}:
-        raise HTTPException(status_code=400, detail="配置角色必须是 chat 或 parser")
+        raise HTTPException(status_code=400, detail="配置用途不受支持")
     stored = get_role_config(request.role)
     api_key = (request.api_key or stored.get("api_key", "")).strip()
     try:
@@ -603,7 +649,7 @@ async def list_llm_models(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.put("/settings/llm", dependencies=[Depends(require_local_settings)])
+@app.put("/settings/llm", dependencies=[Depends(require_llm_settings_access)])
 async def update_llm_settings(
     request: LLMSettingsRequest,
     current_user=Depends(get_current_user),
@@ -653,7 +699,7 @@ async def register(request: RegisterRequest, db: Session = Depends(get_db)):
     - 返回 JWT Token
     """
     email = request.email.strip().lower()
-    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+    if not _is_email_identifier(email):
         raise HTTPException(status_code=400, detail="邮箱格式不正确")
     try:
         user = register_user_with_invite(
@@ -663,12 +709,13 @@ async def register(request: RegisterRequest, db: Session = Depends(get_db)):
             request.invite_code,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail="模型列表查询失败，请检查接口地址和密钥") from exc
     except IntegrityError as exc:
         raise HTTPException(status_code=409, detail="邮箱或邀请码已被使用") from exc
 
     # 生成 Token
-    token = create_access_token({"sub": user.email})
+    auth_session_id = rotate_auth_session(db, user.id)
+    token = create_access_token({"sub": user.email, "sid": auth_session_id})
 
     return TokenResponse(
         access_token=token,
@@ -692,20 +739,25 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = 
     """
     用户登录
 
-    - 邮箱+密码
+    - 普通用户使用邮箱；管理员也可使用专用账号
     - 返回 JWT Token
     """
-    user = get_user_by_email(db, form_data.username.strip().lower())
+    identifier = form_data.username.strip().lower()
+    user = get_user_by_email(db, identifier)
     if not user:
-        raise HTTPException(status_code=401, detail="邮箱或密码错误")
+        raise HTTPException(status_code=401, detail="邮箱、管理员账号或密码错误")
 
     if not verify_password(form_data.password, user.hashed_password):
-        raise HTTPException(status_code=401, detail="邮箱或密码错误")
+        raise HTTPException(status_code=401, detail="邮箱、管理员账号或密码错误")
+
+    if not _is_email_identifier(identifier) and not user.is_admin:
+        raise HTTPException(status_code=401, detail="普通用户必须使用邮箱登录")
 
     if not user.is_active:
         raise HTTPException(status_code=403, detail="账户已被禁用")
 
-    token = create_access_token({"sub": user.email})
+    auth_session_id = rotate_auth_session(db, user.id)
+    token = create_access_token({"sub": user.email, "sid": auth_session_id})
 
     return TokenResponse(
         access_token=token,
@@ -732,6 +784,18 @@ async def get_me(current_user = Depends(get_current_user)):
         is_active=bool(current_user.is_active),
         is_admin=bool(current_user.is_admin),
     )
+
+
+@app.post("/auth/logout", dependencies=[Depends(require_multi_user_mode)])
+async def logout(
+    token: str | None = Depends(oauth2_scheme),
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from .auth import decode_token
+    payload = decode_token(token or "") or {}
+    revoke_auth_session(db, current_user.id, str(payload.get("sid") or ""))
+    return {"success": True}
 
 
 @app.get("/auth/invite-codes", dependencies=[Depends(require_multi_user_mode)])
@@ -922,7 +986,10 @@ async def get_task_contexts(
     if not task:
         raise HTTPException(status_code=404, detail="简历版本不存在")
     contexts = list_conversation_contexts(db, current_user.id, task_id)
-    return {"contexts": [serialize_conversation_context(context) for context in contexts]}
+    return {
+        "contexts": [serialize_conversation_context(context) for context in contexts],
+        "edit_state": get_resume_edit_state(db, current_user.id, task_id),
+    }
 
 
 @app.post("/tasks/{task_id}/contexts")
@@ -977,7 +1044,7 @@ async def close_task_context(
     try:
         closed = close_conversation_context(db, current_user.id, context_id)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail="配置内容不完整或格式不正确") from exc
     manager = get_workflow_checkpoint_manager()
     if manager:
         try:
@@ -1263,32 +1330,49 @@ async def direct_replace_preview(
         get_conversation_context,
         save_conversation_context,
     )
+    request_id = str(uuid.uuid4())
     async with _edit_preview_guard:
-        if find_task_pending_confirmation(db, current_user.id, task_id):
+        if find_task_pending_confirmation(db, current_user.id, task_id) or not acquire_resume_edit_lock(
+            db, current_user.id, task_id, request.session_id, request_id
+        ):
             raise HTTPException(status_code=409, detail="当前简历存在正在处理的修改，请先完成或取消后再请求")
         state = resume_agent.AgentState(
             resume_data=current,
             layout_data=task.layout_config or {},
             user_id=current_user.id,
             task_id=task_id,
-            request_id=str(uuid.uuid4()),
+            request_id=request_id,
             context_id=request.session_id,
         )
         try:
             pending = resume_agent.make_pending_confirmation(state, candidate, task.layout_config or {})
         except ValueError as exc:
+            release_resume_edit_lock(
+                db, current_user.id, task_id,
+                owner_session_id=request.session_id, request_id=request_id,
+            )
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         pending["owner_session_id"] = request.session_id
         pending["request_id"] = state.request_id
         pending["source"] = "direct_replace"
-        compressed_context = get_conversation_context(db, current_user.id, request.session_id)
-        save_conversation_context(
-            db,
-            current_user.id,
-            request.session_id,
-            compressed_context,
-            pending,
-        )
+        try:
+            compressed_context = get_conversation_context(db, current_user.id, request.session_id)
+            save_conversation_context(
+                db,
+                current_user.id,
+                request.session_id,
+                compressed_context,
+                pending,
+            )
+            mark_resume_edit_awaiting_confirmation(
+                db, current_user.id, task_id, request.session_id, request_id
+            )
+        except Exception:
+            release_resume_edit_lock(
+                db, current_user.id, task_id,
+                owner_session_id=request.session_id, request_id=request_id,
+            )
+            raise
     return {
         "success": True,
         "content": pending["content"],
@@ -1372,7 +1456,7 @@ async def save_resume_endpoint(request: SaveResumeRequest, db: Session = Depends
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return _public_error_response("RESUME_SAVE_FAILED", "简历保存失败，请稍后重试。")
 
 
 @app.post("/translate_resume")
@@ -1428,7 +1512,7 @@ async def translate_resume_endpoint(
     except Exception as exc:
         db.rollback()
         print(f"[translate_resume] 翻译失败: {exc}")
-        raise HTTPException(status_code=502, detail=f"简历翻译失败：{exc}") from exc
+        raise HTTPException(status_code=502, detail="简历翻译失败，请检查模型配置后重试") from exc
 
 
 @app.post("/restore_resume_translation")
@@ -1469,7 +1553,8 @@ async def restore_resume_translation_endpoint(
         raise
     except Exception as exc:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"恢复中文简历失败：{exc}") from exc
+        print(f"[restore_resume_translation] 恢复失败: {exc}")
+        raise HTTPException(status_code=500, detail="中文简历恢复失败，请稍后重试") from exc
 
 
 @app.post("/load_jd")
@@ -1483,7 +1568,7 @@ async def load_jd_endpoint(db: Session = Depends(get_db), current_user = Depends
             return JSONResponse(content={}, status_code=500)
         return JSONResponse(content=jd_data)
     except Exception as e:
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return _public_error_response("JD_LOAD_FAILED", "岗位信息加载失败，请稍后重试。")
 
 
 @app.post("/save_jd")
@@ -1503,7 +1588,7 @@ async def save_jd_endpoint(request: Request, db: Session = Depends(get_db), curr
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return _public_error_response("JD_SAVE_FAILED", "岗位信息保存失败，请稍后重试。")
 
 
 def filter_images_from_message_dict(msg_dict):
@@ -1578,7 +1663,7 @@ async def save_conversation_endpoint(request: Request, db: Session = Depends(get
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return _public_error_response("CONVERSATION_SAVE_FAILED", "对话保存失败，请稍后重试。")
 
 
 @app.post("/load_conversation")
@@ -1599,7 +1684,7 @@ async def load_conversation_endpoint(request: Request, db: Session = Depends(get
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return _public_error_response("CONVERSATION_LOAD_FAILED", "对话加载失败，请稍后重试。")
 
 
 @app.post("/parse_jd")
@@ -1650,7 +1735,7 @@ async def parse_jd_endpoint(request: Request, current_user = Depends(get_current
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return _public_error_response("JD_PARSE_FAILED", "岗位描述识别失败，请稍后重试。")
 
 
 @app.post("/api/resume/parse_and_save")
@@ -1757,11 +1842,9 @@ async def parse_and_save_resume_endpoint(
         traceback.print_exc()
         # 解析失败
         set_parsing_status(db, current_user.id, "failed")
-        error_message = str(e).strip()
-        if not error_message and isinstance(e, (asyncio.TimeoutError, TimeoutError, httpx.TimeoutException)):
+        error_message = "解析失败，请检查解析服务配置后重试。"
+        if isinstance(e, (asyncio.TimeoutError, TimeoutError, httpx.TimeoutException)):
             error_message = "解析 API 响应超时，请稍后重试；若持续出现，请更换解析模型或接口。"
-        if not error_message:
-            error_message = "解析失败，请检查解析 API 状态后重试。"
         if source_document and source_document.status == "pending":
             storage_key = discard_pending_source_document(db, current_user.id, source_document.id)
             if storage_key:
@@ -1846,8 +1929,7 @@ async def export_pdf_endpoint(request: Request, db: Session = Depends(get_db), c
         # 从数据库获取证件照
         photo = get_user_photo(db, current_user.id) or None
 
-        generate_pdf = get_pdf_generator()
-        pdf_bytes = generate_pdf(
+        pdf_bytes = _pdf_generator(
             resume_data, style, photo, lang, request_data.get("layout_config")
         )
 
@@ -1872,7 +1954,7 @@ async def export_pdf_endpoint(request: Request, db: Session = Depends(get_db), c
         print(f"PDF 导出错误: {str(e)}")
         import traceback
         traceback.print_exc()
-        return JSONResponse(content=f"错误: {str(e)}", status_code=500)
+        return _public_error_response("PDF_EXPORT_FAILED", "PDF 导出失败，请稍后重试。")
 
 
 @app.post("/export_docx")
@@ -1916,7 +1998,7 @@ async def export_docx_endpoint(request: Request, db: Session = Depends(get_db), 
         print(f"Word 导出错误: {exc}")
         import traceback
         traceback.print_exc()
-        return JSONResponse(content=f"错误: {exc}", status_code=500)
+        return _public_error_response("DOCX_EXPORT_FAILED", "Word 导出失败，请稍后重试。")
 
 
 @app.post("/chat")
@@ -2066,6 +2148,10 @@ async def chat_endpoint(
         initial_pending_confirmation = get_pending_confirmation(db, current_user.id, session_id)
         if initial_pending_confirmation:
             print(f"[InitState] 从数据库加载 pending_confirmation: confirm_id={initial_pending_confirmation.get('confirm_id')}")
+            if not is_confirm_click:
+                from .database import clear_pending_confirmation
+                clear_pending_confirmation(db, current_user.id, session_id)
+                initial_pending_confirmation = None
         else:
             print(f"[InitState] 从数据库加载 pending_confirmation: None")
 
@@ -2239,10 +2325,26 @@ async def chat_endpoint(
             sent_progress_phases = set()
             sent_confirm_ids = set()
             confirmation_sent = False
+            edit_lock_acquired = False
             proposal_error_result = None
             interview_memory_result = memory_state.get("interview_memory", {})
             workflow_updates_result = None
             context_metadata_updates_result = {}
+
+            def acquire_turn_edit_lock():
+                nonlocal edit_lock_acquired
+                if edit_lock_acquired:
+                    return
+                from .database import find_task_pending_confirmation
+                existing = find_task_pending_confirmation(
+                    db, current_user.id, task_id, exclude_session_id=session_id
+                )
+                lock = None if existing else acquire_resume_edit_lock(
+                    db, current_user.id, task_id, session_id, request_id
+                )
+                if not lock:
+                    raise RuntimeError("当前简历存在正在处理的修改，请先完成或取消后再请求。")
+                edit_lock_acquired = True
 
             def progress_event(phase, text):
                 sent_progress_phases.add(phase)
@@ -2253,6 +2355,7 @@ async def chat_endpoint(
                     "text": text,
                 }) + '\n\n'
 
+            edit_lock_token = resume_agent.set_edit_lock_acquirer(acquire_turn_edit_lock)
             try:
                 # 统一使用 graph.astream_events
                 # 入口路由会在 Graph 内部处理（通过 entry_router）
@@ -2387,8 +2490,15 @@ async def chat_endpoint(
                                         current_context,
                                         confirm_data,
                                     )
+                                    if not mark_resume_edit_awaiting_confirmation(
+                                        db, current_user.id, task_id, session_id, request_id
+                                    ):
+                                        raise RuntimeError("修改预览状态未能安全保存")
                                 print(f"[SSE] 同步保存 pending_confirmation: confirm_id={confirm_id}")
                             except Exception as exc:
+                                if edit_lock_acquired:
+                                    from .database import clear_pending_confirmation
+                                    clear_pending_confirmation(db, current_user.id, session_id)
                                 pending_confirmation_result = None
                                 proposal_error_result = (
                                     str(exc)
@@ -2447,10 +2557,23 @@ async def chat_endpoint(
                 import traceback
                 print(f"[Error] 执行错误: {str(e)}")
                 print(f"[Error] 异常堆栈: {traceback.format_exc()}")
-                final_content = f"抱歉，处理请求时出错: {str(e)}"
+                final_content = (
+                    "当前简历存在正在处理的修改，请先完成或取消后再请求。"
+                    if "正在处理的修改" in str(e)
+                    else "抱歉，本次请求未能安全完成，请稍后重试。"
+                )
+            finally:
+                resume_agent.reset_edit_lock_acquirer(edit_lock_token)
+
+            if edit_lock_acquired and not pending_confirmation_result:
+                release_resume_edit_lock(
+                    db, current_user.id, task_id,
+                    owner_session_id=session_id, request_id=request_id,
+                )
 
             if not final_content:
                 final_content = "抱歉，我无法理解您的请求。"
+            final_content = _sanitize_user_visible_text(final_content)
 
             if confirmation_processed:
                 from .database import clear_pending_confirmation
@@ -2558,7 +2681,7 @@ async def chat_endpoint(
         print(f"聊天接口错误: {str(e)}")
         import traceback
         traceback.print_exc()
-        return JSONResponse(content=f"错误: {str(e)}", status_code=500)
+        return _public_error_response("CHAT_FAILED", "本次请求未能安全完成，请稍后重试。")
 
 
 @app.post("/confirm")
@@ -2613,6 +2736,7 @@ async def confirm_endpoint(
                 resume_digest(resume_agent.normalize_and_validate_resume(before_resume_data)),
             }
             if base_hash and base_hash not in live_digests:
+                clear_pending_confirmation(db, current_user.id, session_id)
                 return JSONResponse(
                     content={"error": "简历已发生其他修改，请重新生成修改预览"},
                     status_code=409,
@@ -2626,7 +2750,7 @@ async def confirm_endpoint(
                 updated_resume_data = normalize_and_validate_resume(updated_resume_data)
                 print(f"[Confirm] 解析修改后的简历数据成功，包含 {len(updated_resume_data)} 个顶级字段")
             except (json_module.JSONDecodeError, TypeError, ValueError) as e:
-                return JSONResponse(content={"error": f"简历数据格式错误: {str(e)}"}, status_code=400)
+                return JSONResponse(content={"error": "简历数据格式不正确，请重新生成修改预览"}, status_code=400)
 
             # 保存修改后的简历数据
             from .tools import update_resume
@@ -2677,7 +2801,7 @@ async def confirm_endpoint(
         print(f"确认接口错误: {str(e)}")
         import traceback
         traceback.print_exc()
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return _public_error_response("CONFIRM_FAILED", "确认操作处理失败，请重新加载后重试。")
 
 
 
@@ -2848,7 +2972,7 @@ async def first_message_endpoint(
         print(f"首次提问接口错误: {str(e)}")
         import traceback
         traceback.print_exc()
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return _public_error_response("FIRST_MESSAGE_FAILED", "首次提问生成失败，请稍后重试。")
 
 
 class FirstMessageFromResumeRequest(BaseModel):
@@ -2922,7 +3046,7 @@ async def first_message_from_resume_endpoint(
         print(f"简历首次提问接口错误: {str(e)}")
         import traceback
         traceback.print_exc()
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return _public_error_response("RESUME_QUESTION_FAILED", "简历提问生成失败，请稍后重试。")
 
 
 class SaveAIMessageRequest(BaseModel):
@@ -2976,7 +3100,7 @@ async def save_ai_message_endpoint(
         print(f"保存 AI 消息接口错误: {str(e)}")
         import traceback
         traceback.print_exc()
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return _public_error_response("MESSAGE_SAVE_FAILED", "消息保存失败，请稍后重试。")
 
 
 if __name__ == "__main__":

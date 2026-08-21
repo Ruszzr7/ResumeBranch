@@ -834,7 +834,7 @@ def resolve_layout_tokens(config: dict | None = None, style: dict | None = None)
 
     The persisted configuration keeps user-friendly multipliers (for example
     ``moduleMargin``). Renderers consume the physical point/mm values returned
-    here so browser CSS, WeasyPrint and Word do not invent separate formulas.
+    here so browser preview, Chromium PDF and Word do not invent separate formulas.
     """
     normalized = normalize_layout_config(config)
     global_config = normalized["global"]

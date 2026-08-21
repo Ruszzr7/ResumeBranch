@@ -157,7 +157,7 @@ button:focus-visible {
   margin-bottom: var(--module-margin);
 }
 
-/* 打印模式样式 - PDF导出已改为后端WeasyPrint生成，此处保留基础设置 */
+/* 打印模式样式 - PDF 导出由后端 Chromium 生成，此处保留基础设置 */
 @media print {
   @page {
     size: A4;

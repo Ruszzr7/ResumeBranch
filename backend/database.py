@@ -4,6 +4,7 @@ SQLAlchemy 模型定义和数据库连接
 """
 
 import os
+import secrets
 import uuid
 from copy import deepcopy
 from pathlib import Path
@@ -66,6 +67,15 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     is_active = Column(Boolean, default=True)
     is_admin = Column(Boolean, default=False, nullable=False)
+
+
+class AuthSession(Base):
+    """The single server-side login session currently active for one user."""
+    __tablename__ = "auth_sessions"
+    user_id = Column(Integer, primary_key=True)
+    session_id = Column(String(64), nullable=False, unique=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
 class InviteCode(Base):
@@ -184,6 +194,18 @@ class ProjectTask(Base):
     last_accessed = Column(DateTime, default=datetime.utcnow)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ResumeEditLock(Base):
+    """Database-backed, task-wide ownership for one mutable preview lifecycle."""
+    __tablename__ = "resume_edit_locks"
+    task_id = Column(String(36), primary_key=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    owner_session_id = Column(String(36), nullable=False)
+    request_id = Column(String(64), nullable=False)
+    status = Column(String(32), nullable=False, default="generating")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
 class AgentMemoryState(Base):
@@ -436,6 +458,45 @@ def create_user(
     return user
 
 
+def rotate_auth_session(db, user_id: int) -> str:
+    """Replace a user's active login session and return its opaque id."""
+    session_id = secrets.token_urlsafe(32)
+    row = db.query(AuthSession).filter(AuthSession.user_id == user_id).first()
+    if row:
+        row.session_id = session_id
+        row.updated_at = datetime.utcnow()
+    else:
+        db.add(AuthSession(user_id=user_id, session_id=session_id))
+    try:
+        db.commit()
+    except IntegrityError:
+        # Two near-simultaneous logins still converge on one final session.
+        db.rollback()
+        row = db.query(AuthSession).filter(AuthSession.user_id == user_id).one()
+        row.session_id = session_id
+        row.updated_at = datetime.utcnow()
+        db.commit()
+    return session_id
+
+
+def auth_session_is_active(db, user_id: int, session_id: str) -> bool:
+    if not session_id:
+        return False
+    return db.query(AuthSession).filter(
+        AuthSession.user_id == user_id,
+        AuthSession.session_id == session_id,
+    ).first() is not None
+
+
+def revoke_auth_session(db, user_id: int, session_id: str = "") -> bool:
+    query = db.query(AuthSession).filter(AuthSession.user_id == user_id)
+    if session_id:
+        query = query.filter(AuthSession.session_id == session_id)
+    deleted = query.delete(synchronize_session=False)
+    db.commit()
+    return bool(deleted)
+
+
 def _active_task(db, user_id: int):
     task_id = db.info.get("task_id")
     if not task_id:
@@ -615,6 +676,11 @@ def close_conversation_context(db, user_id: int, context_id: str):
     db.query(AgentMemoryState).filter(
         AgentMemoryState.user_id == user_id,
         AgentMemoryState.scope_id == f"task:{context.task_id}:context:{context.session_id}",
+    ).delete(synchronize_session=False)
+    db.query(ResumeEditLock).filter(
+        ResumeEditLock.task_id == context.task_id,
+        ResumeEditLock.user_id == user_id,
+        ResumeEditLock.owner_session_id == context.session_id,
     ).delete(synchronize_session=False)
     db.commit()
     return context
@@ -1148,6 +1214,10 @@ def delete_resume_project(db, user_id: int, project_id: str) -> bool:
     task_ids = [row[0] for row in task_rows]
     task_session_ids = [row[1] for row in task_rows]
     if task_ids:
+        db.query(ResumeEditLock).filter(
+            ResumeEditLock.user_id == user_id,
+            ResumeEditLock.task_id.in_(task_ids),
+        ).delete(synchronize_session=False)
         db.query(ResumeRevision).filter(
             ResumeRevision.user_id == user_id,
             ResumeRevision.task_id.in_(task_ids),
@@ -1186,6 +1256,10 @@ def delete_resume_task(db, user_id: int, task_id: str) -> str:
         return "not_found"
     if task.is_base:
         return "base_task"
+    db.query(ResumeEditLock).filter(
+        ResumeEditLock.user_id == user_id,
+        ResumeEditLock.task_id == task_id,
+    ).delete(synchronize_session=False)
     db.query(ResumeRevision).filter(
         ResumeRevision.user_id == user_id,
         ResumeRevision.task_id == task_id,
@@ -1767,12 +1841,139 @@ def find_task_pending_confirmation(
     return None
 
 
+EDIT_LOCK_GENERATING_TIMEOUT_SECONDS = 180
+
+
+def acquire_resume_edit_lock(
+    db,
+    user_id: int,
+    task_id: str,
+    owner_session_id: str,
+    request_id: str,
+):
+    """Atomically acquire a task-wide edit lock, recovering abandoned generation."""
+    if not hasattr(db, "query"):
+        return {"status": "generating", "request_id": request_id}
+    task = get_resume_task(db, user_id, task_id)
+    if not task:
+        return None
+    now = datetime.utcnow()
+    cutoff = now - timedelta(seconds=EDIT_LOCK_GENERATING_TIMEOUT_SECONDS)
+    existing = db.query(ResumeEditLock).filter(ResumeEditLock.task_id == task_id).first()
+    if existing:
+        same_request = (
+            existing.user_id == user_id
+            and existing.owner_session_id == owner_session_id
+            and existing.request_id == request_id
+        )
+        stale_generation = existing.status == "generating" and existing.updated_at < cutoff
+        if same_request:
+            existing.updated_at = now
+            db.commit()
+            return existing
+        if stale_generation:
+            db.delete(existing)
+            db.commit()
+        else:
+            return None
+    row = ResumeEditLock(
+        task_id=task_id,
+        user_id=user_id,
+        owner_session_id=owner_session_id,
+        request_id=request_id,
+        status="generating",
+    )
+    db.add(row)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return None
+    db.refresh(row)
+    return row
+
+
+def mark_resume_edit_awaiting_confirmation(
+    db, user_id: int, task_id: str, owner_session_id: str, request_id: str
+) -> bool:
+    if not hasattr(db, "query"):
+        return True
+    updated = db.query(ResumeEditLock).filter(
+        ResumeEditLock.task_id == task_id,
+        ResumeEditLock.user_id == user_id,
+        ResumeEditLock.owner_session_id == owner_session_id,
+        ResumeEditLock.request_id == request_id,
+    ).update({
+        ResumeEditLock.status: "awaiting_confirmation",
+        ResumeEditLock.updated_at: datetime.utcnow(),
+    }, synchronize_session=False)
+    db.commit()
+    return updated == 1
+
+
+def release_resume_edit_lock(
+    db,
+    user_id: int,
+    task_id: str,
+    *,
+    owner_session_id: str = "",
+    request_id: str = "",
+) -> bool:
+    if not hasattr(db, "query"):
+        return True
+    query = db.query(ResumeEditLock).filter(
+        ResumeEditLock.task_id == task_id,
+        ResumeEditLock.user_id == user_id,
+    )
+    if owner_session_id:
+        query = query.filter(ResumeEditLock.owner_session_id == owner_session_id)
+    if request_id:
+        query = query.filter(ResumeEditLock.request_id == request_id)
+    deleted = query.delete(synchronize_session=False)
+    db.commit()
+    return bool(deleted)
+
+
+def get_resume_edit_state(db, user_id: int, task_id: str) -> dict | None:
+    if not hasattr(db, "query"):
+        return None
+    row = db.query(ResumeEditLock).filter(
+        ResumeEditLock.task_id == task_id,
+        ResumeEditLock.user_id == user_id,
+    ).first()
+    if row and row.status == "generating" and row.updated_at < (
+        datetime.utcnow() - timedelta(seconds=EDIT_LOCK_GENERATING_TIMEOUT_SECONDS)
+    ):
+        db.delete(row)
+        db.commit()
+        row = None
+    if row:
+        return {
+            "status": row.status,
+            "owner_session_id": row.owner_session_id,
+            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        }
+    legacy = find_task_pending_confirmation(db, user_id, task_id)
+    if legacy:
+        return {
+            "status": "awaiting_confirmation",
+            "owner_session_id": legacy[0],
+            "updated_at": None,
+        }
+    return None
+
+
 def clear_pending_confirmation(db, user_id: int, session_id: str):
     """清除待确认状态"""
     task = _active_task(db, user_id)
     context = _context_query(db, user_id, session_id) if task else None
     if task and (not context or context.context_type == "main"):
         task.pending_confirmation = None
+        db.query(ResumeEditLock).filter(
+            ResumeEditLock.task_id == task.id,
+            ResumeEditLock.user_id == user_id,
+            ResumeEditLock.owner_session_id == session_id,
+        ).delete(synchronize_session=False)
         task.updated_at = datetime.utcnow()
         db.commit()
         return
@@ -1782,6 +1983,12 @@ def clear_pending_confirmation(db, user_id: int, session_id: str):
     ).first()
     if conv:
         conv.pending_confirmation = None
+        if context:
+            db.query(ResumeEditLock).filter(
+                ResumeEditLock.task_id == context.task_id,
+                ResumeEditLock.user_id == user_id,
+                ResumeEditLock.owner_session_id == session_id,
+            ).delete(synchronize_session=False)
         db.commit()
 
 

@@ -7,8 +7,8 @@
 - 前端：Vue/Vite，`http://127.0.0.1:5173`
 - 后端：FastAPI/Uvicorn，`http://127.0.0.1:8000`
 - 数据库：SQLite 文件 `data/deepagents.db`
-- 导出：浏览器下载，同时保留到 `output/resumes/`
-- PDF：优先使用 Chrome/Edge/Chromium，失败时回退 WeasyPrint
+- 导出：保存到 `output/resumes/`，成功后可在页面中直接打开该文件夹
+- PDF：统一使用 Chrome/Edge/Chromium；缺失或执行失败时明确报错
 - LLM：可选；未配置密钥时，简历编辑、版本管理和导出仍可使用
 
 SQLite 是嵌入式数据库，不需要单独启动。停止项目、重启电脑或升级依赖不会删除数据库文件；只要保留 `data/deepagents.db`，数据就会保留。
@@ -50,9 +50,8 @@ Set-Location ..
 |------|------|
 | `scripts/start_local.cmd` | 启动后端、前端并完成健康检查 |
 | `scripts/start_backend_local.cmd` | 启动或重启本地后端 |
-| `scripts/start_frontend_local.cmd` | 启动本地前端 |
-| `scripts/stop_local.cmd` | 停止前端和后端，不删除 SQLite 数据 |
-| `scripts/start_db_local.cmd` | 仅为旧 MySQL 工作流保留，本地默认流程不调用 |
+| `scripts/start_frontend.cmd` | 启动本地版与多用户版共用的前端 |
+| `scripts/stop_app.cmd` | 停止前端和后端，不删除 SQLite 或 MySQL 数据 |
 
 一键启动：
 
@@ -69,7 +68,7 @@ Set-Location ..
 停止：
 
 ```powershell
-.\scripts\stop_local.cmd
+.\scripts\stop_app.cmd
 ```
 
 运行日志写入 `.local-run/`。后端代码修改后运行 `scripts\start_backend_local.cmd`，脚本会重启后端以加载新代码。
@@ -93,6 +92,8 @@ output/resumes/
 ```
 
 同一天重复导出时依次增加 `_01`、`_02`。文件写完后才会发布到输出目录，避免留下半写入文件。多人版默认只返回浏览器下载，不在服务器持续积累用户简历文件。
+
+本地导出成功弹窗提供“打开导出文件夹”按钮。该能力由只在本地模式开放的后端接口调用系统文件管理器；网页不能指定或打开其他任意路径。
 
 ### 备份
 
@@ -129,4 +130,4 @@ npm run build
 
 在 `.env` 中配置对话与解析服务，或在本地首页右上角打开“设置”。密钥只保存在本机被 Git 忽略的配置/数据文件中。未配置时，AI 接口返回明确的 503，其他功能不受影响。
 
-多人部署请使用 [多人自托管部署](deployment.md)，不要通过本地启动脚本切换。
+需要测试注册、登录和用户隔离时，请使用 [本机多用户部署](multi-user-local.md)。Docker 服务器部署请参考 [Docker 多人自托管部署](deployment.md)。

@@ -48,6 +48,10 @@ export default defineConfig({
         target: apiTarget,
         changeOrigin: true
       },
+      '/local': {
+        target: apiTarget,
+        changeOrigin: true
+      },
       '/health': {
         target: apiTarget,
         changeOrigin: true

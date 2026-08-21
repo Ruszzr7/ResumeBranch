@@ -17,6 +17,7 @@ import uuid
 import asyncio
 import httpx
 import time
+from contextvars import ContextVar
 from copy import deepcopy
 from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
@@ -60,6 +61,29 @@ from .skills.render_resume_pdf_images import (
     ResumeVisualSnapshot,
     render_resume_pdf_snapshot,
 )
+
+
+_edit_lock_acquirer: ContextVar[object | None] = ContextVar(
+    "resume_edit_lock_acquirer", default=None
+)
+
+
+async def acquire_current_edit_lock() -> None:
+    """Ask the HTTP boundary to reserve this task before preview generation."""
+    callback = _edit_lock_acquirer.get()
+    if callback is None:
+        return
+    result = callback()
+    if hasattr(result, "__await__"):
+        await result
+
+
+def set_edit_lock_acquirer(callback):
+    return _edit_lock_acquirer.set(callback)
+
+
+def reset_edit_lock_acquirer(token) -> None:
+    _edit_lock_acquirer.reset(token)
 
 
 def record_assistant_revision(
@@ -434,7 +458,7 @@ CONVERSATION_PROMPT = """
   - 字号和字体仍由专用排版设置管理，不要生成相关操作；不得生成 CSS、坐标或任意新字段。
   - 主模型负责解析“第 1 点”等上下文指代。若指代或目标仍不明确，先向用户澄清，不要调用工具；不要把原始短句、混合咨询内容或整段聊天传给技能。
 - 用户一次消息同时包含“执行某点”和新的咨询问题时，只把明确执行的部分整理进对应的操作列表，其余咨询保留在当前对话中，不要顺手修改。
-- **输出措辞注意**：调用 `request_resume_edit` 只是生成候选预览，绝对不能说“已保存”“已同步”“已修改”或“已经更新到简历库”；只有用户在确认框中接受后才会生效。
+- **面向用户的表达边界**：回复正文只能使用与界面一致的中文栏目名、组件名和自然语言。字段路径、数据键、工具名、协议标记、数据库字段、异常类型与堆栈只用于内部推理或结构化工具参数，绝不能出现在回复正文中；无需逐项穷举。简历原文中的英文、技术名词、公司名和岗位名不受此规则影响。调用修改技能只会生成候选预览，只有用户在确认框中接受后才会保存，不得提前声称已经生效。
 - **教育成绩字段约束**：用户提到“GPA”“绩点”“平均绩点”时写入 `gpa`，满分写入 `gpa_scale`；“专业排名/年级排名”写入 `ranking`。这些内容绝对不能写入 `theses`。
 - 旧版完整 JSON 保存格式如下，仅用于理解当前数据结构；正常修改不得调用旧版保存工具：
 ```json
@@ -482,12 +506,10 @@ CONVERSATION_PROMPT = """
 
 # 重要规则
 - **重要** 当 just_saved=True（简历刚保存）时，说明简历已经修改完成了，不要调用任何工具。
-- **重要** 绝对禁止在聊天内容中输出 JSON 代码块。
-- **重要** 严禁在聊天内容中输出JSON格式内容。
-- **重要** 面向用户的回复只使用中文栏目名和“段落、分点、编号”等中文表述；不得直接展示 `bullet`、`bullet_list`、`numbered`、`numbered_list`、`semantic_role`、`layout_config` 等内部标识。
+- **重要** 面向用户的回复遵守上述统一表达边界；结构化参数可使用内部标识，但不得把它们复制到回复正文。
 - **重要** 禁止构造虚假的修改建议，必须基于用户实际提供的内容，为了提高质量而虚构任何东西（哪怕是一个词）最终会害了用户。
 - 绝对禁止说："已保存"、"已修改"、"正在为你更新"。
-- 当输出文本时，绝对禁止提及 JSON、Key、Value 等技术术语。
+- 不得向用户展示结构化数据载荷或内部实现术语。
 - 年份信息： 当前现实世界的年份是 2026 年，需要谨记。
 
 # 面试引导逻辑
@@ -1344,7 +1366,16 @@ _LOCAL_EDUCATION_SCHOOL_RE = re.compile(
 
 
 def _clean_local_value(value: str) -> str:
-    return str(value or "").strip().strip('"\'“”‘’ ')
+    return plain_inline_text(str(value or "")).strip().strip('"\'“”‘’ ')
+
+
+def _inherit_whole_field_format(current_value: object, new_value: str) -> str:
+    """Keep whole-field bold when a deterministic edit replaces only its text."""
+    current_text = str(current_value or "").strip()
+    clean_new_value = plain_inline_text(str(new_value or "")).strip()
+    if re.fullmatch(r"\*\*.+?\*\*", current_text, flags=re.DOTALL):
+        return f"**{clean_new_value}**"
+    return clean_new_value
 
 
 def _education_index_for_gpa(current: dict, qualifier: str | None, new_gpa: str) -> int | None:
@@ -1406,7 +1437,10 @@ def build_local_edit_candidate(state: AgentState) -> dict | None:
             if _clean_local_value(item.get("school_name", "")) == target_school
         ]
         if len(source_matches) == 1:
-            education[source_matches[0]]["school_name"] = target_school
+            index = source_matches[0]
+            education[index]["school_name"] = _inherit_whole_field_format(
+                education[index].get("school_name", ""), target_school
+            )
         elif not source_matches and len(target_matches) == 1:
             # 重复提交同一修改时走本地无变更结果，不再等待结构化模型。
             pass
@@ -1421,7 +1455,10 @@ def build_local_edit_candidate(state: AgentState) -> dict | None:
         value = _clean_local_value(match.group(1))
         if not value or (field_name == "gender" and value not in {"男", "女", "其他"}):
             return None
-        candidate.setdefault("basics", {})[field_name] = value
+        basics = candidate.setdefault("basics", {})
+        basics[field_name] = _inherit_whole_field_format(
+            basics.get(field_name, ""), value
+        )
         parsed_fields.add(field_name)
 
     if _GPA_MENTION_RE.search(text):
@@ -1533,6 +1570,7 @@ async def direct_edit_node(state: AgentState) -> dict:
             "user_id": state.user_id,
             "task_id": state.task_id,
         }
+    await acquire_current_edit_lock()
     inline_request = is_inline_format_request(latest_human_text(state))
     inline_quote = ""
     inline_bold = True
@@ -1651,6 +1689,7 @@ async def _generate_resume_edit_preview(
     layout_operations=(),
 ) -> dict:
     """Run the generic edit skill with model-resolved operations only."""
+    await acquire_current_edit_lock()
     current = normalize_resume_data(state.resume_data or {})
     current_layout = normalize_layout_config(state.layout_data)
     edit_result = await run_resume_edit(
@@ -1698,6 +1737,7 @@ async def interview_coach_node(state: AgentState) -> dict:
                 raise ValueError("当前阶段没有可应用的改写建议")
             if not suggestion:
                 raise ValueError("当前没有可应用的改写建议")
+            await acquire_current_edit_lock()
             candidate = apply_suggestion_candidate(current, suggestion)
             pending = make_pending_confirmation(state, candidate, current_layout)
             assistant_message = AIMessage(content=_preview_summary(pending.get("changes", [])))

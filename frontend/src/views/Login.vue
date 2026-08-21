@@ -21,14 +21,14 @@
 
         <form class="login-form" @submit.prevent="handleLogin">
           <div class="form-group">
-            <label for="email">邮箱</label>
+            <label for="email">邮箱 / 管理员账号</label>
             <input
               id="email"
               v-model.trim="email"
-              type="email"
-              name="email"
+              type="text"
+              name="username"
               autocomplete="username"
-              placeholder="输入邮箱"
+              placeholder="普通用户输入邮箱，管理员可输入账号"
               required
             />
           </div>
@@ -64,19 +64,37 @@
         </footer>
       </div>
     </section>
+
+    <Teleport to="body">
+      <div v-if="sessionNotice" class="session-notice-overlay" role="presentation">
+        <section class="session-notice-dialog" role="alertdialog" aria-modal="true" aria-labelledby="session-notice-title">
+          <span class="session-notice-kicker">LOGIN STATUS</span>
+          <h2 id="session-notice-title">登录状态已更新</h2>
+          <p>{{ sessionNotice }}</p>
+          <button type="button" @click="sessionNotice = ''">知道了</button>
+        </section>
+      </div>
+    </Teleport>
   </main>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import BrandLogo from '../components/BrandLogo.vue'
+import { userFacingApiError } from '../utils/userFacingError.js'
+import { consumeAuthSessionNotice } from '../config/authSession.js'
 
 const router = useRouter()
 const email = ref('')
 const password = ref('')
 const errorMessage = ref('')
 const loading = ref(false)
+const sessionNotice = ref('')
+
+onMounted(() => {
+  sessionNotice.value = consumeAuthSessionNotice()
+})
 
 async function handleLogin() {
   if (loading.value) return
@@ -92,7 +110,7 @@ async function handleLogin() {
       body
     })
     const data = await response.json().catch(() => ({}))
-    if (!response.ok) throw new Error(data.detail || '登录失败，请检查邮箱和密码')
+    if (!response.ok) throw new Error(userFacingApiError(data, '登录失败，请检查邮箱或管理员账号及密码'))
     localStorage.setItem('access_token', data.access_token)
     localStorage.setItem('user', JSON.stringify(data.user))
     await router.replace('/')
@@ -107,6 +125,7 @@ async function handleLogin() {
 <style scoped>
 .login-page {
   min-height: 100vh;
+  color-scheme: dark;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -247,6 +266,74 @@ input:focus {
   background: #303139;
   border-color: rgba(120, 166, 255, 0.72);
   box-shadow: 0 0 0 3px rgba(120, 166, 255, 0.1);
+}
+
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+  -webkit-text-fill-color: #f5f5f7 !important;
+  caret-color: #f5f5f7;
+  -webkit-box-shadow: 0 0 0 1000px #2b2c32 inset !important;
+  box-shadow: 0 0 0 1000px #2b2c32 inset !important;
+  border-color: rgba(120, 166, 255, 0.5);
+  transition: background-color 9999s ease-out 0s;
+}
+
+.session-notice-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 5000;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.68);
+  backdrop-filter: blur(5px);
+}
+
+.session-notice-dialog {
+  width: min(100%, 24rem);
+  box-sizing: border-box;
+  padding: 1.6rem;
+  color: #f5f5f7;
+  background: #17181d;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.52);
+}
+
+.session-notice-kicker {
+  color: #78a6ff;
+  font: 0.6rem 'GTPressuraMono-Light', monospace;
+  letter-spacing: 0.17em;
+}
+
+.session-notice-dialog h2 {
+  margin: 0.8rem 0 0;
+  font: 1.3rem 'Plaak-CondensedBold', sans-serif;
+  font-weight: 400;
+}
+
+.session-notice-dialog p {
+  margin: 0.8rem 0 1.3rem;
+  color: #aeb0b8;
+  font: 0.72rem/1.7 'GTPressuraMono-Light', monospace;
+}
+
+.session-notice-dialog button {
+  width: 100%;
+  height: 2.8rem;
+  color: #fff;
+  background: #5f8ff2;
+  border: 1px solid #78a6ff;
+  cursor: pointer;
+  font: 0.7rem 'GTPressuraMono-Light', monospace;
+  letter-spacing: 0.12em;
+}
+
+.session-notice-dialog button:hover,
+.session-notice-dialog button:focus-visible {
+  background: #78a6ff;
+  outline: none;
 }
 
 .status-message {

@@ -18,7 +18,13 @@ from .config import (
     LOCAL_USER_EMAIL,
     is_local_mode,
 )
-from .database import create_user, get_db, get_resume_task, get_user_by_email
+from .database import (
+    auth_session_is_active,
+    create_user,
+    get_db,
+    get_resume_task,
+    get_user_by_email,
+)
 
 SECRET_KEY = JWT_SECRET_KEY or secrets.token_urlsafe(32)
 ALGORITHM = "HS256"
@@ -111,7 +117,8 @@ async def get_current_user(
         raise credentials_exception
 
     email = payload.get("sub")
-    if not email:
+    session_id = payload.get("sid")
+    if not email or not session_id:
         raise credentials_exception
 
     user = get_user_by_email(db, email)
@@ -120,6 +127,13 @@ async def get_current_user(
 
     if not user.is_active:
         raise HTTPException(status_code=403, detail="账户已被禁用")
+
+    if not auth_session_is_active(db, user.id, str(session_id)):
+        raise HTTPException(
+            status_code=401,
+            detail="登录状态已在其他设备更新，请重新登录",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     if x_task_id:
         task = get_resume_task(db, user.id, x_task_id)

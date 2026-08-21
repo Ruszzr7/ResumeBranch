@@ -1,0 +1,214 @@
+name: Docker multi-user smoke test
+
+on:
+  push:
+    paths:
+      - ".dockerignore"
+      - ".env.docker.example"
+      - "backend/**"
+      - "docker-compose.multi-user.yml"
+      - "frontend/**"
+      - "scripts/**"
+      - "tests/**"
+      - "docs/deployment.md"
+      - "README.md"
+      - ".github/workflows/docker-multi-user.yml"
+  pull_request:
+    paths:
+      - ".dockerignore"
+      - ".env.docker.example"
+      - "backend/**"
+      - "docker-compose.multi-user.yml"
+      - "frontend/**"
+      - "scripts/**"
+      - "tests/**"
+      - "docs/deployment.md"
+      - "README.md"
+      - ".github/workflows/docker-multi-user.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      COMPOSE_PROJECT_NAME: resumebranch-ci
+      COMPOSE_FILE: docker-compose.multi-user.yml
+      ENV_FILE: .env.docker
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Create disposable CI environment
+        shell: bash
+        run: |
+          cat > "$ENV_FILE" <<'EOF'
+          APP_MODE=multi_user
+          HOST=0.0.0.0
+          PORT=8000
+          JWT_SECRET_KEY=ci-only-secret-that-is-longer-than-thirty-two-characters
+          JWT_ACCESS_TOKEN_EXPIRE_MINUTES=1440
+          ADMIN_EMAIL=admin@example.com
+          ADMIN_PASSWORD=CiAdminPassword1234
+          MYSQL_DATABASE=resume_assistant_ci
+          MYSQL_USER=resume_app_ci
+          MYSQL_PASSWORD=CiDatabasePassword1234
+          MYSQL_ROOT_PASSWORD=CiRootPassword1234
+          MYSQL_HOST=mysql
+          MYSQL_PORT=3306
+          CORS_ALLOW_ORIGINS=
+          LLM_PROVIDER=gemini
+          LLM_API_KEY=
+          LLM_PROFILE_PATH=/app/data/llm_profiles.json
+          BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+          LLM_MODEL=gemini-3.6-flash
+          SOURCE_DOCUMENT_DIR=/app/data/source_documents
+          AGENT_CHECKPOINTER_ENABLED=true
+          AGENT_CHECKPOINT_DB_PATH=/app/data/langgraph_checkpoints.sqlite
+          AGENT_CHECKPOINT_RETENTION_DAYS=30
+          INTERVIEW_HARNESS_ENABLED=true
+          INTERVIEW_HARNESS_ROLLOUT_PERCENT=100
+          INTERVIEW_HARNESS_SHADOW=false
+          EOF
+
+      - name: Validate Compose configuration
+        shell: bash
+        run: docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" config --quiet
+
+      - name: Build Docker images
+        shell: bash
+        run: docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build
+
+      - name: Run multi-user smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          compose=(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
+          base_url=http://127.0.0.1:8080
+          admin_email=admin@example.com
+          admin_password=CiAdminPassword1234
+          user_email=user@example.com
+          user_password=CiUserPassword1234
+
+          wait_for_health() {
+            for attempt in $(seq 1 60); do
+              if curl --silent --fail -X POST "$base_url/health" >/dev/null \
+                && curl --silent --fail "$base_url/app/config" \
+                  | jq -e '.app_mode == "multi_user" and .database_backend == "mysql"' >/dev/null; then
+                return 0
+              fi
+              sleep 2
+            done
+            "${compose[@]}" ps
+            "${compose[@]}" logs --tail=200 mysql backend frontend
+            return 1
+          }
+
+          login() {
+            curl --silent --fail --show-error -X POST \
+              -H 'Content-Type: application/x-www-form-urlencoded' \
+              --data-urlencode "username=$1" \
+              --data-urlencode "password=$2" \
+              "$base_url/auth/login"
+          }
+
+          "${compose[@]}" up -d
+          wait_for_health
+          curl --silent --fail "$base_url/" > /tmp/resumebranch-index.html
+          grep -Eqi '<!doctype html|<html' /tmp/resumebranch-index.html
+          "${compose[@]}" exec -T backend /usr/bin/chromium --version
+          "${compose[@]}" exec -T backend pdfinfo -v
+          "${compose[@]}" exec -T backend pdftoppm -v
+
+          admin_token=$(login "$admin_email" "$admin_password" | jq -er '.access_token')
+          curl --silent --fail \
+            -H "Authorization: Bearer $admin_token" \
+            "$base_url/auth/me" | jq -e '.is_admin == true and .email == "admin@example.com"' >/dev/null
+
+          invite_code=$(curl --silent --fail -X POST \
+            -H "Authorization: Bearer $admin_token" \
+            -H 'Content-Type: application/json' \
+            -d '{"count":1}' \
+            "$base_url/auth/invite-codes" | jq -er '.code')
+
+          user_token=$(curl --silent --fail -X POST \
+            -H 'Content-Type: application/json' \
+            -d "{\"email\":\"$user_email\",\"password\":\"$user_password\",\"invite_code\":\"$invite_code\"}" \
+            "$base_url/auth/register" | jq -er '.access_token')
+
+          forbidden_status=$(curl --silent --output /tmp/invite-response \
+            --write-out '%{http_code}' \
+            -H "Authorization: Bearer $user_token" \
+            "$base_url/auth/invite-codes")
+          test "$forbidden_status" = 403
+
+          admin_project_id=$(curl --silent --fail -X POST \
+            -H "Authorization: Bearer $admin_token" \
+            -H 'Content-Type: application/json' \
+            -d '{"title":"CI administrator project"}' \
+            "$base_url/projects" | jq -er '.id')
+          user_project_id=$(curl --silent --fail -X POST \
+            -H "Authorization: Bearer $user_token" \
+            -H 'Content-Type: application/json' \
+            -d '{"title":"CI user project"}' \
+            "$base_url/projects" | jq -er '.id')
+          user_task_id=$(curl --silent --fail \
+            -H "Authorization: Bearer $user_token" \
+            "$base_url/projects/$user_project_id" | jq -er '.tasks[0].id')
+
+          curl --silent --fail \
+            -H "Authorization: Bearer $user_token" \
+            "$base_url/tasks/$user_task_id/contexts" \
+            | jq -e '.contexts | length >= 1' >/dev/null
+          curl --silent --fail \
+            -H "Authorization: Bearer $user_token" \
+            "$base_url/tasks/$user_task_id/layout" \
+            | jq -e 'type == "object"' >/dev/null
+          curl --silent --fail \
+            -H "Authorization: Bearer $user_token" \
+            "$base_url/tasks/$user_task_id/workflow" \
+            | jq -e '.state | type == "object"' >/dev/null
+          curl --silent --fail -X POST \
+            -H "Authorization: Bearer $user_token" \
+            -H "X-Task-ID: $user_task_id" \
+            -H 'Content-Type: application/json' \
+            -d '{}' "$base_url/export_pdf" > /tmp/resume.pdf
+          test "$(head -c 4 /tmp/resume.pdf)" = '%PDF'
+          "${compose[@]}" exec -T backend python -c \
+            'from backend.skills.render_resume_pdf_images import render_resume_pdf_snapshot; s=render_resume_pdf_snapshot({"basics":{"name":"容器快照"}}); assert s.parts and s.page_sizes'
+
+          curl --silent --fail "$base_url/projects/$user_project_id/tasks/$user_task_id" \
+            | grep -Eqi '<!doctype html|<html'
+
+          admin_projects=$(curl --silent --fail \
+            -H "Authorization: Bearer $admin_token" "$base_url/projects")
+          user_projects=$(curl --silent --fail \
+            -H "Authorization: Bearer $user_token" "$base_url/projects")
+          echo "$admin_projects" | jq -e --arg id "$admin_project_id" 'any(.[]; (.id|tostring) == $id)' >/dev/null
+          echo "$admin_projects" | jq -e --arg title 'CI user project' 'all(.[]; .title != $title)' >/dev/null
+          echo "$user_projects" | jq -e --arg id "$user_project_id" 'any(.[]; (.id|tostring) == $id)' >/dev/null
+          echo "$user_projects" | jq -e --arg title 'CI administrator project' 'all(.[]; .title != $title)' >/dev/null
+
+          "${compose[@]}" restart backend
+          wait_for_health
+          admin_token=$(login "$admin_email" "$admin_password" | jq -er '.access_token')
+          curl --silent --fail -H "Authorization: Bearer $admin_token" "$base_url/projects" \
+            | jq -e --arg id "$admin_project_id" 'any(.[]; (.id|tostring) == $id)' >/dev/null
+
+          "${compose[@]}" down
+          "${compose[@]}" up -d
+          wait_for_health
+          admin_token=$(login "$admin_email" "$admin_password" | jq -er '.access_token')
+          curl --silent --fail -H "Authorization: Bearer $admin_token" "$base_url/projects" \
+            | jq -e --arg id "$admin_project_id" 'any(.[]; (.id|tostring) == $id)' >/dev/null
+
+      - name: Show logs and clean up
+        if: always()
+        shell: bash
+        run: |
+          docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" logs --no-color --tail=200 || true
+          docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down -v --remove-orphans || true

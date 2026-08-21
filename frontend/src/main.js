@@ -5,6 +5,9 @@ import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import router from './router'
 import './style.css'
 import App from './App.vue'
+import { installAuthFailureInterceptor } from './config/authSession.js'
+
+installAuthFailureInterceptor()
 
 const app = createApp(App)
 

@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
-title Resume Assistant - Database Launcher
+title Resume Assistant - MySQL Launcher
 cd /d "%~dp0.."
 
 set "PROJECT_ROOT=%CD%"
@@ -17,7 +17,7 @@ if defined MYSQL_SERVICE_NAME (
 )
 
 echo ============================================================
-echo Resume Assistant - Database
+echo Resume Assistant - MySQL Windows Service
 echo ============================================================
 
 if not exist "%RUN_DIR%" mkdir "%RUN_DIR%"

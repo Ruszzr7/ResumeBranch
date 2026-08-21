@@ -17,6 +17,8 @@
             id="email"
             v-model="email"
             type="email"
+            name="email"
+            autocomplete="email"
             placeholder="邮箱"
             required
           />
@@ -27,6 +29,8 @@
             id="password"
             v-model="password"
             type="password"
+            name="new-password"
+            autocomplete="new-password"
             placeholder="密码（至少 8 位）"
             required
             minlength="8"
@@ -38,6 +42,8 @@
             id="inviteCode"
             v-model="inviteCode"
             type="text"
+            name="invite-code"
+            autocomplete="off"
             placeholder="邀请码"
             required
           />
@@ -127,6 +133,7 @@ export default {
 <style scoped>
 .register-page {
   min-height: 100vh;
+  color-scheme: dark;
   display: flex;
   flex-direction: column;
   color: #f5f5f7;
@@ -215,6 +222,18 @@ input:focus {
 
 input:hover {
   background-color: #303139;
+}
+
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+  -webkit-text-fill-color: #f5f5f7 !important;
+  caret-color: #f5f5f7;
+  -webkit-box-shadow: 0 0 0 1000px #2b2c32 inset !important;
+  box-shadow: 0 0 0 1000px #2b2c32 inset !important;
+  border-color: rgba(120, 166, 255, 0.5);
+  transition: background-color 9999s ease-out 0s;
 }
 
 /* 按钮包装器 - 包含黑色底层和米色按钮 */

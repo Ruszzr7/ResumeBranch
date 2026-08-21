@@ -51,6 +51,14 @@ test('preview resolves the same font and physical spacing tokens as exports', ()
   assert.ok(previewSource.includes('width: 210mm;'))
 })
 
+test('local exports stay in the project folder while hosted exports download in the browser', () => {
+  assert.ok(previewSource.includes("response.headers.get('X-Local-Export-Saved') === 'true'"))
+  assert.ok(previewSource.includes('await response.arrayBuffer()'))
+  assert.ok(previewSource.includes('const documentBlob = await response.blob()'))
+  assert.ok(previewSource.includes("fetch('/local/exports/open'"))
+  assert.ok(previewSource.includes('打开导出文件夹'))
+})
+
 test('semantic font sizes use a half-point modal with live preview and page-limit guard', () => {
   assert.ok(previewSource.includes('<h3 id="font-size-title">文字大小</h3>'))
   assert.ok(previewSource.includes('class="layout-guide-btn font-size-open-btn"'))

@@ -14,7 +14,7 @@ if /I "%~1"=="--worker" goto worker
 if /I "%~1"=="--no-pause" set "NO_PAUSE=1"
 
 echo ============================================================
-echo Resume Assistant - Frontend
+echo Resume Assistant - Shared Frontend
 echo ============================================================
 
 where.exe npm.cmd >nul 2>&1

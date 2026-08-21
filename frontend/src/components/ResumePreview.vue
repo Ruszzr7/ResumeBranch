@@ -1598,11 +1598,12 @@ const formatText = (text) => {
 // into the original items again.
 const paragraphText = value => String(value ?? '').replace(/\r\n?/g, '\n')
 
-// ========== 导出PDF（调用后端API，使用WeasyPrint生成矢量PDF）============
+// ========== 导出 PDF / Word ==========
 const showSuccessDialog = ref(false)
 const exportError = ref('')
 const isExportingPDF = ref(false)
 const isExportingDOCX = ref(false)
+const isOpeningExportFolder = ref(false)
 const lastExportFormat = ref('PDF')
 const lastExportSavedLocally = ref(false)
 
@@ -1655,23 +1656,28 @@ const exportDocument = async (format) => {
       throw new Error(errorData?.detail || errorData || `${isPDF ? 'PDF' : 'Word'}生成失败`)
     }
 
-    // 获取PDF二进制数据
-    const documentBlob = await response.blob()
+    const savedLocally = props.localMode
+      && response.headers.get('X-Local-Export-Saved') === 'true'
 
-    // 创建下载链接
-    const url = window.URL.createObjectURL(documentBlob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = downloadFilename(response, isPDF ? 'pdf' : 'docx')
-    document.body.appendChild(a)
-    a.click()
-    window.URL.revokeObjectURL(url)
-    document.body.removeChild(a)
+    if (savedLocally) {
+      // The backend has already persisted the file. Consume the response body
+      // without creating a second copy in the browser's Downloads directory.
+      await response.arrayBuffer()
+    } else {
+      const documentBlob = await response.blob()
+      const url = window.URL.createObjectURL(documentBlob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = downloadFilename(response, isPDF ? 'pdf' : 'docx')
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+    }
 
     // 显示成功提示弹窗
     lastExportFormat.value = isPDF ? 'PDF' : 'Word'
-    lastExportSavedLocally.value = props.localMode
-      && response.headers.get('X-Local-Export-Saved') === 'true'
+    lastExportSavedLocally.value = savedLocally
     showSuccessDialog.value = true
 
   } catch (error) {
@@ -1685,6 +1691,27 @@ const exportDocument = async (format) => {
 
 const exportPDF = () => exportDocument('pdf')
 const exportWord = () => exportDocument('docx')
+
+async function openExportFolder() {
+  if (!props.localMode || isOpeningExportFolder.value) return
+  isOpeningExportFolder.value = true
+  try {
+    const response = await fetch('/local/exports/open', {
+      method: 'POST',
+      headers: buildAuthorizationHeaders()
+    })
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null)
+      throw new Error(errorData?.detail || '无法打开导出文件夹')
+    }
+    showSuccessDialog.value = false
+  } catch (error) {
+    showSuccessDialog.value = false
+    exportError.value = error.message || '无法打开导出文件夹，请手动打开项目下的 output/resumes。'
+  } finally {
+    isOpeningExportFolder.value = false
+  }
+}
 
 function activateResumeSettingsDialog(dialogId) {
   window.dispatchEvent(new CustomEvent(RESUME_SETTINGS_DIALOG_EVENT, { detail: dialogId }))
@@ -2579,11 +2606,19 @@ const getItemIndex = (type, dataIndex) => {
       </div>
       <h3>简历导出成功</h3>
       <p>
-        {{ lastExportFormat }} 文件已成功下载。
-        <template v-if="lastExportSavedLocally"><br>同时已保存到项目的 output/resumes 文件夹。</template>
+        <template v-if="lastExportSavedLocally">{{ lastExportFormat }} 文件已保存到项目的 output/resumes 文件夹。</template>
+        <template v-else>{{ lastExportFormat }} 文件已成功下载。</template>
         <br><br>{{ lastExportFormat === 'Word' ? 'DOCX 中的文字、段落和列表均可在 Word 或 WPS 中继续编辑。' : '网页预览与实际 PDF 文件在排版上可能有细微差异；可调整样式参数后重新导出。' }}
       </p>
-      <button class="confirm-btn" @click="showSuccessDialog = false">我知道了</button>
+      <div class="success-dialog-actions">
+        <button
+          v-if="lastExportSavedLocally"
+          class="confirm-btn secondary"
+          :disabled="isOpeningExportFolder"
+          @click="openExportFolder"
+        >{{ isOpeningExportFolder ? '正在打开…' : '打开导出文件夹' }}</button>
+        <button class="confirm-btn" @click="showSuccessDialog = false">完成</button>
+      </div>
     </div>
   </div>
 
@@ -4131,8 +4166,28 @@ const getItemIndex = (type, dataIndex) => {
   transition: all 0.2s ease;
 }
 
+.success-dialog-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+
+.success-dialog .confirm-btn.secondary {
+  color: #212529;
+  background: #eceef1;
+}
+
+.success-dialog .confirm-btn:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 .success-dialog .confirm-btn:hover {
   background: #495057;
+}
+
+.success-dialog .confirm-btn.secondary:hover:not(:disabled) {
+  background: #dde0e4;
 }
 
 @keyframes fadeIn {

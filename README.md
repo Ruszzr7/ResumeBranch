@@ -23,10 +23,10 @@
 DeepAgents 是一个全栈 AI 简历优化工具，具有以下特点：
 
 - **对话式交互**：通过自然语言与 AI 对话，智能修改简历
-- **双运行模式**：本地单用户免登录，或 JWT 多用户隔离
+- **双运行模式**：本地单用户免登录，或 JWT 多用户隔离；多用户版每个账号只保留一个活跃登录会话
 - **数据持久化**：本地默认使用免服务的 SQLite，多人自托管推荐 MySQL 8.4
 - **AI 驱动**：基于 LangGraph 构建的智能 Agent
-- **PDF 导出**：服务端优先使用 Chromium 浏览器打印，缺少浏览器时兼容回退到 WeasyPrint
+- **PDF 导出**：服务端统一使用 Chromium 浏览器打印，保持与网页预览一致的排版引擎
 
 ### 两种部署入口
 
@@ -35,8 +35,8 @@ DeepAgents 是一个全栈 AI 简历优化工具，具有以下特点：
 | `APP_MODE` | `local` | `multi_user` |
 | 推荐数据库 | SQLite 文件 | MySQL 8.4 |
 | 账号功能 | 免登录，账号接口关闭 | JWT 登录、注册、邀请码、管理员 |
-| 启动方式 | `scripts\start_local.cmd` | `docker-compose.multi-user.yml` |
-| 导出 | 浏览器下载 + `output/resumes/` | 默认仅浏览器下载 |
+| 启动方式 | `scripts\start_local.cmd` | `scripts\start_multi_user.cmd` |
+| 导出 | 保存到 `output/resumes/`，可一键打开目录 | 默认仅浏览器下载 |
 
 两种入口复用同一套 Vue 界面、FastAPI 业务接口和 SQLAlchemy 模型。运行模式是部署配置，不是页面内开关；SQLite 与 MySQL 数据相互独立，不自动迁移或覆盖。
 
@@ -60,10 +60,10 @@ DeepAgents 是一个全栈 AI 简历优化工具，具有以下特点：
 | Uvicorn | 0.24+ | ASGI 服务器 |
 | Gunicorn | 21+ | WSGI 服务器（生产环境） |
 | SQLAlchemy | 2.0+ | ORM |
-| LangGraph | 1.0+ | AI Agent 工作流 |
-| LangChain | 1.1+ | LLM 集成 |
+| LangGraph | 1.0+ | AI Agent 工作流、状态与检查点 |
+| LangChain Core / OpenAI | 1.1+ | 消息、Prompt、工具与模型适配 |
 | Chromium（Chrome/Edge） | 112+ | 与浏览器预览一致的 PDF 生成 |
-| WeasyPrint | 60+ | 无 Chromium 环境下的 PDF 兼容回退 |
+| Poppler | 系统包 | Docker 中把 PDF 转为 Agent 可分析的页面快照；Windows 可使用项目配置的转换工具 |
 | python-jose | 3.3+ | JWT 认证 |
 | bcrypt | 4.0+ | 密码加密 |
 
@@ -78,8 +78,10 @@ DeepAgents 是一个全栈 AI 简历优化工具，具有以下特点：
 - ✅ 用户注册（邀请码机制）
 - ✅ 用户登录/登出
 - ✅ JWT Token 认证（24 小时有效期）
+- ✅ 服务端会话撤销：新登录会使旧设备登录失效，同一浏览器多标签页复用当前会话
 - ✅ 管理员后台（管理邀请码）
 - ✅ 多用户数据隔离
+- ✅ 同一简历任务的修改预览互斥，跨对话与多进程由数据库锁兜底
 
 ### 简历编辑
 - ✅ 主简历—岗位版本工作区：一份基础简历对应一份主简历，每个 JD 对应独立岗位版本
@@ -113,7 +115,7 @@ DeepAgents 是一个全栈 AI 简历优化工具，具有以下特点：
 
 ### 导出功能
 - ✅ 服务端 Chromium PDF 导出，复用浏览器的中文换行与双端对齐规则
-- ✅ 未安装 Chromium 时自动回退到 WeasyPrint
+- ✅ Chromium 缺失或执行失败时给出明确错误，不使用不同排版引擎静默降级
 - ✅ PDF / DOCX 使用 `简历组名_版本名_导出日期` 命名，本地重复导出自动增加序号并保留到项目输出目录
 
 ### AI 特性
@@ -267,14 +269,13 @@ DeepAgents 是一个全栈 AI 简历优化工具，具有以下特点：
 
 ## 🚀 快速开始
 
-> Windows 本机运行请优先参考 [本地部署说明](docs/local-deployment.md)。默认方案使用
-> 项目专用 Python 虚拟环境、SQLite、Chrome/Edge，以及作为回退的 WeasyPrint/Pango，不依赖 Docker 或数据库服务。
+> Windows 本机运行请优先参考 [本地部署说明](docs/local-deployment.md)；需要测试注册、登录和用户隔离时，参考 [本机多用户部署](docs/multi-user-local.md)。默认本地版使用项目专用 Python 虚拟环境、SQLite 和 Chrome/Edge，不依赖 Docker 或数据库服务。
 
 ### 环境要求
 
 - Python 3.11+
 - Node.js 20+
-- macOS: brew install pango harfbuzz cairo fontconfig (WeasyPrint 依赖)
+- Chrome、Edge 或 Chromium（PDF 导出必需；可通过 `RESUME_PDF_BROWSER` 指定路径）
 
 ### 1. 克隆项目
 
@@ -306,11 +307,10 @@ LLM_API_KEY=your-api-key
 BASE_URL=https://api.bltcy.ai/v1
 
 # Tavily 搜索 API（可选）
-TAVILY_API_KEY=tvly-your-tavily-api-key
 
 ```
 
-需要登录、注册、邀请码和多用户隔离时，不要修改本地脚本；复制 `.env.multi_user.example` 并使用 `docker-compose.multi-user.yml`。详见 [多人自托管部署](docs/deployment.md)。
+需要登录、注册、邀请码和多用户隔离时，不要修改本地 `.env` 或本地启动脚本；复制 `.env.multi_user.example`，配置本机 MySQL 后使用 `scripts\start_multi_user.cmd`。详见 [本机多用户部署](docs/multi-user-local.md)。
 
 ### 3. 安装依赖
 
@@ -332,7 +332,7 @@ cd ..
 
 ### 4. 初始化数据库
 
-SQLite 文件和表会在本地后端首次运行时自动创建，无需初始化命令。多人 Compose 会等待 MySQL 健康后自动创建表，并创建或升级配置的管理员账号。
+SQLite 文件和表会在本地后端首次运行时自动创建，无需初始化命令。本机多用户模式需要提前在 MySQL 中创建业务数据库和应用账号，具体 SQL 见 [本机多用户部署](docs/multi-user-local.md)。Docker Compose 模式会自动启动 MySQL 容器并创建业务表。
 
 ### 5. 启动服务
 
@@ -347,7 +347,7 @@ scripts\start_local.cmd --pause
 
 # 分别启动（运行日志写入 .local-run）
 scripts\start_backend_local.cmd
-scripts\start_frontend_local.cmd
+scripts\start_frontend.cmd
 
 # 后端脚本会自动判断：未运行则启动，已运行则重启
 scripts\start_backend_local.cmd
@@ -356,10 +356,27 @@ scripts\start_backend_local.cmd
 scripts\start_local.cmd
 
 # 停止
-scripts\stop_local.cmd
+scripts\stop_app.cmd
 ```
 
-**方式二：手动启动（跨平台开发环境）**
+**方式二：Windows 本机多用户 MySQL**
+
+```cmd
+# 首次使用前：完成 MySQL 数据库/应用账号配置，并编辑 .env.multi_user
+
+# 启动 MySQL、MySQL 后端和共用前端
+scripts\start_multi_user.cmd
+
+# 停止前端和后端，保留 MySQL 服务
+scripts\stop_app.cmd
+
+# 确认不再使用 MySQL 时再单独停止服务
+scripts\stop_mysql.cmd
+```
+
+多用户启动器会先检查 MySQL 连接，检查通过后才重启后端；共用前端已经运行时会继续复用 Vite 进程。详细说明见 [本机多用户部署](docs/multi-user-local.md)。
+
+**方式三：手动启动（跨平台开发环境）**
 
 ```bash
 # 终端 1 - 启动后端
@@ -371,12 +388,12 @@ cd frontend
 npm run dev
 ```
 
-**方式三：Docker 多人自托管**
+**方式四：Docker 多人自托管（可选服务器部署）**
 
 ```bash
-cp .env.multi_user.example .env.multi_user
+cp .env.docker.example .env.docker
 # 修改 JWT、管理员和 MySQL 密码后：
-docker compose --env-file .env.multi_user -f docker-compose.multi-user.yml up -d --build
+docker compose --env-file .env.docker -f docker-compose.multi-user.yml up -d --build
 ```
 
 ### 6. 访问应用
@@ -384,6 +401,7 @@ docker compose --env-file .env.multi_user -f docker-compose.multi-user.yml up -d
 - 前端：http://localhost:5173
 - 后端 API：http://localhost:8000
 - 健康检查：http://localhost:8000/health
+- Docker 多用户版前端：http://localhost:8080
 
 ---
 
@@ -398,7 +416,7 @@ resume_assistant/
 │   ├── auth.py                        # JWT 认证
 │   ├── tools.py                       # Agent 工具
 │   ├── pdf_generator.py               # PDF 内容与排版生成入口
-│   ├── pdf_renderer.py                # Chromium 打印与 WeasyPrint 回退选择
+│   ├── pdf_renderer.py                # Chromium 浏览器发现与 PDF 打印
 │   ├── create_admin.py                # 管理员初始化模块
 │   ├── requirements.txt
 │   ├── requirements.lock.txt
@@ -423,6 +441,7 @@ resume_assistant/
 ├── docker-compose.multi-user.yml      # 多人 MySQL 自托管入口
 ├── .env.example                       # 本地配置模板
 ├── .env.multi_user.example            # 多人配置模板
+├── .env.docker.example                 # Docker 多人配置模板
 └── README.md
 ```
 
@@ -483,6 +502,8 @@ resume_assistant/
 | 端点 | 方法 | 功能 |
 |------|------|------|
 | `/export_pdf` | POST | 导出 PDF |
+| `/export_docx` | POST | 导出可编辑 DOCX |
+| `/local/exports/open` | POST | 打开本地导出目录（仅本地模式） |
 
 ### 管理接口
 
@@ -507,17 +528,17 @@ resume_assistant/
 
 ```bash
 # 1. 配置多人环境
-cp .env.multi_user.example .env.multi_user
-# 编辑 .env.multi_user 中的 JWT、管理员和 MySQL 密码
+cp .env.docker.example .env.docker
+# 编辑 .env.docker 中的 JWT、管理员和 MySQL 密码
 
 # 2. 构建并启动
-docker compose --env-file .env.multi_user -f docker-compose.multi-user.yml up -d --build
+docker compose --env-file .env.docker -f docker-compose.multi-user.yml up -d --build
 
 # 3. 查看日志
-docker compose --env-file .env.multi_user -f docker-compose.multi-user.yml logs -f
+docker compose --env-file .env.docker -f docker-compose.multi-user.yml logs -f
 
 # 4. 停止服务（保留数据卷）
-docker compose --env-file .env.multi_user -f docker-compose.multi-user.yml down
+docker compose --env-file .env.docker -f docker-compose.multi-user.yml down
 ```
 
 该配置适用于受控自托管环境；开放公网前仍需补充 HTTPS、限流、审计和备份运维。不要使用 `down -v` 停止已有数据的环境。
@@ -598,14 +619,18 @@ docker compose --env-file .env.multi_user -f docker-compose.multi-user.yml down
 python -m backend.create_admin
 ```
 
-管理员邮箱和密码必须通过 `.env.multi_user` 中的 `ADMIN_EMAIL`、`ADMIN_PASSWORD` 设置。Compose 启动时会创建或升级该账号为管理员。
+管理员登录标识和密码必须通过对应环境文件中的 `ADMIN_EMAIL`、`ADMIN_PASSWORD` 设置。为兼容既有配置仍沿用变量名 `ADMIN_EMAIL`；管理员标识可以是邮箱或专用账号名，普通用户注册和登录必须使用邮箱。
+
+本机多用户启动器读取 `.env.multi_user`。
+Docker Compose 读取 `.env.docker`；两者都会创建或升级该账号为管理员。
 
 ---
 
 ## 📚 相关文档
 
 - [本地部署说明](docs/local-deployment.md) - Windows 本地部署与启动说明
-- [多人自托管部署](docs/deployment.md) - JWT + MySQL + Docker Compose
+- [本机多用户部署](docs/multi-user-local.md) - Windows 原生 MySQL + JWT 多用户启动说明
+- [Docker 多人自托管部署](docs/deployment.md) - Linux 服务器上的 JWT + MySQL + Docker Compose
 - [测试清单](docs/testing.md) - 功能回归检查项
 
 ---

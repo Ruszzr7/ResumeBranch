@@ -3,12 +3,10 @@
     <header class="home-header">
       <BrandLogo />
       <div class="header-actions">
-        <span v-if="isLocalMode" class="mode-pill">
-          <i></i>
-          本地模式
-        </span>
-        <button v-if="isLocalMode" class="quiet-btn" @click="openSettings">设置</button>
-        <AccountMenu v-else-if="currentUser" :user="currentUser" @logout="logout" />
+        <button v-if="isLocalMode || currentUser?.is_admin" class="quiet-btn" @click="openSettings">
+          API 设置
+        </button>
+        <AccountMenu v-if="!isLocalMode && currentUser" :user="currentUser" @logout="logout" />
       </div>
     </header>
 
@@ -311,6 +309,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import BrandLogo from '../components/BrandLogo.vue'
 import AccountMenu from '../components/AccountMenu.vue'
+import { userFacingApiError } from '../utils/userFacingError.js'
 import { buildAuthorizationHeaders, loadAppConfig } from '../config/appMode.js'
 import { plainInlineText } from '../utils/inlineFormatting.js'
 
@@ -375,6 +374,13 @@ function readStoredUser() {
 }
 
 function logout() {
+  const activeToken = localStorage.getItem('access_token') || ''
+  if (activeToken) {
+    fetch('/auth/logout', {
+      method: 'POST',
+      headers: buildAuthorizationHeaders(activeToken)
+    }).catch(() => {})
+  }
   localStorage.removeItem('access_token')
   localStorage.removeItem('user')
   token.value = ''
@@ -483,7 +489,7 @@ async function confirmRenameProject() {
       body: JSON.stringify({ title })
     })
     const data = await response.json().catch(() => ({}))
-    if (!response.ok) throw new Error(data.detail || '重命名失败，请重试')
+    if (!response.ok) throw new Error(userFacingApiError(data, '重命名失败，请重试'))
     projectToRename.value = null
     await loadProjects()
   } catch (error) {
@@ -663,7 +669,7 @@ async function loadAvailableModels() {
       })
     })
     const data = await response.json().catch(() => ({}))
-    if (!response.ok) throw new Error(data.detail || '模型查询失败')
+    if (!response.ok) throw new Error(userFacingApiError(data, '模型查询失败'))
     availableModels.value = data.models || []
     if (data.success && !llmSettings.value.model.trim() && availableModels.value.length) {
       llmSettings.value.model = availableModels.value[0]
@@ -690,7 +696,7 @@ async function testSettings() {
       body: JSON.stringify(settingsPayload())
     })
     const data = await response.json()
-    if (!response.ok) throw new Error(data.detail || '连接失败')
+    if (!response.ok) throw new Error(userFacingApiError(data, '连接失败'))
     // Persist the protocol that actually passed capability negotiation. This
     // matters for Gemini relays that expose both OpenAI compatibility and a
     // higher-fidelity native document endpoint on the same URL/key.
@@ -723,7 +729,7 @@ async function saveSettings() {
       body: JSON.stringify(settingsPayload())
     })
     const data = await response.json()
-    if (!response.ok) throw new Error(data.detail || '保存失败')
+    if (!response.ok) throw new Error(userFacingApiError(data, '保存失败'))
     settingsConfigs.value = data.configs || settingsConfigs.value
     selectSettingsRole(settingsRole.value)
     settingsStatus.value = { type: 'success', message: '设置已保存，后续请求立即生效' }
@@ -789,8 +795,7 @@ onUnmounted(() => {
   backdrop-filter: blur(20px);
 }
 
-.header-actions,
-.mode-pill {
+.header-actions {
   display: flex;
   align-items: center;
 }
@@ -799,17 +804,6 @@ onUnmounted(() => {
   gap: 0.65rem;
 }
 
-.mode-pill {
-  gap: 0.45rem;
-  padding: 0.48rem 0.2rem;
-  border: 0;
-  border-radius: 0;
-  color: var(--home-muted);
-  background: transparent;
-  font-size: var(--home-control-font-size);
-}
-
-.mode-pill i,
 .live-dot,
 .settings-status i {
   width: 6px;
@@ -1686,10 +1680,6 @@ button:focus-visible {
 @media (max-width: 760px) {
   .home-header {
     padding: 0 1rem;
-  }
-
-  .mode-pill {
-    display: none;
   }
 
   .home-main {

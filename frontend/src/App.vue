@@ -18,6 +18,7 @@ import {
 } from './utils/resumeContract.js'
 import { hasMeaningfulResumeContent } from './utils/resumePresence.js'
 import { formatInlineHtml, plainInlineText } from './utils/inlineFormatting.js'
+import { userFacingApiError } from './utils/userFacingError.js'
 
 // 响应式布局状态
 const isMobileView = ref(false)
@@ -355,6 +356,7 @@ const projectTasks = ref([])
 const currentTask = computed(() => projectTasks.value.find(task => task.id === currentTaskId.value) || null)
 const activeContextId = ref('')
 const sessionId = ref('default')
+const taskEditState = ref(null)
 const contextUiStates = reactive({})
 
 function createContextUiState() {
@@ -884,6 +886,12 @@ function handleStorageChange(event) {
   }
 }
 
+function refreshEditStateOnFocus() {
+  if (isLoggedIn.value && isWorkspaceRoute.value && currentTaskId.value) {
+    loadTaskContexts({ preserveActive: true }).catch(() => {})
+  }
+}
+
 function activateResumeSettingsDialog(dialogId) {
   window.dispatchEvent(new CustomEvent(RESUME_SETTINGS_DIALOG_EVENT, { detail: dialogId }))
 }
@@ -916,6 +924,7 @@ onMounted(() => {
 
   // 监听 localStorage 变化
   window.addEventListener('storage', handleStorageChange)
+  window.addEventListener('focus', refreshEditStateOnFocus)
   window.addEventListener(RESUME_SETTINGS_DIALOG_EVENT, handleResumeSettingsDialogOpen)
 
   // 使用 ResizeObserver 监听窗口大小变化
@@ -940,6 +949,7 @@ onMounted(() => {
 // 清理监听器
 onUnmounted(() => {
   window.removeEventListener('storage', handleStorageChange)
+  window.removeEventListener('focus', refreshEditStateOnFocus)
   window.removeEventListener(RESUME_SETTINGS_DIALOG_EVENT, handleResumeSettingsDialogOpen)
   stopParsingStatusPoll()
   if (uiNoticeTimer) clearTimeout(uiNoticeTimer)
@@ -973,6 +983,18 @@ function contextDisplayTitle(context) {
   return context?.context_type === 'main' ? '主对话' : (context?.title || '任务')
 }
 
+function contextEditStatus(context) {
+  if (!context || taskEditState.value?.owner_session_id !== context.session_id) return ''
+  return taskEditState.value?.status || ''
+}
+
+function contextStatusTitle(context) {
+  const status = contextEditStatus(context)
+  if (status === 'generating') return `${contextDisplayTitle(context)}：正在生成修改预览`
+  if (status === 'awaiting_confirmation') return `${contextDisplayTitle(context)}：修改预览待确认`
+  return contextDisplayTitle(context)
+}
+
 function invalidateMainConversation() {
   const main = conversationContexts.value.find(context => context.context_type === 'main')
   if (!main) return
@@ -983,6 +1005,7 @@ function invalidateMainConversation() {
 async function loadTaskContexts({ preserveActive = true } = {}) {
   if (!currentTaskId.value) {
     conversationContexts.value = []
+    taskEditState.value = null
     activeContextId.value = ''
     return
   }
@@ -992,6 +1015,7 @@ async function loadTaskContexts({ preserveActive = true } = {}) {
   if (!response.ok) throw new Error('无法加载任务会话')
   const data = await response.json()
   conversationContexts.value = Array.isArray(data.contexts) ? data.contexts : []
+  taskEditState.value = data.edit_state || null
   const main = conversationContexts.value.find(context => context.context_type === 'main')
   const selected = preserveActive
     ? conversationContexts.value.find(context => context.session_id === activeContextId.value)
@@ -1375,6 +1399,7 @@ async function buildDirectEditPreview() {
   const targetSessionId = sessionId.value
   isBuildingDirectPreview.value = true
   directEditError.value = ''
+  taskEditState.value = { status: 'generating', owner_session_id: targetSessionId }
   try {
     const response = await fetch(`/tasks/${currentTaskId.value}/direct-replace-preview`, {
       method: 'POST',
@@ -1387,7 +1412,7 @@ async function buildDirectEditPreview() {
       })
     })
     const data = await response.json().catch(() => ({}))
-    if (!response.ok) throw new Error(data.detail || data.error || '无法生成修改预览')
+    if (!response.ok) throw new Error(userFacingApiError(data, '无法生成修改预览'))
     targetState.messages = targetState.messages.map(message => (
       message.type === 'confirm' && !message.handled ? { ...message, handled: true } : message
     ))
@@ -1409,9 +1434,12 @@ async function buildDirectEditPreview() {
       ? normalizeLayoutConfig(data.layout_candidate)
       : null
     targetState.hasConfirmArea = true
+    taskEditState.value = { status: 'awaiting_confirmation', owner_session_id: targetSessionId }
     showDirectEditDialog.value = false
     nextTick(() => scrollToBottom('auto'))
   } catch (error) {
+    taskEditState.value = null
+    await loadTaskContexts({ preserveActive: true }).catch(() => {})
     directEditError.value = error.message || '无法生成修改预览'
   } finally {
     isBuildingDirectPreview.value = false
@@ -1705,6 +1733,13 @@ function logout() {
   if (isLocalMode.value) {
     return
   }
+  const activeToken = localStorage.getItem('access_token') || ''
+  if (activeToken) {
+    fetch('/auth/logout', {
+      method: 'POST',
+      headers: buildAuthorizationHeaders(activeToken)
+    }).catch(() => {})
+  }
   localStorage.removeItem('access_token')
   localStorage.removeItem('user')
   token.value = ''
@@ -1873,6 +1908,12 @@ async function sendMessage() {
 
               if (data.type === 'progress') {
                 updateProcessing(data, requestState)
+                if (data.phase === 'building_preview') {
+                  taskEditState.value = {
+                    status: 'generating',
+                    owner_session_id: requestSessionId
+                  }
+                }
               } else if (data.type === 'stream') {
                 // 停止加载文案切换
                 if (loadingTextInterval) {
@@ -1912,6 +1953,7 @@ async function sendMessage() {
                 // 收到第一个流式输出后，隐藏加载指示器
                 isLoading.value = false
                 finishProcessing(data.request_id, requestState)
+                if (data.confirmation_processed) taskEditState.value = null
                 // 更新会话ID并保存到localStorage
                 if (data.session_id) {
                   localStorage.setItem('resumeAssistantSessionId', data.session_id)
@@ -1974,6 +2016,10 @@ async function sendMessage() {
                 }
                 // 标记有 confirm area，禁用输入
                 hasConfirmArea.value = true
+                taskEditState.value = {
+                  status: 'awaiting_confirmation',
+                  owner_session_id: requestSessionId
+                }
               } else if (data.type === 'proposal_error') {
                 previewResumeData.value = null
                 previewLayoutConfig.value = null
@@ -1992,6 +2038,8 @@ async function sendMessage() {
                 isLoading.value = false
                 isResponding.value = false
                 finishProcessing(data.request_id, requestState)
+                taskEditState.value = null
+                await loadTaskContexts({ preserveActive: true }).catch(() => {})
               } else if (data.type === 'persistence_error') {
                 showNotice(data.message || '对话状态未能安全保存，请重新发送上一条消息。')
               } else if (data.type === 'workflow_error') {
@@ -2095,9 +2143,15 @@ async function handleOptionClick({ confirm_id, value, source = '', selected_chan
         body: formData
       })
       const data = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(data.error || data.detail || '处理确认请求失败')
+      if (!response.ok) {
+        const error = new Error(userFacingApiError(data, '处理确认请求失败'))
+        error.stalePreview = response.status === 409
+          && String(data.error || data.detail || '').includes('简历已发生其他修改')
+        throw error
+      }
       targetState.previewResumeData = null
       targetState.previewLayoutConfig = null
+      taskEditState.value = null
       if (value !== 'cancel') {
         await updateResumeData()
         targetState.messages.push({
@@ -2110,13 +2164,21 @@ async function handleOptionClick({ confirm_id, value, source = '', selected_chan
         })
       }
     } catch (error) {
-      if (confirmMsgIndex !== -1) {
-        targetState.messages[confirmMsgIndex] = {
-          ...targetState.messages[confirmMsgIndex],
-          handled: false
+      if (error.stalePreview) {
+        targetState.previewResumeData = null
+        targetState.previewLayoutConfig = null
+        targetState.hasConfirmArea = false
+        taskEditState.value = null
+        await updateResumeData().catch(() => {})
+      } else {
+        if (confirmMsgIndex !== -1) {
+          targetState.messages[confirmMsgIndex] = {
+            ...targetState.messages[confirmMsgIndex],
+            handled: false
+          }
         }
+        targetState.hasConfirmArea = true
       }
-      targetState.hasConfirmArea = true
       showNotice(error.message || '处理确认请求失败')
     } finally {
       targetState.isLoading = false
@@ -2172,6 +2234,25 @@ async function handleOptionClick({ confirm_id, value, source = '', selected_chan
     let resumeRefreshed = false
     let confirmationProcessed = false
     let confirmationSucceeded = false
+    let confirmationUiSettled = false
+
+    const settleConfirmationUi = async () => {
+      if (!confirmationProcessed || confirmationUiSettled) return
+      taskEditState.value = null
+      previewResumeData.value = null
+      previewLayoutConfig.value = null
+      hasConfirmArea.value = false
+      confirmationUiSettled = true
+      if (isAccepting && !resumeRefreshed) {
+        try {
+          await updateResumeData()
+          resumeRefreshed = true
+        } catch (refreshError) {
+          console.error('刷新当前简历失败:', refreshError)
+          showNotice('修改预览已关闭，但当前简历刷新失败，请稍后重试。')
+        }
+      }
+    }
 
     while (true) {
       const { done, value: chunk } = await reader.read()
@@ -2203,10 +2284,7 @@ async function handleOptionClick({ confirm_id, value, source = '', selected_chan
             messages.value[index] = { ...messages.value[index], content: data.content, streaming: false }
           }
           if (data.session_id) localStorage.setItem('resumeAssistantSessionId', data.session_id)
-          if (isAccepting && confirmationSucceeded) {
-            await updateResumeData()
-            resumeRefreshed = true
-          }
+          await settleConfirmationUi()
         } else if (data.type === 'persistence_error') {
           showNotice(data.message || '对话状态未能安全保存，请重新发送上一条消息。')
         } else if (data.type === 'workflow_error') {
@@ -2215,13 +2293,11 @@ async function handleOptionClick({ confirm_id, value, source = '', selected_chan
           confirmationProcessed = confirmationProcessed || Boolean(data.confirmation_processed)
           confirmationSucceeded = confirmationSucceeded || Boolean(data.confirmation_success)
           if (data.session_id) localStorage.setItem('resumeAssistantSessionId', data.session_id)
-          if (isAccepting && confirmationSucceeded && !resumeRefreshed) {
-            await updateResumeData()
-            resumeRefreshed = true
-          }
+          await settleConfirmationUi()
         }
       }
     }
+    await settleConfirmationUi()
     if (isAccepting && confirmationProcessed && confirmationSucceeded && resumeRefreshed) {
       messages.value.push({
         id: Date.now() * 1000 + 9,
@@ -4464,8 +4540,7 @@ watch(
       </h1>
       <div class="header-info">
         <span class="workspace-project-title">{{ plainDisplayText(currentProject?.title || '主简历') }}</span>
-        <span v-if="isLocalMode" class="workspace-mode-pill"><i></i>本地模式</span>
-        <AccountMenu v-else-if="currentUser" :user="currentUser" @logout="logout" />
+        <AccountMenu v-if="!isLocalMode && currentUser" :user="currentUser" @logout="logout" />
       </div>
     </div>
   </header>
@@ -4533,7 +4608,9 @@ watch(
               <div
                 v-for="context in conversationContexts.filter(item => item.context_type === 'main' || item.status === 'active')"
                 :key="context.id"
-                :class="['mission-tab', { active: context.session_id === activeContextId, busy: contextUiStates[context.session_id]?.isResponding }]"
+                :class="['mission-tab', { active: context.session_id === activeContextId, busy: contextUiStates[context.session_id]?.isResponding, 'edit-generating': contextEditStatus(context) === 'generating', 'edit-awaiting': contextEditStatus(context) === 'awaiting_confirmation' }]"
+                :title="contextStatusTitle(context)"
+                :aria-label="contextStatusTitle(context)"
                 role="button"
                 tabindex="0"
                 @click.stop="selectConversationContext(context)"
@@ -4722,7 +4799,9 @@ watch(
                   <div
                     v-for="context in conversationContexts.filter(item => item.context_type === 'main' || item.status === 'active')"
                     :key="context.id"
-                    :class="['mission-tab', { active: context.session_id === activeContextId, busy: contextUiStates[context.session_id]?.isResponding }]"
+                    :class="['mission-tab', { active: context.session_id === activeContextId, busy: contextUiStates[context.session_id]?.isResponding, 'edit-generating': contextEditStatus(context) === 'generating', 'edit-awaiting': contextEditStatus(context) === 'awaiting_confirmation' }]"
+                    :title="contextStatusTitle(context)"
+                    :aria-label="contextStatusTitle(context)"
                     role="button"
                     tabindex="0"
                     @click.stop="selectConversationContext(context)"
@@ -5671,6 +5750,18 @@ watch(
   background: #78a6ff;
   box-shadow: 0 0 7px rgba(120, 166, 255, 0.55);
   animation: mission-tab-pulse 1s ease-in-out infinite;
+}
+
+.mission-tab.edit-generating .mission-tab-dot {
+  background: #78a6ff;
+  box-shadow: 0 0 7px rgba(120, 166, 255, 0.62);
+  animation: mission-tab-pulse 1s ease-in-out infinite;
+}
+
+.mission-tab.edit-awaiting .mission-tab-dot {
+  background: #d6a85f;
+  box-shadow: 0 0 7px rgba(214, 168, 95, 0.58);
+  animation: none;
 }
 
 @keyframes mission-tab-pulse {
@@ -7788,23 +7879,6 @@ watch(
 
 .module-title-setting-row-label {
   align-items: center;
-}
-
-.workspace-mode-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  color: #8f8f98;
-  font: 0.66rem 'GTPressuraMono-Light', monospace;
-  letter-spacing: 0.08em;
-}
-
-.workspace-mode-pill i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #6ed69b;
-  box-shadow: 0 0 9px rgba(110, 214, 155, 0.65);
 }
 
 .module-title-inline-label {

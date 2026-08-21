@@ -6,24 +6,44 @@ cd /d "%~dp0.."
 set "PROJECT_ROOT=%CD%"
 set "RUN_DIR=%PROJECT_ROOT%\.local-run"
 set "PYTHON=%PROJECT_ROOT%\.venv-win\Scripts\python.exe"
+if not defined BACKEND_PROFILE set "BACKEND_PROFILE=local"
+if /I "%BACKEND_PROFILE%"=="multi_user" (
+  set "PROFILE_LABEL=Multi-user MySQL"
+  set "ENV_FILE=%PROJECT_ROOT%\.env.multi_user"
+  set "BACKEND_RUNNER=%PROJECT_ROOT%\scripts\run_multi_user_backend.py"
+  set "EXPECTED_APP_MODE=multi_user"
+  set "EXPECTED_DATABASE=mysql"
+) else (
+  set "BACKEND_PROFILE=local"
+  set "PROFILE_LABEL=Local SQLite"
+  set "ENV_FILE=%PROJECT_ROOT%\.env"
+  set "BACKEND_RUNNER=%PROJECT_ROOT%\scripts\run_local_backend.py"
+  set "EXPECTED_APP_MODE=local"
+  set "EXPECTED_DATABASE=sqlite"
+)
 set "PID_FILE=%RUN_DIR%\backend.pid"
 set "OUT_LOG=%RUN_DIR%\backend.out.log"
 set "ERR_LOG=%RUN_DIR%\backend.err.log"
+set "PREFLIGHT_LOG=%RUN_DIR%\backend-preflight.err.log"
 set "NO_PAUSE=0"
 set "RESTART=1"
 if /I "%~1"=="--worker" goto worker
 call :parse_args %*
 
 echo ============================================================
-echo Resume Assistant - Backend
+echo Resume Assistant - Backend - %PROFILE_LABEL%
 echo ============================================================
 
 if not exist "%PYTHON%" (
   echo [ERROR] .venv-win is missing. Install backend dependencies first.
   goto failed
 )
-if not exist "%PROJECT_ROOT%\.env" (
-  echo [ERROR] .env is missing. Copy .env.example to .env first.
+if not exist "%ENV_FILE%" (
+  echo [ERROR] %ENV_FILE% is missing.
+  goto failed
+)
+if not exist "%BACKEND_RUNNER%" (
+  echo [ERROR] Backend runner is missing: %BACKEND_RUNNER%
   goto failed
 )
 where.exe curl.exe >nul 2>&1
@@ -37,6 +57,18 @@ if errorlevel 1 (
   goto failed
 )
 if not exist "%RUN_DIR%" mkdir "%RUN_DIR%"
+
+if /I "%BACKEND_PROFILE%"=="multi_user" (
+  echo [INFO] Checking MySQL application credentials before restarting the backend...
+  "%PYTHON%" "%BACKEND_RUNNER%" --check >nul 2>"%PREFLIGHT_LOG%"
+  if errorlevel 1 (
+    echo [ERROR] MySQL connection check failed. The current backend was not stopped.
+    echo Review: %PREFLIGHT_LOG%
+    goto failed
+  )
+  del /q "%PREFLIGHT_LOG%" >nul 2>&1
+  echo [OK] MySQL connection check passed.
+)
 
 if "%RESTART%"=="1" (
   call :backend_ready
@@ -83,10 +115,22 @@ goto wait_backend
 
 :backend_started
 call :record_pid
+call :profile_ready
+if errorlevel 1 (
+  echo [ERROR] Backend started, but the runtime profile is not %EXPECTED_APP_MODE% + %EXPECTED_DATABASE%.
+  echo Review: %ERR_LOG%
+  goto failed
+)
 echo [OK] Backend started successfully.
 
 :ready
+call :profile_ready
+if errorlevel 1 (
+  echo [ERROR] Backend is reachable, but it is not running the expected profile.
+  goto failed
+)
 echo URL:  http://127.0.0.1:8000
+echo Mode: %EXPECTED_APP_MODE% + %EXPECTED_DATABASE%
 if defined SERVICE_PID echo PID:  !SERVICE_PID!
 echo Logs: %RUN_DIR%
 echo.
@@ -102,6 +146,10 @@ exit /b 1
 
 :backend_ready
 curl.exe --silent --fail --max-time 2 -X POST http://127.0.0.1:8000/health >nul 2>&1
+exit /b %errorlevel%
+
+:profile_ready
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "try { $c = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/app/config' -TimeoutSec 3; if ($c.app_mode -eq '%EXPECTED_APP_MODE%' -and $c.database_backend -eq '%EXPECTED_DATABASE%') { exit 0 }; exit 1 } catch { exit 1 }" >nul 2>&1
 exit /b %errorlevel%
 
 :record_pid
@@ -160,5 +208,5 @@ exit /b %errorlevel%
 
 :worker
 cd /d "%PROJECT_ROOT%"
-"%PYTHON%" "%PROJECT_ROOT%\scripts\run_local_backend.py" 0<nul 1>"%OUT_LOG%" 2>"%ERR_LOG%"
+"%PYTHON%" "%BACKEND_RUNNER%" 0<nul 1>"%OUT_LOG%" 2>"%ERR_LOG%"
 exit /b %errorlevel%

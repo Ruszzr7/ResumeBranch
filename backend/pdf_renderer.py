@@ -1,9 +1,4 @@
-"""Render resume HTML to PDF with the browser engine used by the preview.
-
-Chromium is preferred because its CJK line breaking and justification match the
-browser preview much more closely than WeasyPrint.  WeasyPrint remains a
-compatibility fallback for deployments without a supported browser binary.
-"""
+"""Render resume HTML to PDF with the Chromium engine used by the preview."""
 
 from __future__ import annotations
 
@@ -73,11 +68,14 @@ def render_html_with_chromium(
     *,
     browser_path: str | None = None,
     timeout_seconds: int = 30,
-) -> bytes | None:
-    """Print HTML to PDF with Chromium, or return ``None`` when unavailable."""
+) -> bytes:
+    """Print HTML to PDF with Chromium and fail clearly when it is unavailable."""
     executable = browser_path or find_pdf_browser()
     if not executable:
-        return None
+        raise RuntimeError(
+            "未找到可用的 Chromium 浏览器。请安装 Chrome、Edge 或 Chromium，"
+            f"也可以通过 {PDF_BROWSER_ENV} 指定浏览器可执行文件。"
+        )
 
     with tempfile.TemporaryDirectory(prefix="resume-pdf-") as temp_dir:
         temp_root = Path(temp_dir)
@@ -112,20 +110,16 @@ def render_html_with_chromium(
                 creationflags=creation_flags,
             )
         except (OSError, subprocess.SubprocessError) as exc:
-            LOGGER.warning("Chromium PDF rendering failed; falling back to WeasyPrint: %s", exc)
-            return None
+            raise RuntimeError(f"Chromium PDF 生成失败：{exc}") from exc
 
         if completed.returncode != 0 or not pdf_path.is_file():
             detail = completed.stderr.decode("utf-8", errors="replace").strip()
-            LOGGER.warning(
-                "Chromium PDF rendering failed with exit code %s; falling back to WeasyPrint: %s",
-                completed.returncode,
-                detail[-1000:],
+            raise RuntimeError(
+                "Chromium PDF 生成失败"
+                f"（退出码 {completed.returncode}）：{detail[-1000:] or '未生成 PDF 文件'}"
             )
-            return None
 
         pdf_bytes = pdf_path.read_bytes()
         if not pdf_bytes.startswith(b"%PDF-"):
-            LOGGER.warning("Chromium produced an invalid PDF; falling back to WeasyPrint")
-            return None
+            raise RuntimeError("Chromium 返回了无效的 PDF 文件")
         return pdf_bytes

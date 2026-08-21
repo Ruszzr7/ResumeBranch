@@ -123,6 +123,20 @@ class ConfirmationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("教育经历 1 · GPA", labels)
         self.assertEqual(result["resume_data"]["basics"]["name"], "原姓名")
 
+    async def test_local_field_assignment_preserves_whole_field_bold(self):
+        before = resume_payload("**原姓名**", with_education=True)
+        state = AgentState(
+            messages=[HumanMessage(content="将姓名改为新姓名。")],
+            resume_data=before,
+            jd_data={},
+            user_id=7,
+            task_id="task-1",
+        )
+
+        candidate = build_local_edit_candidate(state)
+
+        self.assertEqual(candidate["basics"]["name"], "**新姓名**")
+
     async def test_legacy_proposal_node_does_not_call_a_second_model(self):
         state = AgentState(
             messages=[HumanMessage(content="优化项目经历的描述，使其更突出后端性能提升")],

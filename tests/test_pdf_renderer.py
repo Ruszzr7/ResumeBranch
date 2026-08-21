@@ -47,6 +47,20 @@ class PdfRendererTests(unittest.TestCase):
             self.assertIn("--no-pdf-header-footer", command)
             self.assertTrue(any(value.startswith("--user-data-dir=") for value in command))
 
+    def test_missing_browser_fails_with_installation_guidance(self):
+        with patch("backend.pdf_renderer.find_pdf_browser", return_value=None):
+            with self.assertRaisesRegex(RuntimeError, "Chrome、Edge 或 Chromium"):
+                render_html_with_chromium("<html><body>test</body></html>")
+
+    def test_browser_failure_does_not_switch_rendering_engines(self):
+        with TemporaryDirectory() as temp_dir:
+            browser = Path(temp_dir) / "browser.exe"
+            browser.touch()
+            completed = type("Completed", (), {"returncode": 1, "stderr": b"failed"})()
+            with patch("backend.pdf_renderer.subprocess.run", return_value=completed):
+                with self.assertRaisesRegex(RuntimeError, "Chromium PDF"):
+                    render_html_with_chromium("<html><body>test</body></html>", browser_path=str(browser))
+
     def test_generate_pdf_prefers_browser_and_applies_two_page_limit(self):
         with patch("backend.pdf_generator.render_html_with_chromium", return_value=pdf_with_pages(2)):
             result = generate_pdf({"basics": {"name": "测试"}})

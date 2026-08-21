@@ -7,7 +7,6 @@
       aria-haspopup="menu"
       @click="open = !open"
     >
-      <span class="account-avatar">{{ initial }}</span>
       <span class="account-label">{{ displayName }}</span>
       <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4" /></svg>
     </button>
@@ -49,7 +48,6 @@ const emit = defineEmits(['logout'])
 const open = ref(false)
 const menuRoot = ref(null)
 const displayName = computed(() => String(props.user?.email || '用户').split('@')[0] || '用户')
-const initial = computed(() => displayName.value.slice(0, 1).toUpperCase())
 
 function closeFromOutside(event) {
   if (menuRoot.value && !menuRoot.value.contains(event.target)) open.value = false
@@ -75,7 +73,7 @@ onBeforeUnmount(() => document.removeEventListener('click', closeFromOutside))
   display: inline-flex;
   align-items: center;
   gap: 0.55rem;
-  padding: 0 0.7rem 0 0.35rem;
+  padding: 0 0.7rem;
   color: #d9d9df;
   background: rgba(255, 255, 255, 0.055);
   border: 1px solid rgba(255, 255, 255, 0.11);
@@ -89,17 +87,6 @@ onBeforeUnmount(() => document.removeEventListener('click', closeFromOutside))
   color: #fff;
   background: rgba(255, 255, 255, 0.1);
   border-color: rgba(120, 166, 255, 0.45);
-}
-
-.account-avatar {
-  width: 24px;
-  height: 24px;
-  display: grid;
-  place-items: center;
-  color: #fff;
-  background: #5f8ff2;
-  border-radius: 6px;
-  font-size: 0.68rem;
 }
 
 .account-label {
@@ -180,7 +167,7 @@ onBeforeUnmount(() => document.removeEventListener('click', closeFromOutside))
 .account-pop-leave-to { opacity: 0; transform: translateY(-5px); }
 
 @media (max-width: 640px) {
-  .account-label { display: none; }
-  .account-trigger { padding-right: 0.4rem; }
+  .account-label { max-width: 6.5rem; }
+  .account-trigger { padding: 0 0.55rem; }
 }
 </style>

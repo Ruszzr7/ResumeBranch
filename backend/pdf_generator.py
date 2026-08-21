@@ -1,9 +1,8 @@
 """
 PDF生成器模块
-使用WeasyPrint生成矢量PDF，样式与前端简历预览完全一致
+使用 Chromium 生成矢量 PDF，样式与前端简历预览保持一致
 """
 
-import os
 import re
 from io import BytesIO
 from html import escape
@@ -1332,7 +1331,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
             window.requestAnimationFrame(applyPhotoFrame);
         }});
     }};
-    // Apply synchronously for non-browser fallbacks, then settle again after
+    // Apply synchronously before Chromium prints, then settle again after
     // fonts and the embedded data URL image have completed layout.
     settle();
     const imagesReady = Promise.all(Array.from(container.querySelectorAll('img')).map(image => (
@@ -1388,13 +1387,6 @@ def generate_pdf(resume_data: dict, style: dict = None, photo: str = None, lang:
 
     html_content = render_resume_to_html(resume_data, style, photo, lang, layout_config)
     pdf_bytes = render_html_with_chromium(html_content)
-    if pdf_bytes is not None:
-        page_count = len(PdfReader(BytesIO(pdf_bytes)).pages)
-        enforce_page_limit(normalize_page_mode((style or {}).get("pageMode")), page_count)
-        return pdf_bytes
-
-    from weasyprint import HTML
-
-    document = HTML(string=html_content, base_url=os.getcwd()).render()
-    enforce_page_limit(normalize_page_mode((style or {}).get("pageMode")), len(document.pages))
-    return document.write_pdf()
+    page_count = len(PdfReader(BytesIO(pdf_bytes)).pages)
+    enforce_page_limit(normalize_page_mode((style or {}).get("pageMode")), page_count)
+    return pdf_bytes
