@@ -38,6 +38,7 @@ ormsgpack==1.12.2
 packaging==26.2
 pillow==12.3.0
 pdf2image==1.17.0
+pypdf==6.15.0
 pyasn1==0.6.4
 pycparser==3.0
 pydantic==2.13.4

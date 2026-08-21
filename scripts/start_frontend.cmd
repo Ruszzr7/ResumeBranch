@@ -34,7 +34,12 @@ if errorlevel 1 (
 )
 if not exist "%FRONTEND_ROOT%\node_modules" (
   echo [ERROR] frontend\node_modules is missing.
-  echo Run npm install in the frontend directory first.
+  echo Run npm ci in the frontend directory first.
+  goto failed
+)
+if not exist "%FRONTEND_ROOT%\node_modules\vite\bin\vite.js" (
+  echo [ERROR] Frontend dependencies are incomplete: Vite is missing.
+  echo Run npm ci in the frontend directory to restore node_modules.
   goto failed
 )
 if not exist "%RUN_DIR%" mkdir "%RUN_DIR%"

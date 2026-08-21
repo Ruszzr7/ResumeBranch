@@ -120,16 +120,17 @@ class InterviewApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(save_memory.call_args.kwargs["interview_memory"]["mode"], "coaching")
 
     async def test_invalid_structured_mode_fails_before_graph_execution(self):
-        response = await main.chat_endpoint(
-            message="开始",
-            files=[],
-            session_id="task-1",
-            request_id="invalid-1",
-            interaction_mode="unsafe-mode",
-            interaction_action="start",
-            current_user=SimpleNamespace(id=7),
-            db=SimpleNamespace(info={"task_id": "task-1"}),
-        )
+        with patch("backend.main.require_llm_configured"):
+            response = await main.chat_endpoint(
+                message="开始",
+                files=[],
+                session_id="task-1",
+                request_id="invalid-1",
+                interaction_mode="unsafe-mode",
+                interaction_action="start",
+                current_user=SimpleNamespace(id=7),
+                db=SimpleNamespace(info={"task_id": "task-1"}),
+            )
         self.assertEqual(response.status_code, 400)
 
 
