@@ -25,6 +25,19 @@ class RenderContractTests(unittest.TestCase):
         }))
         self.assertEqual(blocks, [])
 
+    def test_project_technical_stack_is_rendered_before_introduction(self):
+        blocks = list(iter_experience_content_blocks({
+            "content_blocks": [
+                {"type": "paragraph", "semantic_role": "introduction", "label": "项目简介", "text": "背景"},
+                {"type": "numbered_list", "semantic_role": "responsibilities", "label": "项目职责", "items": ["职责"]},
+                {"type": "paragraph", "semantic_role": "tech_stack", "label": "技术栈", "text": "Python、FastAPI"},
+            ],
+        }, experience_kind="project"))
+        self.assertEqual([block["semantic_role"] for block, _ in blocks], [
+            "tech_stack", "introduction", "responsibilities",
+        ])
+        self.assertEqual([flow["type"] for _, flow in blocks], ["paragraph", "paragraph", "numbered_list"])
+
 
 if __name__ == "__main__":
     unittest.main()

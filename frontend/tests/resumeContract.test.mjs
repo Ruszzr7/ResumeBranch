@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  CONTENT_BLOCK_SEMANTIC_ROLES,
   CONTENT_BLOCK_TYPE_OPTIONS,
   normalizeContentBlock,
   normalizeContentBlocks
@@ -33,6 +34,8 @@ test('content block aliases and boolean strings normalize consistently', () => {
 })
 
 test('content block defaults follow semantic roles and unknown labels stay inline', () => {
+  assert.deepEqual(CONTENT_BLOCK_SEMANTIC_ROLES, ['tech_stack', 'introduction', 'responsibilities', 'generic'])
+  assert.equal(normalizeContentBlock({ semantic_role: 'tech_stack', label: '技术栈', text: 'Python' }).type, 'paragraph')
   assert.equal(normalizeContentBlock({ semantic_role: 'introduction', label: '项目简介', text: '背景' }).type, 'paragraph')
   assert.equal(normalizeContentBlock({ semantic_role: 'responsibilities', label: '项目职责', items: ['职责'] }).type, 'numbered_list')
   assert.equal(normalizeContentBlock({ semantic_role: 'generic', label: '', items: ['普通内容'] }).type, 'bullet_list')
@@ -44,6 +47,29 @@ test('content block defaults follow semantic roles and unknown labels stay inlin
     text: '',
     items: ['**未定义前缀**：基于 **方法** 完成']
   })
+})
+
+test('project technical stack is recognized and kept before the existing semantic blocks', () => {
+  const blocks = normalizeContentBlocks([
+    { type: 'numbered_list', semantic_role: 'responsibilities', label: '项目职责', items: ['职责'] },
+    { type: 'paragraph', semantic_role: 'introduction', label: '项目简介', text: '背景' },
+    { type: 'paragraph', label: '技术选型', text: 'Python、FastAPI' },
+    { type: 'bullet_list', semantic_role: 'generic', label: '', items: ['补充'] }
+  ])
+  assert.deepEqual(blocks.map(block => block.semantic_role), ['tech_stack', 'introduction', 'responsibilities', 'generic'])
+  assert.equal(blocks[0].label, '技术选型')
+  assert.equal(blocks[0].type, 'paragraph')
+})
+
+test('legacy project details migrate an explicit technical stack without changing top-level semantics', () => {
+  const blocks = normalizeContentBlocks([], [
+    '项目简介：背景',
+    '技术栈：Python、FastAPI',
+    '项目职责：',
+    '完成联调'
+  ])
+  assert.deepEqual(blocks.map(block => block.semantic_role), ['tech_stack', 'introduction', 'responsibilities'])
+  assert.equal(blocks[0].text, 'Python、FastAPI')
 })
 
 test('legacy introduction followed by points shares the responsibilities contract', () => {
@@ -75,7 +101,7 @@ test('explicit responsibility headings also work for legacy work details', () =>
   assert.deepEqual(blocks[0].items, ['完成模块设计', '完成联调验证'])
 })
 
-test('bold semantic headings and unlabeled lists keep their responsibility role', () => {
+test('bold semantic headings and explicit generic blocks keep separate roles', () => {
   const legacy = normalizeContentBlocks([], [
     '**项目简介**：**负责导航系统设计**',
     '**完成模块实现**',
@@ -89,9 +115,21 @@ test('bold semantic headings and unlabeled lists keep their responsibility role'
     { type: 'paragraph', semantic_role: 'introduction', label: '项目简介', text: '项目背景' },
      { type: 'bullet_list', semantic_role: 'generic', label: '', items: ['补充说明'] }
   ])
-  assert.equal(explicit[1].semantic_role, 'responsibilities')
-  assert.equal(explicit[1].type, 'numbered_list')
+  assert.equal(explicit[1].semantic_role, 'generic')
+  assert.equal(explicit[1].type, 'bullet_list')
   assert.deepEqual(explicit[1].items, ['补充说明'])
+})
+
+test('explicit responsibility blocks preserve their selected display type', () => {
+  const blocks = normalizeContentBlocks([
+    { type: 'paragraph', semantic_role: 'responsibilities', label: '项目职责', text: '职责段落' },
+    { type: 'bullet_list', semantic_role: 'responsibilities', label: '项目职责', items: ['职责分点'] },
+    { type: 'numbered_list', semantic_role: 'responsibilities', label: '项目职责', items: ['职责编号'] }
+  ])
+  assert.deepEqual(blocks.map(block => block.type), ['paragraph', 'bullet_list', 'numbered_list'])
+  assert.equal(blocks[0].text, '职责段落')
+  assert.deepEqual(blocks[1].items, ['职责分点'])
+  assert.deepEqual(blocks[2].items, ['职责编号'])
 })
 
 test('visual group is required for generic content after an intro', () => {
@@ -142,7 +180,7 @@ test('explicit generic multi-item content after an introduction stays generic', 
     { type: 'paragraph', semantic_role: 'introduction', label: '项目简介', text: '背景' },
      { type: 'bullet_list', semantic_role: 'generic', label: '', items: ['补充说明一', '补充说明二'] }
   ])
-  assert.equal(blocks[1].semantic_role, 'responsibilities')
-  assert.equal(blocks[1].type, 'numbered_list')
+  assert.equal(blocks[1].semantic_role, 'generic')
+  assert.equal(blocks[1].type, 'bullet_list')
   assert.deepEqual(blocks[1].items, ['补充说明一', '补充说明二'])
 })

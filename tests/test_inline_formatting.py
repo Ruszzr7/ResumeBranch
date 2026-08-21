@@ -3,7 +3,9 @@ import unittest
 from backend.inline_formatting import (
     InlineFormatError,
     format_inline_html,
+    join_inline_label_value,
     format_resume_text,
+    join_inline_with_inherited_separator,
     parse_inline_bold,
     plain_inline_text,
     set_inline_bold,
@@ -147,6 +149,18 @@ class InlineFormattingTests(unittest.TestCase):
                 bold=False,
                 request_text="把实习经历中的“甲公司”取消加粗",
             )
+
+    def test_joined_separator_requires_both_adjacent_fields_bold(self):
+        value = join_inline_with_inherited_separator(["**2024.01**", "2024.06"], " - ")
+        self.assertEqual(value, "**2024.01** - 2024.06")
+        self.assertEqual(format_inline_html(value), "<strong>2024.01</strong> - 2024.06")
+
+        mixed = join_inline_with_inherited_separator(["**本科**", "专业", "**成绩**"], " · ")
+        self.assertEqual(plain_inline_text(mixed), "本科 · 专业 · 成绩")
+        self.assertEqual(format_inline_html(mixed), "<strong>本科</strong> · 专业 · <strong>成绩</strong>")
+
+        labeled = join_inline_label_value("**证书**", "软件设计师", "：")
+        self.assertEqual(format_inline_html(labeled), "<strong>证书：</strong>软件设计师")
 
 
 if __name__ == "__main__":

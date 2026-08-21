@@ -16,6 +16,7 @@ test('unknown code-like fields use a safe Chinese fallback', () => {
   assert.equal(userFacingFieldLabel('自定义说明'), '自定义说明')
   assert.equal(userFacingFieldLabel('numbered_list'), '编号')
   assert.equal(userFacingFieldLabel('bullet_list'), '分点')
+  assert.equal(userFacingFieldLabel('tech_stack'), '技术栈')
 })
 
 test('historical assistant text localizes embedded internal field names', () => {

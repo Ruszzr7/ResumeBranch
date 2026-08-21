@@ -332,7 +332,9 @@ def normalize_resume_data(data: dict) -> dict:
         item["role"] = _text(item.get("role"))
         item["date_range"] = _date_range(item)
         item["details"] = _normalize_details(item.get("details", item.pop("content", [])))
-        item["content_blocks"] = normalize_content_blocks(item.get("content_blocks"), item["details"])
+        item["content_blocks"] = normalize_content_blocks(
+            item.get("content_blocks"), item["details"], experience_kind="project",
+        )
     normalized["project_experience"] = project_items
 
     others = normalized.get("others")

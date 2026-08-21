@@ -55,6 +55,33 @@ class ResumeEditSkillTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.resume_data["basics"]["name"], "新姓名")
         llm.ainvoke.assert_not_awaited()
 
+    async def test_project_tech_stack_can_be_edited_without_becoming_top_level_skill(self):
+        payload = resume_payload()
+        payload["project_experience"][0]["content_blocks"].insert(0, {
+            "type": "paragraph",
+            "semantic_role": "tech_stack",
+            "label": "技术栈",
+            "label_bold": True,
+            "text": "Python、FastAPI",
+            "items": [],
+        })
+        result = await run_resume_edit(
+            ResumeEditRequest(
+                resume_data=payload,
+                layout_config=default_layout_config(),
+                resume_operations=({
+                    "op": "set",
+                    "path": "project_experience[0].content_blocks[0].text",
+                    "value": "Python、FastAPI、MySQL",
+                    "expected": "Python、FastAPI",
+                },),
+            )
+        )
+        block = result.resume_data["project_experience"][0]["content_blocks"][0]
+        self.assertEqual(block["semantic_role"], "tech_stack")
+        self.assertEqual(block["text"], "Python、FastAPI、MySQL")
+        self.assertEqual(result.resume_data["others"]["skills"], [])
+
     async def test_list_operations_support_move_insert_and_remove(self):
         result = await run_resume_edit(
             ResumeEditRequest(

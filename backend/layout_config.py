@@ -11,6 +11,11 @@ import math
 import re
 from typing import Any
 
+from .inline_formatting import (
+    is_fully_bold_inline,
+    join_inline_with_inherited_separator,
+    plain_inline_text,
+)
 from .resume_contract import normalize_content_block
 
 
@@ -64,18 +69,43 @@ def format_compact_academic_metric(
     item: dict[str, Any] | None,
     hidden_metrics: set[str] | list[str] | tuple[str, ...] = (),
 ) -> str:
-    """Format compact education metrics once for both export renderers."""
+    """Format compact education metrics once for all renderers."""
     item = item or {}
     hidden = set(hidden_metrics)
     metric = ""
     if item.get("gpa") and "gpa" not in hidden:
         metric = str(item["gpa"])
         if item.get("gpa_scale"):
-            metric += f'/{item["gpa_scale"]}'
+            metric = join_inline_with_inherited_separator(
+                [metric, item["gpa_scale"]], "/"
+            )
     if item.get("ranking") and "ranking" not in hidden:
         ranking = str(item["ranking"]).strip().strip("()（）")
-        metric = f"{metric} ({ranking})" if metric else f"({ranking})"
+        ranking = (
+            f"**({plain_inline_text(ranking)})**"
+            if is_fully_bold_inline(ranking)
+            else f"({ranking})"
+        )
+        metric = join_inline_with_inherited_separator(
+            [metric, ranking], " "
+        )
     return metric
+
+
+def is_compact_academic_metric_leading_bold(
+    item: dict[str, Any] | None,
+    hidden_metrics: set[str] | list[str] | tuple[str, ...] = (),
+) -> bool:
+    """Return whether the GPA field immediately after the major is bold.
+
+    The total scale after the slash and the later ranking are independent
+    fields; neither can decide the separator between the major and GPA.
+    """
+    item = item or {}
+    hidden = set(hidden_metrics)
+    if item.get("gpa") and "gpa" not in hidden:
+        return is_fully_bold_inline(item["gpa"])
+    return False
 
 
 def _semantic_font_sizes(body_size: float) -> dict[str, float]:
@@ -110,6 +140,24 @@ SECTION_IDS = (
     "others",
     "self_evaluation",
 )
+_CUSTOM_SECTION_MODULE_RE = re.compile(r"^custom_sections:(\d+)$")
+
+
+def custom_section_module_id(index: int) -> str:
+    return f"custom_sections:{max(0, int(index))}"
+
+
+def custom_section_index(module_id: object) -> int | None:
+    match = _CUSTOM_SECTION_MODULE_RE.fullmatch(str(module_id or ""))
+    return int(match.group(1)) if match else None
+
+
+def is_custom_section_module(module_id: object) -> bool:
+    return custom_section_index(module_id) is not None
+
+
+def _is_valid_section_id(value: object) -> bool:
+    return str(value) in SECTION_IDS or is_custom_section_module(value)
 
 MODULE_COMPONENTS: dict[str, tuple[str, ...]] = {
     "basics": ("name", "target_position", "personal_meta", "contact", "additional_fields", "photo"),
@@ -350,7 +398,7 @@ VALUE_LABELS = {
     "with-degree": "与学历专业同行", "info-column": "信息列",
     "expanded": "完整展示", "bullets": "圆点列表", "bullet": "分点", "bullet_list": "分点",
     "numbered": "编号", "numbered_list": "编号", "paragraph": "普通段落",
-    "introduction": "项目简介", "responsibilities": "项目职责", "generic": "普通内容",
+    "tech_stack": "技术栈", "introduction": "项目简介", "responsibilities": "项目职责", "generic": "普通内容",
     "standalone": "独立栏目",
     "paragraphs": "分段", "tags": "标签", "pipe": "竖线分隔", "dot": "圆点分隔",
 }
@@ -415,7 +463,11 @@ def _display_layout_value(value: Any, field_key: str = "") -> str:
     if isinstance(value, bool):
         return "是" if value else "否"
     if isinstance(value, list):
-        return "、".join(ITEM_LABELS.get(str(item), VALUE_LABELS.get(str(item), str(item))) for item in value) or "无"
+        return "、".join(
+            "自定义栏目" if is_custom_section_module(item)
+            else ITEM_LABELS.get(str(item), VALUE_LABELS.get(str(item), str(item)))
+            for item in value
+        ) or "无"
     if isinstance(value, dict):
         placement_labels = {"standalone": "独立栏目", "education": "并入教育经历"} if field_key == "sectionPlacements" else {}
         return "、".join(
@@ -711,7 +763,7 @@ def normalize_layout_config(value: dict | None) -> dict:
     if supplied_version < 8 and global_config.get("sectionOrder") == old_default_order:
         global_config["sectionOrder"] = list(DEFAULT_LAYOUT_CONFIG["global"]["sectionOrder"])
     order = list(dict.fromkeys(
-        item for item in global_config.get("sectionOrder", []) if item in SECTION_IDS
+        item for item in global_config.get("sectionOrder", []) if _is_valid_section_id(item)
     ))
     if not global_config["splitWorkExperience"]:
         order = [item for item in order if item != "internship_experience"]
@@ -719,6 +771,7 @@ def normalize_layout_config(value: dict | None) -> dict:
         work_index = order.index("work_experience") + 1 if "work_experience" in order else 0
         order.insert(work_index, "internship_experience")
     required = [item for item in SECTION_IDS if item != "internship_experience" or global_config["splitWorkExperience"]]
+    has_custom_section_modules = any(is_custom_section_module(item) for item in order)
     insertion_points = {
         "honors": "education",
         "publications": "honors",
@@ -727,6 +780,8 @@ def normalize_layout_config(value: dict | None) -> dict:
         "custom_sections": "project_experience",
     }
     for item in required:
+        if item == "custom_sections" and has_custom_section_modules:
+            continue
         if item in order:
             continue
         anchor = insertion_points.get(item)
@@ -736,7 +791,7 @@ def normalize_layout_config(value: dict | None) -> dict:
             order.append(item)
     global_config["sectionOrder"] = order
     global_config["hiddenSections"] = list(dict.fromkeys(
-        item for item in global_config.get("hiddenSections", []) if item in SECTION_IDS
+        item for item in global_config.get("hiddenSections", []) if _is_valid_section_id(item)
     ))
     supplied_global_config = value.get("global") if isinstance(value, dict) and isinstance(value.get("global"), dict) else {}
     title_overrides = supplied_global_config.get("titleOverrides", global_config.get("titleOverrides"))
@@ -809,9 +864,10 @@ def normalize_layout_config(value: dict | None) -> dict:
 def resolve_module_layout(config: dict | None, module_id: str) -> dict[str, Any]:
     """Resolve one module without introducing a second line-height source."""
     normalized = normalize_layout_config(config)
-    if module_id not in MODULE_COMPONENTS:
+    resolved_module_id = "custom_sections" if is_custom_section_module(module_id) else module_id
+    if resolved_module_id not in MODULE_COMPONENTS:
         raise KeyError(module_id)
-    module = deepcopy(normalized[module_id])
+    module = deepcopy(normalized[resolved_module_id])
     module["resolvedTitleStyle"] = module["titleStyle"] or normalized["global"]["titleStyle"]
     module["resolvedTitleAlignment"] = module["titleAlignment"] or "left"
     module["resolvedLineHeight"] = normalized["global"]["lineHeight"]
@@ -1024,6 +1080,13 @@ def resolve_photo_height_mm(
     has_values = lambda value: isinstance(value, list) and any(str(item or "").strip() for item in value)
 
     def section_has_content(section: str) -> bool:
+        custom_index = custom_section_index(section)
+        if custom_index is not None:
+            custom_sections = data.get("custom_sections") or []
+            if custom_index >= len(custom_sections) or not isinstance(custom_sections[custom_index], dict):
+                return False
+            custom = custom_sections[custom_index]
+            return bool(str(custom.get("title") or "").strip()) and has_values(custom.get("items"))
         if section == "education":
             return bool(data.get("education"))
         if section == "skills":
@@ -1054,7 +1117,9 @@ def resolve_photo_height_mm(
         return False
 
     if not any(
-        section_has_content(section) and section not in hidden
+        section_has_content(section)
+        and section not in hidden
+        and (not is_custom_section_module(section) or "custom_sections" not in hidden)
         for section in global_config.get("sectionOrder") or []
     ):
         return desired

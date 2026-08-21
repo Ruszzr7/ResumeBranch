@@ -153,7 +153,8 @@ class ResumeFileApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("只有项目简介正文结束后的后续内容才进入职责候选区", prompt)
         self.assertIn("此后的连续内容默认属于 responsibilities", prompt)
         self.assertIn("source_layout_group", prompt)
-        self.assertIn("若整个经历没有任何明确的项目简介/项目职责标题，全部内容归入 generic", prompt)
+        self.assertIn("若整个经历没有任何明确的项目简介/项目职责/技术栈标题，全部内容归入 generic", prompt)
+        self.assertIn("不能仅凭正文出现技术名词创建该块", prompt)
         self.assertIn("所有可见内容必须原样进入某个 content_blocks", prompt)
 
 

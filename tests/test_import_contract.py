@@ -110,10 +110,30 @@ class ImportContractTests(unittest.TestCase):
         self.assertTrue(quality.accepted)
         blocks = result["project_experience"][0]["content_blocks"]
         self.assertEqual([block["label"] for block in blocks], ["项目简介", "项目职责"])
-        self.assertEqual(blocks[1]["type"], "numbered_list")
+        self.assertEqual(blocks[1]["type"], "bullet_list")
         self.assertTrue(all(block["label_bold"] for block in blocks))
 
-    def test_finalize_import_converts_responsibility_paragraphs_to_numbered_items(self):
+    def test_finalize_import_distinguishes_project_tech_stack_from_top_level_skills(self):
+        result, quality = finalize_import_resume({
+            "basics": {"name": "张三", "phone": "13800138000", "email": "a@example.com"},
+            "project_experience": [{
+                "project_name": "项目",
+                "content_blocks": [
+                    {"type": "paragraph", "semantic_role": "introduction", "label": "项目简介", "text": "背景"},
+                    {"type": "paragraph", "semantic_role": "tech_stack", "label": "", "text": "Python、FastAPI"},
+                ],
+            }],
+            "others": {"skills": ["Docker"]},
+        }, normalize_and_validate_resume)
+
+        self.assertTrue(quality.accepted)
+        blocks = result["project_experience"][0]["content_blocks"]
+        self.assertEqual([block["semantic_role"] for block in blocks], ["tech_stack", "introduction"])
+        self.assertEqual(blocks[0]["label"], "技术栈")
+        self.assertTrue(blocks[0]["label_bold"])
+        self.assertEqual(result["others"]["skills"], ["Docker"])
+
+    def test_finalize_import_preserves_responsibility_paragraphs(self):
         result, quality = finalize_import_resume({
             "basics": {"name": "张三", "phone": "13800138000", "email": "a@example.com"},
             "project_experience": [{
@@ -127,9 +147,9 @@ class ImportContractTests(unittest.TestCase):
 
         self.assertTrue(quality.accepted)
         block = result["project_experience"][0]["content_blocks"][0]
-        self.assertEqual(block["type"], "numbered_list")
-        self.assertEqual(block["text"], "")
-        self.assertEqual(block["items"], ["完成设计与验证"])
+        self.assertEqual(block["type"], "paragraph")
+        self.assertEqual(block["text"], "完成设计与验证")
+        self.assertEqual(block["items"], [])
 
 
 if __name__ == "__main__":

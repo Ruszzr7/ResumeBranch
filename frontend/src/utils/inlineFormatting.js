@@ -91,6 +91,37 @@ export function isFullyBoldInlineText(value = '') {
   return segments.length > 0 && segments.every(segment => segment.bold)
 }
 
+export function joinInlineWithInheritedSeparator(values = [], separator = '') {
+  const normalized = (Array.isArray(values) ? values : [])
+    .map(value => String(value ?? '').trim())
+    .filter(Boolean)
+  if (!normalized.length) return ''
+
+  const segments = []
+  normalized.forEach((value, index) => {
+    if (index) {
+      segments.push({
+        text: separator,
+        bold: isFullyBoldInlineText(normalized[index - 1]) && isFullyBoldInlineText(value)
+      })
+    }
+    segments.push(...parseInlineBold(value))
+  })
+  return serializeInlineBold(segments)
+}
+
+export function joinInlineLabelValue(label = '', value = '', separator = '：') {
+  const labelText = String(label ?? '').trim()
+  const valueText = String(value ?? '').trim()
+  if (!labelText) return valueText
+  const segments = [
+    ...parseInlineBold(labelText),
+    { text: separator, bold: isFullyBoldInlineText(labelText) },
+    ...parseInlineBold(valueText)
+  ]
+  return serializeInlineBold(segments)
+}
+
 export function formatInlineHtml(value = '') {
   return parseInlineBold(String(value ?? '').trim()).map(segment => {
     const content = escapeHtml(segment.text)

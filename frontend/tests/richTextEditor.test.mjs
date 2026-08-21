@@ -33,9 +33,13 @@ test('editor toggles selections through the deterministic bold-only protocol', (
 
 test('default-bold fields are explicit while module editors do not force all text bold', () => {
   assert.ok(appSource.includes('v-model="resumeFormData.basics.target_position" placeholder="例如 后端开发工程师" compact default-bold'))
-  assert.ok(appSource.includes("label_bold: semanticRole === 'introduction' || semanticRole === 'responsibilities'"))
-  assert.ok(appSource.includes("semantic_role: 'introduction',\n  label: project?._introLabel,\n  label_bold: true"))
-  assert.ok(appSource.includes("semantic_role: 'responsibilities', label: project?._dutiesLabel,\n  label_bold: true"))
+  assert.ok(appSource.includes('label_bold: isFullyBoldInlineText(normalizedLabel)'))
+  assert.ok(appSource.includes("return value.includes('**') ? value : `**${value}**`"))
+  assert.ok(appSource.includes('label_bold: isFullyBoldInlineText(project?._introLabel)'))
+  assert.ok(appSource.includes('label_bold: isFullyBoldInlineText(project?._techStackLabel)'))
+  assert.ok(appSource.includes('label_bold: isFullyBoldInlineText(project?._dutiesLabel)'))
+  assert.ok(appSource.includes("semantic_role: 'introduction',\n  label: project?._introLabel,\n  label_bold: isFullyBoldInlineText(project?._introLabel)"))
+  assert.ok(appSource.includes("semantic_role: 'responsibilities', label: project?._dutiesLabel,\n  label_bold: isFullyBoldInlineText(project?._dutiesLabel)"))
   for (const field of [
     'v-model="work.job_type" placeholder="例如 全职或实习" compact',
     'v-model="work.date_range[0]" placeholder="例如 2024.09" compact',
@@ -106,6 +110,7 @@ test('work and project semantic labels use the same inline bold editor and hide 
   assert.ok(appSource.includes('v-model="work._introLabel"'))
   assert.ok(appSource.includes('v-model="work._dutiesLabel"'))
   assert.ok(appSource.includes('v-model="proj._introLabel"'))
+  assert.ok(appSource.includes('v-model="proj._techStackLabel"'))
   assert.ok(appSource.includes("_introLabel: '**项目简介**'"))
   assert.equal(appSource.includes('简介标签</label>'), false)
   assert.equal(appSource.includes('_introLabelBold = !'), false)
@@ -117,6 +122,9 @@ test('work and project semantic labels use the same inline bold editor and hide 
   assert.ok(appSource.includes('CONTENT_BLOCK_TYPE_OPTIONS'))
   assert.ok(appSource.includes('v-model="proj._introType"'))
   assert.ok(appSource.includes('v-model="proj._dutiesType"'))
+  assert.ok(appSource.includes('v-model="proj._techStackType"'))
+  assert.ok(appSource.includes('v-model="proj._techStackText"'))
+  assert.ok(appSource.includes(':resume-flow="projectTechStackFlow(proj)"'))
   assert.ok(appSource.includes("type: project?._introType || 'paragraph'"))
   assert.ok(appSource.includes("type: project?._dutiesType || 'numbered_list'"))
 })

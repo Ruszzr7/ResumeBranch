@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, watch, nextTick, onUnmounted } from 'vue'
 import { labels } from '../utils/labels.js'
-import { formatInlineHtml, isFullyBoldInlineText, plainInlineText } from '../utils/inlineFormatting.js'
+import { formatInlineHtml, isFullyBoldInlineText, joinInlineLabelValue, joinInlineWithInheritedSeparator as joinInlineFields, plainInlineText } from '../utils/inlineFormatting.js'
 import { buildAuthorizationHeaders } from '../config/appMode.js'
 import { normalizeContentBlocks } from '../utils/resumeContract.js'
 import {
@@ -9,6 +9,7 @@ import {
   FONT_SIZE_LABELS,
   FONT_SIZE_LIMITS,
   formatCompactAcademicMetric,
+  isCompactAcademicMetricLeadingBold,
   normalizeLayoutConfig,
   resolveContentBlockFlow,
   resolveEducationColumnWidths,
@@ -17,7 +18,11 @@ import {
   PHOTO_BOTTOM_GAP_MM,
   sectionTitle,
   sectionOrder,
-  isSectionHidden
+  isSectionHidden,
+  customSectionIndex,
+  customSectionModuleId,
+  expandSectionOrderForData,
+  isCustomSectionModule
 } from '../utils/layoutConfig.js'
 
 const props = defineProps({
@@ -94,7 +99,8 @@ const props = defineProps({
 
 // 获取当前语言的标签
 const t = computed(() => labels[props.lang] || labels.zh)
-const localSectionOrder = ref(normalizeLayoutConfig(props.layoutConfig).global.sectionOrder)
+const initialLayout = expandSectionOrderForData(props.layoutConfig, props.data)
+const localSectionOrder = ref(initialLayout.global.sectionOrder)
 const RESUME_SETTINGS_DIALOG_EVENT = 'resume-settings-dialog-open'
 const showSectionSettingsDialog = ref(false)
 const isSavingSectionSettings = ref(false)
@@ -106,9 +112,14 @@ const layout = computed(() => {
   value.global.sectionOrder = [...localSectionOrder.value]
   return value
 })
-const moduleLayout = name => layout.value[name] || {}
+const baseModuleName = name => isCustomSectionModule(name) ? 'custom_sections' : name
+const moduleLayout = name => layout.value[baseModuleName(name)] || {}
 const hiddenSection = name => isSectionHidden(layout.value, name)
 const displayTitle = (name, fallback) => {
+  const customIndex = customSectionIndex(name)
+  if (customIndex !== null) {
+    return String(props.data?.custom_sections?.[customIndex]?.title || fallback)
+  }
   const override = layout.value.global?.titleOverrides?.[name]?.[props.lang]
   if (override !== undefined) return override
   return Number(props.data?.formatting_version || 0) >= 2 ? `**${fallback}**` : sectionTitle(layout.value, name, props.lang, fallback)
@@ -116,7 +127,7 @@ const displayTitle = (name, fallback) => {
 const displayTitleText = (name, fallback) => plainInlineText(displayTitle(name, fallback))
 const moduleTitleStyle = name => moduleLayout(name).titleStyle || layout.value.global.titleStyle
 const moduleOrder = name => {
-  const moduleTokens = layoutTokens.value?.modules?.[name] || {}
+  const moduleTokens = layoutTokens.value?.modules?.[baseModuleName(name)] || {}
   const config = moduleLayout(name)
   return {
     order: sectionOrder(layout.value, name),
@@ -151,10 +162,15 @@ const otherFieldLabel = field => {
   if (custom && Object.prototype.hasOwnProperty.call(custom, field)) return String(custom[field] ?? '').trim()
   return ({ skills: t.value.skills, certificates: t.value.certificates, languages: t.value.language }[field] || field)
 }
+
+function joinInlineWithInheritedSeparator(values, separator) {
+  return joinInlineFields(values, separator)
+}
+
 const otherFieldValue = (field, values) => {
   const label = otherFieldLabel(field)
-  const joined = (values || []).join(otherSeparator.value)
-  return label ? `${label}：${joined}` : joined
+  const joined = joinInlineWithInheritedSeparator(values, otherSeparator.value)
+  return joinInlineLabelValue(label, joined, '：')
 }
 const otherSeparator = computed(() => moduleLayout('others').separator === 'dot' ? ' · ' : ' | ')
 const sectionMergedIntoEducation = section => Boolean(props.data?.education?.length)
@@ -271,7 +287,10 @@ function academicMetrics(item) {
   const metrics = []
   const hidden = moduleLayout('education').hiddenMetrics || []
   if (item?.gpa && !hidden.includes('gpa')) {
-    metrics.push(`${t.value.gpa}：${item.gpa}${item.gpa_scale ? `/${item.gpa_scale}` : ''}`)
+    const gpaValue = item.gpa_scale
+      ? joinInlineWithInheritedSeparator([item.gpa, item.gpa_scale], '/')
+      : item.gpa
+    metrics.push(`${t.value.gpa}：${gpaValue}`)
   }
   if (item?.ranking && !hidden.includes('ranking')) {
     metrics.push(`${t.value.ranking}：${item.ranking}`)
@@ -302,6 +321,20 @@ function nativeListMarkerParts(value) {
 function compactAcademicMetric(item) {
   const hidden = moduleLayout('education').hiddenMetrics || []
   return formatCompactAcademicMetric(item, hidden)
+}
+
+function dateRangeText(item) {
+  const dateRange = Array.isArray(item?.date_range)
+    ? item.date_range.slice(0, 2).map(value => String(value ?? '').trim())
+    : []
+  const values = dateRange.some(Boolean)
+    ? dateRange
+    : [item?.start_date, item?.end_date].map(value => String(value ?? '').trim())
+  return joinInlineWithInheritedSeparator(values, ' - ')
+}
+
+function componentIsFullyBold(value) {
+  return isFullyBoldInlineText(String(value ?? '').trim())
 }
 
 function visibleComponentRows(moduleId, excluded = []) {
@@ -344,15 +377,15 @@ function componentCellStyle(cell) {
 
 function educationComponentText(item, component) {
   if (component === 'school') return item?.school_name || '学校未填写'
-  if (component === 'school_tags') return (item?.school_tags || []).join(' · ')
+  if (component === 'school_tags') return joinInlineWithInheritedSeparator(item?.school_tags, ' · ')
   if (component === 'degree') return item?.degree || ''
   if (component === 'major') return item?.major || ''
   if (component === 'metrics') {
     return moduleLayout('education').preset === 'compact'
       ? compactAcademicMetric(item)
-      : academicMetrics(item).join(' · ')
+      : joinInlineWithInheritedSeparator(academicMetrics(item), ' · ')
   }
-  if (component === 'date') return `${item?.date_range?.[0] || ''} - ${item?.date_range?.[1] || '至今'}`
+  if (component === 'date') return dateRangeText(item)
   return ''
 }
 
@@ -360,14 +393,14 @@ function workComponentText(item, component, moduleId) {
   if (component === 'organization') return item?.company_name || '公司未填写'
   if (component === 'position') return item?.job_title || ''
   if (component === 'job_type') return moduleLayout(moduleId).showJobType && item?.job_type ? `(${item.job_type})` : ''
-  if (component === 'date') return `${item?.date_range?.[0] || ''} - ${item?.date_range?.[1] || '至今'}`
+  if (component === 'date') return dateRangeText(item)
   return ''
 }
 
 function projectComponentText(item, component) {
   if (component === 'project_name') return item?.project_name || item?.name || '项目未填写'
   if (component === 'role') return moduleLayout('project_experience').showRole ? (item?.role || '') : ''
-  if (component === 'date') return moduleLayout('project_experience').showDate ? `${item?.date_range?.[0] || ''} - ${item?.date_range?.[1] || '至今'}` : ''
+  if (component === 'date') return moduleLayout('project_experience').showDate ? dateRangeText(item) : ''
   return ''
 }
 
@@ -378,19 +411,18 @@ function basicsComponentText(component) {
     const label = `${t.value.targetPosition}：`
     return `${isFullyBoldInlineText(basics.target_position) ? `**${label}**` : label}${basics.target_position}`
   }
-  if (component === 'personal_meta') return [
+  if (component === 'personal_meta') return joinInlineWithInheritedSeparator([
     !hiddenBasicField('gender') ? basics.gender : '',
     !hiddenBasicField('birth_date') && basics.birth_date ? basics.birth_date : ''
-  ].filter(Boolean).join(' | ')
-  if (component === 'contact') return [
+  ], ' | ')
+  if (component === 'contact') return joinInlineWithInheritedSeparator([
     !hiddenBasicField('phone') ? basics.phone : '',
     !hiddenBasicField('email') ? basics.email : ''
-  ].filter(Boolean).join(' | ')
+  ], ' | ')
   if (component === 'additional_fields' && !hiddenBasicField('additional_fields')) {
-    return (basics.additional_fields || [])
+    return joinInlineWithInheritedSeparator((basics.additional_fields || [])
       .filter(field => field?.label || field?.value)
-      .map(field => field?.label && field?.value ? `${field.label}：${field.value}` : (field?.label || field?.value))
-      .join(' | ')
+      .map(field => field?.label && field?.value ? `${field.label}：${field.value}` : (field?.label || field?.value)), ' | ')
   }
   return ''
 }
@@ -480,6 +512,11 @@ const isEducationChildSection = section => section !== 'education' && sectionMer
 const hasResumeListContent = value => Array.isArray(value) && value.some(item => String(item || '').trim())
 const sectionHasContent = section => {
   const data = props.data || {}
+  const customIndex = customSectionIndex(section)
+  if (customIndex !== null) {
+    const custom = data.custom_sections?.[customIndex]
+    return Boolean(custom?.title && hasResumeListContent(custom.items))
+  }
   if (section === 'education') return Array.isArray(data.education) && data.education.length > 0
   if (section === 'skills') return hasResumeListContent(data.others?.skills)
   if (section === 'research_interests') return hasResumeListContent(data.research_interests)
@@ -504,9 +541,9 @@ const sectionHasContent = section => {
   return false
 }
 const reorderableTopSections = computed(() => localSectionOrder.value
-  .filter(section => SECTION_LABELS[section] && sectionHasContent(section) && !hiddenSection(section) && !isEducationChildSection(section)))
+  .filter(section => sectionLabel(section) && sectionHasContent(section) && !hiddenSection(section) && !isEducationChildSection(section)))
 const reorderableEducationChildren = computed(() => localSectionOrder.value
-  .filter(section => SECTION_LABELS[section] && sectionHasContent(section) && !hiddenSection(section) && isEducationChildSection(section)))
+  .filter(section => sectionLabel(section) && sectionHasContent(section) && !hiddenSection(section) && isEducationChildSection(section)))
 const reorderableSections = computed(() => reorderableTopSections.value.flatMap(section => (
   section === 'education' ? [section, ...reorderableEducationChildren.value] : [section]
 )))
@@ -519,6 +556,14 @@ const sectionOrderError = ref('')
 const listSettingSections = ['skills', 'research_interests', 'honors', 'publications', 'custom_sections', 'self_evaluation']
 const mergeSettingSections = ['research_interests', 'honors', 'publications', 'others']
 const LIST_STYLE_LABELS = { paragraph: '段落', bullet: '分点', numbered: '编号' }
+
+function sectionLabel(section) {
+  const customIndex = customSectionIndex(section)
+  if (customIndex !== null) {
+    return plainInlineText(props.data?.custom_sections?.[customIndex]?.title || `自定义栏目 ${customIndex + 1}`)
+  }
+  return SECTION_LABELS[section] || ''
+}
 
 function editableSectionPlacement(section) {
   return sectionSettingsDraft.value.global.sectionPlacements[section] === 'education'
@@ -594,14 +639,14 @@ async function persistSectionOrder() {
     })
     const data = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(data.detail || '保存模块顺序失败')
-    localSectionOrder.value = [...normalizeLayoutConfig(data.layout_config).global.sectionOrder]
+    localSectionOrder.value = [...expandSectionOrderForData(data.layout_config, props.data).global.sectionOrder]
     emit('layout-updated', data.layout_config)
     sectionOrderSnapshot.value = []
     return true
   } catch (error) {
     localSectionOrder.value = sectionOrderSnapshot.value.length
       ? [...sectionOrderSnapshot.value]
-      : [...normalizeLayoutConfig(props.layoutConfig).global.sectionOrder]
+      : [...expandSectionOrderForData(props.layoutConfig, props.data).global.sectionOrder]
     sectionOrderError.value = error.message || '保存模块顺序失败'
     console.error(error)
     return false
@@ -630,7 +675,7 @@ function openSectionOrderDialog() {
   closeSectionSettingsDialog()
   closeToolbarMenu()
   activateResumeSettingsDialog('section-order')
-  sectionOrderSnapshot.value = [...normalizeLayoutConfig(props.layoutConfig).global.sectionOrder]
+  sectionOrderSnapshot.value = [...expandSectionOrderForData(props.layoutConfig, props.data).global.sectionOrder]
   localSectionOrder.value = [...sectionOrderSnapshot.value]
   sectionOrderError.value = ''
   showSectionOrderDialog.value = true
@@ -696,7 +741,7 @@ function canMoveSection(section, direction) {
 
 function resetSectionOrder() {
   if (isSavingSectionOrder.value) return
-  const defaultOrder = normalizeLayoutConfig(DEFAULT_LAYOUT_CONFIG).global.sectionOrder
+  const defaultOrder = expandSectionOrderForData(DEFAULT_LAYOUT_CONFIG, props.data).global.sectionOrder
   const currentOrder = localSectionOrder.value
   localSectionOrder.value = [
     ...defaultOrder.filter(section => currentOrder.includes(section)),
@@ -1305,8 +1350,13 @@ const allItems = computed(() => {
         })
       }
     }
-    if (section === 'custom_sections' && props.data.custom_sections?.length) {
-      props.data.custom_sections.forEach((custom, sectionIndex) => {
+    if ((section === 'custom_sections' || isCustomSectionModule(section)) && props.data.custom_sections?.length) {
+      const customIndex = customSectionIndex(section)
+      const sectionIndexes = customIndex === null
+        ? props.data.custom_sections.map((_, index) => index)
+        : [customIndex]
+      sectionIndexes.forEach(sectionIndex => {
+        const custom = props.data.custom_sections[sectionIndex]
         if (!custom?.title || !custom?.items?.length) return
         push({ type: 'custom-title', dataIndex: sectionIndex, groupId: `custom_sections:${sectionIndex}`, breakKey: `custom_sections:${sectionIndex}`, isSectionTitle: true })
         customSectionListValues(custom).forEach((_, itemIndex) => push({ type: 'custom-item', dataIndex: `${sectionIndex}-${itemIndex}`, groupId: `custom_sections:${sectionIndex}`, breakKey: `custom_sections:${sectionIndex}` }))
@@ -1475,9 +1525,9 @@ watch([() => props.data, () => props.sourcePageCount, renderLayout, marginVertic
 
 watch([marginVertical, marginHorizontal, moduleMargin, lineHeight, fontSize], saveLayoutSettings)
 watch([marginVertical, marginHorizontal, moduleMargin, lineHeight, fontSize, pageBreakBefore, () => props.sourcePageCount], emitCurrentRenderStyle, { immediate: true })
-watch(() => props.layoutConfig, () => {
+watch(() => [props.layoutConfig, props.data], () => {
   syncingLayoutProps = true
-  localSectionOrder.value = [...normalizeLayoutConfig(props.layoutConfig).global.sectionOrder]
+  localSectionOrder.value = [...expandSectionOrderForData(props.layoutConfig, props.data).global.sectionOrder]
   loadLayoutSettings()
   nextTick(() => { syncingLayoutProps = false })
 }, { deep: true, immediate: true })
@@ -1985,7 +2035,7 @@ const getItemIndex = (type, dataIndex) => {
             <div v-for="(cell, cellIndex) in row.cells" :key="cellIndex" class="module-component-cell" :class="`flow-${cell.flow}`" :style="componentCellStyle(cell)">
               <template v-for="component in cell.components" :key="component">
                 <img v-if="component === 'photo' && data.basics.photo && !hiddenBasicField('photo')" :src="data.basics.photo" class="profile-photo component-photo" alt="证件照">
-                <span v-else-if="basicsComponentText(component)" class="module-component" :class="[`component-${component}`, { name: component === 'name' }]" v-html="formatText(basicsComponentText(component))"></span>
+                <span v-else-if="basicsComponentText(component)" class="module-component" :class="[`component-${component}`, { name: component === 'name', 'component-explicit-bold': componentIsFullyBold(basicsComponentText(component)) }]" v-html="formatText(basicsComponentText(component))"></span>
               </template>
             </div>
           </div>
@@ -1999,7 +2049,7 @@ const getItemIndex = (type, dataIndex) => {
           <div class="module-component-rows">
             <div v-for="(row, rowIndex) in visibleComponentRows('education', ['theses'])" :key="rowIndex" class="module-component-row" :style="componentRowStyle(row, 'education')">
               <div v-for="(cell, cellIndex) in row.cells" :key="cellIndex" class="module-component-cell" :class="`flow-${cell.flow}`" :style="componentCellStyle(cell)">
-                <span v-for="component in cell.components" v-show="educationComponentText(item, component)" :key="component" class="module-component" :class="[`component-${component}`, { school: component === 'school', 'graduation-date': component === 'date' }]" v-html="formatText(educationComponentText(item, component))"></span>
+                <span v-for="component in cell.components" v-show="educationComponentText(item, component)" :key="component" class="module-component" :class="[`component-${component}`, { school: component === 'school', 'graduation-date': component === 'date', 'component-explicit-bold': componentIsFullyBold(educationComponentText(item, component)) }]" v-html="formatText(educationComponentText(item, component))"></span>
               </div>
             </div>
           </div>
@@ -2046,7 +2096,7 @@ const getItemIndex = (type, dataIndex) => {
             <div class="module-component-rows">
               <div v-for="(row, rowIndex) in visibleComponentRows(section.id, ['content'])" :key="rowIndex" class="module-component-row" :style="componentRowStyle(row, section.id)">
                 <div v-for="(cell, cellIndex) in row.cells" :key="cellIndex" class="module-component-cell" :class="`flow-${cell.flow}`" :style="componentCellStyle(cell)">
-                  <span v-for="component in cell.components" v-show="workComponentText(entry.item, component, section.id)" :key="component" class="module-component" :class="[`component-${component}`, { company: component === 'organization', 'work-period': component === 'date' }]" v-html="formatText(workComponentText(entry.item, component, section.id))"></span>
+                  <span v-for="component in cell.components" v-show="workComponentText(entry.item, component, section.id)" :key="component" class="module-component" :class="[`component-${component}`, { company: component === 'organization', 'work-period': component === 'date', 'component-explicit-bold': componentIsFullyBold(workComponentText(entry.item, component, section.id)) }]" v-html="formatText(workComponentText(entry.item, component, section.id))"></span>
                 </div>
               </div>
             </div>
@@ -2076,7 +2126,7 @@ const getItemIndex = (type, dataIndex) => {
             <div class="module-component-rows">
               <div v-for="(row, rowIndex) in visibleComponentRows('project_experience', ['content'])" :key="rowIndex" class="module-component-row" :style="componentRowStyle(row, 'project_experience')">
                 <div v-for="(cell, cellIndex) in row.cells" :key="cellIndex" class="module-component-cell" :class="`flow-${cell.flow}`" :style="componentCellStyle(cell)">
-                  <span v-for="component in cell.components" v-show="projectComponentText(item, component)" :key="component" class="module-component" :class="[`component-${component}`, { 'project-name': component === 'project_name', 'project-period': component === 'date' }]" v-html="formatText(projectComponentText(item, component))"></span>
+                  <span v-for="component in cell.components" v-show="projectComponentText(item, component)" :key="component" class="module-component" :class="[`component-${component}`, { 'project-name': component === 'project_name', 'project-period': component === 'date', 'component-explicit-bold': componentIsFullyBold(projectComponentText(item, component)) }]" v-html="formatText(projectComponentText(item, component))"></span>
                 </div>
               </div>
             </div>
@@ -2100,8 +2150,8 @@ const getItemIndex = (type, dataIndex) => {
 
       <template v-if="data.custom_sections?.length && !hiddenSection('custom_sections')">
         <template v-for="(custom, sectionIndex) in data.custom_sections" :key="`source-custom-${sectionIndex}`">
-          <h2 v-if="custom.title && custom.items?.length" class="pageable-item section-title" :class="`title-${moduleTitleStyle('custom_sections')}`" :style="moduleOrder('custom_sections')" data-module="custom_sections" v-html="formatText(custom.title)"></h2>
-          <div v-for="(item, itemIndex) in customSectionListValues(custom)" :key="`source-custom-${sectionIndex}-${itemIndex}`" :class="['pageable-item', ...listClassesForStyle(customSectionListStyle(custom), item)]" :data-marker="listMarkerForStyle(customSectionListStyle(custom), itemIndex)" :style="moduleOrder('custom_sections')" v-html="formatText(moduleListContent(item))"></div>
+          <h2 v-if="custom.title && custom.items?.length" class="pageable-item section-title" :class="`title-${moduleTitleStyle(customSectionModuleId(sectionIndex))}`" :style="moduleOrder(customSectionModuleId(sectionIndex))" :data-module="customSectionModuleId(sectionIndex)" v-html="formatText(custom.title)"></h2>
+          <div v-for="(item, itemIndex) in customSectionListValues(custom)" :key="`source-custom-${sectionIndex}-${itemIndex}`" :class="['pageable-item', ...listClassesForStyle(customSectionListStyle(custom), item)]" :data-marker="listMarkerForStyle(customSectionListStyle(custom), itemIndex)" :style="moduleOrder(customSectionModuleId(sectionIndex))" v-html="formatText(moduleListContent(item))"></div>
         </template>
       </template>
 
@@ -2112,7 +2162,7 @@ const getItemIndex = (type, dataIndex) => {
           <div class="module-component-rows">
             <div v-for="(row, rowIndex) in visibleOtherComponentRows()" :key="rowIndex" class="module-component-row" :style="componentRowStyle(row, 'others')">
               <div v-for="(cell, cellIndex) in row.cells" :key="cellIndex" class="module-component-cell" :class="`flow-${cell.flow}`" :style="componentCellStyle(cell)">
-                <span v-for="component in cell.components" :key="component" class="module-component" :class="`component-${component}`" v-html="formatText(othersComponentText(component))"></span>
+                <span v-for="component in cell.components" :key="component" class="module-component" :class="[`component-${component}`, { 'component-explicit-bold': componentIsFullyBold(othersComponentText(component)) }]" v-html="formatText(othersComponentText(component))"></span>
               </div>
             </div>
           </div>
@@ -2173,9 +2223,9 @@ const getItemIndex = (type, dataIndex) => {
                 <span v-for="(tag, tIdx) in item.school_tags" :key="tIdx" class="school-tag" v-html="formatText(tag)"></span>
               </div>
             </div>
-            <span class="graduation-date" v-html="formatText(`${item.date_range?.[0] || ''} - ${item.date_range?.[1] || '至今'}`)"></span>
+            <span v-if="dateRangeText(item)" class="graduation-date" v-html="formatText(dateRangeText(item))"></span>
           </div>
-          <div class="degree-major" v-html="formatText(`${item.degree || ''} ${item.major || ''}`)"></div>
+          <div class="degree-major" v-html="formatText(joinInlineWithInheritedSeparator([item.degree, item.major], ' · '))"></div>
           <div v-if="academicMetrics(item).length" class="academic-metrics">
             <span v-for="metric in academicMetrics(item)" :key="metric" v-html="formatText(metric)"></span>
           </div>
@@ -2216,7 +2266,7 @@ const getItemIndex = (type, dataIndex) => {
               <div class="company" v-html="formatText(item.company_name || '公司未填写')"></div>
               <div v-if="workPosition(item)" class="position" v-html="formatText(workPosition(item))"></div>
             </div>
-            <span class="work-period" v-html="formatText(`${item.date_range?.[0] || ''} - ${item.date_range?.[1] || '至今'}`)"></span>
+            <span v-if="dateRangeText(item)" class="work-period" v-html="formatText(dateRangeText(item))"></span>
           </div>
             <div v-for="(block, bIdx) in projectContentBlocks(item, 'work')" :key="bIdx" class="project-content-block" :class="contentBlockClasses(block)">
             <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(paragraphText(block.text))"></span></p>
@@ -2239,9 +2289,8 @@ const getItemIndex = (type, dataIndex) => {
         <div v-for="(item, idx) in (data.project_experience || data.projects)" :key="idx" class="project-item">
           <div class="project-header">
             <div class="project-name" v-html="formatText(item.project_name || item.name || '项目未填写')"></div>
-            <div v-if="item.role || item.date_range?.length || item.start_date || item.end_date" class="project-role">
-              <span v-if="item.date_range?.length" v-html="formatText(`${item.role ? `${item.role} | ` : ''}${item.date_range[0]} - ${item.date_range[1] || '至今'}`)"></span>
-              <span v-else-if="item.start_date || item.end_date" v-html="formatText(`${item.role ? `${item.role} | ` : ''}${item.start_date || ''} - ${item.end_date || '至今'}`)"></span>
+            <div v-if="item.role || dateRangeText(item)" class="project-role">
+              <span v-if="dateRangeText(item)" v-html="formatText(joinInlineWithInheritedSeparator([item.role, dateRangeText(item)], ' | '))"></span>
               <span v-else-if="item.role" v-html="formatText(item.role)"></span>
             </div>
           </div>
@@ -2258,8 +2307,8 @@ const getItemIndex = (type, dataIndex) => {
 
       <template v-for="(custom, sectionIndex) in (data.custom_sections || [])" :key="`print-custom-${sectionIndex}`">
         <template v-if="custom.title && custom.items?.length">
-          <h2 class="section-title" v-html="formatText(custom.title)"></h2>
-          <div v-for="(item, itemIndex) in customSectionListValues(custom)" :key="`print-custom-${sectionIndex}-${itemIndex}`" :class="listClassesForStyle(customSectionListStyle(custom), item)" :data-marker="listMarkerForStyle(customSectionListStyle(custom), itemIndex)" v-html="formatText(moduleListContent(item))"></div>
+          <h2 class="section-title" :style="moduleOrder(customSectionModuleId(sectionIndex))" v-html="formatText(custom.title)"></h2>
+          <div v-for="(item, itemIndex) in customSectionListValues(custom)" :key="`print-custom-${sectionIndex}-${itemIndex}`" :class="listClassesForStyle(customSectionListStyle(custom), item)" :data-marker="listMarkerForStyle(customSectionListStyle(custom), itemIndex)" :style="moduleOrder(customSectionModuleId(sectionIndex))" v-html="formatText(moduleListContent(item))"></div>
         </template>
       </template>
 
@@ -2302,7 +2351,7 @@ const getItemIndex = (type, dataIndex) => {
                   <div v-for="(cell, cellIndex) in row.cells" :key="cellIndex" class="module-component-cell" :class="`flow-${cell.flow}`" :style="componentCellStyle(cell)">
                     <template v-for="component in cell.components" :key="component">
                       <img v-if="component === 'photo' && data.basics.photo && !hiddenBasicField('photo')" :src="data.basics.photo" class="profile-photo component-photo" alt="证件照">
-                      <span v-else-if="basicsComponentText(component)" class="module-component" :class="[`component-${component}`, { name: component === 'name' }]" v-html="formatText(basicsComponentText(component))"></span>
+                      <span v-else-if="basicsComponentText(component)" class="module-component" :class="[`component-${component}`, { name: component === 'name', 'component-explicit-bold': componentIsFullyBold(basicsComponentText(component)) }]" v-html="formatText(basicsComponentText(component))"></span>
                     </template>
                   </div>
                 </div>
@@ -2317,7 +2366,7 @@ const getItemIndex = (type, dataIndex) => {
                   <div class="module-component-rows">
                     <div v-for="(row, rowIndex) in visibleComponentRows('education', ['theses'])" :key="rowIndex" class="module-component-row" :style="componentRowStyle(row, 'education')">
                       <div v-for="(cell, cellIndex) in row.cells" :key="cellIndex" class="module-component-cell" :class="`flow-${cell.flow}`" :style="componentCellStyle(cell)">
-                        <span v-for="component in cell.components" v-show="educationComponentText(item, component)" :key="component" class="module-component" :class="[`component-${component}`, { school: component === 'school', 'graduation-date': component === 'date' }]" v-html="formatText(educationComponentText(item, component))"></span>
+                        <span v-for="component in cell.components" v-show="educationComponentText(item, component)" :key="component" class="module-component" :class="[`component-${component}`, { school: component === 'school', 'graduation-date': component === 'date', 'component-explicit-bold': componentIsFullyBold(educationComponentText(item, component)), 'component-leading-bold': component === 'metrics' && moduleLayout('education').preset === 'compact' && isCompactAcademicMetricLeadingBold(item, moduleLayout('education').hiddenMetrics || []) }]" v-html="formatText(educationComponentText(item, component))"></span>
                       </div>
                     </div>
                   </div>
@@ -2364,7 +2413,7 @@ const getItemIndex = (type, dataIndex) => {
                   <div class="module-component-rows">
                     <div v-for="(row, rowIndex) in visibleComponentRows(section.id, ['content'])" :key="rowIndex" class="module-component-row" :style="componentRowStyle(row, section.id)">
                       <div v-for="(cell, cellIndex) in row.cells" :key="cellIndex" class="module-component-cell" :class="`flow-${cell.flow}`" :style="componentCellStyle(cell)">
-                        <span v-for="component in cell.components" v-show="workComponentText(entry.item, component, section.id)" :key="component" class="module-component" :class="[`component-${component}`, { company: component === 'organization', 'work-period': component === 'date' }]" v-html="formatText(workComponentText(entry.item, component, section.id))"></span>
+                        <span v-for="component in cell.components" v-show="workComponentText(entry.item, component, section.id)" :key="component" class="module-component" :class="[`component-${component}`, { company: component === 'organization', 'work-period': component === 'date', 'component-explicit-bold': componentIsFullyBold(workComponentText(entry.item, component, section.id)) }]" v-html="formatText(workComponentText(entry.item, component, section.id))"></span>
                       </div>
                     </div>
                   </div>
@@ -2395,7 +2444,7 @@ const getItemIndex = (type, dataIndex) => {
                   <div class="module-component-rows">
                     <div v-for="(row, rowIndex) in visibleComponentRows('project_experience', ['content'])" :key="rowIndex" class="module-component-row" :style="componentRowStyle(row, 'project_experience')">
                       <div v-for="(cell, cellIndex) in row.cells" :key="cellIndex" class="module-component-cell" :class="`flow-${cell.flow}`" :style="componentCellStyle(cell)">
-                        <span v-for="component in cell.components" v-show="projectComponentText(item, component)" :key="component" class="module-component" :class="[`component-${component}`, { 'project-name': component === 'project_name', 'project-period': component === 'date' }]" v-html="formatText(projectComponentText(item, component))"></span>
+                        <span v-for="component in cell.components" v-show="projectComponentText(item, component)" :key="component" class="module-component" :class="[`component-${component}`, { 'project-name': component === 'project_name', 'project-period': component === 'date', 'component-explicit-bold': componentIsFullyBold(projectComponentText(item, component)) }]" v-html="formatText(projectComponentText(item, component))"></span>
                       </div>
                     </div>
                   </div>
@@ -2420,8 +2469,8 @@ const getItemIndex = (type, dataIndex) => {
 
             <template v-if="data.custom_sections?.length && !hiddenSection('custom_sections')">
               <template v-for="(custom, sectionIndex) in data.custom_sections" :key="`page-${page}-custom-${sectionIndex}`">
-                <h2 v-if="custom.title && custom.items?.length && isItemVisible({index: getItemIndex('custom-title', sectionIndex)}, page - 1)" class="section-title" :class="`title-${moduleTitleStyle('custom_sections')}`" :style="moduleOrder('custom_sections')" data-module="custom_sections" v-html="formatText(custom.title)"></h2>
-                <div v-for="(item, itemIndex) in customSectionListValues(custom)" v-show="isItemVisible({index: getItemIndex('custom-item', `${sectionIndex}-${itemIndex}`)}, page - 1)" :key="`page-${page}-custom-${sectionIndex}-${itemIndex}`" :class="listClassesForStyle(customSectionListStyle(custom), item)" :data-marker="listMarkerForStyle(customSectionListStyle(custom), itemIndex)" :style="moduleOrder('custom_sections')" v-html="formatText(moduleListContent(item))"></div>
+                <h2 v-if="custom.title && custom.items?.length && isItemVisible({index: getItemIndex('custom-title', sectionIndex)}, page - 1)" class="section-title" :class="`title-${moduleTitleStyle(customSectionModuleId(sectionIndex))}`" :style="moduleOrder(customSectionModuleId(sectionIndex))" :data-module="customSectionModuleId(sectionIndex)" v-html="formatText(custom.title)"></h2>
+                <div v-for="(item, itemIndex) in customSectionListValues(custom)" v-show="isItemVisible({index: getItemIndex('custom-item', `${sectionIndex}-${itemIndex}`)}, page - 1)" :key="`page-${page}-custom-${sectionIndex}-${itemIndex}`" :class="listClassesForStyle(customSectionListStyle(custom), item)" :data-marker="listMarkerForStyle(customSectionListStyle(custom), itemIndex)" :style="moduleOrder(customSectionModuleId(sectionIndex))" v-html="formatText(moduleListContent(item))"></div>
               </template>
             </template>
 
@@ -2436,7 +2485,7 @@ const getItemIndex = (type, dataIndex) => {
                 <div class="module-component-rows">
                   <div v-for="(row, rowIndex) in visibleOtherComponentRows()" :key="rowIndex" class="module-component-row" :style="componentRowStyle(row, 'others')">
                     <div v-for="(cell, cellIndex) in row.cells" :key="cellIndex" class="module-component-cell" :class="`flow-${cell.flow}`" :style="componentCellStyle(cell)">
-                      <span v-for="component in cell.components" :key="component" class="module-component" :class="`component-${component}`" v-html="formatText(othersComponentText(component))"></span>
+                      <span v-for="component in cell.components" :key="component" class="module-component" :class="[`component-${component}`, { 'component-explicit-bold': componentIsFullyBold(othersComponentText(component)) }]" v-html="formatText(othersComponentText(component))"></span>
                     </div>
                   </div>
                 </div>
@@ -2506,10 +2555,10 @@ const getItemIndex = (type, dataIndex) => {
           @dragend="finishSectionDrag"
         >
           <span class="drag-handle" aria-hidden="true">⋮⋮</span>
-          <span class="section-order-name">{{ displayTitleText(section, SECTION_LABELS[section]) }}</span>
+          <span class="section-order-name">{{ sectionLabel(section) }}</span>
           <span class="section-order-actions">
-            <button type="button" :disabled="!canMoveSection(section, -1)" :aria-label="`上移${SECTION_LABELS[section]}`" @click="moveSection(section, -1)">↑</button>
-            <button type="button" :disabled="!canMoveSection(section, 1)" :aria-label="`下移${SECTION_LABELS[section]}`" @click="moveSection(section, 1)">↓</button>
+            <button type="button" :disabled="!canMoveSection(section, -1)" :aria-label="`上移${sectionLabel(section)}`" @click="moveSection(section, -1)">↑</button>
+            <button type="button" :disabled="!canMoveSection(section, 1)" :aria-label="`下移${sectionLabel(section)}`" @click="moveSection(section, 1)">↓</button>
           </span>
         </div>
       </div>
@@ -3456,6 +3505,8 @@ const getItemIndex = (type, dataIndex) => {
 .module-component-cell.flow-inline .module-component + .module-component::before { content: ' · '; white-space: pre; }
 .personal-info .module-component-cell.flow-inline .module-component + .module-component::before { content: ' | '; }
 .module-component-cell.flow-inline .component-position + .component-job_type::before { content: ' '; }
+.module-component-cell.flow-inline .component-explicit-bold + .module-component.component-explicit-bold::before { font-weight: 700; }
+.module-component-cell.flow-inline .component-explicit-bold + .module-component.component-leading-bold::before { font-weight: 700; }
 .module-component.component-school { font-size: var(--entry-title-font-size); font-weight: var(--manual-title-font-weight); }
 .module-component.component-organization,
 .module-component.component-project_name { font-size: var(--entry-title-font-size); font-weight: var(--manual-title-font-weight); }

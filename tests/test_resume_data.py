@@ -12,6 +12,29 @@ class ResumeDataNormalizationTests(unittest.TestCase):
         })
         self.assertEqual(result["education_supplement"], ["**论文标题**", "校级奖励"])
 
+    def test_project_tech_stack_is_a_fixed_block_and_top_level_tech_stack_stays_skills(self):
+        result = normalize_resume_data({
+            "basics": {"name": "张三"},
+            "others": {"skills": ["Python"]},
+            "project_experience": [{
+                "project_name": "项目 A",
+                "content_blocks": [
+                    {"semantic_role": "responsibilities", "label": "项目职责", "items": ["完成联调"]},
+                    {"label": "技术栈", "text": "Python、FastAPI"},
+                    {"semantic_role": "introduction", "label": "项目简介", "text": "项目背景"},
+                    {"semantic_role": "generic", "label": "", "items": ["补充说明"]},
+                ],
+            }],
+        })
+
+        blocks = result["project_experience"][0]["content_blocks"]
+        self.assertEqual([block["semantic_role"] for block in blocks], [
+            "tech_stack", "introduction", "responsibilities", "generic",
+        ])
+        self.assertEqual(blocks[0]["type"], "paragraph")
+        self.assertEqual(blocks[0]["label"], "技术栈")
+        self.assertEqual(result["others"]["skills"], ["Python"])
+
     def test_publications_are_a_standalone_editable_string_list(self):
         result = normalize_resume_data({
             "publications": ["论文 A，已接收", {"text": "论文 B，返修"}],
@@ -244,8 +267,8 @@ class ResumeDataNormalizationTests(unittest.TestCase):
         self.assertEqual(work_blocks[1]["items"], ["**完成模块实现**", "完成联调验证"])
 
         project_blocks = result["project_experience"][0]["content_blocks"]
-        self.assertEqual(project_blocks[1]["semantic_role"], "responsibilities")
-        self.assertEqual(project_blocks[1]["type"], "numbered_list")
+        self.assertEqual(project_blocks[1]["semantic_role"], "generic")
+        self.assertEqual(project_blocks[1]["type"], "bullet_list")
         self.assertEqual(project_blocks[1]["items"], ["补充说明"])
 
     def test_visual_group_is_required_for_generic_content_after_intro(self):
@@ -359,8 +382,8 @@ class ResumeDataNormalizationTests(unittest.TestCase):
         })
 
         block = result["project_experience"][0]["content_blocks"][1]
-        self.assertEqual(block["semantic_role"], "responsibilities")
-        self.assertEqual(block["type"], "numbered_list")
+        self.assertEqual(block["semantic_role"], "generic")
+        self.assertEqual(block["type"], "bullet_list")
         self.assertEqual(block["items"], ["补充说明一", "补充说明二"])
 
     def test_unknown_generic_labels_stay_inline_and_role_defaults_are_stable(self):
@@ -382,10 +405,12 @@ class ResumeDataNormalizationTests(unittest.TestCase):
         self.assertEqual(blocks[1], {
             "type": "numbered_list", "semantic_role": "responsibilities", "label": "项目职责",
             "label_bold": True, "text": "", "items": [
-                "**未定义前缀**：基于 **方法** 完成", "完成联调", "补充说明",
+                "**未定义前缀**：基于 **方法** 完成", "完成联调",
             ],
         })
-        self.assertEqual(len(blocks), 2)
+        self.assertEqual(blocks[2]["semantic_role"], "generic")
+        self.assertEqual(blocks[2]["items"], ["补充说明"])
+        self.assertEqual(len(blocks), 3)
 
     def test_content_block_type_defaults_follow_semantic_role(self):
         result = normalize_resume_data({
@@ -400,8 +425,8 @@ class ResumeDataNormalizationTests(unittest.TestCase):
             }],
         })
         blocks = result["project_experience"][0]["content_blocks"]
-        self.assertEqual([block["type"] for block in blocks], ["paragraph", "numbered_list"])
-        self.assertEqual([block["semantic_role"] for block in blocks], ["introduction", "responsibilities"])
+        self.assertEqual([block["type"] for block in blocks], ["paragraph", "numbered_list", "bullet_list"])
+        self.assertEqual([block["semantic_role"] for block in blocks], ["introduction", "responsibilities", "generic"])
 
     def test_unlabelled_work_body_is_not_promoted_by_inline_wording(self):
         source = {

@@ -55,6 +55,7 @@ VALUE_LABELS = {
     "bullet_list": "分点",
     "numbered": "编号",
     "numbered_list": "编号",
+    "tech_stack": "技术栈",
     "introduction": "项目简介",
     "responsibilities": "项目职责",
     "generic": "普通内容",

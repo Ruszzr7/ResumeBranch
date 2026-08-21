@@ -15,7 +15,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Mm, Pt, RGBColor
 
-from .inline_formatting import parse_inline_bold
+from .inline_formatting import join_inline_label_value, join_inline_with_inherited_separator, parse_inline_bold
 from .resume_labels import LABELS
 from .resume_data import normalize_resume_data
 from .render_contract import iter_experience_content_blocks
@@ -81,8 +81,8 @@ def _other_field_labels(values: dict, labels: dict) -> dict[str, str]:
 
 
 def _other_field_value(label: str, values: list[object], separator: str, colon: str) -> str:
-    joined = separator.join(str(value) for value in values)
-    return f"{label}{colon}{joined}" if label else joined
+    joined = join_inline_with_inherited_separator(values, separator)
+    return join_inline_label_value(label, joined, colon)
 
 
 def _set_cell_borderless(cell) -> None:
@@ -415,9 +415,9 @@ def _increase_paragraph_after(paragraph, amount_pt: float) -> None:
 
 def _date_range(item: dict) -> str:
     values = item.get("date_range") or []
-    if isinstance(values, list) and values:
-        return " - ".join(str(value) for value in values[:2] if value)
-    return " - ".join(value for value in (item.get("start_date", ""), item.get("end_date", "")) if value)
+    if not isinstance(values, list) or not any(str(value or "").strip() for value in values[:2]):
+        values = [item.get("start_date", ""), item.get("end_date", "")]
+    return join_inline_with_inherited_separator(values[:2], " - ")
 
 
 def _set_hanging_indent(paragraph, *, left: float = 5.5, hanging: float = 5.5) -> None:
@@ -502,7 +502,11 @@ def generate_docx(
     """Return an editable DOCX that follows the controlled layout configuration."""
     from .layout import apply_page_mode_defaults
     from .layout_config import (
+        custom_section_index,
+        custom_section_module_id,
         format_compact_academic_metric,
+        is_compact_academic_metric_leading_bold,
+        is_custom_section_module,
         normalize_layout_config,
         resolve_education_column_widths,
         resolve_layout_tokens,
@@ -698,9 +702,9 @@ def generate_docx(
             f'{basics["target_position"]}'
             if basics.get("target_position") and "target_position" not in hidden_basics else ""
         ),
-        "personal_meta": " | ".join(contact_values),
-        "contact": " | ".join(direct_contact),
-        "additional_fields": " | ".join(additional_values),
+        "personal_meta": join_inline_with_inherited_separator(contact_values, " | "),
+        "contact": join_inline_with_inherited_separator(direct_contact, " | "),
+        "additional_fields": join_inline_with_inherited_separator(additional_values, " | "),
         "photo": photo_bytes,
     }
     hidden_basic_components = set(basics_layout["hiddenComponents"])
@@ -793,14 +797,15 @@ def generate_docx(
             )
             _add_markdown_runs(
                 paragraph,
-                " | ".join(parts),
+                join_inline_with_inherited_separator(parts, " | "),
                 meta_font_size,
                 color="333333",
                 fonts=font_spec,
             )
+            metadata_text = join_inline_with_inherited_separator(parts, " | ")
             basics_height_pt += (
                 _word_estimated_line_count(
-                    " | ".join(parts),
+                    metadata_text,
                     meta_font_size,
                     table_width_mm,
                 )
@@ -822,18 +827,23 @@ def generate_docx(
         ]
 
         def compact_metric(item: dict) -> str:
-            return format_compact_academic_metric(
-                item,
-                hidden_metrics,
-            )
+            return format_compact_academic_metric(item, hidden_metrics)
 
         compact_metrics = [compact_metric(item) for item in items]
+        compact_metric_leading_bold = [
+            is_compact_academic_metric_leading_bold(item, hidden_metrics)
+            for item in items
+        ]
+        compact_width_metrics = [
+            format_compact_academic_metric(item, hidden_metrics)
+            for item in items
+        ]
         compact_widths = resolve_education_column_widths(
             tokens,
             schools=schools,
             dates=dates,
             degree_majors=degree_majors,
-            compact_metrics=compact_metrics,
+            compact_metrics=compact_width_metrics,
         )
         maybe_break("education:0")
         title("education", labels["education"])
@@ -844,15 +854,19 @@ def generate_docx(
                 maybe_break(f"education:{index}")
             school = item.get("school_name") or labels["schoolNotSet"]
             tags = item.get("school_tags") or []
-            tag_text = " · ".join(str(tag) for tag in tags)
+            tag_text = join_inline_with_inherited_separator(tags, " · ")
             if cfg["schoolTagStyle"] == "hidden":
                 tag_text = ""
-            degree = " · ".join(value for value in (item.get("degree", ""), item.get("major", "")) if value)
-            degree = degree_majors[index]
             date = dates[index]
             metrics = []
             if item.get("gpa") and "gpa" not in hidden_metrics:
-                value = str(item["gpa"]) + (f'/{item["gpa_scale"]}' if item.get("gpa_scale") else "")
+                value = (
+                    join_inline_with_inherited_separator(
+                        [item["gpa"], item["gpa_scale"]], "/"
+                    )
+                    if item.get("gpa_scale")
+                    else str(item["gpa"])
+                )
                 metrics.append(f'{labels["gpa"]}{colon}{value}')
             if item.get("ranking") and "ranking" not in hidden_metrics:
                 metrics.append(f'{labels["ranking"]}{colon}{item["ranking"]}')
@@ -861,7 +875,7 @@ def generate_docx(
                 "school_tags": tag_text,
                 "degree": item.get("degree", ""),
                 "major": item.get("major", ""),
-                "metrics": compact_metrics[index] if cfg["preset"] == "compact" else " · ".join(metrics),
+                "metrics": compact_metrics[index] if cfg["preset"] == "compact" else join_inline_with_inherited_separator(metrics, " · "),
                 "date": date,
             }
             hidden_components = set(cfg["hiddenComponents"]) | {"theses"}
@@ -902,6 +916,7 @@ def generate_docx(
                 for cell_index, ((cell_config, components), cell) in enumerate(zip(active_cells, table.rows[0].cells)):
                     _set_cell_borderless(cell)
                     _set_cell_margins(cell)
+                    previous_bold = False
                     for paragraph_index, component in enumerate(components):
                         paragraph = (
                             cell.paragraphs[0]
@@ -916,13 +931,30 @@ def generate_docx(
                         )
                         prefix = " · " if cell_config["flow"] == "inline" and paragraph_index > 0 else ""
                         if component == "school":
-                            _add_markdown_runs(paragraph, prefix + component_values[component], entry_title_font_size, fonts=font_spec, base_bold=entry_title_bold if legacy_default_bold else False)
+                            base_bold = entry_title_bold if legacy_default_bold else False
+                            current_bold = base_bold or _is_fully_bold(component_values[component])
+                            if prefix and previous_bold and current_bold:
+                                prefix = f"**{prefix}**"
+                            _add_markdown_runs(paragraph, prefix + component_values[component], entry_title_font_size, fonts=font_spec, base_bold=base_bold)
                         elif component in {"school_tags", "degree", "major", "metrics", "date"}:
                             # These are user-entered field values. Their visual
                             # weight comes only from explicit inline-bold marks.
-                            _add_markdown_runs(paragraph, prefix + component_values[component], label_font_size, fonts=font_spec, base_bold=False)
+                            base_bold = False
+                            current_bold = (
+                                compact_metric_leading_bold[index]
+                                if component == "metrics" and cfg["preset"] == "compact"
+                                else _is_fully_bold(component_values[component])
+                            )
+                            if prefix and previous_bold and current_bold:
+                                prefix = f"**{prefix}**"
+                            _add_markdown_runs(paragraph, prefix + component_values[component], label_font_size, fonts=font_spec, base_bold=base_bold)
                         else:
-                            _add_markdown_runs(paragraph, prefix + component_values[component], meta_font_size, fonts=font_spec, base_bold=meta_bold)
+                            base_bold = meta_bold
+                            current_bold = base_bold or _is_fully_bold(component_values[component])
+                            if prefix and previous_bold and current_bold:
+                                prefix = f"**{prefix}**"
+                            _add_markdown_runs(paragraph, prefix + component_values[component], meta_font_size, fonts=font_spec, base_bold=base_bold)
+                        previous_bold = current_bold
             if cfg["thesisDisplay"] != "hidden" and "theses" not in cfg["hiddenComponents"]:
                 for thesis in item.get("theses") or []:
                     if not isinstance(thesis, dict):
@@ -1007,6 +1039,7 @@ def generate_docx(
             for (cell_cfg, components), cell in zip(active_cells, table.rows[0].cells):
                 _set_cell_borderless(cell)
                 _set_cell_margins(cell)
+                previous_bold = False
                 for component_index, component in enumerate(components):
                     paragraph = cell.paragraphs[0] if component_index == 0 or cell_cfg["flow"] == "inline" else cell.add_paragraph()
                     paragraph.alignment = alignment_map[cell_cfg["alignment"]]
@@ -1017,11 +1050,16 @@ def generate_docx(
                     )
                     size = entry_title_font_size if component in title_components else (label_font_size if component in label_components else meta_font_size)
                     bold = (entry_title_bold if legacy_default_bold else False) if component in title_components else (legacy_manual_field_bold if component in label_components else meta_bold)
+                    current_bold = bold or _is_fully_bold(values[component])
+                    if prefix and previous_bold and current_bold:
+                        prefix = f"**{prefix}**"
                     _add_markdown_runs(paragraph, prefix + values[component], size, fonts=font_spec, base_bold=bold)
+                    previous_bold = current_bold
 
     def add_module_list_item(module_id: str, value: object, index: int, list_style_override: str | None = None) -> None:
-        cfg = layout[module_id]
-        module_tokens = tokens["modules"][module_id]
+        base_module_id = "custom_sections" if is_custom_section_module(module_id) else module_id
+        cfg = layout[base_module_id]
+        module_tokens = tokens["modules"][base_module_id]
         base_indent_mm = module_tokens["indentPt"] * 25.4 / 72.0
         after = module_tokens["itemSpacingPt"]
         list_style = list_style_override or cfg.get("listStyle", "bullet")
@@ -1236,16 +1274,18 @@ def generate_docx(
         render_plain_section("publications", "Publications" if lang == "en" else "论文", data.get("publications") or [])
 
     def render_custom_sections() -> None:
-        if "custom_sections" in hidden_sections:
-            return
+        use_individual_modules = any(is_custom_section_module(item) for item in global_layout["sectionOrder"])
         for index, custom in enumerate(data.get("custom_sections") or []):
             if not custom.get("title") or not custom.get("items"):
                 continue
+            module_id = custom_section_module_id(index) if use_individual_modules else "custom_sections"
+            if module_id in hidden_sections or "custom_sections" in hidden_sections:
+                continue
             maybe_break(f"custom_sections:{index}")
-            title("custom_sections", custom["title"])
+            title(module_id, custom["title"])
             list_style = custom.get("list_style") if custom.get("list_style") in {"paragraph", "bullet", "numbered"} else layout["custom_sections"].get("listStyle", "bullet")
             for item_index, value in enumerate(_module_list_values(custom["items"], list_style)):
-                add_module_list_item("custom_sections", value, item_index, list_style_override=list_style)
+                add_module_list_item(module_id, value, item_index, list_style_override=list_style)
 
     renderers = {
         "education": render_education,
@@ -1263,6 +1303,16 @@ def generate_docx(
         if section_id in work_by_id:
             fallback, items = work_by_id[section_id]
             render_work(section_id, fallback, items)
+        elif is_custom_section_module(section_id):
+            custom_index = custom_section_index(section_id)
+            if custom_index is not None:
+                custom = (data.get("custom_sections") or [])[custom_index] if custom_index < len(data.get("custom_sections") or []) else None
+                if custom and custom.get("title") and custom.get("items") and "custom_sections" not in hidden_sections and section_id not in hidden_sections:
+                    maybe_break(f"custom_sections:{custom_index}")
+                    title(section_id, custom["title"])
+                    list_style = custom.get("list_style") if custom.get("list_style") in {"paragraph", "bullet", "numbered"} else layout["custom_sections"].get("listStyle", "bullet")
+                    for item_index, value in enumerate(_module_list_values(custom["items"], list_style)):
+                        add_module_list_item(section_id, value, item_index, list_style_override=list_style)
         elif section_id in renderers:
             renderers[section_id]()
 

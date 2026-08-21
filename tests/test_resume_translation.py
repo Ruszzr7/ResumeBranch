@@ -49,6 +49,18 @@ def sample_resume():
     }
 
 
+def project_resume():
+    source = sample_resume()
+    source["project_experience"] = [{
+        "project_name": "导航平台",
+        "content_blocks": [
+            {"type": "paragraph", "semantic_role": "tech_stack", "label": "技术栈", "label_bold": True, "text": "Python 与 FastAPI", "items": []},
+            {"type": "paragraph", "semantic_role": "introduction", "label": "项目简介", "label_bold": True, "text": "导航服务", "items": []},
+        ],
+    }]
+    return source
+
+
 class ResumeTranslationTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.memory = {}
@@ -88,6 +100,16 @@ class ResumeTranslationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first["new_translations"], second["cache_hits"])
         self.assertEqual(second["new_translations"], 0)
         self.assertEqual(len(model.calls), 1)
+
+    async def test_translation_preserves_project_tech_stack_role_and_order(self):
+        model = FakeModel()
+        with patch.object(resume_translation, "get_translation_memory", self.get_memory), \
+             patch.object(resume_translation, "save_translation_memory", self.save_memory):
+            result = await resume_translation.translate_resume(FakeDb(), 7, project_resume(), model=model)
+
+        blocks = result["resume_data"]["project_experience"][0]["content_blocks"]
+        self.assertEqual([block["semantic_role"] for block in blocks], ["tech_stack", "introduction"])
+        self.assertEqual(blocks[0]["label"], "EN:技术栈")
 
     async def test_changed_field_is_retranslated_while_unchanged_fields_are_reused(self):
         model = FakeModel()

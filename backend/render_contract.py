@@ -17,7 +17,7 @@ def iter_experience_content_blocks(
     *,
     experience_kind: str = "project",
 ) -> Iterator[tuple[dict[str, Any], dict[str, Any]]]:
-    """Yield ``(canonical_block, flow)`` pairs in source order."""
+    """Yield ``(canonical_block, flow)`` pairs in canonical project order."""
     item = item if isinstance(item, dict) else {}
     blocks = normalize_content_blocks(
         item.get("content_blocks"),
@@ -31,4 +31,3 @@ def iter_experience_content_blocks(
         flow = resolve_content_block_flow(block)
         if flow["visible"]:
             yield block, flow
-

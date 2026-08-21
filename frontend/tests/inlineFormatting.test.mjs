@@ -4,6 +4,8 @@ import assert from 'node:assert/strict'
 import {
   formatInlineHtml,
   isFullyBoldInlineText,
+  joinInlineLabelValue,
+  joinInlineWithInheritedSeparator,
   parseInlineBold,
   plainInlineText,
   toggleInlineBoldRange
@@ -60,4 +62,17 @@ test('a bold selection spanning lines closes markers on every line', () => {
   assert.equal(bold, '**第一行**\n**第二行**')
   assert.equal(plainInlineText(bold), '第一行\n第二行')
   assert.equal(toggleInlineBoldRange(bold, 0, 7), '第一行\n第二行')
+})
+
+test('joined separators require both adjacent fields to be bold', () => {
+  const value = joinInlineWithInheritedSeparator(['**2024.01**', '2024.06'], ' - ')
+  assert.equal(value, '**2024.01** - 2024.06')
+  assert.equal(formatInlineHtml(value), '<strong>2024.01</strong> - 2024.06')
+
+  const mixed = joinInlineWithInheritedSeparator(['**本科**', '专业', '**成绩**'], ' · ')
+  assert.equal(plainInlineText(mixed), '本科 · 专业 · 成绩')
+  assert.equal(formatInlineHtml(mixed), '<strong>本科</strong> · 专业 · <strong>成绩</strong>')
+
+  const labeled = joinInlineLabelValue('**证书**', '软件设计师', '：')
+  assert.equal(formatInlineHtml(labeled), '<strong>证书：</strong>软件设计师')
 })

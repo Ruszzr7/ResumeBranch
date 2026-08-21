@@ -7,7 +7,7 @@ import re
 from io import BytesIO
 from html import escape
 
-from .inline_formatting import format_inline_html, parse_inline_bold
+from .inline_formatting import format_inline_html, join_inline_label_value, join_inline_with_inherited_separator, parse_inline_bold
 from .pdf_renderer import render_html_with_chromium
 from .resume_data import normalize_resume_data
 from .render_contract import iter_experience_content_blocks
@@ -50,6 +50,14 @@ def _paragraph_text(value: object) -> str:
     return re.sub(r'\r\n?', '\n', str(value or '')).strip()
 
 
+def _date_range_text(item: dict) -> str:
+    raw_range = item.get("date_range")
+    values = raw_range[:2] if isinstance(raw_range, list) else []
+    if not any(str(value or "").strip() for value in values):
+        values = [str(item.get("start_date") or '').strip(), str(item.get("end_date") or '').strip()]
+    return join_inline_with_inherited_separator(values, " - ")
+
+
 def _photo_aspect_ratio(photo: str | None, resume_data: dict) -> float:
     """Return the imported photo's width/height ratio, with a safe legacy fallback."""
     try:
@@ -82,8 +90,8 @@ def _other_field_labels(values: dict, labels: dict) -> dict[str, str]:
 
 
 def _other_field_value(label: str, values: list[object], separator: str) -> str:
-    joined = separator.join(str(value) for value in values)
-    return f"{label}：{joined}" if label else joined
+    joined = join_inline_with_inherited_separator(values, separator)
+    return join_inline_label_value(label, joined, "：")
 
 
 def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = None, lang: str = 'zh', layout_config: dict = None) -> str:
@@ -98,7 +106,11 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     resume_data = normalize_resume_data(resume_data)
     from .layout_config import (
         PHOTO_BOTTOM_GAP_MM,
+        custom_section_index,
+        custom_section_module_id,
         format_compact_academic_metric,
+        is_custom_section_module,
+        is_compact_academic_metric_leading_bold,
         normalize_layout_config,
         resolve_education_column_widths,
         resolve_layout_tokens,
@@ -143,12 +155,13 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     education_hidden_metrics = set(layout_config["education"]["hiddenMetrics"])
 
     def compact_education_metric(item: dict) -> str:
-        return format_compact_academic_metric(
-            item,
-            education_hidden_metrics,
-        )
+        return format_compact_academic_metric(item, education_hidden_metrics)
 
     compact_education_metrics = [compact_education_metric(item) for item in education_items]
+    compact_education_width_metrics = [
+        format_compact_academic_metric(item, education_hidden_metrics)
+        for item in education_items
+    ]
     education_column_widths = resolve_education_column_widths(
         tokens,
         schools=[str(item.get("school_name") or labels["schoolNotSet"]) for item in education_items],
@@ -159,14 +172,15 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
             )
             for item in education_items
         ],
-        compact_metrics=compact_education_metrics,
+        compact_metrics=compact_education_width_metrics,
     )
 
     def break_class(key: str) -> str:
         return ' page-break-before' if page_break_before == key else ''
 
     def hidden(section: str) -> bool:
-        return section in global_layout["hiddenSections"]
+        base_section = "custom_sections" if is_custom_section_module(section) else section
+        return section in global_layout["hiddenSections"] or base_section in global_layout["hiddenSections"]
 
     def order_style(section: str) -> str:
         try:
@@ -199,9 +213,15 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
             f'{format_markdown(text)}</h2>'
         )
 
-    def component_rows_markup(module_id: str, values: dict[str, str], excluded: set[str] | None = None) -> str:
+    def component_rows_markup(
+        module_id: str,
+        values: dict[str, str],
+        excluded: set[str] | None = None,
+        bold_components: set[str] | None = None,
+    ) -> str:
         module = resolve_module_layout(layout_config, module_id)
         hidden_components = set(module["hiddenComponents"]) | set(excluded or set())
+        bold_components = set(bold_components or set())
         parts = ['<div class="module-component-rows">']
         for row in module["componentRows"]:
             active_cells = []
@@ -241,7 +261,8 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
                     if component == "photo":
                         parts.append(values[component])
                     else:
-                        parts.append(f'<span class="module-component component-{component}">{values[component]}</span>')
+                        bold_class = " component-explicit-bold" if component in bold_components else ""
+                        parts.append(f'<span class="module-component component-{component}{bold_class}">{values[component]}</span>')
                 parts.append('</div>')
             parts.append('</div>')
         parts.append('</div>')
@@ -266,15 +287,15 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         basics_layout = layout_config["basics"]
         hidden_basics = set(basics_layout["hiddenFields"])
         html_parts.append(f'<div class="personal-info basics-{basics_layout["preset"]} contact-{basics_layout["contactLayout"]}" style="order:0">')
-        personal_meta = " | ".join(filter(None, [
+        personal_meta = join_inline_with_inherited_separator([
             str(basics.get("gender", "")) if "gender" not in hidden_basics else "",
             str(basics["birth_date"]) if basics.get("birth_date") and "birth_date" not in hidden_basics else "",
-        ]))
-        contact = " | ".join(filter(None, [
+        ], " | ")
+        contact = join_inline_with_inherited_separator([
             str(basics.get("phone", "")) if "phone" not in hidden_basics else "",
             str(basics.get("email", "")) if "email" not in hidden_basics else "",
-        ]))
-        additional = " | ".join(
+        ], " | ")
+        additional = join_inline_with_inherited_separator([
             (
                 f'{item.get("label", "")}：{item.get("value", "")}'
                 if item.get("label") and item.get("value")
@@ -282,19 +303,24 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
             )
             for item in basics.get("additional_fields", [])
             if (item.get("label") or item.get("value")) and "additional_fields" not in hidden_basics
-        )
+        ], " | ")
         target_position = str(basics.get("target_position", ""))
         target_position_label = f'{labels["targetPosition"]}：'
         if _is_fully_bold(target_position):
             target_position_label = f'**{target_position_label}**'
-        html_parts.append(component_rows_markup("basics", {
-            "name": format_markdown(basics.get("name", labels["nameNotSet"])),
-            "target_position": format_markdown(f'{target_position_label}{target_position}') if target_position and "target_position" not in hidden_basics else "",
-            "personal_meta": format_markdown(personal_meta),
-            "contact": format_markdown(contact),
-            "additional_fields": format_markdown(additional),
+        raw_basics = {
+            "name": basics.get("name", labels["nameNotSet"]),
+            "target_position": f'{target_position_label}{target_position}' if target_position and "target_position" not in hidden_basics else "",
+            "personal_meta": personal_meta,
+            "contact": contact,
+            "additional_fields": additional,
             "photo": f'<img src="{escape(display_photo, quote=True)}" class="profile-photo component-photo" alt="证件照" />' if display_photo and "photo" not in hidden_basics else "",
-        }))
+        }
+        html_parts.append(component_rows_markup(
+            "basics",
+            {component: value if component == "photo" else format_markdown(value) for component, value in raw_basics.items()},
+            bold_components={component for component, value in raw_basics.items() if component != "photo" and _is_fully_bold(value)},
+        ))
         html_parts.append('</div>')  # personal-info
         commit_section("basics", chunk_start)
 
@@ -313,30 +339,39 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
             academic_metrics = []
             compact_metric = compact_education_metrics[edu_index]
             if edu.get("gpa") and "gpa" not in hidden_metrics:
-                gpa_value = str(edu["gpa"])
-                if edu.get("gpa_scale"):
-                    gpa_value += f'/{edu["gpa_scale"]}'
+                gpa_value = (
+                    join_inline_with_inherited_separator(
+                        [edu["gpa"], edu["gpa_scale"]], "/"
+                    )
+                    if edu.get("gpa_scale")
+                    else str(edu["gpa"])
+                )
                 academic_metrics.append(f'{labels["gpa"]}：{gpa_value}')
             if edu.get("ranking") and "ranking" not in hidden_metrics:
                 academic_metrics.append(f'{labels["ranking"]}：{edu["ranking"]}')
-            date_range = edu.get("date_range", [])
-            date_str = ""
-            if len(date_range) > 0:
-                date_str = date_range[0]
-                if len(date_range) > 1:
-                    date_str += f" - {date_range[1]}"
-            component_values = {
-                "school": format_markdown(edu.get("school_name", labels["schoolNotSet"])),
-                "school_tags": " · ".join(format_markdown(tag) for tag in (edu.get("school_tags") or [])) if education_layout["schoolTagStyle"] != "hidden" else "",
-                "degree": format_markdown(edu.get("degree", "")),
-                "major": format_markdown(edu.get("major", "")),
-                "metrics": format_markdown(
+            date_str = _date_range_text(edu)
+            raw_component_values = {
+                "school": edu.get("school_name", labels["schoolNotSet"]),
+                "school_tags": join_inline_with_inherited_separator(edu.get("school_tags") or [], " · ") if education_layout["schoolTagStyle"] != "hidden" else "",
+                "degree": edu.get("degree", ""),
+                "major": edu.get("major", ""),
+                "metrics": (
                     compact_education_metric(edu)
                     if education_layout["preset"] == "compact"
-                    else " · ".join(academic_metrics)
+                    else join_inline_with_inherited_separator(academic_metrics, " · ")
                 ),
-                "date": format_markdown(date_str),
+                "date": date_str,
             }
+            component_values = {component: format_markdown(value) for component, value in raw_component_values.items()}
+            bold_components = {
+                component for component, value in raw_component_values.items() if _is_fully_bold(value)
+            }
+            leading_bold_components = set()
+            if (
+                education_layout["preset"] == "compact"
+                and is_compact_academic_metric_leading_bold(edu, hidden_metrics)
+            ):
+                leading_bold_components.add("metrics")
             hidden_components = set(education_module["hiddenComponents"]) | {"theses"}
             html_parts.append('<div class="module-component-rows">')
             for row in education_module["componentRows"]:
@@ -368,7 +403,9 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
                         f'style="text-align:{cell["alignment"]};justify-content:{justify}">'
                     )
                     for component in components:
-                        html_parts.append(f'<span class="module-component component-{component}">{component_values[component]}</span>')
+                        bold_class = " component-explicit-bold" if component in bold_components else ""
+                        leading_bold_class = " component-leading-bold" if component in leading_bold_components else ""
+                        html_parts.append(f'<span class="module-component component-{component}{bold_class}{leading_bold_class}">{component_values[component]}</span>')
                     html_parts.append('</div>')
                 html_parts.append('</div>')
             html_parts.append('</div>')
@@ -452,18 +489,20 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
                 f'date-{work_layout["datePosition"]}{item_break}'
             )
             html_parts.append(f'<div class="{work_classes}">')
-            date_range = work.get("date_range", [])
-            date_str = ""
-            if len(date_range) > 0:
-                date_str = date_range[0]
-                if len(date_range) > 1:
-                    date_str += f" - {date_range[1]}"
+            date_str = _date_range_text(work)
             html_parts.append(component_rows_markup(section_id, {
                 "organization": format_markdown(work.get("company_name", labels["companyNotSet"])),
                 "position": format_markdown(work.get("job_title", "")),
                 "job_type": format_markdown(f'({work["job_type"]})') if work.get("job_type") and work_layout["showJobType"] else "",
                 "date": format_markdown(date_str),
-            }, {"content"}))
+            }, {"content"}, {
+                component for component, value in {
+                    "organization": work.get("company_name", labels["companyNotSet"]),
+                    "position": work.get("job_title", ""),
+                    "job_type": f'({work["job_type"]})' if work.get("job_type") and work_layout["showJobType"] else "",
+                    "date": date_str,
+                }.items() if _is_fully_bold(value)
+            }))
 
             # 工作详情沿用与项目经历一致的语义块，避免标题和已编号内容被重复加圆点。
             for block, flow in iter_experience_content_blocks(work, experience_kind="work"):
@@ -507,21 +546,18 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
             )
             html_parts.append(f'<div class="{project_classes}">')
             role_value = project.get("role", "") if project_layout["showRole"] else ""
-            date_range = project.get("date_range", [])
-            date_value = ""
-            if len(date_range) > 0 and project_layout["showDate"]:
-                date_value = date_range[0]
-                if len(date_range) > 1:
-                    date_value += f" - {date_range[1]}"
-            elif project.get("start_date") and project_layout["showDate"]:
-                date_value = project["start_date"]
-                if project.get("end_date"):
-                    date_value += f" - {project['end_date']}"
+            date_value = _date_range_text(project) if project_layout["showDate"] else ""
             html_parts.append(component_rows_markup("project_experience", {
                 "project_name": format_markdown(project.get("project_name") or project.get("name") or labels["projectNotSet"]),
                 "role": format_markdown(role_value),
                 "date": format_markdown(date_value),
-            }, {"content"}))
+            }, {"content"}, {
+                component for component, value in {
+                    "project_name": project.get("project_name") or project.get("name") or labels["projectNotSet"],
+                    "role": role_value,
+                    "date": date_value,
+                }.items() if _is_fully_bold(value)
+            }))
 
             # 项目详情使用语义块：标题不带圆点，职责内部保留编号。
             for block, flow in iter_experience_content_blocks(project, experience_kind="project"):
@@ -551,19 +587,30 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         commit_section("project_experience", chunk_start)
 
     custom_sections = resume_data.get("custom_sections") or []
-    if custom_sections and not hidden("custom_sections"):
+
+    def render_custom_section(custom_index: int, module_id: str) -> None:
+        if hidden(module_id) or custom_index < 0 or custom_index >= len(custom_sections):
+            return
+        custom = custom_sections[custom_index]
+        if not custom.get("title") or not custom.get("items"):
+            return
         chunk_start = len(html_parts)
-        for custom_index, custom in enumerate(custom_sections):
-            if not custom.get("title") or not custom.get("items"):
-                continue
-            html_parts.append(f'<section class="section custom-section{break_class(f"custom_sections:{custom_index}")}"{order_style("custom_sections")}>')
-            html_parts.append(title_markup("custom_sections", custom["title"]))
-            list_style = custom.get("list_style") if custom.get("list_style") in {"paragraph", "bullet", "numbered"} else layout_config["custom_sections"]["listStyle"]
-            html_parts.append(f'<ul class="list-items module-list list-style-{list_style}">')
-            for value in _module_list_values(custom["items"], list_style):
-                html_parts.append(f'<li class="list-item">{format_markdown(value)}</li>')
-            html_parts.append('</ul></section>')
-        commit_section("custom_sections", chunk_start)
+        html_parts.append(f'<section class="section custom-section{break_class(f"custom_sections:{custom_index}")}"{order_style(module_id)}>')
+        html_parts.append(title_markup(module_id, custom["title"]))
+        list_style = custom.get("list_style") if custom.get("list_style") in {"paragraph", "bullet", "numbered"} else layout_config["custom_sections"]["listStyle"]
+        html_parts.append(f'<ul class="list-items module-list list-style-{list_style}">')
+        for value in _module_list_values(custom["items"], list_style):
+            html_parts.append(f'<li class="list-item">{format_markdown(value)}</li>')
+        html_parts.append('</ul></section>')
+        commit_section(module_id, chunk_start)
+
+    def render_custom_sections() -> None:
+        use_individual_modules = any(is_custom_section_module(item) for item in global_layout["sectionOrder"])
+        for custom_index in range(len(custom_sections)):
+            module_id = custom_section_module_id(custom_index) if use_individual_modules else "custom_sections"
+            render_custom_section(custom_index, module_id)
+
+    render_custom_sections()
 
     # 其他信息
     others = resume_data.get("others") or {}
@@ -580,11 +627,15 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         html_parts.append(title_markup("others", section_title("others", other_title)))
         field_labels = {"skills": labels["skills"], **_other_field_labels(others, labels)}
         separator = " · " if others_layout["separator"] == "dot" else " | "
-        values = {
-            field: format_markdown(_other_field_value(field_labels[field], others[field], separator))
+        raw_values = {
+            field: _other_field_value(field_labels[field], others[field], separator)
             for field in visible_other_fields
         }
-        html_parts.append(component_rows_markup("others", values))
+        html_parts.append(component_rows_markup(
+            "others",
+            {field: format_markdown(value) for field, value in raw_values.items()},
+            bold_components={field for field, value in raw_values.items() if _is_fully_bold(value)},
+        ))
         html_parts.append('</section>')
         commit_section("others", chunk_start)
 
@@ -920,6 +971,8 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     .module-component-cell.flow-inline .module-component + .module-component::before {{ content: ' · '; white-space: pre; }}
     .personal-info .module-component-cell.flow-inline .module-component + .module-component::before {{ content: ' | '; }}
     .module-component-cell.flow-inline .component-position + .component-job_type::before {{ content: ' '; }}
+    .module-component-cell.flow-inline .component-explicit-bold + .module-component.component-explicit-bold::before {{ font-weight: 700; }}
+    .module-component-cell.flow-inline .component-explicit-bold + .module-component.component-leading-bold::before {{ font-weight: 700; }}
     .module-component.component-school {{ font-size: var(--entry-title-font-size); font-weight: var(--manual-title-font-weight); }}
     .module-component.component-organization,
     .module-component.component-project_name {{ font-size: var(--entry-title-font-size); font-weight: var(--manual-title-font-weight); }}

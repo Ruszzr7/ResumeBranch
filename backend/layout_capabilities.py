@@ -25,6 +25,7 @@ from .layout_config import (
     MODULE_COMPONENTS,
     MODULE_LABELS,
     SECTION_IDS,
+    is_custom_section_module,
     normalize_layout_config,
 )
 
@@ -173,6 +174,8 @@ def build_layout_capability_manifest() -> dict[str, Any]:
         },
         "semantic_content_rules": {
             "experience_content": ["introduction", "responsibilities", "generic"],
+            "project_experience_content": ["tech_stack", "introduction", "responsibilities", "generic"],
+            "tech_stack": "项目技术栈，默认段落；仅用于项目经历，不等同于顶层专业技能栏目",
             "introduction": "项目简介，默认段落",
             "responsibilities": "项目职责，默认编号",
             "generic": "普通内容，默认分点",
@@ -188,7 +191,7 @@ def build_layout_capability_manifest() -> dict[str, Any]:
             "self_evaluation": "自我评价支持段落、分点、编号",
             "work_experience": "工作内容由项目简介、项目职责、普通内容三种内容块组成；职责默认编号，普通内容默认分点",
             "internship_experience": "实习内容由项目简介、项目职责、普通内容三种内容块组成；职责默认编号，普通内容默认分点",
-            "project_experience": "项目内容由项目简介、项目职责、普通内容三种内容块组成；职责默认编号，普通内容默认分点",
+            "project_experience": "项目内容按技术栈、项目简介、项目职责、普通内容固定顺序组成；技术栈和项目简介默认段落，职责默认编号，普通内容默认分点",
             "others": "证书和语言各自独立一行，条目之间使用分隔符，不提供长文本换行",
             "education": "教育经历为学校、学历/专业/成绩、日期三栏；教育经历补充使用 education.supplementListStyle",
         },
@@ -196,7 +199,7 @@ def build_layout_capability_manifest() -> dict[str, Any]:
             "lineHeight 是全局行距；模块不能单独覆盖行距",
             "moduleMargin 是全局模块间距；模块不能单独设置另一份模块间距",
             "titleStyle 是全局统一的模块标题样式",
-            "sectionOrder 只排列实际有内容且未并入教育经历的顶层模块",
+            "sectionOrder 只排列实际有内容且未并入教育经历的顶层模块；多个自定义栏目按各自标题独立排列",
             "sectionPlacements 只支持独立栏目或并入教育经历",
             "照片位于基本信息右上方，photoHeightMm 控制高度，宽度由原图比例计算",
         ],
@@ -269,9 +272,14 @@ def _validate_list_value(
     if section == "global" and field == "sectionOrder" and current_layout:
         if not current_layout.get("global", {}).get("splitWorkExperience"):
             allowed.discard("internship_experience")
+    accepts_custom_modules = section == "global" and field in {"sectionOrder", "hiddenSections"}
+
+    def allowed_item(item: Any) -> bool:
+        return str(item) in allowed or (accepts_custom_modules and is_custom_section_module(item))
+
     if not isinstance(value, list):
         raise ValueError(f"{path} 必须是列表")
-    if any(str(item) not in allowed for item in value):
+    if any(not allowed_item(item) for item in value):
         raise ValueError(f"{path} 含有当前排版不支持的模块或字段")
     if (section, field) in {
         ("global", "sectionOrder"),
@@ -361,14 +369,20 @@ def _validate_path_and_value(
             if section == "global" and field == "sectionOrder" and current_layout:
                 if not current_layout.get("global", {}).get("splitWorkExperience"):
                     allowed.discard("internship_experience")
-            if str(operation["value"]) not in allowed:
+            if str(operation["value"]) not in allowed and not (
+                section == "global" and field in {"sectionOrder", "hiddenSections"}
+                and is_custom_section_module(operation["value"])
+            ):
                 raise ValueError(f"{path} 含有当前排版不支持的值")
         elif "value" in operation and operation_name in {"append", "insert"}:
             allowed = set(LIST_FIELDS[(section, field)])
             if section == "global" and field == "sectionOrder" and current_layout:
                 if not current_layout.get("global", {}).get("splitWorkExperience"):
                     allowed.discard("internship_experience")
-            if str(operation["value"]) not in allowed:
+            if str(operation["value"]) not in allowed and not (
+                section == "global" and field in {"sectionOrder", "hiddenSections"}
+                and is_custom_section_module(operation["value"])
+            ):
                 raise ValueError(f"{path} 含有当前排版不支持的值")
         return tokens
     if (section, field) in OBJECT_FIELDS:

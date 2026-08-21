@@ -17,10 +17,11 @@ from .inline_formatting import parse_inline_bold, plain_inline_text, serialize_i
 from .resume_data import normalize_resume_data
 
 
-IMPORT_CONTRACT_VERSION = 3
+IMPORT_CONTRACT_VERSION = 4
 MIN_IMPORT_TEXT_VOLUME = 60
 IDENTITY_FIELDS = ("name", "phone", "email")
 SEMANTIC_CONTENT_LABELS = {
+    "tech_stack": "技术栈",
     "introduction": "项目简介",
     "responsibilities": "项目职责",
 }
@@ -112,11 +113,6 @@ def _apply_import_formatting_contract(data: dict[str, Any]) -> None:
                 if not block["label"]:
                     block["label"] = SEMANTIC_CONTENT_LABELS[role]
                 block["label_bold"] = True
-            if role == "responsibilities":
-                block["type"] = "numbered_list"
-                if not block.get("items") and block.get("text"):
-                    block["items"] = [block["text"]]
-                    block["text"] = ""
             block["text"] = _preserve_content_import_text(block.get("text"))
             block["items"] = _normalize_free_list(block.get("items"))
 
@@ -134,11 +130,6 @@ def _apply_import_formatting_contract(data: dict[str, Any]) -> None:
                 if not block["label"]:
                     block["label"] = SEMANTIC_CONTENT_LABELS[role]
                 block["label_bold"] = True
-            if role == "responsibilities":
-                block["type"] = "numbered_list"
-                if not block.get("items") and block.get("text"):
-                    block["items"] = [block["text"]]
-                    block["text"] = ""
             block["text"] = _preserve_content_import_text(block.get("text"))
             block["items"] = _normalize_free_list(block.get("items"))
 

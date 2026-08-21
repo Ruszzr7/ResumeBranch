@@ -4,10 +4,14 @@ from backend.pdf_generator import render_resume_to_html
 from backend.layout_config import (
     apply_density,
     apply_layout_change_groups,
+    custom_section_index,
+    custom_section_module_id,
     build_layout_changes,
     default_layout_config,
     format_compact_academic_metric,
+    is_compact_academic_metric_leading_bold,
     normalize_layout_config,
+    is_custom_section_module,
     component_position,
     resolve_module_layout,
     resolve_content_block_flow,
@@ -19,6 +23,23 @@ from backend.layout_config import (
 
 
 class LayoutConfigTests(unittest.TestCase):
+    def test_custom_sections_are_accepted_as_individual_layout_modules(self):
+        config = normalize_layout_config({
+            "global": {
+                "sectionOrder": ["custom_sections:1", "work_experience", "custom_sections:0"],
+                "hiddenSections": ["custom_sections:1"],
+            },
+        })
+        self.assertEqual(custom_section_module_id(1), "custom_sections:1")
+        self.assertEqual(custom_section_index("custom_sections:0"), 0)
+        self.assertTrue(is_custom_section_module("custom_sections:1"))
+        self.assertNotIn("custom_sections", config["global"]["sectionOrder"])
+        self.assertEqual(config["global"]["hiddenSections"], ["custom_sections:1"])
+        self.assertEqual(
+            resolve_module_layout(config, "custom_sections:1")["listStyle"],
+            config["custom_sections"]["listStyle"],
+        )
+
     def test_column_titles_list_styles_and_education_merges_are_normalized(self):
         config = normalize_layout_config({
             "global": {
@@ -313,6 +334,36 @@ class LayoutConfigTests(unittest.TestCase):
             format_compact_academic_metric({**base, "ranking": "前10%"}),
             "3.8/5.0 (前10%)",
         )
+
+    def test_compact_metric_treats_score_and_ranking_as_separate_groups(self):
+        self.assertEqual(
+            format_compact_academic_metric({
+                "gpa": "**4.0**",
+                "gpa_scale": "**5.0**",
+                "ranking": "**前5%**",
+            }),
+            "**4.0/5.0 (前5%)**",
+        )
+        self.assertEqual(
+            format_compact_academic_metric({
+                "gpa": "**4.0**",
+                "gpa_scale": "**5.0**",
+                "ranking": "前5%",
+            }),
+            "**4.0/5.0** (前5%)",
+        )
+        self.assertTrue(is_compact_academic_metric_leading_bold({
+            "gpa": "**4.0**", "gpa_scale": "5.0", "ranking": "前5%",
+        }))
+        self.assertTrue(is_compact_academic_metric_leading_bold({
+            "gpa": "**4.0**", "gpa_scale": "5.0", "ranking": "**前5%**",
+        }))
+        self.assertFalse(is_compact_academic_metric_leading_bold({
+            "gpa": "4.0", "gpa_scale": "**5.0**", "ranking": "**前5%**",
+        }))
+        self.assertFalse(is_compact_academic_metric_leading_bold({
+            "gpa": "", "gpa_scale": "", "ranking": "**前5%**",
+        }))
 
     def test_pdf_html_consumes_the_shared_font_and_spacing_tokens(self):
         html = render_resume_to_html(

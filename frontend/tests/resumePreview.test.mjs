@@ -79,7 +79,8 @@ test('semantic font sizes use a half-point modal with live preview and page-limi
 })
 
 test('resume fields render the escaped bold-only protocol', () => {
-  assert.ok(previewSource.includes("formatInlineHtml, isFullyBoldInlineText, plainInlineText"))
+  assert.ok(previewSource.includes("joinInlineWithInheritedSeparator as joinInlineFields"))
+  assert.ok(previewSource.includes("formatInlineHtml, isFullyBoldInlineText"))
   assert.ok(previewSource.includes('return formatInlineHtml(text)'))
   assert.equal(previewSource.includes(".replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>')"), false)
 })
@@ -121,11 +122,13 @@ test('layout menu opens a dedicated bidirectional manual ordering dialog', () =>
 
 test('module ordering only exposes visible modules with content', () => {
   assert.ok(previewSource.includes('const sectionHasContent = section =>'))
-  assert.ok(previewSource.includes(".filter(section => SECTION_LABELS[section] && sectionHasContent(section) && !hiddenSection(section) && !isEducationChildSection(section))"))
+  assert.ok(previewSource.includes(".filter(section => sectionLabel(section) && sectionHasContent(section) && !hiddenSection(section) && !isEducationChildSection(section))"))
   for (const section of ['honors', 'publications', 'research_interests', 'skills', 'work_experience', 'project_experience', 'custom_sections', 'others', 'self_evaluation']) {
     assert.ok(previewSource.includes(`${section}:`), `missing module label: ${section}`)
   }
-  assert.ok(previewSource.includes(".filter(section => SECTION_LABELS[section] && sectionHasContent(section) && !hiddenSection(section) && isEducationChildSection(section))"))
+  assert.ok(previewSource.includes(".filter(section => sectionLabel(section) && sectionHasContent(section) && !hiddenSection(section) && isEducationChildSection(section))"))
+  assert.ok(previewSource.includes('customSectionModuleId(sectionIndex)'))
+  assert.ok(previewSource.includes('expandSectionOrderForData(props.layoutConfig, props.data)'))
 })
 
 test('font size order and section dialogs are mutually exclusive', () => {
@@ -331,8 +334,8 @@ test('education uses normalized component rows with configurable alignment and w
   assert.ok(previewSource.includes('componentCellStyle(cell)'))
   assert.ok(previewSource.includes('educationComponentText(item, component)'))
   assert.ok(previewSource.includes('formatCompactAcademicMetric(item, hidden)'))
-  assert.ok(previewSource.includes("filter(Boolean).join(' · ')"))
-  assert.ok(previewSource.includes("(item?.school_tags || []).join(' · ')"))
+  assert.ok(previewSource.includes("joinInlineWithInheritedSeparator(academicMetrics(item), ' · ')"))
+  assert.ok(previewSource.includes("joinInlineWithInheritedSeparator(item?.school_tags, ' · ')"))
   assert.ok(previewSource.includes('text-align: center'))
   assert.ok(previewSource.includes('margin-right: 0'))
   assert.ok(previewSource.includes('position: static'))
@@ -425,6 +428,15 @@ test('work headings use configurable component rows and right-aligned date cells
   assert.ok(previewSource.includes("cell.alignment === 'right' ? 'flex-end'"))
   assert.ok(previewSource.includes("cell.width === 'content' ? 'max-content' : 'minmax(0, 1fr)'"))
   assert.ok(previewSource.includes('text-align: right'))
+})
+
+test('empty work and project dates stay hidden and separators require both sides bold', () => {
+  assert.ok(previewSource.includes('function dateRangeText(item)'))
+  assert.ok(previewSource.includes("return joinInlineWithInheritedSeparator(values, ' - ')"))
+  assert.equal(previewSource.includes("|| '至今'"), false)
+  assert.ok(previewSource.includes("'component-explicit-bold': componentIsFullyBold(workComponentText(entry.item, component, section.id))"))
+  assert.ok(previewSource.includes("'component-explicit-bold': componentIsFullyBold(projectComponentText(item, component))"))
+  assert.ok(previewSource.includes('.component-explicit-bold + .module-component.component-explicit-bold::before'))
 })
 
 test('zoom stepper reports the live percentage instead of a fixed label', () => {

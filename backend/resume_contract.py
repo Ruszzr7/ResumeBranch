@@ -15,18 +15,20 @@ from pydantic import BaseModel, Field
 
 
 CONTENT_BLOCK_TYPES = ("paragraph", "numbered_list", "bullet_list")
-CONTENT_BLOCK_SEMANTIC_ROLES = ("introduction", "responsibilities", "generic")
+CONTENT_BLOCK_SEMANTIC_ROLES = ("tech_stack", "introduction", "responsibilities", "generic")
 CONTENT_BLOCK_TYPE_LABELS = {
     "paragraph": "段落",
     "bullet_list": "分点",
     "numbered_list": "编号",
 }
 CONTENT_BLOCK_ROLE_LABELS = {
+    "tech_stack": "技术栈",
     "introduction": "项目简介",
     "responsibilities": "项目职责",
     "generic": "普通内容",
 }
 DEFAULT_CONTENT_BLOCK_TYPES = {
+    "tech_stack": "paragraph",
     "introduction": "paragraph",
     "responsibilities": "numbered_list",
     "generic": "bullet_list",
@@ -37,10 +39,10 @@ class ProjectContentBlock(BaseModel):
     type: Literal["paragraph", "numbered_list", "bullet_list"] = Field(
         default="paragraph", description="段落、编号列表或普通分点列表"
     )
-    semantic_role: Literal["introduction", "responsibilities", "generic"] | None = Field(
+    semantic_role: Literal["tech_stack", "introduction", "responsibilities", "generic"] | None = Field(
         default=None, description="稳定语义角色；旧数据缺省时由类型和标签兼容推断"
     )
-    label: str = Field(default="", description="例如项目简介、项目职责")
+    label: str = Field(default="", description="例如技术栈、项目简介、项目职责")
     label_bold: bool = Field(default=True, description="语义标签是否加粗")
     text: str = Field(default="", description="paragraph 类型的正文")
     items: list[str] = Field(default_factory=list, description="列表类型的逐条内容，不包含序号")
@@ -80,6 +82,13 @@ _TYPE_ALIASES = {
     "numbers": "numbered_list",
 }
 _ROLE_ALIASES = {
+    "tech_stack": "tech_stack",
+    "technology_stack": "tech_stack",
+    "technology": "tech_stack",
+    "技术栈": "tech_stack",
+    "技术选型": "tech_stack",
+    "使用技术": "tech_stack",
+    "技术工具": "tech_stack",
     "introduction": "introduction",
     "intro": "introduction",
     "项目简介": "introduction",
@@ -103,7 +112,8 @@ _LEADING_NUMBER_RE = re.compile(r"^\s*[（(]?\s*\d{1,2}\s*[）).、．]\s*")
 _LEADING_BULLET_RE = re.compile(r"^\s*(?:[•·▪‣●○◦]\s*|-\s+)")
 _INTRO_RE = re.compile(r"^(项目简介|项目背景|项目概述|项目说明)\s*[：:]\s*(.*)$")
 _DUTY_RE = re.compile(r"^(项目职责|主要职责|个人职责|负责内容)\s*[：:]?\s*(.*)$")
-_BOLD_HEADING_RE = re.compile(r"^\*\*(项目简介|项目背景|项目概述|项目说明|项目职责|主要职责|个人职责|负责内容)\*\*\s*[：:]?\s*(.*)$")
+_TECH_STACK_RE = re.compile(r"^(技术栈|技术选型|使用技术|技术工具)\s*[：:]?\s*(.*)$")
+_BOLD_HEADING_RE = re.compile(r"^\*\*(技术栈|技术选型|使用技术|技术工具|项目简介|项目背景|项目概述|项目说明|项目职责|主要职责|个人职责|负责内容)\*\*\s*[：:]?\s*(.*)$")
 
 
 def _text(value: Any) -> str:
@@ -122,7 +132,7 @@ def _normalize_heading_surface(value: Any) -> tuple[str, bool]:
     if whole_bold:
         text = text[2:-2].strip()
     text = re.sub(
-        r"^\*\*(项目简介|项目背景|项目概述|项目说明|项目职责|主要职责|个人职责|负责内容)\*\*",
+        r"^\*\*(技术栈|技术选型|使用技术|技术工具|项目简介|项目背景|项目概述|项目说明|项目职责|主要职责|个人职责|负责内容)\*\*",
         r"\1",
         text,
     )
@@ -138,10 +148,16 @@ def _semantic_heading_match(value: Any) -> tuple[str, str, str, bool] | None:
     duty_match = _DUTY_RE.match(normalized)
     if duty_match:
         return "responsibilities", duty_match.group(1), duty_match.group(2).strip(), whole_bold
+    tech_stack_match = _TECH_STACK_RE.match(normalized)
+    if tech_stack_match:
+        return "tech_stack", tech_stack_match.group(1), tech_stack_match.group(2).strip(), whole_bold
     bold_match = _BOLD_HEADING_RE.match(_text(value))
     if bold_match:
         label = bold_match.group(1)
-        role = "introduction" if label in {"项目简介", "项目背景", "项目概述", "项目说明"} else "responsibilities"
+        if label in {"技术栈", "技术选型", "使用技术", "技术工具"}:
+            role = "tech_stack"
+        else:
+            role = "introduction" if label in {"项目简介", "项目背景", "项目概述", "项目说明"} else "responsibilities"
         return role, label, bold_match.group(2).strip(), True
     return None
 
@@ -359,6 +375,21 @@ def _legacy_semantic_blocks(details: list[str]) -> list[dict[str, Any]]:
     while index < len(details):
         value = _text(details[index])
         heading = _semantic_heading_match(value)
+        if heading and heading[0] == "tech_stack":
+            flush_unmatched()
+            _, label, body, whole_bold = heading
+            index += 1
+            following = [f"**{body}**" if whole_bold and body else body] if body else []
+            while index < len(details) and not _is_heading(_text(details[index])):
+                following.append(details[index])
+                index += 1
+            values = [value for value in following if _text(value)]
+            if values:
+                blocks.append({
+                    "type": "paragraph", "semantic_role": "tech_stack", "label": label,
+                    "label_bold": True, "text": "\n".join(values), "items": [],
+                })
+            continue
         if heading and heading[0] == "introduction":
             flush_unmatched()
             _, label, body, whole_bold = heading
@@ -405,6 +436,32 @@ def _legacy_semantic_blocks(details: list[str]) -> list[dict[str, Any]]:
     return [block for block in blocks if block.get("text") or block.get("items")]
 
 
+def _order_project_content_blocks(
+    blocks: list[dict[str, Any]],
+    *,
+    experience_kind: str,
+) -> list[dict[str, Any]]:
+    """Apply the fixed semantic order when a project has technical-stack content.
+
+    The editor exposes a fixed project order rather than a generic drag-and-
+    drop operation.  Projects without the new role are returned untouched so
+    existing resume ordering remains backward-compatible.  Once a project
+    explicitly contains technical-stack content, all four semantic roles use
+    the canonical order.
+    """
+    if experience_kind != "project":
+        return blocks
+    if not any(block.get("semantic_role") == "tech_stack" for block in blocks):
+        return blocks
+    role_order = {"tech_stack": 0, "introduction": 1, "responsibilities": 2, "generic": 3}
+    return [
+        block for _, block in sorted(
+            enumerate(blocks),
+            key=lambda pair: (role_order.get(pair[1].get("semantic_role"), 3), pair[0]),
+        )
+    ]
+
+
 def normalize_content_blocks(
     value: Any,
     legacy_details: Any = None,
@@ -432,8 +489,6 @@ def normalize_content_blocks(
 
     def as_responsibilities(
         block: dict[str, Any],
-        *,
-        promoted: bool = True,
     ) -> dict[str, Any]:
         items = list(block["items"])
         if not items and block["text"]:
@@ -442,29 +497,62 @@ def normalize_content_blocks(
             **block,
             "type": "numbered_list",
             "semantic_role": "responsibilities",
-            "label": "项目职责" if promoted else block["label"],
-            "label_bold": True if promoted else block["label_bold"],
+            "label": "项目职责",
+            "label_bold": True,
             "text": "",
             "items": items,
         }
 
     def append_responsibilities(block: dict[str, Any]) -> None:
-        if result and result[-1]["semantic_role"] == "responsibilities" and result[-1]["label"] == "项目职责":
-            result[-1]["items"].extend(block["items"])
+        if (
+            result
+            and result[-1]["semantic_role"] == "responsibilities"
+            and result[-1]["label"] == "项目职责"
+            and result[-1]["type"] == block["type"]
+        ):
+            items = list(block["items"])
+            if not items and block["text"]:
+                items = [block["text"]]
+            if result[-1]["type"] == "paragraph":
+                result[-1]["text"] = "\n".join(
+                    value for value in [result[-1]["text"], *items] if value
+                )
+            else:
+                result[-1]["items"].extend(items)
         else:
             result.append(block)
 
     for raw, block, visual_signature in entries:
+        has_explicit_semantic_role = (
+            isinstance(raw, Mapping) and bool(_text(raw.get("semantic_role")))
+        )
+        if block["semantic_role"] == "tech_stack":
+            # Project technical stack is a fixed semantic block. It is kept
+            # outside the responsibility continuation window and moved ahead
+            # of the introduction by the final project ordering step.
+            result.append(block)
+            active_semantic_group = None
+            responsibility_visual_key = None
+            continue
         if block["semantic_role"] == "introduction":
             result.append(block)
             active_semantic_group = "introduction" if block["label"] else None
             responsibility_visual_key = None
             continue
         elif block["semantic_role"] == "responsibilities":
-            block = as_responsibilities(block, promoted=False)
+            # An explicit block comes from the editor/parser contract. Its
+            # selected paragraph, bullet, or numbered form is authoritative.
             append_responsibilities(block)
             active_semantic_group = "responsibilities" if block["label"] else None
             responsibility_visual_key = _visual_group_key(visual_signature)
+            continue
+        elif has_explicit_semantic_role:
+            # Explicit generic content marks a real boundary. Do not fold it
+            # into the preceding responsibility group when visual evidence is
+            # unavailable (which is normal for editor-authored data).
+            result.append(block)
+            active_semantic_group = None
+            responsibility_visual_key = None
             continue
 
         if active_semantic_group in {"introduction", "responsibilities"}:
@@ -499,14 +587,14 @@ def normalize_content_blocks(
         result.append(block)
     legacy = _string_list(legacy_details)
     if result or not legacy:
-        return result
+        return _order_project_content_blocks(result, experience_kind=experience_kind)
 
     # Work descriptions historically had no semantic labels. Preserve that
     # legacy generic shape only when no explicit semantic heading exists;
     # an explicit project-introduction or responsibility heading always wins.
     if experience_kind == "work" and not any(_semantic_heading_match(item) for item in legacy):
-        return [{
+        return _order_project_content_blocks([{
             "type": "bullet_list", "semantic_role": "generic", "label": "", "label_bold": True,
             "text": "", "items": legacy,
-        }]
-    return _legacy_semantic_blocks(legacy)
+        }], experience_kind=experience_kind)
+    return _order_project_content_blocks(_legacy_semantic_blocks(legacy), experience_kind=experience_kind)

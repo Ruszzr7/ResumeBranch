@@ -342,6 +342,105 @@ class LayoutRuleTests(unittest.TestCase):
         self.assertTrue(bool(date_cell.paragraphs[0].runs[0].bold))
         self.assertAlmostEqual(date_cell.paragraphs[0].runs[0].font.size.pt, tokens["labelFontSizePt"], places=1)
 
+    def test_empty_experience_dates_hide_and_separators_require_both_sides_bold(self):
+        data = {
+            "formatting_version": 4,
+            "basics": {"name": "测试", "gender": "", "phone": "", "email": "", "target_position": ""},
+            "education": [{
+                "school_name": "示例大学",
+                "degree": "**本科**",
+                "major": "**专业**",
+                "date_range": ["", ""],
+                "school_tags": [],
+                "theses": [],
+            }],
+            "work_experience": [{
+                "company_name": "**示例公司**",
+                "job_title": "后端开发",
+                "job_type": "",
+                "date_range": ["**2024.01**", "**2024.06**"],
+                "details": [],
+            }],
+            "project_experience": [{
+                "project_name": "**示例项目**",
+                "role": "**项目负责人**",
+                "date_range": ["", ""],
+                "details": [],
+            }],
+            "others": {
+                "skills": [],
+                "certificates": ["软件设计师"],
+                "languages": [],
+                "field_labels": {"certificates": "**资格证书**"},
+            },
+            "self_evaluation": [],
+        }
+
+        html = render_resume_to_html(data, layout_config=default_layout_config())
+        self.assertNotIn("至今", html)
+        self.assertIn('component-organization component-explicit-bold', html)
+        self.assertIn('component-project_name component-explicit-bold', html)
+        self.assertIn('component-degree component-explicit-bold', html)
+        self.assertIn('<strong>2024.01 - 2024.06</strong>', html)
+        self.assertIn('.component-explicit-bold + .module-component.component-explicit-bold::before', html)
+        self.assertIn('<strong>资格证书：</strong>软件设计师', html)
+        self.assertNotIn('component-date', html[html.index('示例项目') - 500:html.index('示例项目') + 500])
+
+        document = Document(BytesIO(generate_docx(data, layout_config=default_layout_config())))
+        work_table = next(
+            table for table in document.tables
+            if any("示例公司" in cell.text for row in table.rows for cell in row.cells)
+        )
+        project_table = next(
+            table for table in document.tables
+            if any("示例项目" in cell.text for row in table.rows for cell in row.cells)
+        )
+        work_cell = work_table.rows[0].cells[0]
+        work_separator = next(run for run in work_cell.paragraphs[0].runs if " · " in run.text)
+        self.assertFalse(work_separator.bold)
+        self.assertIn(" · 后端开发", work_cell.text)
+
+        project_cell = project_table.rows[0].cells[0]
+        project_separator = next(run for run in project_cell.paragraphs[0].runs if " · " in run.text)
+        self.assertTrue(project_separator.bold)
+        self.assertIn(" · 项目负责人", project_cell.text)
+
+        work_date_cell = next(
+            cell for cell in work_table.rows[0].cells if "2024.01" in cell.text
+        )
+        self.assertEqual(work_date_cell.text, "2024.01 - 2024.06")
+        date_runs = work_date_cell.paragraphs[0].runs
+        self.assertTrue(any("2024.01 - 2024.06" in run.text and run.bold for run in date_runs))
+
+        education_table = next(
+            table for table in document.tables
+            if any("示例大学" in cell.text for row in table.rows for cell in row.cells)
+        )
+        education_text = "".join(
+            run.text for row in education_table.rows for cell in row.cells for paragraph in cell.paragraphs for run in paragraph.runs
+        )
+        self.assertIn("本科 · 专业", education_text)
+        self.assertTrue(any(
+            " · " in run.text and run.bold
+            for row in education_table.rows
+            for cell in row.cells
+            for paragraph in cell.paragraphs
+            for run in paragraph.runs
+        ))
+
+        certificate_table = next(
+            table for table in document.tables
+            if any("资格证书" in cell.text for row in table.rows for cell in row.cells)
+        )
+        certificate_runs = [
+            run
+            for row in certificate_table.rows
+            for cell in row.cells
+            for paragraph in cell.paragraphs
+            for run in paragraph.runs
+        ]
+        self.assertTrue(any("资格证书：" in run.text and run.bold for run in certificate_runs))
+
     def test_empty_self_evaluation_is_hidden_in_default_layout(self):
         data = resume_with_two_jobs()
         data["self_evaluation"] = ["", "   "]
@@ -427,7 +526,7 @@ class LayoutRuleTests(unittest.TestCase):
         })
 
         html = render_resume_to_html(data)
-        self.assertIn("<strong>男</strong> | <strong>2002.06</strong>", html)
+        self.assertIn("<strong>男 | 2002.06</strong>", html)
         self.assertIn("<strong>目标岗位：软件工程师</strong>", html)
         self.assertNotIn("component-target_position { font-weight: var(--manual-title-font-weight); }", html)
 
@@ -504,6 +603,33 @@ class LayoutRuleTests(unittest.TestCase):
         for expected in ("段落内容", "分点内容", "编号内容"):
             self.assertIn(expected, combined)
 
+    def test_project_tech_stack_uses_the_same_render_contract_in_html_and_docx(self):
+        data = resume_with_two_jobs()
+        data["project_experience"] = [{
+            "project_name": "导航平台",
+            "content_blocks": [
+                {"type": "bullet_list", "semantic_role": "generic", "label": "", "items": ["其他说明"]},
+                {"type": "paragraph", "semantic_role": "introduction", "label": "项目简介", "text": "项目背景", "items": []},
+                {"type": "paragraph", "semantic_role": "tech_stack", "label": "技术栈", "text": "Python、FastAPI", "items": []},
+                {"type": "numbered_list", "semantic_role": "responsibilities", "label": "项目职责", "items": ["完成联调"]},
+            ],
+        }]
+
+        html = render_resume_to_html(data)
+        for text in ("技术栈", "Python、FastAPI", "项目简介", "项目职责", "其他说明"):
+            self.assertIn(text, html)
+        self.assertLess(html.index("技术栈"), html.index("项目简介"))
+        self.assertLess(html.index("项目简介"), html.index("项目职责"))
+        self.assertLess(html.index("项目职责"), html.index("其他说明"))
+
+        document = Document(BytesIO(generate_docx(data)))
+        combined = "\n".join(paragraph.text for paragraph in document.paragraphs)
+        for text in ("技术栈", "Python、FastAPI", "项目简介", "项目职责", "其他说明"):
+            self.assertIn(text, combined)
+        self.assertLess(combined.index("技术栈"), combined.index("项目简介"))
+        self.assertLess(combined.index("项目简介"), combined.index("项目职责"))
+        self.assertLess(combined.index("项目职责"), combined.index("其他说明"))
+
     def test_paragraph_mode_preserves_authored_line_breaks(self):
         data = resume_with_two_jobs()
         data["project_experience"] = [{
@@ -545,6 +671,27 @@ class LayoutRuleTests(unittest.TestCase):
         self.assertIn("第一项", combined)
         self.assertIn("第一句\n第二句", combined)
         self.assertNotIn("第一句 第二句", combined)
+
+    def test_custom_sections_follow_individual_module_order_in_html_and_word(self):
+        data = resume_with_two_jobs()
+        data["custom_sections"] = [
+            {"title": "项目A", "items": ["A内容"]},
+            {"title": "项目B", "items": ["B内容"]},
+        ]
+        layout = default_layout_config()
+        layout["global"]["sectionOrder"] = [
+            "education", "custom_sections:1", "work_experience", "custom_sections:0",
+            "others", "self_evaluation",
+        ]
+
+        html = render_resume_to_html(data, layout_config=layout)
+        self.assertLess(html.index("项目B"), html.index("工作经历"))
+        self.assertLess(html.index("工作经历"), html.index("项目A"))
+
+        document = Document(BytesIO(generate_docx(data, layout_config=layout)))
+        combined = "\n".join(paragraph.text for paragraph in document.paragraphs)
+        self.assertLess(combined.index("项目B"), combined.index("工作经历"))
+        self.assertLess(combined.index("工作经历"), combined.index("项目A"))
 
     def test_forced_item_break_preserves_template_and_date_classes(self):
         data = resume_with_two_jobs()
@@ -923,6 +1070,39 @@ class LayoutRuleTests(unittest.TestCase):
         self.assertIn('<w:characterSpacingControl w:val="doNotCompress"', settings_xml)
         self.assertIn('w:eastAsia="zh-CN"', settings_xml)
         self.assertIn('<w:overflowPunct w:val="0"', document_xml)
+
+    def test_compact_education_bolds_separator_based_on_gpa_only(self):
+        data = resume_with_two_jobs()
+        data["education"] = [{
+            "school_name": "中山大学",
+            "degree": "**硕士**",
+            "major": "**电子信息**",
+            "gpa": "**4.0**",
+            "gpa_scale": "5.0",
+            "ranking": "**前5%**",
+            "date_range": ["2024.09", "2027.06"],
+            "school_tags": [],
+            "theses": [],
+        }]
+        layout = default_layout_config()
+
+        html = render_resume_to_html(data, layout_config=layout)
+        self.assertIn(
+            'component-major component-explicit-bold"><strong>电子信息</strong></span>'
+            '<span class="module-component component-metrics component-leading-bold">'
+            '<strong>4.0</strong>/5.0 <strong>(前5%)</strong></span>',
+            html,
+        )
+
+        document = Document(BytesIO(generate_docx(data, layout_config=layout)))
+        education_table = next(
+            table for table in document.tables
+            if any("中山大学" in cell.text for row in table.rows for cell in row.cells)
+        )
+        middle_cell = education_table.cell(0, 1)
+        metrics_run = next(run for run in middle_cell.paragraphs[0].runs if run.text.startswith(" · 4.0"))
+        self.assertTrue(metrics_run.text.startswith(" · "))
+        self.assertTrue(metrics_run.bold)
 
     def test_mixed_text_keeps_source_spaces_and_section_divider_gap_matches(self):
         data = resume_with_two_jobs()

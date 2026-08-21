@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { DEFAULT_LAYOUT_CONFIG, componentPosition, formatCompactAcademicMetric, normalizeLayoutConfig, resolveContentBlockFlow, resolveEducationColumnWidths, resolveLayoutTokens, resolveModuleLayout, resolvePhotoHeightMm } from '../src/utils/layoutConfig.js'
+import { DEFAULT_LAYOUT_CONFIG, componentPosition, customSectionIndex, customSectionModuleId, expandSectionOrderForData, formatCompactAcademicMetric, isCompactAcademicMetricLeadingBold, isCustomSectionModule, normalizeLayoutConfig, resolveContentBlockFlow, resolveEducationColumnWidths, resolveLayoutTokens, resolveModuleLayout, resolvePhotoHeightMm } from '../src/utils/layoutConfig.js'
 
 test('current defaults use the compact practical spacing range', () => {
   const result = normalizeLayoutConfig(DEFAULT_LAYOUT_CONFIG)
@@ -37,6 +37,29 @@ test('v7 default section order migrates without overwriting a user order', () =>
     'work_experience', 'project_experience', 'custom_sections', 'others', 'self_evaluation'
   ]
   assert.deepEqual(normalizeLayoutConfig({ version: 7, global: { sectionOrder: custom } }).global.sectionOrder, custom)
+})
+
+test('custom sections expand into individually sortable virtual modules', () => {
+  const data = {
+    custom_sections: [
+      { title: '项目A', items: ['A'] },
+      { title: '项目B', items: ['B'] }
+    ]
+  }
+  const expanded = expandSectionOrderForData({
+    global: { sectionOrder: ['education', 'custom_sections', 'work_experience'] }
+  }, data).global.sectionOrder
+  assert.equal(customSectionModuleId(0), 'custom_sections:0')
+  assert.equal(customSectionIndex('custom_sections:1'), 1)
+  assert.equal(isCustomSectionModule('custom_sections:1'), true)
+  assert.ok(expanded.indexOf('custom_sections:0') < expanded.indexOf('work_experience'))
+  assert.ok(expanded.indexOf('custom_sections:1') < expanded.indexOf('work_experience'))
+
+  const reordered = normalizeLayoutConfig({
+    global: { sectionOrder: ['custom_sections:1', 'work_experience', 'custom_sections:0'] }
+  })
+  assert.equal(reordered.global.sectionOrder.includes('custom_sections'), false)
+  assert.deepEqual(resolveModuleLayout(reordered, 'custom_sections:1').componentRows, reordered.custom_sections.componentRows)
 })
 
 test('module headings stay global and retired work layouts normalize to compact', () => {
@@ -151,6 +174,21 @@ test('compact metric preserves the ranking wording entered by the user', () => {
   const base = { gpa: '3.8', gpa_scale: '5.0' }
   assert.equal(formatCompactAcademicMetric({ ...base, ranking: '10%' }), '3.8/5.0 (10%)')
   assert.equal(formatCompactAcademicMetric({ ...base, ranking: '前10%' }), '3.8/5.0 (前10%)')
+})
+
+test('compact metric treats score and ranking as separate groups', () => {
+  assert.equal(
+    formatCompactAcademicMetric({ gpa: '**4.0**', gpa_scale: '**5.0**', ranking: '**前5%**' }),
+    '**4.0/5.0 (前5%)**'
+  )
+  assert.equal(
+    formatCompactAcademicMetric({ gpa: '**4.0**', gpa_scale: '**5.0**', ranking: '前5%' }),
+    '**4.0/5.0** (前5%)'
+  )
+  assert.equal(isCompactAcademicMetricLeadingBold({ gpa: '**4.0**', gpa_scale: '5.0', ranking: '前5%' }), true)
+  assert.equal(isCompactAcademicMetricLeadingBold({ gpa: '**4.0**', gpa_scale: '5.0', ranking: '**前5%**' }), true)
+  assert.equal(isCompactAcademicMetricLeadingBold({ gpa: '4.0', gpa_scale: '**5.0**', ranking: '**前5%**' }), false)
+  assert.equal(isCompactAcademicMetricLeadingBold({ gpa: '', gpa_scale: '', ranking: '**前5%**' }), false)
 })
 
 test('saved v3 defaults migrate through the semantic scale to schema v9', () => {

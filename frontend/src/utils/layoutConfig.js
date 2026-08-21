@@ -1,4 +1,5 @@
 import { normalizeContentBlock } from './resumeContract.js'
+import { isFullyBoldInlineText, joinInlineWithInheritedSeparator, plainInlineText } from './inlineFormatting.js'
 
 export const MODULE_COMPONENTS = Object.freeze({
   basics: ['name', 'target_position', 'personal_meta', 'contact', 'additional_fields', 'photo'],
@@ -131,6 +132,20 @@ const SECTION_IDS = new Set([
   'education', 'honors', 'publications', 'research_interests', 'skills', 'work_experience',
   'internship_experience', 'project_experience', 'custom_sections', 'others', 'self_evaluation'
 ])
+const CUSTOM_SECTION_MODULE_RE = /^custom_sections:(\d+)$/
+
+export const customSectionModuleId = index => `custom_sections:${Math.max(0, Number(index) || 0)}`
+
+export function customSectionIndex(moduleId) {
+  const match = CUSTOM_SECTION_MODULE_RE.exec(String(moduleId || ''))
+  return match ? Number(match[1]) : null
+}
+
+export function isCustomSectionModule(moduleId) {
+  return customSectionIndex(moduleId) !== null
+}
+
+const isValidSectionId = value => SECTION_IDS.has(value) || isCustomSectionModule(value)
 const ENUMS = Object.freeze({
   'typography.preset': ['microsoft-office'],
   'global.density': ['compact', 'standard', 'comfortable'],
@@ -356,7 +371,7 @@ export function normalizeLayoutConfig(value = {}) {
     result.global.sectionOrder = [...DEFAULT_LAYOUT_CONFIG.global.sectionOrder]
   }
   result.global.sectionOrder = [...new Set((Array.isArray(result.global.sectionOrder) ? result.global.sectionOrder : [])
-    .filter(item => SECTION_IDS.has(item)))]
+    .filter(item => isValidSectionId(item)))]
   if (result.global.splitWorkExperience && !result.global.sectionOrder.includes('internship_experience')) {
     const index = result.global.sectionOrder.indexOf('work_experience')
     result.global.sectionOrder.splice(Math.max(0, index + 1), 0, 'internship_experience')
@@ -373,12 +388,14 @@ export function normalizeLayoutConfig(value = {}) {
   insertAfter('publications', 'honors')
   insertAfter('research_interests', 'publications')
   insertAfter('skills', 'research_interests')
-  insertAfter('custom_sections', 'project_experience')
+  const hasCustomSectionModules = result.global.sectionOrder.some(isCustomSectionModule)
+  if (!hasCustomSectionModules) insertAfter('custom_sections', 'project_experience')
   for (const item of SECTION_IDS) {
+    if (item === 'custom_sections' && hasCustomSectionModules) continue
     if (item !== 'internship_experience' || result.global.splitWorkExperience) insertAfter(item)
   }
   result.global.hiddenSections = [...new Set(
-    (Array.isArray(result.global.hiddenSections) ? result.global.hiddenSections : []).filter(item => SECTION_IDS.has(item))
+    (Array.isArray(result.global.hiddenSections) ? result.global.hiddenSections : []).filter(item => isValidSectionId(item))
   )]
   const cleanTitles = {}
   const suppliedTitles = suppliedGlobal.titleOverrides ?? result.global.titleOverrides
@@ -457,6 +474,59 @@ export function normalizeLayoutConfig(value = {}) {
   }
   normalizeModuleContracts(result, value, suppliedVersion, boundedConfigNumber)
   return result
+}
+
+/**
+ * Expand the legacy aggregate custom_sections module into one virtual module
+ * per custom section. The stored layout remains backward compatible: old
+ * configs may still contain the aggregate id, while newly saved configs can
+ * persist custom_sections:<index> entries for independent ordering.
+ */
+export function expandSectionOrderForData(value = {}, data = {}) {
+  const config = normalizeLayoutConfig(value)
+  const customCount = Array.isArray(data?.custom_sections) ? data.custom_sections.length : 0
+  const customIds = Array.from({ length: customCount }, (_, index) => customSectionModuleId(index))
+  const rawOrder = [...(config.global.sectionOrder || [])]
+  const expanded = []
+  const seen = new Set()
+  const push = section => {
+    if (!section || seen.has(section)) return
+    seen.add(section)
+    expanded.push(section)
+  }
+  let customInserted = false
+  for (const section of rawOrder) {
+    if (section === 'custom_sections') {
+      if (customCount) customIds.forEach(push)
+      else push(section)
+      customInserted = true
+      continue
+    }
+    if (isCustomSectionModule(section)) {
+      const index = customSectionIndex(section)
+      if (index !== null && index < customCount) push(section)
+      customInserted = true
+      continue
+    }
+    push(section)
+  }
+  if (customCount) {
+    const missing = customIds.filter(section => !seen.has(section))
+    if (missing.length) {
+      let insertionIndex = expanded.findIndex(section => section === 'project_experience')
+      const lastCustomIndex = expanded.reduce((last, section, index) => (
+        isCustomSectionModule(section) ? index : last
+      ), -1)
+      if (lastCustomIndex >= 0) insertionIndex = lastCustomIndex
+      insertionIndex = insertionIndex >= 0 ? insertionIndex + 1 : expanded.length
+      expanded.splice(insertionIndex, 0, ...missing)
+    }
+  } else if (customInserted && !expanded.includes('custom_sections')) {
+    const anchor = expanded.indexOf('project_experience')
+    expanded.splice(anchor >= 0 ? anchor + 1 : expanded.length, 0, 'custom_sections')
+  }
+  config.global.sectionOrder = expanded
+  return config
 }
 
 const quoteCssFont = font => font === 'sans-serif' ? font : `"${font}"`
@@ -542,11 +612,12 @@ export function resolveLayoutTokens(value = {}, style = {}) {
 
 export function resolveModuleLayout(value = {}, moduleId) {
   const config = normalizeLayoutConfig(value)
-  if (!MODULE_COMPONENTS[moduleId]) throw new Error(`Unknown layout module: ${moduleId}`)
+  const resolvedModuleId = isCustomSectionModule(moduleId) ? 'custom_sections' : moduleId
+  if (!MODULE_COMPONENTS[resolvedModuleId]) throw new Error(`Unknown layout module: ${moduleId}`)
   return {
-    ...clone(config[moduleId]),
-    resolvedTitleStyle: config[moduleId].titleStyle || config.global.titleStyle,
-    resolvedTitleAlignment: config[moduleId].titleAlignment || 'left',
+    ...clone(config[resolvedModuleId]),
+    resolvedTitleStyle: config[resolvedModuleId].titleStyle || config.global.titleStyle,
+    resolvedTitleAlignment: config[resolvedModuleId].titleAlignment || 'left',
     resolvedLineHeight: config.global.lineHeight
   }
 }
@@ -619,6 +690,11 @@ export function resolvePhotoHeightMm(resumeData = {}, config = {}, tokens = {}) 
   const others = resumeData?.others && typeof resumeData.others === 'object' ? resumeData.others : {}
   const hasValues = value => Array.isArray(value) && value.some(item => String(item || '').trim())
   const sectionHasContent = section => {
+    const customIndex = customSectionIndex(section)
+    if (customIndex !== null) {
+      const custom = resumeData?.custom_sections?.[customIndex]
+      return Boolean(custom?.title && hasValues(custom.items))
+    }
     if (section === 'education') return Array.isArray(resumeData.education) && resumeData.education.length > 0
     if (section === 'skills') return hasValues(others.skills)
     if (['research_interests', 'honors', 'publications', 'self_evaluation'].includes(section)) return hasValues(resumeData[section])
@@ -638,7 +714,9 @@ export function resolvePhotoHeightMm(resumeData = {}, config = {}, tokens = {}) 
     if (section === 'others') return ['certificates', 'languages'].some(key => hasValues(others[key]))
     return false
   }
-  if (!(global.sectionOrder || []).some(section => sectionHasContent(section) && !hidden.has(section))) return desired
+  if (!(global.sectionOrder || []).some(section => sectionHasContent(section)
+    && !hidden.has(section)
+    && !(isCustomSectionModule(section) && hidden.has('custom_sections')))) return desired
 
   const printableWidthPt = Math.max(1, (210 - Number(tokens.marginLeftMm || 0) - Number(tokens.marginRightMm || 0)) * 72 / 25.4)
   const ratio = Math.min(3, Math.max(0.2, Number(basics.photo_aspect_ratio) || 21 / 26))
@@ -677,13 +755,24 @@ export function formatCompactAcademicMetric(item = {}, hiddenMetrics = []) {
   const hidden = new Set(hiddenMetrics)
   let metric = ''
   if (item?.gpa && !hidden.has('gpa')) {
-    metric = `${item.gpa}${item.gpa_scale ? `/${item.gpa_scale}` : ''}`
+    metric = String(item.gpa)
+    if (item.gpa_scale) {
+      metric = joinInlineWithInheritedSeparator([metric, item.gpa_scale], '/')
+    }
   }
   if (item?.ranking && !hidden.has('ranking')) {
     const ranking = String(item.ranking).trim().replace(/^[（(]|[）)]$/g, '')
-    metric = metric ? `${metric} (${ranking})` : `(${ranking})`
+    const rankingValue = isFullyBoldInlineText(ranking)
+      ? `**(${plainInlineText(ranking)})**`
+      : `(${ranking})`
+    metric = joinInlineWithInheritedSeparator([metric, rankingValue], ' ')
   }
   return metric
+}
+
+export function isCompactAcademicMetricLeadingBold(item = {}, hiddenMetrics = []) {
+  const hidden = new Set(hiddenMetrics)
+  return Boolean(item?.gpa && !hidden.has('gpa') && isFullyBoldInlineText(item.gpa))
 }
 
 // Keep content-flow decisions in one place. Preview rendering and editor line
@@ -726,5 +815,8 @@ export function sectionOrder(config, section) {
 }
 
 export function isSectionHidden(config, section) {
-  return config?.global?.hiddenSections?.includes(section) || false
+  const baseSection = isCustomSectionModule(section) ? 'custom_sections' : section
+  return config?.global?.hiddenSections?.includes(section)
+    || config?.global?.hiddenSections?.includes(baseSection)
+    || false
 }

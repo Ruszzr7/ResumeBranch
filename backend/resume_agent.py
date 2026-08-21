@@ -177,7 +177,7 @@ class WorkExperience(BaseModel):
     job_title: str = Field(default="", description="职位名称；原文没有时留空")
     date_range: List[str] = Field(default_factory=list, description="就职时间；原文没有时留空")
     job_type: str = Field(default="", description="工作类型；原文没有明确标注时必须留空，不得推断")
-    content_blocks: List[ProjectContentBlock] = Field(default_factory=list, description="项目简介、职责等语义内容块")
+    content_blocks: List[ProjectContentBlock] = Field(default_factory=list, description="项目简介、项目职责、普通内容等语义内容块；工作经历不使用项目技术栈角色")
     details: List[str] = Field(default_factory=list, description="工作详细内容")
 
 
@@ -187,14 +187,14 @@ class ProjectExperience(BaseModel):
     role: str = Field(default="", description="项目角色；原文未提供时必须留空")
     date_range: List[str] = Field(default_factory=list, description="项目时间")
     content_blocks: List[ProjectContentBlock] = Field(
-        default_factory=list, description="优先使用的项目简介、项目职责等语义内容块"
+        default_factory=list, description="优先使用的技术栈、项目简介、项目职责、普通内容语义块；固定顺序为技术栈、项目简介、项目职责、普通内容"
     )
     details: List[str] = Field(default_factory=list, description="旧数据兼容字段；新解析优先写入 content_blocks")
 
 
 class Others(BaseModel):
     """其他信息"""
-    skills: List[str] = Field(default_factory=list, description="原简历专业技能/技能特长/技术栈栏目中的全部条目，包括该栏目内出现的语言和证书")
+    skills: List[str] = Field(default_factory=list, description="原简历顶层专业技能/技能特长/技术栈栏目中的全部条目，包括该栏目内出现的语言和证书；项目经历内部技术栈写入项目 content_blocks")
     certificates: List[str] = Field(default_factory=list, description="仅提取原简历独立证书/资格栏目中的条目")
     languages: List[str] = Field(default_factory=list, description="仅提取原简历独立语言/外语能力栏目中的条目")
 
@@ -562,13 +562,13 @@ def build_resume_extract_prompt() -> str:
         "禁止总结、润色、改写、补全、合并不同经历或猜测不可见内容；原文没有明确出现的字段必须保持空值，尤其是工作类型，不得为了补全模板而猜测‘全职’或‘实习’。\n"
         "【字段映射】出生年月进入 basics.birth_date；其他未预设的个人字段进入 basics.additional_fields；"
         "研究方向进入 research_interests；奖学金、竞赛奖项和主要荣誉进入 honors；"
-        "字段映射必须先遵循原简历的可见栏目边界，而不是仅凭内容语义重新分类：专业技能、技能特长、技术栈栏目下的全部内容"
+        "字段映射必须先遵循原简历的可见栏目边界，而不是仅凭内容语义重新分类：顶层专业技能、技能特长、技术栈栏目下的全部内容"
         "都进入 others.skills，即使其中包含 CET-4/CET-6、英语、证书或认证；只有原文存在独立的证书/资格栏目时才写入"
         "others.certificates，只有原文存在独立的语言/外语能力栏目时才写入 others.languages。禁止把原简历一个栏目拆成多个新栏目，"
         "也不要跨数组重复同一内容。若一个可见栏目标题同时包含语言、荣誉、奖项、论文或证书等多个类别，必须保留为一个"
-        "custom_sections 项目，保留原标题和原阅读顺序，不得为了套用系统栏目而拆成多个数组。不能把专业技能放入 custom_sections，"
+        "custom_sections 项目，保留原标题和原阅读顺序，不得为了套用系统栏目而拆成多个数组。不能把顶层专业技能放入 custom_sections。项目经历内部若存在独立的‘技术栈’、‘技术选型’、‘使用技术’或‘技术工具’标题，才将该标题及其原文内容写入对应项目的 content_blocks，semantic_role=tech_stack；项目内部技术栈不能写入 others.skills，不能仅凭正文出现技术名词创建该块，"
         "也不能把荣誉混入 certificates。\n"
-        "【文字格式】在生成 JSON 前先按页面阅读顺序在内部建立带字重的逐行转写。以下固定标题字段不受原文视觉字重影响，必须默认加粗：basics.name、basics.target_position、education.school_name、work_experience.company_name、work_experience.job_title、project_experience.project_name，以及项目简介和项目职责的 label（label_bold=true）。以下固定字段必须保持普通字重，不得写 **：基本信息中的性别、出生年月、手机、邮箱和其他基本信息；教育经历中的学校标签、学历、专业、绩点、排名、日期；工作/实习经历中的工作类型、日期；项目经历中的角色、日期。"
+        "【文字格式】在生成 JSON 前先按页面阅读顺序在内部建立带字重的逐行转写。以下固定标题字段不受原文视觉字重影响，必须默认加粗：basics.name、basics.target_position、education.school_name、work_experience.company_name、work_experience.job_title、project_experience.project_name，以及项目技术栈、项目简介和项目职责的 label（label_bold=true）。以下固定字段必须保持普通字重，不得写 **：基本信息中的性别、出生年月、手机、邮箱和其他基本信息；教育经历中的学校标签、学历、专业、绩点、排名、日期；工作/实习经历中的工作类型、日期；项目经历中的角色、日期。"
         "其余编辑内容中的大输入框需保留段落内部真实存在的重点词汇粗体，但只保留原文有明确视觉证据的局部粗体：只有能确认原文字符确实使用粗体时，才使用成对的 **文字** 标记；段落或分点开头出现完整粗体片段并紧接冒号/中文冒号或其他分隔符（例如 **重点内容**：XXXXX）时，必须优先检查并保留开头实际粗体片段，这是高优先级的局部粗体证据；只标记冒号前实际粗体范围，不延伸到后文。不能因为是英文、缩写、技术名词、数字、百分比或看起来重要就推断加粗。无法确认时保持普通字重，宁可漏标也不要误标。列表按每一条独立判断，条目内部的局部粗体同样要保留。内容块的 label 不要写 ** 标记，使用 label_bold=true/false 表示标签字重；不要输出其他 Markdown 标记，列表序号不要写入 items。\n"
         + CONTENT_STRUCTURE_GUIDANCE
         + "\n"

@@ -55,6 +55,48 @@ def plain_inline_text(value: object) -> str:
     return "".join(segment.text for segment in parse_inline_bold(value))
 
 
+def is_fully_bold_inline(value: object) -> bool:
+    """Return whether all visible text in a value is explicitly bold."""
+    segments = [segment for segment in parse_inline_bold(str(value or "").strip()) if segment.text.strip()]
+    return bool(segments) and all(segment.bold for segment in segments)
+
+
+def join_inline_with_inherited_separator(values: list[object], separator: str) -> str:
+    """Join fields; a connector is bold only when both adjacent fields are bold."""
+    normalized = [str(value or "").strip() for value in values if str(value or "").strip()]
+    if not normalized:
+        return ""
+    segments: list[InlineSegment] = []
+    for index, value in enumerate(normalized):
+        if index:
+            segments.append(
+                InlineSegment(
+                    separator,
+                    bold=(
+                        is_fully_bold_inline(normalized[index - 1])
+                        and is_fully_bold_inline(value)
+                    ),
+                )
+            )
+        segments.extend(parse_inline_bold(value))
+    # Do not concatenate adjacent ``**...**`` fragments.  That form is
+    # ambiguous to the inline parser; serializing the combined segments keeps
+    # the connector in the same bold run as its preceding field.
+    return serialize_inline_bold(segments)
+
+
+def join_inline_label_value(label: object, value: object, separator: str) -> str:
+    """Join a label and value; the label separator follows the label only."""
+    label_text = str(label or "").strip()
+    value_text = str(value or "").strip()
+    if not label_text:
+        return value_text
+    segments = parse_inline_bold(label_text)
+    segments.append(InlineSegment(separator, bold=is_fully_bold_inline(label_text)))
+    segments.extend(parse_inline_bold(value_text))
+    return serialize_inline_bold(segments)
+
+
 def format_inline_html(value: object) -> str:
     """Render the allowlisted bold protocol as escaped HTML."""
     rendered = []

@@ -17,7 +17,7 @@ import {
   normalizeContentBlocks,
 } from './utils/resumeContract.js'
 import { hasMeaningfulResumeContent } from './utils/resumePresence.js'
-import { formatInlineHtml, plainInlineText } from './utils/inlineFormatting.js'
+import { formatInlineHtml, isFullyBoldInlineText, plainInlineText } from './utils/inlineFormatting.js'
 import { userFacingApiError } from './utils/userFacingError.js'
 
 // 响应式布局状态
@@ -494,11 +494,17 @@ const projectIntroFlow = project => resolveContentBlockFlow({
   type: project?._introType || 'paragraph',
   semantic_role: 'introduction',
   label: project?._introLabel,
-  label_bold: true
+  label_bold: isFullyBoldInlineText(project?._introLabel)
+})
+const projectTechStackFlow = project => resolveContentBlockFlow({
+  type: project?._techStackType || 'paragraph',
+  semantic_role: 'tech_stack',
+  label: project?._techStackLabel,
+  label_bold: isFullyBoldInlineText(project?._techStackLabel)
 })
 const projectDutiesFlow = project => resolveContentBlockFlow({
   type: project?._dutiesType || 'numbered_list', semantic_role: 'responsibilities', label: project?._dutiesLabel,
-  label_bold: true
+  label_bold: isFullyBoldInlineText(project?._dutiesLabel)
 })
 const genericDetailsFlow = item => resolveContentBlockFlow({
   type: item?._detailsType || 'bullet_list', semantic_role: 'generic', label: ''
@@ -2574,9 +2580,17 @@ function closeJDDialog() {
 
 function initializeExperienceContentEditor(proj, migrateDefaultBold = false, experienceKind = 'project') {
   const blocks = normalizeContentBlocks(proj.content_blocks, proj.details, { experienceKind })
+  const techStack = experienceKind === 'project'
+    ? blocks.find(block => resolveContentBlockFlow(block).semanticRole === 'tech_stack')
+    : null
   const intro = blocks.find(block => resolveContentBlockFlow(block).semanticRole === 'introduction')
   const duties = blocks.find(block => resolveContentBlockFlow(block).semanticRole === 'responsibilities')
-  const extraBlocks = blocks.filter(block => block !== intro && block !== duties)
+  const editorLabel = block => {
+    const value = String(block?.label ?? '').trim()
+    if (!value || block?.label_bold === false) return value
+    return value.includes('**') ? value : `**${value}**`
+  }
+  const extraBlocks = blocks.filter(block => block !== techStack && block !== intro && block !== duties)
   const extraBlockValues = block => {
     const values = block?.items?.length
       ? block.items
@@ -2592,11 +2606,14 @@ function initializeExperienceContentEditor(proj, migrateDefaultBold = false, exp
       ? [`${prefix}${values[0]}`, ...values.slice(1)]
       : [prefix.replace(/[：:]$/, '')]
   }
-  proj._introLabel = intro ? String(intro.label ?? '') : '**项目简介**'
-  proj._dutiesLabel = duties ? String(duties.label ?? '') : '**项目职责**'
+  proj._techStackLabel = techStack ? editorLabel(techStack) : '**技术栈**'
+  proj._introLabel = intro ? editorLabel(intro) : '**项目简介**'
+  proj._dutiesLabel = duties ? editorLabel(duties) : '**项目职责**'
+  proj._techStackType = techStack?.type || 'paragraph'
   proj._introType = intro?.type || 'paragraph'
   proj._dutiesType = duties?.type || 'numbered_list'
   proj._detailsType = extraBlocks.find(block => ['paragraph', 'bullet_list', 'numbered_list'].includes(block?.type))?.type || 'bullet_list'
+  proj._techStackText = techStack?.type === 'paragraph' ? (techStack?.text || '') : arrayToMultiline(techStack?.items || [])
   proj._introText = intro?.type === 'paragraph' ? (intro?.text || '') : arrayToMultiline(intro?.items || [])
   proj._dutiesText = duties?.type === 'paragraph' ? (duties?.text || '') : arrayToMultiline(duties?.items || [])
   proj._extraDetailsText = arrayToMultiline(extraBlocks.flatMap(extraBlockValues))
@@ -2609,7 +2626,12 @@ function initializeExperienceContentEditor(proj, migrateDefaultBold = false, exp
       const text = String(raw || '').trim()
       const introMatch = text.match(/^(项目简介|项目背景|项目概述|项目说明)\s*[：:]\s*(.*)$/)
       const dutyMatch = text.match(/^(项目职责|主要职责|个人职责|负责内容)\s*[：:]?\s*(.*)$/)
-      if (introMatch) {
+      const techStackMatch = text.match(/^(技术栈|技术选型|使用技术|技术工具)\s*[：:]?\s*(.*)$/)
+      if (techStackMatch) {
+        proj._techStackLabel = techStackMatch[1]
+        proj._techStackText = techStackMatch[2]
+        dutyMode = false
+      } else if (introMatch) {
         proj._introLabel = introMatch[1]
         proj._introText = introMatch[2]
         dutyMode = false
@@ -2627,6 +2649,7 @@ function initializeExperienceContentEditor(proj, migrateDefaultBold = false, exp
     proj._extraDetailsText = arrayToMultiline(extras)
   }
   if (migrateDefaultBold) {
+    proj._techStackLabel = wrapDefaultBold(proj._techStackLabel)
     proj._introLabel = wrapDefaultBold(proj._introLabel)
     proj._dutiesLabel = wrapDefaultBold(proj._dutiesLabel)
   }
@@ -2745,18 +2768,19 @@ function initializeWorkContentEditor(work, migrateDefaultBold = false) {
 
 function editableExperienceToContentBlocks(work) {
   const contentBlock = (semanticRole, label, type, rawText) => {
-    const fallbackType = semanticRole === 'introduction'
+    const fallbackType = ['tech_stack', 'introduction'].includes(semanticRole)
       ? 'paragraph'
       : semanticRole === 'responsibilities' ? 'numbered_list' : 'bullet_list'
     const resolvedType = CONTENT_BLOCK_TYPE_OPTIONS[type] ? type : fallbackType
     const normalizedText = normalizeEditorMultiline(rawText)
     const values = multilineToArray(normalizedText)
     if (!values.length) return null
+    const normalizedLabel = String(label || '').trim()
     return {
       type: resolvedType,
       semantic_role: semanticRole,
-      label: String(label || '').trim(),
-      label_bold: semanticRole === 'introduction' || semanticRole === 'responsibilities',
+      label: normalizedLabel,
+      label_bold: isFullyBoldInlineText(normalizedLabel),
       // Keep the authored line boundaries in paragraph mode. The renderers
       // remove those boundaries for a paragraph, while switching back to a
       // list can still recover the original items without data loss.
@@ -2767,8 +2791,10 @@ function editableExperienceToContentBlocks(work) {
   const detailsText = normalizeEditorMultiline(work?._detailsText ?? work?._extraDetailsText)
   const lines = multilineToArray(detailsText)
   const blocks = []
+  const techStack = contentBlock('tech_stack', work?._techStackLabel, work?._techStackType || 'paragraph', work?._techStackText)
   const intro = contentBlock('introduction', work?._introLabel, work?._introType || 'paragraph', work?._introText)
   const duties = contentBlock('responsibilities', work?._dutiesLabel, work?._dutiesType || 'numbered_list', work?._dutiesText)
+  if (techStack) blocks.push(techStack)
   if (intro) blocks.push(intro)
   if (duties) blocks.push(duties)
   if (lines.length) {
@@ -3132,13 +3158,16 @@ function addProject() {
     date_range: ['', ''],
     content_blocks: [],
     details: [],
+    _techStackLabel: '**技术栈**',
     _introLabel: '**项目简介**',
     _dutiesLabel: '**项目职责**',
+    _techStackType: 'paragraph',
     _introType: 'paragraph',
     _dutiesType: 'numbered_list',
     _detailsType: 'bullet_list',
     _introText: '',
     _dutiesText: '',
+    _techStackText: '',
     _extraDetailsText: ''
   })
 }
@@ -3270,13 +3299,16 @@ async function saveResume() {
       if (work._detailsText !== undefined) {
         work.content_blocks = editableExperienceToContentBlocks(work)
         work.details = []
-        for (const key of ['_introLabel', '_dutiesLabel', '_introLabelBold', '_dutiesLabelBold', '_introType', '_dutiesType', '_detailsType', '_introText', '_dutiesText', '_detailsText', '_extraDetailsText']) delete work[key]
+        for (const key of ['_techStackLabel', '_techStackType', '_techStackText', '_introLabel', '_dutiesLabel', '_introLabelBold', '_dutiesLabelBold', '_introType', '_dutiesType', '_detailsType', '_introText', '_dutiesText', '_detailsText', '_extraDetailsText']) delete work[key]
       }
     })
     dataToSave.project_experience?.forEach(proj => {
       convertDateRangeToSave(proj)
       proj.content_blocks = editableExperienceToContentBlocks(proj)
       proj.details = []
+      delete proj._techStackLabel
+      delete proj._techStackType
+      delete proj._techStackText
       delete proj._introLabel
       delete proj._dutiesLabel
       delete proj._introLabelBold
@@ -5489,6 +5521,22 @@ watch(
                 </div>
               </div>
               <!-- 项目内容 -->
+              <div class="array-item-nested">
+                <div class="content-block-heading-row">
+                  <RichTextEditor v-model="proj._techStackLabel" placeholder="例如 技术栈" compact default-bold />
+                  <select v-model="proj._techStackType" aria-label="项目技术栈内容形式">
+                    <option v-for="(label, value) in CONTENT_BLOCK_TYPE_OPTIONS" :key="value" :value="value">{{ label }}</option>
+                  </select>
+                </div>
+                <RichTextEditor
+                  v-model="proj._techStackText"
+                  placeholder="例如 Python、FastAPI、MySQL"
+                  class="rich-editor-field"
+                  :resume-metrics="resumeEditorMetrics"
+                  :resume-flow="projectTechStackFlow(proj)"
+                />
+                <div v-if="hasEditorText(proj._techStackText) && !hasEditorText(proj._techStackLabel)" class="semantic-hidden-notice">标签为空，该技术栈内容已保留但不会显示或导出。</div>
+              </div>
               <div class="array-item-nested">
                 <div class="content-block-heading-row">
                   <RichTextEditor v-model="proj._introLabel" placeholder="例如 项目简介" compact default-bold />
