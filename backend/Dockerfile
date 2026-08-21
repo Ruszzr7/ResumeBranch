@@ -9,6 +9,7 @@ WORKDIR /app
 # 安装 Chromium、PDF 页面转换工具、健康检查工具和中文字体
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
+    chromium-sandbox \
     curl \
     fonts-noto-cjk \
     poppler-utils \
