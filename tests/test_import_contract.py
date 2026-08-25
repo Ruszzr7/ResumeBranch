@@ -110,7 +110,7 @@ class ImportContractTests(unittest.TestCase):
         self.assertTrue(quality.accepted)
         blocks = result["project_experience"][0]["content_blocks"]
         self.assertEqual([block["label"] for block in blocks], ["项目简介", "项目职责"])
-        self.assertEqual(blocks[1]["type"], "bullet_list")
+        self.assertEqual(blocks[1]["type"], "numbered_list")
         self.assertTrue(all(block["label_bold"] for block in blocks))
 
     def test_finalize_import_distinguishes_project_tech_stack_from_top_level_skills(self):

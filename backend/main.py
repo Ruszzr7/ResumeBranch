@@ -120,6 +120,7 @@ from .auth import (
     verify_password, get_password_hash, create_access_token,
     get_current_admin, get_current_user, oauth2_scheme, require_multi_user_mode
 )
+from .datetime_utils import serialize_utc_datetime
 from .config import APP_MODE, CORS_ALLOW_ORIGINS, LOCAL_USER_EMAIL, SERVER_HOST, is_local_mode
 from .llm_providers import (
     gateway_config,
@@ -376,7 +377,7 @@ class TranslateResumeRequest(BaseModel):
 
 class CreateProjectRequest(BaseModel):
     """创建简历项目请求"""
-    title: str = "未命名简历"
+    title: str = "未命名简历组"
 
 
 class CreateTaskRequest(BaseModel):
@@ -456,8 +457,8 @@ def serialize_task(task):
         "source_page_count": max(1, int(task.source_page_count or 1)),
         "has_source_document": bool(task.source_document_id),
         "layout_config": normalize_layout_config(task.layout_config),
-        "created_at": task.created_at.isoformat() if task.created_at else None,
-        "updated_at": task.updated_at.isoformat() if task.updated_at else None,
+        "created_at": serialize_utc_datetime(task.created_at),
+        "updated_at": serialize_utc_datetime(task.updated_at),
     }
 
 
@@ -470,8 +471,8 @@ def serialize_project(project, task_count=0):
         "candidate_name": basics.get("name", ""),
         "target_position": basics.get("target_position", ""),
         "task_count": task_count,
-        "created_at": project.created_at.isoformat() if project.created_at else None,
-        "updated_at": project.updated_at.isoformat() if project.updated_at else None,
+        "created_at": serialize_utc_datetime(project.created_at),
+        "updated_at": serialize_utc_datetime(project.updated_at),
     }
 
 
@@ -527,7 +528,7 @@ def require_llm_configured():
     if not resume_agent.LLM_ENABLED:
         raise HTTPException(
             status_code=503,
-            detail="LLM_API_KEY 尚未配置；基础简历和数据库功能可继续使用。"
+            detail="LLM_API_KEY 尚未配置；主简历和数据库功能可继续使用。"
         )
 
 # 添加 CORS 中间件
@@ -885,11 +886,11 @@ async def rename_project(
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user),
 ):
-    """Rename a main resume without changing any resume data."""
+    """Rename a resume group without changing any resume data."""
     title = _validated_rename_title(request.title)
     project = rename_resume_project(db, current_user.id, project_id, title)
     if not project:
-        raise HTTPException(status_code=404, detail="主简历不存在")
+        raise HTTPException(status_code=404, detail="简历组不存在")
     return serialize_project(project, len(list_project_tasks(db, current_user.id, project_id)))
 
 
@@ -917,7 +918,7 @@ async def get_resume_sources(
     for task in list_user_resume_sources(db, current_user.id):
         project = projects.get(task.project_id)
         item = serialize_task(task)
-        item["project_title"] = project.title if project else "未命名主简历"
+        item["project_title"] = project.title if project else "未命名简历组"
         sources.append(item)
     return sources
 
@@ -931,7 +932,7 @@ async def delete_project(
     task_ids = [task.id for task in list_project_tasks(db, current_user.id, project_id)]
     mission_sessions = list_conversation_context_sessions(db, current_user.id, task_ids)
     if not delete_resume_project(db, current_user.id, project_id):
-        raise HTTPException(status_code=404, detail="主简历不存在")
+        raise HTTPException(status_code=404, detail="简历组不存在")
     for storage_key in delete_unreferenced_source_documents(db, current_user.id):
         remove_source_document_file(storage_key)
     manager = get_workflow_checkpoint_manager()
@@ -1085,7 +1086,7 @@ async def set_task_as_base(
     if result == "not_found":
         raise HTTPException(status_code=404, detail="简历版本不存在")
     if result == "base_missing":
-        raise HTTPException(status_code=409, detail="当前项目缺少基础简历")
+        raise HTTPException(status_code=409, detail="当前项目缺少主简历")
     project = get_resume_project(db, current_user.id, base_task.project_id)
     return {
         "success": True,
@@ -1171,7 +1172,7 @@ async def delete_task(
     if result == "not_found":
         raise HTTPException(status_code=404, detail="岗位版本不存在")
     if result == "base_task":
-        raise HTTPException(status_code=400, detail="基础简历不能单独删除，请删除整份主简历")
+        raise HTTPException(status_code=400, detail="主简历不能单独删除，请删除整份简历组")
     for storage_key in delete_unreferenced_source_documents(db, current_user.id):
         remove_source_document_file(storage_key)
     manager = get_workflow_checkpoint_manager()

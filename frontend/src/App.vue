@@ -540,7 +540,9 @@ const uiNotice = ref({ visible: false, type: 'error', message: '' })
 let uiNoticeTimer = null
 
 function displayTaskTitle(task) {
-  return plainDisplayText(task?.title || (task?.is_base ? '基础简历' : '岗位版本'))
+  const title = plainDisplayText(task?.title || '')
+  if (title === '基础简历') return '主简历'
+  return title || (task?.is_base ? '主简历' : '岗位版本')
 }
 
 const currentProjectSources = computed(() => taskResumeSources.value.filter(
@@ -2668,7 +2670,8 @@ function openRenameTaskDialog(task) {
   if (!task) return
   closeTaskActionMenu()
   taskToRename.value = task
-  renameTaskTitle.value = String(task.title || (task.is_base ? '基础简历' : '岗位版本'))
+  const title = String(task.title || '')
+  renameTaskTitle.value = title === '基础简历' ? '主简历' : (title || (task.is_base ? '主简历' : '岗位版本'))
   taskRenameError.value = ''
 }
 
@@ -2739,7 +2742,7 @@ async function confirmSetBaseTask() {
       headers: getAuthorizationHeaders()
     })
     const data = await response.json().catch(() => ({}))
-    if (!response.ok) throw new Error(data.detail || '更换基础简历失败，请重试')
+    if (!response.ok) throw new Error(data.detail || '更换主简历失败，请重试')
     const updates = new Map(
       [data.base_task, data.former_base_task].filter(Boolean).map(task => [task.id, task])
     )
@@ -2749,9 +2752,9 @@ async function confirmSetBaseTask() {
       if (data.project) Object.assign(currentProject.value, data.project, { tasks: projectTasks.value })
     }
     taskToSetBase.value = null
-    showNotice('已切换基础简历', 'success')
+    showNotice('已切换主简历', 'success')
   } catch (error) {
-    setBaseError.value = error.message || '更换基础简历失败，请重试'
+    setBaseError.value = error.message || '更换主简历失败，请重试'
   } finally {
     isSettingBaseTask.value = false
   }
@@ -4128,7 +4131,7 @@ watch(
                 <span><b>{{ displayTaskTitle(source) }}</b><small>{{ plainDisplayText(source.target_position || source.candidate_name || '未填写目标岗位') }}</small></span>
               </label>
               <details v-if="otherProjectSourceGroups.length" class="other-resume-sources">
-                <summary>其他主简历</summary>
+                <summary>其他简历组</summary>
                 <div v-for="group in otherProjectSourceGroups" :key="group.id" class="source-project-group">
                   <strong>{{ plainDisplayText(group.title) }}</strong>
                   <label v-for="source in group.sources" :key="source.id" class="resume-source-row">
@@ -4251,20 +4254,20 @@ watch(
     </Transition>
   </Teleport>
 
-  <!-- 更换基础简历确认弹窗 -->
+  <!-- 更换主简历确认弹窗 -->
   <Teleport to="body">
     <Transition name="dialog-fade">
       <div v-if="taskToSetBase" class="workspace-modal-mask" @click.self="closeSetBaseDialog">
         <div class="workspace-modal compact">
           <div class="workspace-modal-header">
             <div>
-              <span class="workspace-modal-kicker">基础简历</span>
-              <h2>切换为基础简历？</h2>
+              <span class="workspace-modal-kicker">主简历</span>
+              <h2>切换为主简历？</h2>
             </div>
             <button type="button" class="modal-close-btn" aria-label="关闭" @click="closeSetBaseDialog">×</button>
           </div>
           <p class="workspace-modal-copy">
-            将“{{ displayTaskTitle(taskToSetBase) }}”切换为基础简历；原基础简历会变为“版本简历”。双方内容、照片、排版、JD 和对话均保留。
+            将“{{ displayTaskTitle(taskToSetBase) }}”切换为主简历；原主简历会变为“版本简历”。双方内容、照片、排版、JD 和对话均保留。
           </p>
           <p v-if="setBaseError" class="workspace-modal-error">{{ setBaseError }}</p>
           <div class="workspace-modal-footer">
@@ -4553,7 +4556,7 @@ watch(
         </router-link>
       </h1>
       <div class="header-info">
-        <span class="workspace-project-title">{{ plainDisplayText(currentProject?.title || '主简历') }}</span>
+        <span class="workspace-project-title">{{ plainDisplayText(currentProject?.title || '简历组') }}</span>
         <AccountMenu v-if="!isLocalMode && currentUser" :user="currentUser" @logout="logout" />
       </div>
     </div>
@@ -4594,14 +4597,14 @@ watch(
               type="button"
               class="task-action-menu-item"
               @click="openSetBaseDialog(task)"
-            >设为基础简历</button>
+            >设为主简历</button>
             <button
               v-if="!task.is_base"
               type="button"
               class="task-action-menu-item danger"
               @click="deleteProjectTask(task)"
             >删除</button>
-            <span v-else class="task-action-menu-note">当前基础简历</span>
+            <span v-else class="task-action-menu-note">当前主简历</span>
           </div>
         </div>
         <button class="new-task-btn" @click="createProjectTask">＋ 新建版本</button>

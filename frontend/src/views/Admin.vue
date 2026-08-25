@@ -71,6 +71,8 @@
 </template>
 
 <script>
+import { parseBackendDate } from '../utils/dateTime.js'
+
 export default {
   name: 'Admin',
   data() {
@@ -145,8 +147,8 @@ export default {
 
     formatTime(timeStr) {
       if (!timeStr) return '-'
-      const date = new Date(timeStr)
-      return date.toLocaleString('zh-CN')
+      const date = parseBackendDate(timeStr)
+      return date ? date.toLocaleString('zh-CN') : '-'
     },
 
     showNotice(message, type = 'success') {

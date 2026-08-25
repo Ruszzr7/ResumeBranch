@@ -15,18 +15,18 @@
         <div>
           <span class="eyebrow">简历工作台</span>
           <h1>你的简历工作区</h1>
-          <p>维护一份长期更新的主简历，针对不同 JD 创建独立岗位版本。</p>
+          <p>维护一个简历组，以主简历为基础，针对不同 JD 创建独立岗位版本。</p>
         </div>
-        <button class="primary-btn create-main-btn" @click="openCreateDialog">＋ 新建主简历</button>
+        <button class="primary-btn create-main-btn" @click="openCreateDialog">＋ 新建简历组</button>
       </section>
 
       <section v-if="canUseProjects" class="resume-library">
         <div class="section-heading">
           <h2>最近编辑</h2>
-          <span>{{ projects.length }} 份主简历</span>
+          <span>{{ projects.length }} 个简历组</span>
         </div>
 
-        <div v-if="isLoadingProjects" class="loading-card">正在加载主简历…</div>
+        <div v-if="isLoadingProjects" class="loading-card">正在加载简历组…</div>
 
         <div v-else-if="projects.length" class="project-grid">
           <article
@@ -39,8 +39,8 @@
               <button
                 class="card-menu card-rename"
                 type="button"
-                aria-label="重命名主简历"
-                title="重命名主简历"
+                aria-label="重命名简历组"
+                title="重命名简历组"
                 @click="openRenameDialog(project)"
               >
                 重命名
@@ -48,8 +48,8 @@
               <button
                 class="card-menu card-delete"
                 type="button"
-                aria-label="删除主简历"
-                title="删除主简历"
+                aria-label="删除简历组"
+                title="删除简历组"
                 @click="openDeleteDialog(project)"
               >
                 删除
@@ -74,13 +74,13 @@
                 </div>
                 <div>
                   <strong>{{ project.candidate_name ? '已建立' : '待完善' }}</strong>
-                  <span>主简历状态</span>
+                  <span>简历组状态</span>
                 </div>
               </div>
             </div>
 
             <div v-if="index === 0" class="paper-thumbnail" aria-hidden="true">
-              <strong>{{ plainSummaryText(project.candidate_name || '主简历') }}</strong>
+              <strong>{{ plainSummaryText(project.candidate_name || '简历组') }}</strong>
               <i></i><i class="short"></i>
               <b></b>
               <i></i><i></i><i class="short"></i>
@@ -92,7 +92,7 @@
 
         <button v-else class="empty-state" @click="openCreateDialog">
           <span class="empty-plus">＋</span>
-          <strong>创建第一份主简历</strong>
+          <strong>创建第一个简历组</strong>
           <small>从空白开始，或上传现有简历自动解析</small>
         </button>
 
@@ -100,15 +100,15 @@
 
       <section v-else class="login-card">
         <h2>登录后开始管理简历</h2>
-        <p>登录后可以创建主简历并为不同岗位建立独立版本。</p>
+        <p>登录后可以创建简历组，并以主简历为基础建立独立版本。</p>
         <button class="primary-btn" @click="router.push('/login')">前往登录</button>
       </section>
 
       <section class="help-section" aria-label="产品帮助">
         <article>
           <span class="eyebrow">使用流程</span>
-          <h3>一份主简历，适配多个岗位</h3>
-          <p>先沉淀完整经历，再为每个 JD 复制一份独立版本，后续修改互不干扰。</p>
+          <h3>一个简历组，适配多个岗位</h3>
+          <p>先沉淀完整主简历，再为每个 JD 创建独立版本，后续修改互不干扰。</p>
         </article>
         <article>
           <span class="eyebrow">简历助手</span>
@@ -134,20 +134,20 @@
           <section class="internal-modal" role="dialog" aria-modal="true" aria-labelledby="create-title">
             <header>
               <div>
-                <span class="modal-kicker">新建简历</span>
-                <h2 id="create-title">新建主简历</h2>
+                <span class="modal-kicker">新建简历组</span>
+                <h2 id="create-title">新建简历组</h2>
               </div>
               <button class="modal-close" aria-label="关闭" @click="closeCreateDialog">×</button>
             </header>
             <div class="modal-body">
-              <p>创建一份长期维护的主简历，之后可以针对不同 JD 建立独立岗位版本。</p>
-              <label for="project-title">简历名称</label>
+              <p>创建一个简历组，系统会先建立主简历，之后可以针对不同 JD 建立独立岗位版本。</p>
+              <label for="project-title">简历组名称</label>
               <input
                 id="project-title"
                 ref="projectTitleInput"
                 v-model="newProjectTitle"
                 maxlength="120"
-                placeholder="例如：吴彦祖的主简历"
+                placeholder="例如：软件开发岗位简历组"
                 @keydown.enter="createProject"
               />
               <small>稍后可以随时重命名</small>
@@ -170,20 +170,20 @@
           <section class="internal-modal" role="dialog" aria-modal="true" aria-labelledby="rename-title">
             <header>
               <div>
-                <span class="modal-kicker">主简历</span>
-                <h2 id="rename-title">重命名主简历</h2>
+                <span class="modal-kicker">简历组</span>
+                <h2 id="rename-title">重命名简历组</h2>
               </div>
               <button class="modal-close" type="button" aria-label="关闭" @click="closeRenameDialog">×</button>
             </header>
             <div class="modal-body">
-              <label for="rename-project-title">简历名称</label>
+              <label for="rename-project-title">简历组名称</label>
               <input
                 id="rename-project-title"
                 ref="renameProjectTitleInput"
                 v-model="renameProjectTitle"
                 maxlength="120"
                 autocomplete="off"
-                placeholder="例如：我的主简历"
+                placeholder="例如：软件开发岗位简历组"
                 @keydown.enter.prevent="confirmRenameProject"
               />
               <p v-if="renameError" class="form-error">{{ renameError }}</p>
@@ -205,8 +205,8 @@
           <section class="internal-modal danger-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-title">
             <header>
               <div>
-                <span class="modal-kicker danger">删除简历</span>
-                <h2 id="delete-title">删除主简历？</h2>
+                <span class="modal-kicker danger">删除简历组</span>
+                <h2 id="delete-title">删除简历组？</h2>
               </div>
               <button class="modal-close" aria-label="关闭" @click="closeDeleteDialog">×</button>
             </header>
@@ -312,6 +312,7 @@ import AccountMenu from '../components/AccountMenu.vue'
 import { userFacingApiError } from '../utils/userFacingError.js'
 import { buildAuthorizationHeaders, loadAppConfig } from '../config/appMode.js'
 import { plainInlineText } from '../utils/inlineFormatting.js'
+import { formatRelativeUpdatedAt } from '../utils/dateTime.js'
 
 const router = useRouter()
 const projects = ref([])
@@ -412,16 +413,7 @@ function authHeaders() {
   }
 }
 
-function formatUpdatedAt(value) {
-  if (!value) return '最近编辑'
-  const date = new Date(value)
-  const distance = Date.now() - date.getTime()
-  if (distance < 60_000) return '刚刚编辑'
-  if (distance < 3_600_000) return `${Math.max(1, Math.floor(distance / 60_000))} 分钟前编辑`
-  if (distance < 86_400_000) return `${Math.max(1, Math.floor(distance / 3_600_000))} 小时前编辑`
-  if (distance < 604_800_000) return `${Math.max(1, Math.floor(distance / 86_400_000))} 天前编辑`
-  return date.toLocaleDateString('zh-CN')
-}
+const formatUpdatedAt = formatRelativeUpdatedAt
 
 async function loadProjects() {
   if (!canUseProjects.value) return
@@ -476,7 +468,7 @@ async function confirmRenameProject() {
   if (!projectToRename.value || isRenamingProject.value) return
   const title = renameProjectTitle.value.trim()
   if (!title) {
-    renameError.value = '请输入简历名称'
+    renameError.value = '请输入简历组名称'
     renameProjectTitleInput.value?.focus()
     return
   }
@@ -503,7 +495,7 @@ async function createProject() {
   if (isCreatingProject.value) return
   const title = newProjectTitle.value.trim()
   if (!title) {
-    createError.value = '请输入主简历名称'
+    createError.value = '请输入简历组名称'
     projectTitleInput.value?.focus()
     return
   }
@@ -1303,12 +1295,25 @@ onUnmounted(() => {
 .modal-close {
   width: 31px;
   height: 31px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 9px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
   color: #96979f;
-  background: rgba(255, 255, 255, 0.045);
+  background: transparent;
   cursor: pointer;
   font-size: 1.15rem;
+  line-height: 1;
+  transition: color 0.2s ease;
+}
+
+.modal-close:hover {
+  color: #f2f2f4;
+  background: transparent;
+}
+
+.modal-close:focus-visible {
+  outline: 2px solid rgba(137, 174, 252, 0.75);
+  outline-offset: 2px;
 }
 
 .modal-body {

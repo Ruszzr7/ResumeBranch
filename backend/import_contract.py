@@ -113,6 +113,8 @@ def _apply_import_formatting_contract(data: dict[str, Any]) -> None:
                 if not block["label"]:
                     block["label"] = SEMANTIC_CONTENT_LABELS[role]
                 block["label_bold"] = True
+            if role == "responsibilities" and block.get("type") == "bullet_list":
+                block["type"] = "numbered_list"
             block["text"] = _preserve_content_import_text(block.get("text"))
             block["items"] = _normalize_free_list(block.get("items"))
 
@@ -130,6 +132,8 @@ def _apply_import_formatting_contract(data: dict[str, Any]) -> None:
                 if not block["label"]:
                     block["label"] = SEMANTIC_CONTENT_LABELS[role]
                 block["label_bold"] = True
+            if role == "responsibilities" and block.get("type") == "bullet_list":
+                block["type"] = "numbered_list"
             block["text"] = _preserve_content_import_text(block.get("text"))
             block["items"] = _normalize_free_list(block.get("items"))
 

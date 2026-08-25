@@ -154,7 +154,7 @@ class ResumeProject(Base):
     __tablename__ = "resume_projects"
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(Integer, nullable=False, index=True)
-    title = Column(String(120), nullable=False, default="未命名简历")
+    title = Column(String(120), nullable=False, default="未命名简历组")
     base_resume_data = Column(JSON, default=dict)
     photo = Column(large_text_type, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -181,7 +181,7 @@ class ProjectTask(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     project_id = Column(String(36), nullable=False, index=True)
     user_id = Column(Integer, nullable=False, index=True)
-    title = Column(String(120), nullable=False, default="基础简历")
+    title = Column(String(120), nullable=False, default="主简历")
     is_base = Column(Boolean, default=False)
     session_id = Column(String(36), nullable=False, unique=True)
     resume_data = Column(JSON, default=dict)
@@ -801,7 +801,7 @@ def get_or_create_legacy_project(db, user_id: int):
                 id=task_id,
                 project_id=project.id,
                 user_id=user_id,
-                title="基础简历",
+                title="主简历",
                 is_base=True,
                 session_id=task_id,
                 resume_data=project.base_resume_data or {},
@@ -838,7 +838,7 @@ def get_or_create_legacy_project(db, user_id: int):
         id=base_task_id,
         project_id=project_id,
         user_id=user_id,
-        title="基础简历",
+        title="主简历",
         is_base=True,
         session_id=base_task_id,
         resume_data=(resume.resume_data if resume else {}),
@@ -877,19 +877,19 @@ def list_resume_projects(db, user_id: int):
     ).all()
 
 
-def create_resume_project(db, user_id: int, title: str = "未命名简历"):
+def create_resume_project(db, user_id: int, title: str = "未命名简历组"):
     project_id = str(uuid.uuid4())
     task_id = str(uuid.uuid4())
     project = ResumeProject(
         id=project_id,
         user_id=user_id,
-        title=(title or "未命名简历").strip()[:120],
+        title=(title or "未命名简历组").strip()[:120],
     )
     task = ProjectTask(
         id=task_id,
         project_id=project_id,
         user_id=user_id,
-        title="基础简历",
+        title="主简历",
         is_base=True,
         session_id=task_id,
         layout_config=default_layout_config(),
@@ -1462,7 +1462,7 @@ def save_user_resume(db, user_id: int, data: dict, name: str = "默认简历", p
             if project:
                 project.base_resume_data = data
                 project.photo = photo or ""
-                if project.title == "未命名简历":
+                if project.title in {"未命名简历", "未命名简历组"}:
                     project.title = data.get("basics", {}).get("name") or name
                 project.updated_at = datetime.utcnow()
         task.updated_at = datetime.utcnow()
