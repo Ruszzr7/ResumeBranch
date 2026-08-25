@@ -86,7 +86,7 @@ Harness 负责把本轮需要的信息组装给 Agent：
 
 | 状态 | 存储位置 | 说明 |
 |---|---|---|
-| 用户、项目、简历、JD、对话 | SQLAlchemy 业务数据库 | 本地版为 SQLite，多用户版为 MySQL |
+| 用户、项目、简历、JD、对话 | SQLAlchemy 业务数据库 | 单用户配置（源码或安装包）为 SQLite，多用户配置为 MySQL |
 | 导入原文件 | `data/source_documents/` 或容器应用数据卷 | 用于查看原版和继续处理 |
 | 工作流控制检查点 | `data/langgraph_checkpoints.sqlite` | 保存必要的图执行状态，不替代业务数据库 |
 | 运行中的临时预览 | 图状态与数据库中的确认元数据 | 确认、取消或失效后清理 |

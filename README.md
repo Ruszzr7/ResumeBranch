@@ -2,7 +2,7 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-ResumeBranch is an open-source AI resume assistant for maintaining resumes and preparing job applications. It uses a structured resume as its core data model and provides import, editing, version management, layout controls, PDF/DOCX export, job-description analysis, and conversational optimization. It supports both a local profile for personal computers and a self-hosted multi-user profile.
+ResumeBranch is an open-source AI resume assistant for maintaining resumes and preparing job applications. It uses a structured resume as its core data model and provides import, editing, version management, layout controls, PDF/DOCX export, job-description analysis, and conversational optimization. It is distributed through three paths: source development/testing, multi-user Docker deployment, and a Windows single-user installation package.
 
 The current version is **Release 1**. The feature set and architecture are frozen; this document describes the code, configuration, and launch scripts in the repository.
 
@@ -15,46 +15,62 @@ The current version is **Release 1**. The feature set and architecture are froze
 - Maintain job descriptions with text or image parsing, structured editing, and targeted analysis.
 - Let the intelligent Agent decide whether to answer, ask follow-up questions, read a layout snapshot, or generate a modification preview.
 - Use a preview-confirm-save flow for AI changes; stale changes are rejected when the resume has changed, with concurrency protection for multiple windows.
-- Save local exports to `output/resumes/`; the multi-user profile downloads files through the browser instead of accumulating them on the server.
+- Save single-user exports to `output/resumes/`; the multi-user profile downloads files through the browser instead of accumulating them on the server.
 
-## Two runtime profiles
+## Three delivery paths
 
-Both profiles share the same Vue frontend, FastAPI backend, and business code. The entry point is selected by startup configuration; the application does not switch profiles dynamically inside the page.
+The three paths share the same Vue frontend, FastAPI backend, and business code, but they target different users and operational environments. The application does not switch between single-user and multi-user profiles dynamically inside the page.
 
-| Item | Local profile | Multi-user profile |
-|---|---|---|
-| Use case | Personal computer and local resume maintenance | Self-hosting on a LAN or server |
-| Authentication | No registration or login | Invite-code registration and email login |
-| Database | SQLite file | MySQL |
-| Bind address | Loopback only | Configurable for the deployment |
-| API settings | Available to the local user | Available to administrators only |
-| Export | Saved to project `output/resumes/` | Browser download |
-| Entry point | `scripts\start_local.cmd` | Native Windows MySQL or Docker Compose |
+| Delivery path | Obtain and run | User model | Purpose |
+|---|---|---|---|
+| Source development/testing | Clone the GitHub repository, install dependencies, and use Windows scripts | Single-user or multi-user test configuration | Development, testing, and acceptance |
+| Multi-user Docker deployment | Obtain the source and Docker Compose configuration, then run Docker Compose | Multi-user only | Local deployment validation or server deployment |
+| Windows single-user installation | Download `ResumeBranch-Setup-x64.exe` from GitHub Releases and install it | Single-user only | Direct local use on Windows |
 
-SQLite does not require a separate service. Shutting down the application or restarting the computer does not delete `data/resumebranch.db`; the local data remains as long as the `data/` directory is kept. SQLite and MySQL are independent data sources, and the project does not migrate data between them automatically.
+The source path provides two configurations: single-user uses SQLite and `scripts\start_local.cmd`; multi-user testing uses MySQL and `scripts\start_multi_user.cmd`. The existing internal configuration value `APP_MODE=local` and script names remain unchanged; “single-user” is the user-facing description.
+
+Single-user SQLite does not require a separate service. Shutting down the application or restarting the computer does not delete `data/resumebranch.db`; the data remains as long as the `data/` directory is kept. SQLite and MySQL are independent data sources, and the project does not migrate data between them automatically.
 
 ## Technical architecture
 
 - Frontend: Vue 3, Vite, Element Plus, and Vue Router.
 - Backend: Python 3.11, FastAPI, SQLAlchemy, and Uvicorn/Gunicorn.
 - Agent: LangGraph handles graph state and routing; LangChain Core and an OpenAI-compatible client provide message, model, and tool abstractions.
-- Data: the local profile uses SQLite, while the multi-user profile uses MySQL; workflow checkpoints are stored separately in a SQLite file.
+- Data: the single-user profile uses SQLite, while the multi-user profile uses MySQL; workflow checkpoints are stored separately in a SQLite file.
 - Export and rendering: Chromium generates PDFs, `python-docx` generates editable DOCX files, and Poppler generates PDF page snapshots that can be consumed by the AI.
 - Communication: regular endpoints use HTTP, while AI responses are streamed over SSE.
-- Deployment: Windows launch scripts; the multi-user profile includes Docker Compose, MySQL, Gunicorn, and Nginx configuration.
+- Delivery and deployment: the source path includes Windows launch scripts; the multi-user Docker path includes Compose, MySQL, Gunicorn, and Nginx configuration.
 
 Reproducible dependency versions are defined by [`backend/requirements.lock.txt`](backend/requirements.lock.txt) and [`frontend/package-lock.json`](frontend/package-lock.json). Patch versions are not duplicated in this README because they become outdated easily.
 
-## Quick start: Windows local profile
+## Windows single-user installation package
 
-### 1. Requirements
+For a normal Windows user, download `ResumeBranch-Setup-x64.exe` from GitHub Releases and run the installer. It includes the frozen single-user application, the production frontend bundle, a private Python runtime and dependencies, Nginx, Poppler, and the PDF rendering browser. It does not require Python, Node.js, npm, Docker, MySQL, or Inno Setup on the target computer, and it does not modify the system `PATH`.
+
+The installer uses a per-user installation location by default. After installation, the optional desktop shortcut points to `ResumeBranch.exe`; the launcher starts the private single-user backend and frontend, then opens `http://127.0.0.1:5173` in the default browser. The SQLite database and exports are stored below the installed `app/` directory. Initial user data and API settings are empty and must be configured by the user when needed.
+
+The single-user installer has no updater. Multi-user use remains a separate source-testing or Docker-deployment path.
+
+The installer is a generated release artifact. Maintainers can rebuild it on Windows x64 with:
+
+~~~powershell
+.\packaging\build-installer.ps1
+~~~
+
+The generated file is written to `output/installer/ResumeBranch-Setup-x64.exe`. See [Windows single-user installation package](packaging/README.md) for packaging details.
+
+## Source development/testing on Windows
+
+The following procedure is for developers or users who clone the repository directly. It describes the single-user source configuration; the multi-user source configuration is covered below. If you use the installation package above, do not install these development dependencies separately.
+
+### Single-user source test: requirements
 
 - Windows 10/11
 - Python 3.11+
 - Node.js 20+
 - Chrome, Edge, or Chromium (required for PDF export)
 
-### 2. Configure and install
+### Single-user source test: configure and install
 
 ~~~powershell
 Copy-Item .env.example .env
@@ -71,7 +87,7 @@ For AI chat and resume parsing, configure an OpenAI-compatible API in `.env`, or
 
 Do not commit `.env`, `.env.multi_user`, `.env.docker`, or any real credentials.
 
-### 3. Start and stop
+### Single-user source test: start and stop
 
 ~~~powershell
 .\scripts\start_local.cmd
@@ -84,13 +100,11 @@ Open <http://127.0.0.1:5173>. The script starts or restarts the backend, starts 
 .\scripts\stop_app.cmd
 ~~~
 
-See [Windows local deployment](docs/local-deployment.md) for the complete procedure, backup guidance, and health checks.
+See [Source development and testing](docs/source-development-testing.md) for the complete source procedure, backup guidance, and health checks.
 
-## Multi-user profile
+### Multi-user source test: Windows native MySQL
 
-### Native MySQL on Windows
-
-Use this profile on a Windows computer without Docker to test login, invite codes, administrator permissions, and user-data isolation:
+Use this source configuration on a Windows computer without Docker to test login, invite codes, administrator permissions, and user-data isolation:
 
 ~~~powershell
 Copy-Item .env.multi_user.example .env.multi_user
@@ -98,13 +112,13 @@ Copy-Item .env.multi_user.example .env.multi_user
 .\scripts\start_multi_user.cmd
 ~~~
 
-The launcher checks and starts the MySQL service, verifies the database connection, starts or restarts the backend, and reuses the same Vite frontend. Ordinary users must register and sign in with an email address; administrators may use an email address or a dedicated non-email account name. Each account has only one valid login session at a time; a new login invalidates the previous session.
+The Windows multi-user entry script checks and starts the MySQL service, verifies the database connection, starts or restarts the backend, and reuses the same Vite frontend. Ordinary users must register and sign in with an email address; administrators may use an email address or a dedicated non-email account name. Each account has only one valid login session at a time; a new login invalidates the previous session.
 
-See [Windows native multi-user deployment](docs/multi-user-local.md) for detailed configuration.
+See [Source development and testing](docs/source-development-testing.md) for detailed configuration.
 
-### Docker Compose
+## Multi-user Docker deployment
 
-Use this profile on a Linux server or another environment that supports Docker. Docker is not required to run the project on this computer.
+Use this path on a Linux server or another environment that supports Docker. It can also be run locally for deployment acceptance. Docker is not required for the source single-user or source multi-user Windows tests.
 
 ~~~bash
 cp .env.docker.example .env.docker
@@ -113,15 +127,15 @@ docker compose --env-file .env.docker -f docker-compose.multi-user.yml config
 docker compose --env-file .env.docker -f docker-compose.multi-user.yml up -d --build
 ~~~
 
-The default address is <http://127.0.0.1:8080>. See [Docker multi-user self-hosting](docs/deployment.md) for the topology, security boundaries, backups, and acceptance checks.
+The default address is <http://127.0.0.1:8080>. See [Multi-user Docker deployment](docs/docker-multi-user-deployment.md) for the topology, security boundaries, backups, and acceptance checks.
 
 ## Launch scripts
 
 | Script | Purpose |
 |---|---|
-| `scripts/start_local.cmd` | Start the local SQLite backend and shared frontend |
+| `scripts/start_local.cmd` | Start the single-user SQLite backend and shared frontend |
 | `scripts/start_multi_user.cmd` | Start native MySQL, the multi-user backend, and the shared frontend |
-| `scripts/start_backend_local.cmd` | Start or restart the local backend |
+| `scripts/start_backend_local.cmd` | Start or restart the single-user backend |
 | `scripts/start_backend_multi_user.cmd` | Start or restart the multi-user backend |
 | `scripts/start_frontend.cmd` | Start the shared Vite frontend |
 | `scripts/start_mysql.cmd` | Start the Windows MySQL service only |
@@ -148,7 +162,7 @@ See [Agent architecture and state boundaries](docs/agent-architecture.md) for th
 
 ## Data and privacy
 
-Main persistent data in the local profile:
+Main persistent data in the single-user profile:
 
 ~~~text
 data/resumebranch.db                  # Resume, JD, conversation, and business state
@@ -176,7 +190,7 @@ FastAPI generates the complete development API contract:
 - Swagger UI: <http://127.0.0.1:8000/docs>
 - OpenAPI JSON: <http://127.0.0.1:8000/openapi.json>
 
-The main endpoint groups cover runtime configuration, authentication and invite codes, resumes and versions, JDs, conversations, imports, PDF/DOCX export, AI settings, and confirmation saves. `POST /chat` streams events over SSE. Authentication endpoints are available only in the multi-user profile; the local open-export-directory endpoint is available only in the local profile.
+The main endpoint groups cover runtime configuration, authentication and invite codes, resumes and versions, JDs, conversations, imports, PDF/DOCX export, AI settings, and confirmation saves. `POST /chat` streams events over SSE. Authentication endpoints are available only in the multi-user profile; the open-export-directory endpoint is available only in the single-user profile.
 
 ## Tests
 
@@ -211,10 +225,14 @@ ResumeBranch/
 │   └── requirements.lock.txt      # Locked dependencies
 ├── frontend/                      # Vue SPA and Nginx container configuration
 ├── scripts/                       # Windows startup, shutdown, health, and smoke scripts
+├── launcher/                      # GUI launcher source for the single-user installer
+├── installer/                     # Inno Setup recipe for the Windows installer
+├── packaging/                     # Installer build scripts and bundled runtime configuration
 ├── tests/                         # Backend automated tests
 ├── docs/                          # Deployment, architecture, testing, and reference docs
 ├── data/                          # Local runtime data (not committed by default)
 ├── output/resumes/                # Local exports (not committed by default)
+├── output/installer/               # Generated Windows installer artifact
 ├── docker-compose.multi-user.yml  # Multi-user Compose definition
 ├── .env*.example                  # Configuration templates
 ├── README.md                      # English default README
@@ -224,9 +242,10 @@ ResumeBranch/
 ## Documentation
 
 - [Documentation index](docs/README.md)
-- [Windows local deployment](docs/local-deployment.md)
-- [Windows native multi-user deployment](docs/multi-user-local.md)
-- [Docker multi-user self-hosting](docs/deployment.md)
+- [Windows single-user installation](docs/windows-single-user-installation.md)
+- [Source development and testing](docs/source-development-testing.md)
+- [Multi-user Docker deployment](docs/docker-multi-user-deployment.md)
+- [Windows installation package build](packaging/README.md)
 - [Testing and acceptance](docs/testing.md)
 - [Agent architecture and state boundaries](docs/agent-architecture.md)
 

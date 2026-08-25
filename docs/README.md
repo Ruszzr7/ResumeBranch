@@ -2,11 +2,13 @@
 
 项目概览、能力边界和最快启动方式见仓库根目录的 [README](../README.md)。以下文档分别维护具体流程，避免在 README 中重复保存容易过期的细节。
 
-## 部署与运行
+## 三种交付方式
 
-- [Windows 本地部署](local-deployment.md)：默认个人模式，SQLite、数据备份、导出与验活。
-- [Windows 本机多用户部署](multi-user-local.md)：使用本机 MySQL 测试登录、邀请码和用户隔离。
-- [Docker 多人自托管部署](deployment.md)：Linux/服务器 Compose 拓扑、配置、备份与安全边界。
+- [源码开发/测试版](source-development-testing.md)：从 GitHub 获取源码，通过 Windows 脚本测试单用户和多用户配置。
+- [多用户 Docker 部署版](docker-multi-user-deployment.md)：从源码和 Docker Compose 运行多用户版本，用于本地部署验收或服务器部署。
+- [Windows 单用户安装版](windows-single-user-installation.md)：从 GitHub Releases 下载安装程序，直接安装并运行单用户版本。
+
+安装包的构建细节见 [Windows 安装包构建说明](../packaging/README.md)。
 
 ## 开发与验收
 

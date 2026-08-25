@@ -27,8 +27,9 @@
 - `docs/README.md`：项目文档索引。
 - `docs/agent-architecture.md`：Agent 架构与状态边界；实际行为以当前代码为准。
 - `docs/testing.md`：功能回归测试清单。
-- `docs/local-deployment.md`：Windows 本地部署与验活流程。
-- `docs/deployment.md`：生产环境部署与运维说明。
+- `docs/source-development-testing.md`：源码开发/测试，以及单用户和多用户 Windows 脚本流程。
+- `docs/windows-single-user-installation.md`：Windows 单用户安装包、启动、数据和卸载说明。
+- `docs/docker-multi-user-deployment.md`：多用户 Docker 部署与运维说明。
 - `.env.example`：环境变量示例，不得把真实密钥写入仓库。
 
 ## 必须遵循的执行流程
