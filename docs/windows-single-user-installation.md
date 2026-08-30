@@ -73,7 +73,7 @@ app/output/resumes/
 
 ## 卸载与重新安装
 
-当前 Release 1 不提供在线更新器。卸载或重新安装前，请先导出需要保留的简历，并备份 app/data/ 和 app/output/resumes/。
+当前 Release 1.1 不提供在线更新器。卸载或重新安装前，请先导出需要保留的简历，并备份 app/data/ 和 app/output/resumes/。
 
 卸载程序会停止安装包启动的后端和页面服务，并清理私有运行时文件；用户数据不会被静默覆盖。若要彻底删除用户数据，应在确认备份后手动删除安装目录中的 app/data/ 和 app/output/resumes/。
 
