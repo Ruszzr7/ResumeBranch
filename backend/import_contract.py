@@ -20,10 +20,14 @@ from .resume_data import normalize_resume_data
 IMPORT_CONTRACT_VERSION = 4
 MIN_IMPORT_TEXT_VOLUME = 60
 IDENTITY_FIELDS = ("name", "phone", "email")
-SEMANTIC_CONTENT_LABELS = {
+PROJECT_CONTENT_LABELS = {
     "tech_stack": "技术栈",
     "introduction": "项目简介",
     "responsibilities": "项目职责",
+}
+WORK_CONTENT_LABELS = {
+    "introduction": "工作简介",
+    "responsibilities": "工作职责",
 }
 
 
@@ -103,15 +107,14 @@ def _apply_import_formatting_contract(data: dict[str, Any]) -> None:
             _strip_job_type_suffix(item.get("job_title"), item.get("job_type"))
         )
         item["date_range"] = [_plain_import_text(value) for value in item.get("date_range") or []]
-        item["details"] = _normalize_free_list(item.get("details"))
         for block in item.get("content_blocks") or []:
             if not isinstance(block, dict):
                 continue
             block["label"] = _plain_import_text(block.get("label"))
             role = block.get("semantic_role")
-            if role in SEMANTIC_CONTENT_LABELS:
+            if role in WORK_CONTENT_LABELS:
                 if not block["label"]:
-                    block["label"] = SEMANTIC_CONTENT_LABELS[role]
+                    block["label"] = WORK_CONTENT_LABELS[role]
                 block["label_bold"] = True
             if role == "responsibilities" and block.get("type") == "bullet_list":
                 block["type"] = "numbered_list"
@@ -122,15 +125,14 @@ def _apply_import_formatting_contract(data: dict[str, Any]) -> None:
         item["project_name"] = _default_bold_import_text(item.get("project_name"))
         item["role"] = _plain_import_text(item.get("role"))
         item["date_range"] = [_plain_import_text(value) for value in item.get("date_range") or []]
-        item["details"] = _normalize_free_list(item.get("details"))
         for block in item.get("content_blocks") or []:
             if not isinstance(block, dict):
                 continue
             block["label"] = _plain_import_text(block.get("label"))
             role = block.get("semantic_role")
-            if role in SEMANTIC_CONTENT_LABELS:
+            if role in PROJECT_CONTENT_LABELS:
                 if not block["label"]:
-                    block["label"] = SEMANTIC_CONTENT_LABELS[role]
+                    block["label"] = PROJECT_CONTENT_LABELS[role]
                 block["label_bold"] = True
             if role == "responsibilities" and block.get("type") == "bullet_list":
                 block["type"] = "numbered_list"

@@ -61,6 +61,22 @@ class FakeInterviewGraph:
         }
 
 
+class FakeConversationGraph:
+    async def astream_events(self, initial_state, config=None, version=None):
+        assert initial_state["interaction_mode"] == ""
+        yield {"event": "on_chain_start", "name": "conversation_llm", "data": {}}
+        yield {
+            "event": "on_chain_end",
+            "name": "conversation_llm",
+            "data": {"output": {
+                "messages": list(initial_state["messages"]) + [AIMessage(content="已回答问题并处理明确修改。")],
+                "resume_data": initial_state["resume_data"],
+                "layout_data": initial_state["layout_data"],
+                "pending_confirmation": None,
+            }},
+        }
+
+
 class InterviewApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_explicit_interview_mode_emits_recoverable_workflow_state(self):
         db = SimpleNamespace(info={"task_id": "task-1"})
@@ -132,6 +148,56 @@ class InterviewApiTests(unittest.IsolatedAsyncioTestCase):
                 db=SimpleNamespace(info={"task_id": "task-1"}),
             )
         self.assertEqual(response.status_code, 400)
+
+    async def test_mixed_edit_turn_preserves_active_interview_mode(self):
+        db = SimpleNamespace(info={"task_id": "task-1"})
+        user = SimpleNamespace(id=7)
+        active_state = {
+            "interaction_mode": "coaching",
+            "status": "active",
+            "phase": "questioning",
+            "current_question": "这段经历的结果是什么？",
+            "turn_count": 2,
+        }
+        manager = SimpleNamespace(
+            load_state=AsyncMock(return_value=active_state),
+            record_turn=AsyncMock(return_value=active_state),
+            update_state=AsyncMock(return_value=active_state),
+        )
+        with (
+            patch("backend.main.require_llm_configured"),
+            patch("backend.main.graph", FakeConversationGraph()),
+            patch("backend.main.get_workflow_checkpoint_manager", return_value=manager),
+            patch("backend.main.get_user_resume", return_value=resume_payload()),
+            patch("backend.main.get_user_jd", return_value={}),
+            patch("backend.main.get_task_layout_config", return_value=default_layout_config()),
+            patch("backend.database.clear_pending_confirmation"),
+            patch("backend.database.get_pending_confirmation", return_value=None),
+            patch("backend.database.get_agent_memory_state", return_value={
+                "summary": "", "recent_messages": [], "version": 0, "interview_memory": {},
+            }),
+            patch("backend.main.persist_turn_state", new=AsyncMock()),
+            patch("backend.database.save_agent_memory_state", return_value=1),
+            patch("backend.database.save_conversation_context"),
+        ):
+            response = await main.chat_endpoint(
+                message="教育经历怎样写会更紧凑？请回答后把本科专业改为软件工程。",
+                files=[],
+                session_id="task-1",
+                request_id="mixed-edit-1",
+                current_user=user,
+                db=db,
+            )
+            chunks = [chunk async for chunk in response.body_iterator]
+            await asyncio.sleep(0)
+
+        self.assertTrue(decode_sse(chunks))
+        manager.record_turn.assert_awaited_once_with(
+            7, "task-1", session_id="task-1", request_id="mixed-edit-1",
+        )
+        workflow_update = manager.update_state.await_args.kwargs
+        self.assertNotIn("interaction_mode", workflow_update)
+        self.assertNotIn("status", workflow_update)
 
 
 if __name__ == "__main__":

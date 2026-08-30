@@ -47,7 +47,7 @@ class ResumeRevisionTests(unittest.TestCase):
         status, restored, restored_layout = undo_latest_resume_revision(self.db, 1, "task-1")
         self.assertEqual(status, "undone")
         self.assertEqual(restored["basics"]["name"], "原姓名")
-        self.assertEqual(restored_layout["education"]["preset"], "compact")
+        self.assertEqual(restored_layout["education"]["schoolTagStyle"], "text")
         self.db.refresh(self.task)
         self.db.refresh(self.project)
         self.assertEqual(self.task.resume_data["basics"]["name"], "原姓名")
@@ -84,8 +84,8 @@ class ResumeRevisionTests(unittest.TestCase):
         self.assertIsNone(restored_layout)
 
     def test_undo_restores_layout_snapshot(self):
-        before_layout = {"education": {"preset": "classic"}}
-        after_layout = {"education": {"preset": "three-column"}}
+        before_layout = {"education": {"schoolTagStyle": "text"}}
+        after_layout = {"education": {"schoolTagStyle": "outline"}}
         self.task.layout_config = after_layout
         self.db.commit()
         record_resume_revision(
@@ -98,7 +98,7 @@ class ResumeRevisionTests(unittest.TestCase):
         )
         status, _, restored_layout = undo_latest_resume_revision(self.db, 1, "task-1")
         self.assertEqual(status, "undone")
-        self.assertEqual(restored_layout["education"]["preset"], "classic")
+        self.assertEqual(restored_layout["education"]["schoolTagStyle"], "text")
 
     def test_deleting_project_removes_revision_snapshots(self):
         record_resume_revision(

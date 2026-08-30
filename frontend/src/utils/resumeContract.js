@@ -17,9 +17,18 @@ export const CONTENT_BLOCK_TYPE_OPTIONS = Object.freeze({
 
 export const CONTENT_BLOCK_ROLE_LABELS = Object.freeze({
   tech_stack: '技术栈',
-  introduction: '项目简介',
-  responsibilities: '项目职责',
-  generic: '普通内容'
+  introduction: '简介',
+  responsibilities: '职责',
+  generic: '其他内容'
+})
+
+export const CONTENT_BLOCK_ROLE_LABELS_BY_EXPERIENCE = Object.freeze({
+  work: Object.freeze({
+    introduction: '工作简介', responsibilities: '工作职责', generic: '其他工作内容'
+  }),
+  project: Object.freeze({
+    tech_stack: '技术栈', introduction: '项目简介', responsibilities: '项目职责', generic: '其他项目内容'
+  })
 })
 
 export const DEFAULT_CONTENT_BLOCK_TYPES = Object.freeze({
@@ -55,18 +64,14 @@ const TYPE_ALIASES = Object.freeze({
 const ROLE_ALIASES = Object.freeze({
   tech_stack: 'tech_stack', technology_stack: 'tech_stack', technology: 'tech_stack',
   '技术栈': 'tech_stack', '技术选型': 'tech_stack', '使用技术': 'tech_stack', '技术工具': 'tech_stack',
-  introduction: 'introduction', intro: 'introduction', '项目简介': 'introduction', '项目背景': 'introduction', '项目概述': 'introduction',
-  responsibilities: 'responsibilities', responsibility: 'responsibilities', duty: 'responsibilities', duties: 'responsibilities', '主要职责': 'responsibilities', '项目职责': 'responsibilities',
+  introduction: 'introduction', intro: 'introduction', '工作简介': 'introduction', '项目简介': 'introduction', '项目背景': 'introduction', '项目概述': 'introduction',
+  responsibilities: 'responsibilities', responsibility: 'responsibilities', duty: 'responsibilities', duties: 'responsibilities', '主要职责': 'responsibilities', '工作职责': 'responsibilities', '项目职责': 'responsibilities',
   generic: 'generic', other: 'generic', '普通内容': 'generic', '普通工作内容': 'generic',
   '其他项目内容': 'generic', '其他工作内容': 'generic', '普通项目内容': 'generic'
 })
 
 const LEADING_NUMBER_RE = /^\s*[（(]?\s*\d{1,2}\s*[）).、．]\s*/
 const LEADING_BULLET_RE = /^\s*(?:[•·▪‣●○◦]\s*|-\s+)/
-const INTRO_RE = /^(项目简介|项目背景|项目概述|项目说明)\s*[：:]\s*(.*)$/
-const DUTY_RE = /^(项目职责|主要职责|个人职责|负责内容)\s*[：:]?\s*(.*)$/
-const TECH_STACK_RE = /^(技术栈|技术选型|使用技术|技术工具)\s*[：:]?\s*(.*)$/
-const BOLD_HEADING_RE = /^\*\*(技术栈|技术选型|使用技术|技术工具|项目简介|项目背景|项目概述|项目说明|项目职责|主要职责|个人职责|负责内容)\*\*\s*[：:]?\s*(.*)$/
 
 const text = value => value == null ? '' : String(value).trim()
 const defaultContentBlockType = semanticRole => DEFAULT_CONTENT_BLOCK_TYPES[semanticRole] || 'bullet_list'
@@ -106,34 +111,6 @@ function visualGroupKey(signature) {
   if (!signature) return null
   if (signature.group) return `group:${signature.group}`
   if (signature.indent != null || signature.marker) return `shape:${signature.indent ?? ''}:${signature.marker}`
-  return null
-}
-
-function normalizeHeadingSurface(value) {
-  let surface = text(value)
-  if (!surface) return { surface: '', wholeBold: false }
-  const wholeBold = surface.startsWith('**') && surface.endsWith('**') && surface.length >= 4
-    && (surface.match(/\*\*/g) || []).length === 2
-  if (wholeBold) surface = surface.slice(2, -2).trim()
-  surface = surface.replace(/^\*\*(技术栈|技术选型|使用技术|技术工具|项目简介|项目背景|项目概述|项目说明|项目职责|主要职责|个人职责|负责内容)\*\*/, '$1')
-  return { surface, wholeBold }
-}
-
-function semanticHeading(value) {
-  const { surface, wholeBold } = normalizeHeadingSurface(value)
-  const intro = surface.match(INTRO_RE)
-  if (intro) return { role: 'introduction', label: intro[1], body: intro[2].trim(), wholeBold }
-  const duty = surface.match(DUTY_RE)
-  if (duty) return { role: 'responsibilities', label: duty[1], body: duty[2].trim(), wholeBold }
-  const techStack = surface.match(TECH_STACK_RE)
-  if (techStack) return { role: 'tech_stack', label: techStack[1], body: techStack[2].trim(), wholeBold }
-  const bold = text(value).match(BOLD_HEADING_RE)
-  if (bold) {
-    const role = ['技术栈', '技术选型', '使用技术', '技术工具'].includes(bold[1])
-      ? 'tech_stack'
-      : (['项目简介', '项目背景', '项目概述', '项目说明'].includes(bold[1]) ? 'introduction' : 'responsibilities')
-    return { role, label: bold[1], body: bold[2].trim(), wholeBold: true }
-  }
   return null
 }
 
@@ -198,64 +175,9 @@ export function normalizeContentBlock(block = {}, { keepEmpty = true } = {}) {
   return normalized
 }
 
-function legacyListType(values) {
-  const nonEmpty = values.map(text).filter(Boolean)
-  if (nonEmpty.length && nonEmpty.every(value => LEADING_NUMBER_RE.test(value))) return 'numbered_list'
-  if (nonEmpty.length && nonEmpty.every(value => LEADING_BULLET_RE.test(value))) return 'bullet_list'
-  return 'numbered_list'
-}
-
-function legacySemanticBlocks(details) {
-  const blocks = []
-  let unmatched = []
-  const flush = () => {
-    if (!unmatched.length) return
-    blocks.push({ type: 'bullet_list', semantic_role: 'generic', label: '', label_bold: true, text: '', items: unmatched.map(stripContentMarker).filter(Boolean) })
-    unmatched = []
-  }
-  let index = 0
-  while (index < details.length) {
-    const value = text(details[index])
-    const heading = semanticHeading(value)
-    if (heading?.role === 'tech_stack') {
-      flush()
-      index += 1
-      const first = heading.wholeBold && heading.body ? `**${heading.body}**` : heading.body
-      const following = first ? [first] : []
-      while (index < details.length && !semanticHeading(text(details[index]))) following.push(details[index++])
-      const values = following.map(text).filter(Boolean)
-      if (values.length) blocks.push({ type: 'paragraph', semantic_role: 'tech_stack', label: heading.label, label_bold: true, text: values.join('\n'), items: [] })
-      continue
-    }
-    if (heading?.role === 'introduction') {
-      flush()
-      const body = heading.wholeBold && heading.body ? `**${heading.body}**` : heading.body
-      if (body) blocks.push({ type: 'paragraph', semantic_role: 'introduction', label: heading.label, label_bold: true, text: body, items: [] })
-      index += 1
-      const following = []
-      while (index < details.length && !semanticHeading(text(details[index]))) following.push(details[index++])
-      const items = following.map(stripContentMarker).filter(Boolean)
-      if (items.length) blocks.push({ type: legacyListType(following), semantic_role: 'responsibilities', label: '项目职责', label_bold: true, text: '', items })
-      continue
-    }
-    if (heading?.role === 'responsibilities') {
-      flush()
-      index += 1
-      const first = heading.wholeBold && heading.body ? `**${heading.body}**` : heading.body
-      const following = first ? [first] : []
-      while (index < details.length && !semanticHeading(text(details[index]))) following.push(details[index++])
-      const items = following.map(stripContentMarker).filter(Boolean)
-      if (items.length) blocks.push({ type: legacyListType(following), semantic_role: 'responsibilities', label: heading.label, label_bold: true, text: '', items })
-      continue
-    }
-    unmatched.push(value)
-    index += 1
-  }
-  flush()
-  return blocks.filter(block => block.text || block.items?.length)
-}
-
-export function normalizeContentBlocks(value, legacyDetails = [], { experienceKind = 'project' } = {}) {
+export function normalizeContentBlocks(value, { experienceKind = 'project' } = {}) {
+  const contextualLabels = CONTENT_BLOCK_ROLE_LABELS_BY_EXPERIENCE[experienceKind]
+    || CONTENT_BLOCK_ROLE_LABELS_BY_EXPERIENCE.project
   const normalizedExplicit = []
   let activeSemanticGroup = null
   let responsibilityVisualKey = null
@@ -266,7 +188,7 @@ export function normalizeContentBlocks(value, legacyDetails = [], { experienceKi
       ...block,
       type: 'numbered_list',
       semantic_role: 'responsibilities',
-      label: '项目职责',
+      label: contextualLabels.responsibilities,
       label_bold: true,
       text: '',
       items
@@ -276,7 +198,7 @@ export function normalizeContentBlocks(value, legacyDetails = [], { experienceKi
   const appendResponsibilities = block => {
     const previous = normalizedExplicit[normalizedExplicit.length - 1]
     if (previous?.semantic_role === 'responsibilities'
-      && previous.label === '项目职责'
+      && previous.label === contextualLabels.responsibilities
       && previous.type === block.type) {
       const items = block.items?.length ? block.items : (block.text ? [block.text] : [])
       if (previous.type === 'paragraph') {
@@ -293,6 +215,13 @@ export function normalizeContentBlocks(value, legacyDetails = [], { experienceKi
     value.forEach(raw => {
       let block = normalizeContentBlock(raw, { keepEmpty: false })
       if (!block) return
+      if (experienceKind === 'work') {
+        if (block.semantic_role === 'introduction' && block.label === '项目简介') {
+          block = { ...block, label: contextualLabels.introduction }
+        } else if (block.semantic_role === 'responsibilities' && block.label === '项目职责') {
+          block = { ...block, label: contextualLabels.responsibilities }
+        }
+      }
       const visualKey = visualGroupKey(sourceVisualSignature(raw))
       const hasExplicitSemanticRole = raw && typeof raw === 'object'
         && Object.prototype.hasOwnProperty.call(raw, 'semantic_role')
@@ -340,7 +269,6 @@ export function normalizeContentBlocks(value, legacyDetails = [], { experienceKi
       }
     })
   }
-  const legacy = (Array.isArray(legacyDetails) ? legacyDetails : [legacyDetails]).map(text).filter(Boolean)
   const orderProjectBlocks = blocks => {
     if (experienceKind !== 'project') return blocks
     if (!blocks.some(block => block.semantic_role === 'tech_stack')) return blocks
@@ -353,9 +281,5 @@ export function normalizeContentBlocks(value, legacyDetails = [], { experienceKi
       ))
       .map(({ block }) => block)
   }
-  if (normalizedExplicit.length || !legacy.length) return orderProjectBlocks(normalizedExplicit)
-  if (experienceKind === 'work' && !legacy.some(item => semanticHeading(item))) {
-    return orderProjectBlocks([{ type: 'bullet_list', semantic_role: 'generic', label: '', label_bold: true, text: '', items: legacy }])
-  }
-  return orderProjectBlocks(legacySemanticBlocks(legacy))
+  return orderProjectBlocks(normalizedExplicit)
 }

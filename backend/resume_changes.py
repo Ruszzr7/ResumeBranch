@@ -22,7 +22,6 @@ SECTION_LABELS = {
     "honors": "主要荣誉",
     "publications": "论文",
     "work_experience": "工作经历",
-    "internship_experience": "实习经历",
     "project_experience": "项目经历",
     "custom_sections": "自定义模块",
     "others": "专业技能与补充信息",
@@ -75,22 +74,37 @@ def resume_digest(data: dict) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _display_value(value: Any, field_key: str = "") -> str:
+def _display_value(value: Any, field_key: str = "", path: list[Any] | None = None) -> str:
     if value in (None, "", []):
         return "未填写"
     if isinstance(value, bool):
         return "是" if value else "否"
     if isinstance(value, list):
         rendered = []
-        for item in value:
-            rendered.append(_display_value(item))
+        for index, item in enumerate(value):
+            rendered.append(_display_value(item, path=[*(path or []), index]))
         return "；".join(rendered) if rendered else "未填写"
     if isinstance(value, dict):
         rendered = []
         for key, item in value.items():
             label = FIELD_LABELS.get(str(key), "内容")
-            rendered.append(f"{label}：{_display_value(item, str(key))}")
+            rendered.append(f"{label}：{_display_value(item, str(key), [*(path or []), key])}")
         return "；".join(rendered) if rendered else "未填写"
+    root = str(path[0]) if path else ""
+    contextual = {
+        "work_experience": {
+            "introduction": "工作简介",
+            "responsibilities": "工作职责",
+            "generic": "其他工作内容",
+        },
+        "project_experience": {
+            "introduction": "项目简介",
+            "responsibilities": "项目职责",
+            "generic": "其他项目内容",
+        },
+    }
+    if str(value) in contextual.get(root, {}):
+        return contextual[root][str(value)]
     return VALUE_LABELS.get(str(value), str(value))
 
 
@@ -125,8 +139,8 @@ def build_resume_changes(before: dict, after: dict) -> list[dict]:
             "label": label,
             "before": deepcopy(old),
             "after": deepcopy(new),
-            "before_display": _display_value(old, str(path[-1]) if path else ""),
-            "after_display": _display_value(new, str(path[-1]) if path else ""),
+            "before_display": _display_value(old, str(path[-1]) if path else "", path),
+            "after_display": _display_value(new, str(path[-1]) if path else "", path),
             "operation": operation,
         })
 

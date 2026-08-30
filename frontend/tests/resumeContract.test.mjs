@@ -61,55 +61,50 @@ test('project technical stack is recognized and kept before the existing semanti
   assert.equal(blocks[0].type, 'paragraph')
 })
 
-test('legacy project details migrate an explicit technical stack without changing top-level semantics', () => {
-  const blocks = normalizeContentBlocks([], [
-    '项目简介：背景',
-    '技术栈：Python、FastAPI',
-    '项目职责：',
-    '完成联调'
+test('explicit project semantic blocks preserve top-level semantics', () => {
+  const blocks = normalizeContentBlocks([
+    { type: 'paragraph', semantic_role: 'introduction', label: '项目简介', text: '背景' },
+    { type: 'paragraph', semantic_role: 'tech_stack', label: '技术栈', text: 'Python、FastAPI' },
+    { type: 'numbered_list', semantic_role: 'responsibilities', label: '项目职责', items: ['完成联调'] }
   ])
   assert.deepEqual(blocks.map(block => block.semantic_role), ['tech_stack', 'introduction', 'responsibilities'])
   assert.equal(blocks[0].text, 'Python、FastAPI')
 })
 
-test('legacy introduction followed by points shares the responsibilities contract', () => {
-  const blocks = normalizeContentBlocks([], [
-    '项目简介：负责展厅导航系统',
-    '完成模块设计与实现',
-    '完成联调与性能验证'
+test('explicit work introduction and responsibilities share the contract', () => {
+  const blocks = normalizeContentBlocks([
+    { type: 'paragraph', semantic_role: 'introduction', label: '项目简介', text: '负责展厅导航系统' },
+    { type: 'numbered_list', semantic_role: 'responsibilities', label: '项目职责', items: ['完成模块设计与实现', '完成联调与性能验证'] }
   ], { experienceKind: 'work' })
   assert.equal(blocks[0].semantic_role, 'introduction')
+  assert.equal(blocks[0].label, '工作简介')
   assert.equal(blocks[1].semantic_role, 'responsibilities')
-  assert.equal(blocks[1].label, '项目职责')
+  assert.equal(blocks[1].label, '工作职责')
   assert.deepEqual(blocks[1].items, ['完成模块设计与实现', '完成联调与性能验证'])
 })
 
-test('legacy scalar details are normalized instead of being dropped', () => {
-  const blocks = normalizeContentBlocks([], '项目简介：负责模块设计', { experienceKind: 'project' })
-  assert.equal(blocks[0].semantic_role, 'introduction')
-  assert.equal(blocks[0].text, '负责模块设计')
+test('empty explicit content blocks remain empty', () => {
+  assert.deepEqual(normalizeContentBlocks([], { experienceKind: 'project' }), [])
 })
 
-test('explicit responsibility headings also work for legacy work details', () => {
-  const blocks = normalizeContentBlocks([], [
-    '项目职责：',
-    '（1）完成模块设计',
-    '（2）完成联调验证'
+test('explicit responsibility blocks normalize for work experiences', () => {
+  const blocks = normalizeContentBlocks([
+    { type: 'numbered_list', semantic_role: 'responsibilities', label: '项目职责', items: ['（1）完成模块设计', '（2）完成联调验证'] }
   ], { experienceKind: 'work' })
   assert.equal(blocks[0].semantic_role, 'responsibilities')
   assert.equal(blocks[0].type, 'numbered_list')
+  assert.equal(blocks[0].label, '工作职责')
   assert.deepEqual(blocks[0].items, ['完成模块设计', '完成联调验证'])
 })
 
-test('bold semantic headings and explicit generic blocks keep separate roles', () => {
-  const legacy = normalizeContentBlocks([], [
-    '**项目简介**：**负责导航系统设计**',
-    '**完成模块实现**',
-    '完成联调验证'
+test('bold semantic content and explicit generic blocks keep separate roles', () => {
+  const canonical = normalizeContentBlocks([
+    { type: 'paragraph', semantic_role: 'introduction', label: '项目简介', text: '**负责导航系统设计**' },
+    { type: 'numbered_list', semantic_role: 'responsibilities', label: '项目职责', items: ['**完成模块实现**', '完成联调验证'] }
   ], { experienceKind: 'work' })
-  assert.equal(legacy[0].semantic_role, 'introduction')
-  assert.equal(legacy[0].text, '**负责导航系统设计**')
-  assert.equal(legacy[1].semantic_role, 'responsibilities')
+  assert.equal(canonical[0].semantic_role, 'introduction')
+  assert.equal(canonical[0].text, '**负责导航系统设计**')
+  assert.equal(canonical[1].semantic_role, 'responsibilities')
 
   const explicit = normalizeContentBlocks([
     { type: 'paragraph', semantic_role: 'introduction', label: '项目简介', text: '项目背景' },

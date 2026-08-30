@@ -1,0 +1,7744 @@
+{
+  "schema_version": 1,
+  "dataset_id": "agent-core-total-600",
+  "description": "ResumeBranch Agent 核心评测总集；统一汇总路由、Skill 选择和修改安全案例。",
+  "case_counts": {
+    "routing": 200,
+    "skill": 300,
+    "safety": 100
+  },
+  "scenario_counts": {
+    "legacy_unclassified": 300,
+    "complex_operation": 101,
+    "mixed_request": 53,
+    "ambiguous_request": 91,
+    "multi_turn_summary": 55
+  },
+  "smoke_case_count": 20,
+  "routing": [
+    {
+      "id": "route-001",
+      "prompt": "你好，先介绍一下你能怎样帮助我完善简历。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-002",
+      "prompt": "请概括我目前简历里最有竞争力的三点。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-003",
+      "prompt": "你建议应届后端候选人怎样安排简历结构？",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-004",
+      "prompt": "请全面诊断这份简历，先不要修改任何内容。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-005",
+      "prompt": "请以面试官视角分析我的项目经历，但现在不要开始正式拷打。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-006",
+      "prompt": "结合当前 JD 分析匹配度，只给建议，不修改简历。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-007",
+      "prompt": "这份简历感觉不够好，你先问我几个必要问题。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-008",
+      "prompt": "请直接重写工作经历第一条，让动作和结果更清楚。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-009",
+      "prompt": "把项目经历重新组织成技术栈、项目简介和项目职责。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-010",
+      "prompt": "在专业技能中补充 Redis，并按熟练程度重新排序。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-011",
+      "prompt": "删除荣誉中不适合投递后端岗位的内容。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-012",
+      "prompt": "请直接优化自我评价，避免空泛表述。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-013",
+      "prompt": "把本科的 GPA 修改为前 10%。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-014",
+      "prompt": "把学校信息换成另一所学校，但先根据上下文判断是哪一段教育经历。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-015",
+      "prompt": "把绩点改得更有竞争力一些。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-016",
+      "prompt": "重新撰写项目职责，并把项目经历放到工作经历前面。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-017",
+      "prompt": "比较当前版本和主简历的差异，不要改动。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-018",
+      "prompt": "如果要突出数据库能力，你认为应该修改哪些字段？先讨论方案。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-019",
+      "prompt": "执行第一点，同时解释为什么这样排版。",
+      "expected_route": "conversation_llm",
+      "state": {
+        "context_type": "layout"
+      }
+    },
+    {
+      "id": "route-020",
+      "prompt": "应用第 2 条建议，其他内容继续分析。",
+      "expected_route": "conversation_llm",
+      "state": {
+        "context_type": "content"
+      }
+    },
+    {
+      "id": "route-021",
+      "prompt": "把姓名改为苏明澈。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-022",
+      "prompt": "将目标岗位修改为 Python 后端开发工程师。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-023",
+      "prompt": "把手机号改为 13700005678。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-024",
+      "prompt": "将邮箱改为 sumingche@example.test。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-025",
+      "prompt": "把性别改为其他。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-026",
+      "prompt": "将姓名改为周清禾，将目标岗位改为平台研发工程师。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-027",
+      "prompt": "把本科 GPA 改为 3.8/4.0。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-028",
+      "prompt": "请修改教育经历：将海岚大学替换为云川大学。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-029",
+      "prompt": "把工作经历中的“协助定位慢查询”加粗。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-030",
+      "prompt": "把自我评价中的“持续复盘”改为普通字重。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-031",
+      "prompt": "把正文字号调整为 10.5 磅。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-032",
+      "prompt": "请恢复默认排版。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-033",
+      "prompt": "学校标签不要黑底，改成普通文字。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-034",
+      "prompt": "把工作经历移到项目经历前面。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-035",
+      "prompt": "工作经历标题改为实习与工作经历。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-036",
+      "prompt": "确认全部修改。",
+      "expected_route": "tool_node",
+      "confirmation": "confirm"
+    },
+    {
+      "id": "route-037",
+      "prompt": "全部接受候选修改。",
+      "expected_route": "tool_node",
+      "confirmation": "confirm_all"
+    },
+    {
+      "id": "route-038",
+      "prompt": "只应用选中的修改。",
+      "expected_route": "tool_node",
+      "confirmation": "confirm_selected:change-1"
+    },
+    {
+      "id": "route-039",
+      "prompt": "取消这次修改。",
+      "expected_route": "tool_node",
+      "confirmation": "cancel"
+    },
+    {
+      "id": "route-040",
+      "prompt": "拒绝当前预览。",
+      "expected_route": "tool_node",
+      "confirmation": "cancel"
+    },
+    {
+      "id": "route-041",
+      "prompt": "放弃候选版本并保留原简历。",
+      "expected_route": "tool_node",
+      "confirmation": "cancel"
+    },
+    {
+      "id": "route-042",
+      "prompt": "开始全面诊断。",
+      "expected_route": "interview_coach",
+      "state": {
+        "interaction_mode": "diagnosis",
+        "interaction_action": "start"
+      }
+    },
+    {
+      "id": "route-043",
+      "prompt": "请继续诊断最薄弱的经历。",
+      "expected_route": "interview_coach",
+      "state": {
+        "interaction_mode": "diagnosis",
+        "interaction_action": "answer"
+      }
+    },
+    {
+      "id": "route-044",
+      "prompt": "开始深挖我的项目经历。",
+      "expected_route": "interview_coach",
+      "state": {
+        "interaction_mode": "coaching",
+        "interaction_action": "start"
+      }
+    },
+    {
+      "id": "route-045",
+      "prompt": "我负责权限接口和自动化测试。",
+      "expected_route": "interview_coach",
+      "state": {
+        "interaction_mode": "coaching",
+        "interaction_action": "answer"
+      }
+    },
+    {
+      "id": "route-046",
+      "prompt": "暂停这轮求职辅导。",
+      "expected_route": "interview_coach",
+      "state": {
+        "interaction_mode": "coaching",
+        "interaction_action": "pause"
+      }
+    },
+    {
+      "id": "route-047",
+      "prompt": "继续刚才的问题。",
+      "expected_route": "interview_coach",
+      "state": {
+        "interaction_mode": "coaching",
+        "interaction_action": "resume"
+      }
+    },
+    {
+      "id": "route-048",
+      "prompt": "应用当前已经核实的改写建议。",
+      "expected_route": "interview_coach",
+      "state": {
+        "interaction_mode": "coaching",
+        "interaction_action": "apply"
+      }
+    },
+    {
+      "id": "route-049",
+      "prompt": "结合岗位要求开始复盘。",
+      "expected_route": "interview_coach",
+      "state": {
+        "interaction_mode": "jd_review",
+        "interaction_action": "start"
+      }
+    },
+    {
+      "id": "route-050",
+      "prompt": "结束本轮 JD 复盘。",
+      "expected_route": "interview_coach",
+      "state": {
+        "interaction_mode": "jd_review",
+        "interaction_action": "end"
+      }
+    },
+    {
+      "id": "route-v2-001",
+      "prompt": "晚上好，我可以先和你讨论简历问题吗？",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v2-002",
+      "prompt": "说明一下修改预览和正式保存有什么区别。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v2-003",
+      "prompt": "先评价这份简历的技术深度，不要生成修改。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v2-004",
+      "prompt": "从招聘者角度指出工作经历最薄弱的地方。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v2-005",
+      "prompt": "结合岗位要求告诉我哪些技能证据不足，只分析。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v2-006",
+      "prompt": "请重写第一段工作职责，让它更突出性能成果。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v2-007",
+      "prompt": "重新组织自我评价，但先问清楚我的优势。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v2-008",
+      "prompt": "把项目描述润色得专业一些，同时隐藏照片。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v2-009",
+      "prompt": "删除你认为价值最低的技能，但先说明判断依据。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v2-010",
+      "prompt": "把工作成果写得更有说服力，并将项目经历放到教育经历后面。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v2-011",
+      "prompt": "学校改成我另一段教育经历里的院校。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v2-012",
+      "prompt": "把 GPA 调高一点，看起来更好。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v2-013",
+      "prompt": "新增最适合这个岗位的证书。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v2-014",
+      "prompt": "比较简历与 JD 的关键词差距，不要动原文。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v2-015",
+      "prompt": "如果强调接口性能，建议我先补充哪些事实？",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v2-016",
+      "prompt": "帮我构思项目亮点，暂时不要生成候选。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v2-017",
+      "prompt": "解释为什么简历修改必须经过确认。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v2-018",
+      "prompt": "这份简历适合投平台研发吗？",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v2-019",
+      "prompt": "应用第一条建议，并继续分析第二条。",
+      "expected_route": "conversation_llm",
+      "state": {
+        "context_type": "content"
+      }
+    },
+    {
+      "id": "route-v2-020",
+      "prompt": "调整刚才建议的排版，同时说说页面层级是否清楚。",
+      "expected_route": "conversation_llm",
+      "state": {
+        "context_type": "layout"
+      }
+    },
+    {
+      "id": "route-v2-021",
+      "prompt": "请将姓名修改为唐予安。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-v2-022",
+      "prompt": "把求职岗位改为服务端研发工程师。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-v2-023",
+      "prompt": "将电话改为 13800006789。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-v2-024",
+      "prompt": "把邮箱改为 tangyuan@example.test。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-v2-025",
+      "prompt": "将性别改为其他。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-v2-026",
+      "prompt": "把姓名改为江望舒，把目标岗位改为后端研发工程师。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-v2-027",
+      "prompt": "将本科绩点改为 3.7/4.0。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-v2-028",
+      "prompt": "请修改教育经历：将海岚大学替换为青屿大学。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-v2-029",
+      "prompt": "把工作经历中的“订单服务接口开发”加粗。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-v2-030",
+      "prompt": "取消项目职责中“自动化测试”的加粗。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-v2-031",
+      "prompt": "将正文字号设置为 11 磅。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-v2-032",
+      "prompt": "把姓名和基本信息改为左对齐。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v2-033",
+      "prompt": "项目经历改成段落形式。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-v2-034",
+      "prompt": "把项目经历移到工作经历后面。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-v2-035",
+      "prompt": "项目经历标题改为代表项目。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-v2-036",
+      "prompt": "接受当前全部候选。",
+      "expected_route": "tool_node",
+      "confirmation": "confirm"
+    },
+    {
+      "id": "route-v2-037",
+      "prompt": "确认应用所有修改。",
+      "expected_route": "tool_node",
+      "confirmation": "confirm_all"
+    },
+    {
+      "id": "route-v2-038",
+      "prompt": "仅确认我勾选的变更。",
+      "expected_route": "tool_node",
+      "confirmation": "confirm_selected:change-2"
+    },
+    {
+      "id": "route-v2-039",
+      "prompt": "取消当前候选。",
+      "expected_route": "tool_node",
+      "confirmation": "cancel"
+    },
+    {
+      "id": "route-v2-040",
+      "prompt": "不要保存这次预览。",
+      "expected_route": "tool_node",
+      "confirmation": "cancel"
+    },
+    {
+      "id": "route-v2-041",
+      "prompt": "拒绝所有候选并保留现状。",
+      "expected_route": "tool_node",
+      "confirmation": "cancel"
+    },
+    {
+      "id": "route-v2-042",
+      "prompt": "开始检查整份简历。",
+      "expected_route": "interview_coach",
+      "state": {
+        "interaction_mode": "diagnosis",
+        "interaction_action": "start"
+      }
+    },
+    {
+      "id": "route-v2-043",
+      "prompt": "继续回答诊断问题。",
+      "expected_route": "interview_coach",
+      "state": {
+        "interaction_mode": "diagnosis",
+        "interaction_action": "answer"
+      }
+    },
+    {
+      "id": "route-v2-044",
+      "prompt": "开始深挖工作经历。",
+      "expected_route": "interview_coach",
+      "state": {
+        "interaction_mode": "coaching",
+        "interaction_action": "start"
+      }
+    },
+    {
+      "id": "route-v2-045",
+      "prompt": "我用慢查询日志定位了索引问题。",
+      "expected_route": "interview_coach",
+      "state": {
+        "interaction_mode": "coaching",
+        "interaction_action": "answer"
+      }
+    },
+    {
+      "id": "route-v2-046",
+      "prompt": "先暂停这轮深挖。",
+      "expected_route": "interview_coach",
+      "state": {
+        "interaction_mode": "coaching",
+        "interaction_action": "pause"
+      }
+    },
+    {
+      "id": "route-v2-047",
+      "prompt": "恢复刚才的求职辅导。",
+      "expected_route": "interview_coach",
+      "state": {
+        "interaction_mode": "coaching",
+        "interaction_action": "resume"
+      }
+    },
+    {
+      "id": "route-v2-048",
+      "prompt": "应用已经确认过的辅导结论。",
+      "expected_route": "interview_coach",
+      "state": {
+        "interaction_mode": "coaching",
+        "interaction_action": "apply"
+      }
+    },
+    {
+      "id": "route-v2-049",
+      "prompt": "开始根据当前 JD 复盘项目。",
+      "expected_route": "interview_coach",
+      "state": {
+        "interaction_mode": "jd_review",
+        "interaction_action": "start"
+      }
+    },
+    {
+      "id": "route-v2-050",
+      "prompt": "结束岗位复盘。",
+      "expected_route": "interview_coach",
+      "state": {
+        "interaction_mode": "jd_review",
+        "interaction_action": "end"
+      }
+    },
+    {
+      "id": "route-v3-001",
+      "scenario_type": "complex_operation",
+      "prompt": "将姓名改为宋知遥，手机号改为 13800006721，其他基本信息保持不变。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-v3-002",
+      "scenario_type": "complex_operation",
+      "prompt": "把目标岗位改为数据平台后端工程师，并将本科 GPA 改为 3.8/4.0。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-v3-003",
+      "scenario_type": "complex_operation",
+      "prompt": "请把云笺协作平台的项目职责改写得更突出数据一致性。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v3-004",
+      "scenario_type": "complex_operation",
+      "prompt": "把项目职责中关于自动化测试的内容移到第一条，保留其他条目。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v3-005",
+      "scenario_type": "complex_operation",
+      "prompt": "整份简历切换为标准密度，其他排版设置不变。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-v3-006",
+      "scenario_type": "complex_operation",
+      "prompt": "新增一个‘开源实践’栏目，并根据我的项目经历补写栏目内容。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v3-007",
+      "scenario_type": "complex_operation",
+      "prompt": "把项目经历放到工作经历前面，模块中的文字不要改。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-v3-008",
+      "scenario_type": "complex_operation",
+      "prompt": "先重写项目职责，再把项目经历放到工作经历前面。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v3-009",
+      "scenario_type": "complex_operation",
+      "prompt": "把项目经历的标题拖到页面左侧 42 毫米处，并固定在第一页。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v3-010",
+      "scenario_type": "complex_operation",
+      "prompt": "请将教育经历中的‘海岚大学’改为‘云川大学’，其余教育字段保持原样。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-v3-011",
+      "scenario_type": "mixed_request",
+      "prompt": "先解释为什么项目职责缺少结果，再把第二条改成更具体的成果描述。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v3-012",
+      "scenario_type": "mixed_request",
+      "prompt": "请告诉我 Redis 是否适合写进这份简历；如果适合，就直接补到项目技术栈里。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v3-013",
+      "scenario_type": "mixed_request",
+      "prompt": "回答我这段自我评价的问题在哪里，同时把它改成更简洁的一段话。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v3-014",
+      "scenario_type": "mixed_request",
+      "prompt": "项目经历放前面会更好吗？说明理由后再帮我调整顺序。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v3-015",
+      "scenario_type": "mixed_request",
+      "prompt": "先判断页面是否拥挤，再根据判断结果决定要不要缩小字号；现在不要直接改。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v3-016",
+      "scenario_type": "mixed_request",
+      "prompt": "我想知道工作经历怎样写得更像后端项目，明确方案后再处理第一条职责。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v3-017",
+      "scenario_type": "mixed_request",
+      "prompt": "请回答教育经历中的排名是否有说服力，并把学校名称的显示方式改成普通文字。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v3-018",
+      "scenario_type": "mixed_request",
+      "prompt": "看看这份简历和 JD 的差距，然后把最相关的项目职责改写出来。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v3-019",
+      "scenario_type": "mixed_request",
+      "prompt": "我该如何重写项目职责？你说明方法后，把已经明确的项目顺序调整到工作经历之前。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v3-020",
+      "scenario_type": "mixed_request",
+      "prompt": "请说明候选修改为什么需要确认，并把我明确指定的邮箱更新为 zhiyao.song@example.test。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v3-021",
+      "scenario_type": "ambiguous_request",
+      "prompt": "把项目优化一下。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v3-022",
+      "scenario_type": "ambiguous_request",
+      "prompt": "把它写得专业一点。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v3-023",
+      "scenario_type": "ambiguous_request",
+      "prompt": "重新撰写项目职责。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v3-024",
+      "scenario_type": "ambiguous_request",
+      "prompt": "调整一下顺序。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v3-025",
+      "scenario_type": "ambiguous_request",
+      "prompt": "让简历更有竞争力。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v3-026",
+      "scenario_type": "ambiguous_request",
+      "prompt": "把前面的那条删掉。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v3-027",
+      "scenario_type": "ambiguous_request",
+      "prompt": "把学校改得好看些。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v3-028",
+      "scenario_type": "ambiguous_request",
+      "prompt": "把相关内容补全。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v3-029",
+      "scenario_type": "ambiguous_request",
+      "prompt": "隐藏不需要的部分。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v3-030",
+      "scenario_type": "ambiguous_request",
+      "prompt": "按这个岗位的要求帮我改一版。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v3-031",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "我想继续上次的项目追问。",
+      "expected_route": "interview_coach",
+      "state": {
+        "interaction_mode": "coaching",
+        "interaction_action": "resume"
+      },
+      "turns": [
+        {
+          "role": "user",
+          "content": "我想把项目经历讲得更有说服力。"
+        },
+        {
+          "role": "assistant",
+          "content": "我们先核对你在项目中的具体职责和结果。"
+        },
+        {
+          "role": "user",
+          "content": "我负责了权限校验接口，并补充了自动化测试。"
+        }
+      ]
+    },
+    {
+      "id": "route-v3-032",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "我补充完了，请继续追问结果数据。",
+      "expected_route": "interview_coach",
+      "state": {
+        "interaction_mode": "coaching",
+        "interaction_action": "answer"
+      },
+      "turns": [
+        {
+          "role": "user",
+          "content": "继续深挖云笺协作平台。"
+        },
+        {
+          "role": "assistant",
+          "content": "你负责的接口带来了什么可观察的变化？"
+        },
+        {
+          "role": "user",
+          "content": "接口错误率下降了，但我还没整理具体比例。"
+        }
+      ]
+    },
+    {
+      "id": "route-v3-033",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "根据刚才的 JD 对照继续复盘。",
+      "expected_route": "interview_coach",
+      "state": {
+        "interaction_mode": "jd_review",
+        "interaction_action": "answer"
+      },
+      "turns": [
+        {
+          "role": "user",
+          "content": "先找出简历和岗位要求的差距。"
+        },
+        {
+          "role": "assistant",
+          "content": "岗位重点包括接口性能、数据一致性和自动化测试。"
+        },
+        {
+          "role": "user",
+          "content": "我已经补充了慢查询定位的背景。"
+        }
+      ]
+    },
+    {
+      "id": "route-v3-034",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "请先对当前简历做一次全面诊断，指出最影响通过率的不足并按优先级给出建议，先不要修改。",
+      "expected_route": "conversation_llm",
+      "turns": [
+        {
+          "role": "user",
+          "content": "我准备投递后端开发岗位。"
+        },
+        {
+          "role": "assistant",
+          "content": "可以结合当前简历继续分析。"
+        }
+      ]
+    },
+    {
+      "id": "route-v3-035",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "确认全部接受。",
+      "expected_route": "tool_node",
+      "confirmation": "confirm"
+    },
+    {
+      "id": "route-v3-036",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "这次先不采用，保留原简历。",
+      "expected_route": "tool_node",
+      "confirmation": "cancel"
+    },
+    {
+      "id": "route-v3-037",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "只接受第 2 项修改。",
+      "expected_route": "tool_node",
+      "confirmation": "confirm_selected:change-2"
+    },
+    {
+      "id": "route-v3-038",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "全部采用刚才的候选版本。",
+      "expected_route": "tool_node",
+      "confirmation": "confirm_all"
+    },
+    {
+      "id": "route-v3-039",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "取消本次预览。",
+      "expected_route": "tool_node",
+      "confirmation": "cancel"
+    },
+    {
+      "id": "route-v3-040",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "确认当前这组修改。",
+      "expected_route": "tool_node",
+      "confirmation": "confirm"
+    },
+    {
+      "id": "route-v3-041",
+      "scenario_type": "complex_operation",
+      "prompt": "将工作经历标题改为‘实习与工作经历’，并把整份简历的模块标题改为纯文字样式。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-v4-001",
+      "scenario_type": "ambiguous_request",
+      "prompt": "请概括这份简历最突出的三项能力。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-002",
+      "scenario_type": "ambiguous_request",
+      "prompt": "如果应聘平台后端，哪些经历最值得展开？",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-003",
+      "scenario_type": "ambiguous_request",
+      "prompt": "帮我分析教育经历是否清晰。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-004",
+      "scenario_type": "ambiguous_request",
+      "prompt": "项目职责怎样写更有说服力？",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-005",
+      "scenario_type": "ambiguous_request",
+      "prompt": "请点评简历和岗位要求的匹配情况。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-006",
+      "scenario_type": "ambiguous_request",
+      "prompt": "我想了解这份简历的短板。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-007",
+      "scenario_type": "ambiguous_request",
+      "prompt": "面试前应该重点准备哪些问题？",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-008",
+      "scenario_type": "ambiguous_request",
+      "prompt": "这段项目经历的技术亮点是什么？",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-009",
+      "scenario_type": "ambiguous_request",
+      "prompt": "如果只保留一页，建议先压缩哪里？",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-010",
+      "scenario_type": "ambiguous_request",
+      "prompt": "能否解释一下为什么这个项目适合后端岗位？",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-011",
+      "scenario_type": "ambiguous_request",
+      "prompt": "请按招聘者视角审阅全文。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-012",
+      "scenario_type": "ambiguous_request",
+      "prompt": "项目职责写得太散，怎样组织会更清楚？",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-013",
+      "scenario_type": "ambiguous_request",
+      "prompt": "请给我一个改进教育经历的建议。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-014",
+      "scenario_type": "ambiguous_request",
+      "prompt": "我还在考虑是否补充 Redis，先说说利弊。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-015",
+      "scenario_type": "ambiguous_request",
+      "prompt": "这个岗位最看重哪些能力？",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-016",
+      "scenario_type": "ambiguous_request",
+      "prompt": "请梳理这份简历的叙事主线。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-017",
+      "scenario_type": "ambiguous_request",
+      "prompt": "能否比较项目经历和工作经历的重点？",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-018",
+      "scenario_type": "ambiguous_request",
+      "prompt": "请告诉我联系方式在页面上的观感问题。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-019",
+      "scenario_type": "ambiguous_request",
+      "prompt": "我想知道该项目描述是否缺少结果指标。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-020",
+      "scenario_type": "ambiguous_request",
+      "prompt": "请先解释一下岗位 JD 中的核心要求。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-021",
+      "scenario_type": "ambiguous_request",
+      "prompt": "简历中哪些内容可能需要进一步核实？",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-022",
+      "scenario_type": "ambiguous_request",
+      "prompt": "怎样把项目职责写得更紧凑？",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-023",
+      "scenario_type": "ambiguous_request",
+      "prompt": "我想听听关于一页版排版的建议。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-024",
+      "scenario_type": "ambiguous_request",
+      "prompt": "能否帮我准备一个自我介绍思路？",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-025",
+      "scenario_type": "complex_operation",
+      "prompt": "将姓名改为周言川。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-v4-026",
+      "scenario_type": "complex_operation",
+      "prompt": "把目标岗位改成数据平台后端工程师。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-v4-027",
+      "scenario_type": "complex_operation",
+      "prompt": "将手机改为 13700004567。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-v4-028",
+      "scenario_type": "complex_operation",
+      "prompt": "把邮箱改成 zhou.yanchuan@example.test。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-v4-029",
+      "scenario_type": "complex_operation",
+      "prompt": "将性别改为男。",
+      "expected_route": "direct_edit"
+    },
+    {
+      "id": "route-v4-030",
+      "scenario_type": "complex_operation",
+      "prompt": "把本科专业改为软件工程。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-031",
+      "scenario_type": "complex_operation",
+      "prompt": "将 GPA 改为 3.8。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-032",
+      "scenario_type": "complex_operation",
+      "prompt": "把学校改为澄海大学。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-033",
+      "scenario_type": "complex_operation",
+      "prompt": "将工作职位改为后端研发实习生。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-034",
+      "scenario_type": "complex_operation",
+      "prompt": "把公司名称改成瀚云科技有限公司。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-035",
+      "scenario_type": "complex_operation",
+      "prompt": "将项目角色改为服务端负责人。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-036",
+      "scenario_type": "complex_operation",
+      "prompt": "把项目名称改成协同知识库平台。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-037",
+      "scenario_type": "complex_operation",
+      "prompt": "把项目时间改成 2023.03 至 2023.08。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-038",
+      "scenario_type": "complex_operation",
+      "prompt": "将全局模块间距设为 0.7。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-039",
+      "scenario_type": "complex_operation",
+      "prompt": "把教育经历的专业改为软件工程，并把 GPA 改为 3.8。",
+      "expected_route": "conversation_llm"
+    },
+    {
+      "id": "route-v4-040",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "开始一次简历诊断。",
+      "expected_route": "interview_coach",
+      "state": {
+        "interaction_mode": "diagnosis"
+      }
+    },
+    {
+      "id": "route-v4-041",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "继续追问我的项目成果。",
+      "expected_route": "interview_coach",
+      "state": {
+        "interaction_mode": "coaching"
+      }
+    },
+    {
+      "id": "route-v4-042",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "请根据当前简历模拟面试官提问。",
+      "expected_route": "interview_coach",
+      "state": {
+        "interaction_mode": "coaching"
+      }
+    },
+    {
+      "id": "route-v4-043",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "先从岗位匹配度开始分析。",
+      "expected_route": "interview_coach",
+      "state": {
+        "interaction_mode": "jd_review"
+      }
+    },
+    {
+      "id": "route-v4-044",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "我想回答刚才的问题：项目上线后接口响应时间下降了。",
+      "expected_route": "interview_coach",
+      "state": {
+        "interaction_mode": "coaching"
+      }
+    },
+    {
+      "id": "route-v4-045",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "暂停这次辅导。",
+      "expected_route": "interview_coach",
+      "state": {
+        "interaction_mode": "coaching"
+      }
+    },
+    {
+      "id": "route-v4-046",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "恢复上次的面试练习。",
+      "expected_route": "interview_coach",
+      "state": {
+        "interaction_mode": "coaching"
+      }
+    },
+    {
+      "id": "route-v4-047",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "结束本轮辅导。",
+      "expected_route": "interview_coach",
+      "state": {
+        "interaction_mode": "coaching"
+      }
+    },
+    {
+      "id": "route-v4-048",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "请针对 JD 给我下一道追问。",
+      "expected_route": "interview_coach",
+      "state": {
+        "interaction_mode": "jd_review"
+      }
+    },
+    {
+      "id": "route-v4-049",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "诊断我的简历并列出待核实事项。",
+      "expected_route": "interview_coach",
+      "state": {
+        "interaction_mode": "diagnosis"
+      }
+    },
+    {
+      "id": "route-v4-050",
+      "scenario_type": "mixed_request",
+      "prompt": "确认刚才的修改",
+      "confirmation": "confirm",
+      "expected_route": "tool_node"
+    },
+    {
+      "id": "route-v4-051",
+      "scenario_type": "mixed_request",
+      "prompt": "先取消这次修改",
+      "confirmation": "cancel",
+      "expected_route": "tool_node"
+    },
+    {
+      "id": "route-v4-052",
+      "scenario_type": "mixed_request",
+      "prompt": "接受当前候选",
+      "confirmation": "confirm",
+      "expected_route": "tool_node"
+    },
+    {
+      "id": "route-v4-053",
+      "scenario_type": "mixed_request",
+      "prompt": "拒绝当前候选",
+      "confirmation": "cancel",
+      "expected_route": "tool_node"
+    },
+    {
+      "id": "route-v4-054",
+      "scenario_type": "mixed_request",
+      "prompt": "确认全部修改",
+      "confirmation": "confirm",
+      "expected_route": "tool_node"
+    },
+    {
+      "id": "route-v4-055",
+      "scenario_type": "mixed_request",
+      "prompt": "全部取消",
+      "confirmation": "cancel",
+      "expected_route": "tool_node"
+    },
+    {
+      "id": "route-v4-056",
+      "scenario_type": "mixed_request",
+      "prompt": "应用刚才的候选",
+      "confirmation": "confirm",
+      "expected_route": "tool_node"
+    },
+    {
+      "id": "route-v4-057",
+      "scenario_type": "mixed_request",
+      "prompt": "不要应用这次候选",
+      "confirmation": "cancel",
+      "expected_route": "tool_node"
+    },
+    {
+      "id": "route-v4-058",
+      "scenario_type": "mixed_request",
+      "prompt": "我确认保存",
+      "confirmation": "confirm",
+      "expected_route": "tool_node"
+    },
+    {
+      "id": "route-v4-059",
+      "scenario_type": "mixed_request",
+      "prompt": "我不接受这次修改",
+      "confirmation": "cancel",
+      "expected_route": "tool_node"
+    }
+  ],
+  "skill": [
+    {
+      "id": "skill-001",
+      "prompt": "请直接把工作经历第一条改为“负责订单查询接口开发，并为核心分支补充单元测试”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "smoke": true
+    },
+    {
+      "id": "skill-002",
+      "prompt": "在工作经历的工作职责末尾新增一条“使用执行计划定位并优化慢查询”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-003",
+      "prompt": "删除工作经历中“整理接口文档并协助定位慢查询”这一条。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "remove",
+          "path": "work_experience[0].content_blocks[0].items",
+          "index": 1,
+          "target_semantic_role": "responsibilities",
+          "expected": "整理接口文档并协助定位慢查询"
+        }
+      ]
+    },
+    {
+      "id": "skill-004",
+      "prompt": "把工作经历里的慢查询内容移到接口开发内容前面。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-005",
+      "prompt": "将实习职位改为 Python 后端开发实习生，请生成修改预览。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-006",
+      "prompt": "把实习公司名称改成云岑软件有限公司。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-007",
+      "prompt": "在专业技能最后加入 Redis，不要改其他技能。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-008",
+      "prompt": "从专业技能中移除 Git，保留 Python 和 SQL。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-009",
+      "scenario_type": "mixed_request",
+      "prompt": "SQL 和 PostgreSQL 放在专业技能中分别传达什么？简要说明后，把专业技能中的 SQL 替换为 PostgreSQL。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "others.skills[1]",
+          "value": "PostgreSQL"
+        }
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "answer_expectation": "required"
+    },
+    {
+      "id": "skill-010",
+      "prompt": "在主要荣誉中新增“2024 年开源实践奖”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-011",
+      "prompt": "将自我评价改为“重视可维护性，习惯通过测试和复盘推动问题闭环”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-012",
+      "prompt": "在云笺协作平台的技术栈末尾补充 Redis。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-013",
+      "prompt": "把云笺协作平台中的角色改为后端负责人。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-014",
+      "prompt": "将项目名称“云笺协作平台”改为“云笺权限协作平台”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-015",
+      "prompt": "把云笺项目时间调整为 2023.01 至 2023.07。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-016",
+      "prompt": "将本科专业修改为软件工程，其他教育字段保持不变。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-017",
+      "prompt": "把教育经历中的排名改为前 10%。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-018",
+      "prompt": "把主要荣誉现有条目替换为“2023 年工程实践奖”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-019",
+      "prompt": "在证书列表中新增“数据库开发认证”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-020",
+      "prompt": "我已通过日语 N2，请在语言能力中新增“日语 N2”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-021",
+      "prompt": "我维护了权限校验示例项目。请新增自定义栏目“开源实践”，内容为“维护权限校验示例项目”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "append",
+          "path": "custom_sections",
+          "value": {
+            "title": "开源实践",
+            "items": [
+              "维护权限校验示例项目"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "skill-022",
+      "scenario_type": "mixed_request",
+      "prompt": "先说明“设计文档权限校验接口”为什么没有充分体现职责边界，再将这条项目职责改为“设计文档级权限校验与审计接口”；第二条职责保持不变。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "project_experience[0].content_blocks[1].items[0]",
+          "value": "设计文档级权限校验与审计接口"
+        }
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "answer_expectation": "required"
+    },
+    {
+      "id": "skill-023",
+      "prompt": "把项目经历移动到工作经历前面，并保留所有内容。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-024",
+      "prompt": "同时把项目角色改为核心开发，并将项目职责改成编号列表。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-025",
+      "prompt": "将教育经历中的课程补充改为“主修操作系统、数据库系统、计算机网络”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-026",
+      "prompt": "请查看当前 PDF 页面，判断是否有内容跨页或被截断。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "smoke": true
+    },
+    {
+      "id": "skill-027",
+      "prompt": "我想知道第二页是否只有一两行内容，请先看真实页面。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-028",
+      "prompt": "请检查当前简历页面底部有没有异常大块留白。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-029",
+      "prompt": "请根据实际渲染结果判断基本信息是否对齐。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-030",
+      "prompt": "证件照和姓名区域在页面上是否协调？请查看页面后回答。",
+      "fixture": "photo",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-031",
+      "prompt": "现在的简历到底是一页还是两页？不要只根据 JSON 猜。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-032",
+      "prompt": "请观察真实 PDF，判断模块标题的视觉层级是否明显。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-033",
+      "prompt": "项目经历有没有被硬拆到两页？请先获取页面视觉证据。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-034",
+      "prompt": "教育经历这一行在实际页面上是否过于拥挤？",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-035",
+      "prompt": "请检查各模块之间的垂直间距在真实页面上是否均衡。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-036",
+      "prompt": "技能列表在 PDF 中有没有换行得很难看？",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-037",
+      "prompt": "请看一下页面，确认工作经历标题和内容是否分离到了不同页。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-038",
+      "prompt": "当前页面左右留白看起来是否对称？需要基于渲染图判断。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-039",
+      "prompt": "简历最后一页的内容密度是否太低？请查看快照。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-040",
+      "prompt": "从实际页面判断项目技术栈是否挤压了项目标题。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-041",
+      "prompt": "请查看 PDF 后告诉我是否存在孤立的模块标题。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-042",
+      "prompt": "页面中的中英文混排有没有造成明显对齐问题？先看快照。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-043",
+      "prompt": "请检查项目职责的圆点在实际渲染中是否整齐。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-044",
+      "prompt": "我担心联系方式在页面顶部被压缩，请基于页面图片确认。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-045",
+      "prompt": "请先观察当前真实排版，再判断整体视觉重心是否偏上。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-046",
+      "prompt": "你好，请用一句话说明你能提供哪些简历帮助。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "smoke": true
+    },
+    {
+      "id": "skill-047",
+      "prompt": "我的目标岗位是什么？请从当前简历内容回答。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-048",
+      "prompt": "当前简历里列出了哪些专业技能？",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-049",
+      "prompt": "请概括云笺协作平台使用的技术栈。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-050",
+      "prompt": "这份简历中有几段工作经历和几段项目经历？",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-051",
+      "prompt": "当前 JD 最重视哪些后端技能？",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-052",
+      "prompt": "简历里是否已经出现 PostgreSQL？只回答内容事实。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-053",
+      "prompt": "教育经历的起止时间是什么？",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-054",
+      "prompt": "工作经历里提到了哪些质量保障动作？",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-055",
+      "prompt": "请分析简历与 JD 的技能差距，但不要修改，也不需要看页面排版。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "smoke": true
+    },
+    {
+      "id": "skill-056",
+      "prompt": "给出三条内容优化建议，本轮只讨论，不生成候选修改。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-057",
+      "prompt": "分析项目经历是否体现了个人职责，先不要改写。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-058",
+      "prompt": "从招聘方视角指出工作经历内容上的不足，不讨论排版。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-059",
+      "prompt": "我还缺哪些信息才能证明慢查询优化成果？请向我追问。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-060",
+      "prompt": "请评价当前自我评价是否空泛，只给分析。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-061",
+      "prompt": "根据 JD，面试官最可能追问哪个项目事实？",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-062",
+      "prompt": "如果要补充 Redis 经验，哪些事实必须由我先确认？",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-063",
+      "prompt": "分析当前项目描述是否符合 STAR 思路，但不要评分或改写。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-064",
+      "prompt": "解释为什么简历不能凭空添加量化结果。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-065",
+      "prompt": "先比较 Python 与 Java 后端岗位对项目描述的不同要求。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-066",
+      "prompt": "我说“优化一下项目”还不够明确，你需要我补充什么？",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-067",
+      "prompt": "我可能想调整教育经历，但还没决定改学校还是改专业，先问我。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-068",
+      "prompt": "先讨论是否应该删除自我评价，暂时不要执行。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-069",
+      "prompt": "你建议把工作经历和项目经历谁放前面？只给理由。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-070",
+      "prompt": "请告诉我怎样确认修改预览；不要替我点击确认。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "smoke": true
+    },
+    {
+      "id": "skill-071",
+      "prompt": "帮我写一封投递星桥科技的求职邮件，不要修改简历。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-072",
+      "prompt": "解释 FastAPI 的依赖注入概念，不需要结合页面。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-073",
+      "prompt": "给我列一个后端面试复习清单，不要改简历。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-074",
+      "prompt": "模拟提出一个数据库索引问题，但先不要进入正式辅导模式。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-075",
+      "prompt": "解释候选修改为什么要经过确认才能保存。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-001",
+      "prompt": "把工作职责第一条替换为“负责订单检索接口开发，并补充参数校验与单元测试”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "smoke": true
+    },
+    {
+      "id": "skill-v2-002",
+      "prompt": "在工作职责末尾追加“根据慢查询日志完成索引优化”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-003",
+      "prompt": "删除工作职责里的“整理接口文档并协助定位慢查询”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-004",
+      "prompt": "把工作职责第二条移动到第一条前面。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-005",
+      "prompt": "将实习职位替换为服务端研发实习生。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-006",
+      "prompt": "把实习公司名称改为星桥数据技术有限公司。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-007",
+      "prompt": "在专业技能末尾新增 Docker。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-008",
+      "prompt": "从专业技能中删除 Git，其他技能保持不变。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-009",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "确认，按刚才确定的数据库技能方案执行，其他技能及顺序保持不变。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "others.skills[1]",
+          "value": "MySQL"
+        }
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "answer_expectation": "empty",
+      "turns": [
+        {
+          "role": "user",
+          "content": "专业技能中的 SQL 写得有些宽泛，我实际主要使用的是 MySQL，应该怎么调整？"
+        },
+        {
+          "role": "assistant",
+          "content": "如果与你的实际经历一致，可以把 SQL 明确为 MySQL。需要执行这项修改吗？"
+        }
+      ]
+    },
+    {
+      "id": "skill-v2-010",
+      "prompt": "在主要荣誉末尾新增“2024 年校级技术实践奖”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-011",
+      "prompt": "把自我评价第一条改为“关注代码可维护性，能够通过复盘持续改进交付质量”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-012",
+      "prompt": "在云笺协作平台的技术栈中补充 pytest。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-013",
+      "prompt": "把云笺协作平台的项目角色改为服务端开发。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-014",
+      "prompt": "将项目名称改为云笺文档协作平台。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-015",
+      "prompt": "把云笺项目时间改为 2023.03 至 2023.08。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-016",
+      "prompt": "将本科专业改为计算机工程。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-017",
+      "prompt": "把教育经历中的排名改为前 8%。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-018",
+      "prompt": "将主要荣誉第一条替换为“2023 年软件设计实践奖”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-019",
+      "prompt": "在证书列表末尾新增“数据库系统工程认证”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-020",
+      "prompt": "我已通过英语专业四级，请在语言能力末尾新增“英语 TEM-4”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-021",
+      "prompt": "我参与维护开发者社区。请新增栏目“社区实践”，内容为“维护后端开发者社区”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "append",
+          "path": "custom_sections",
+          "value": {
+            "title": "社区实践",
+            "items": [
+              "维护后端开发者社区"
+            ]
+          }
+        }
+      ],
+      "accepted_outcomes": [
+        {
+          "tools": [
+            "request_resume_edit"
+          ],
+          "expected_operations": [
+            {
+              "op": "append",
+              "path": "custom_sections",
+              "value": {
+                "title": "社区实践",
+                "items": [
+                  "维护后端开发者社区"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "tools": [
+            "request_resume_edit"
+          ],
+          "expected_operations": [
+            {
+              "op": "append",
+              "path": "custom_sections",
+              "value": {
+                "title": "社区实践",
+                "items": [
+                  "维护后端开发者社区"
+                ],
+                "list_style": "bullet"
+              }
+            }
+          ]
+        }
+      ],
+      "outcome_note": "省略 list_style 继承当前默认排版，显式 bullet 在当前布局下呈现等效；两者均视为用户目标完成"
+    },
+    {
+      "id": "skill-v2-022",
+      "scenario_type": "mixed_request",
+      "prompt": "先判断当前两条项目职责的顺序是否合理，然后把“为核心接口补充自动化测试”改为“为权限与审计接口补充自动化回归测试”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "project_experience[0].content_blocks[1].items[1]",
+          "value": "为权限与审计接口补充自动化回归测试"
+        }
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "answer_expectation": "required"
+    },
+    {
+      "id": "skill-v2-023",
+      "prompt": "将项目经历移动到教育经历后面。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-024",
+      "prompt": "把项目角色改为后端开发，并把项目职责显示为圆点列表。",
+      "expected_tools": [],
+      "optional_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "answer_expectation": "required",
+      "outcome_note": "当前项目角色和职责列表形式已经满足请求；可直接说明，也可先查看当前页面后说明，但不应生成无变化修改候选"
+    },
+    {
+      "id": "skill-v2-025",
+      "prompt": "把教育经历补充第一条改为“主修算法设计、操作系统与数据库原理”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-026",
+      "prompt": "请读取当前 PDF 页面，检查正文有没有超出页面边界。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "smoke": true
+    },
+    {
+      "id": "skill-v2-027",
+      "prompt": "先查看真实页面，告诉我最后一页是否内容过少。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-v2-028",
+      "prompt": "检查 PDF 中模块之间的垂直间距是否一致。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-v2-029",
+      "prompt": "请根据渲染页面判断联系方式有没有错位。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-v2-030",
+      "prompt": "查看页面后判断照片是否挤压了姓名区域。",
+      "fixture": "photo",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-v2-031",
+      "prompt": "请确认实际 PDF 的总页数。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-v2-032",
+      "prompt": "观察 PDF 页面，判断各模块标题是否容易区分。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-v2-033",
+      "prompt": "项目职责有没有被分页截断？请查看实际页面。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-v2-034",
+      "prompt": "请检查教育经历和工作经历之间是否留白过大。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-v2-035",
+      "prompt": "查看当前页面，判断项目名称和日期是否对齐。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-v2-036",
+      "prompt": "请用页面截图判断第二页顶部是否出现孤行。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-v2-037",
+      "prompt": "根据真实 PDF 判断简历整体密度是否过高。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-v2-038",
+      "prompt": "检查证件照在导出页面中的实际位置。",
+      "fixture": "photo",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-v2-039",
+      "prompt": "查看 PDF 后判断页脚附近是否有内容被裁切。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-v2-040",
+      "prompt": "先获取页面视觉证据，再评价字体层级是否清晰。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-v2-041",
+      "prompt": "请检查真实页面中圆点列表的缩进是否一致。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-v2-042",
+      "prompt": "查看导出页面，判断长项目名称是否换行得当。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-v2-043",
+      "prompt": "请确认当前页面有没有异常空白页。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-v2-044",
+      "prompt": "根据 PDF 页面检查学校标签与学校名称是否贴得太近。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-v2-045",
+      "prompt": "查看最终渲染效果，判断简历是否适合双页展示。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ]
+    },
+    {
+      "id": "skill-v2-046",
+      "prompt": "解释一下 STAR 方法，不要修改当前简历。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "smoke": true
+    },
+    {
+      "id": "skill-v2-047",
+      "prompt": "先问我一个关于项目成果的问题，不要生成候选。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-048",
+      "prompt": "分析当前技能与 JD 的差距，只给建议。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-049",
+      "prompt": "告诉我后端简历通常应该突出哪些指标。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-050",
+      "prompt": "比较工作经历和项目经历的表达差异，不做修改。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-051",
+      "prompt": "给我三个改进自我评价的方向，暂时不应用。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-052",
+      "prompt": "为什么量化结果对技术简历重要？",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-053",
+      "prompt": "指出项目职责里最需要追问的信息。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-054",
+      "prompt": "帮我判断目前的目标岗位是否清晰，不要改字段。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-055",
+      "prompt": "先解释候选预览的作用，不执行修改。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "smoke": true
+    },
+    {
+      "id": "skill-v2-056",
+      "prompt": "列出面试官可能追问的两个数据库问题。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-057",
+      "prompt": "帮我分析为什么“参与开发”显得不够有力。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-058",
+      "prompt": "我还没确定投递方向，你建议先梳理什么？",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-059",
+      "prompt": "评价一下当前项目技术栈是否有后端深度。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-060",
+      "prompt": "给出一份补充项目数据的提问清单。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-061",
+      "prompt": "解释接口性能指标通常包括哪些内容。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-062",
+      "prompt": "分析这份 JD 对数据库能力的要求。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-063",
+      "prompt": "如果没有量化数字，项目经历还能怎样表达？",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-064",
+      "prompt": "请先审阅教育经历的信息完整度。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-065",
+      "prompt": "告诉我技能列表按什么逻辑排序更合理。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-066",
+      "prompt": "分析当前简历有哪些内容重复。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-067",
+      "prompt": "模拟面试官追问一次权限校验设计。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-068",
+      "prompt": "给我一个准备后端面试的学习顺序。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-069",
+      "prompt": "说明简历中的技术名词为什么需要项目证据。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-070",
+      "prompt": "解释确认、取消和过期确认分别会发生什么。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "smoke": true
+    },
+    {
+      "id": "skill-v2-071",
+      "prompt": "帮我起草一封投递远帆数据的求职邮件，不修改简历。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-072",
+      "prompt": "总结我当前简历中已经出现的后端技能。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-073",
+      "prompt": "列一份数据库面试前的复习提纲。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-074",
+      "prompt": "提出一个关于缓存一致性的思考题。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v2-075",
+      "prompt": "说明为什么未经确认的候选不能写入正式简历。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ]
+    },
+    {
+      "id": "skill-v3-001",
+      "scenario_type": "complex_operation",
+      "prompt": "把云笺协作平台的角色改为‘服务端负责人’，并在技术栈末尾补充 Redis。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "project_experience[0].role",
+          "value": "服务端负责人"
+        },
+        {
+          "op": "set",
+          "path": "project_experience[0].content_blocks[0].text",
+          "value": "Python、FastAPI、PostgreSQL、Redis"
+        }
+      ],
+      "answer_expectation": "empty",
+      "smoke": true
+    },
+    {
+      "id": "skill-v3-002",
+      "scenario_type": "complex_operation",
+      "prompt": "将项目职责的第二条移到第一条，第一条顺延到第二条，文字不要改写。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "move",
+          "path": "project_experience[0].content_blocks[1].items",
+          "from_index": 1,
+          "to_index": 0,
+          "expected": "为核心接口补充自动化测试"
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v3-003",
+      "scenario_type": "complex_operation",
+      "prompt": "删除工作经历中的第二条职责，并在职责列表末尾新增‘为订单接口补充回归测试’。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "remove",
+          "path": "work_experience[0].content_blocks[0].items",
+          "index": 1,
+          "expected": "整理接口文档并协助定位慢查询"
+        },
+        {
+          "op": "append",
+          "path": "work_experience[0].content_blocks[0].items",
+          "value": "为订单接口补充回归测试"
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v3-004",
+      "scenario_type": "complex_operation",
+      "prompt": "把工作经历的职位改成‘Python 后端开发实习生’，同时将日期改为 2023.08 至 2024.01。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "work_experience[0].job_title",
+          "value": "Python 后端开发实习生"
+        },
+        {
+          "op": "set",
+          "path": "work_experience[0].date_range",
+          "value": [
+            "2023.08",
+            "2024.01"
+          ]
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v3-005",
+      "scenario_type": "complex_operation",
+      "prompt": "将项目经历放到工作经历前面，并把项目角色改为‘平台后端负责人’。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "global.sectionOrder",
+          "value": [
+            "education",
+            "honors",
+            "publications",
+            "research_interests",
+            "skills",
+            "project_experience",
+            "work_experience",
+            "custom_sections",
+            "others",
+            "self_evaluation"
+          ]
+        },
+        {
+          "op": "set",
+          "path": "project_experience[0].role",
+          "value": "平台后端负责人"
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v3-006",
+      "scenario_type": "complex_operation",
+      "prompt": "请查看当前 PDF，判断项目经历是否被分页拆开，以及职责编号是否仍然连续。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none",
+      "smoke": true
+    },
+    {
+      "id": "skill-v3-007",
+      "scenario_type": "complex_operation",
+      "prompt": "请基于实际页面检查联系方式、目标岗位和证件照是否处于同一视觉区域。",
+      "fixture": "photo",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none"
+    },
+    {
+      "id": "skill-v3-008",
+      "scenario_type": "complex_operation",
+      "prompt": "先查看 PDF 页面，再判断教育经历的学校、专业和日期是否出现错位。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none"
+    },
+    {
+      "id": "skill-v3-009",
+      "scenario_type": "complex_operation",
+      "prompt": "请观察渲染结果，确认项目技术栈与项目名称是否挤在同一行。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none",
+      "smoke": true
+    },
+    {
+      "id": "skill-v3-010",
+      "scenario_type": "complex_operation",
+      "prompt": "根据真实页面判断最后一页的空白是否影响阅读，并说明依据。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none"
+    },
+    {
+      "id": "skill-v3-011",
+      "scenario_type": "complex_operation",
+      "prompt": "请检查页面中英文混排的对齐情况，以及工作经历标题是否和第一条职责分离。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none"
+    },
+    {
+      "id": "skill-v3-012",
+      "scenario_type": "complex_operation",
+      "prompt": "观察当前快照，告诉我模块标题层级和正文间距是否一致。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none"
+    },
+    {
+      "id": "skill-v3-013",
+      "scenario_type": "complex_operation",
+      "prompt": "我准备调整项目职责、技能顺序和模块间距，请先给出执行顺序，不要生成候选。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none",
+      "smoke": true
+    },
+    {
+      "id": "skill-v3-014",
+      "scenario_type": "complex_operation",
+      "prompt": "排版契约里是否支持只给某一个模块设置独立行距？请解释规则，暂不修改。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none"
+    },
+    {
+      "id": "skill-v3-015",
+      "scenario_type": "complex_operation",
+      "prompt": "把专业技能调整为 Python、FastAPI、PostgreSQL、Redis 的顺序，并删除 Git。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "others.skills",
+          "value": [
+            "Python",
+            "FastAPI",
+            "PostgreSQL",
+            "Redis"
+          ]
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v3-016",
+      "scenario_type": "complex_operation",
+      "prompt": "本科专业改为软件工程，GPA 改为 3.8/4.0，教育经历补充保持不变。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "education[0].major",
+          "value": "软件工程"
+        },
+        {
+          "op": "set",
+          "path": "education[0].gpa",
+          "value": "3.8"
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v3-017",
+      "scenario_type": "complex_operation",
+      "prompt": "新增自定义栏目‘开源实践’，栏目内容填写‘维护权限校验示例项目’，不要动现有项目经历。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "append",
+          "path": "custom_sections",
+          "value": {
+            "title": "开源实践",
+            "items": [
+              "维护权限校验示例项目"
+            ]
+          }
+        }
+      ],
+      "accepted_outcomes": [
+        {
+          "tools": ["request_resume_edit"],
+          "expected_operations": [
+            {
+              "op": "append",
+              "path": "custom_sections",
+              "value": {
+                "title": "开源实践",
+                "items": ["维护权限校验示例项目"]
+              }
+            }
+          ]
+        },
+        {
+          "tools": ["request_resume_edit"],
+          "expected_operations": [
+            {
+              "op": "append",
+              "path": "custom_sections",
+              "value": {
+                "title": "开源实践",
+                "items": ["维护权限校验示例项目"],
+                "list_style": "bullet"
+              }
+            }
+          ]
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v3-018",
+      "scenario_type": "complex_operation",
+      "prompt": "在主要荣誉末尾增加‘2024 年工程实践奖’，并在证书列表中增加‘数据库开发认证’。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "append",
+          "path": "honors",
+          "value": "2024 年工程实践奖"
+        },
+        {
+          "op": "append",
+          "path": "others.certificates",
+          "value": "数据库开发认证"
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v3-019",
+      "scenario_type": "complex_operation",
+      "prompt": "将自我评价替换为‘重视可维护性，习惯通过测试和复盘推动问题闭环’，同时把自我评价改为段落形式。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "self_evaluation[0]",
+          "value": "重视可维护性，习惯通过测试和复盘推动问题闭环"
+        },
+        {
+          "op": "set",
+          "path": "self_evaluation.listStyle",
+          "value": "paragraph"
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v3-021",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "把项目职责第一条替换为‘设计文档级权限校验与审计接口’，并删除原来的第二条职责。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "project_experience[0].content_blocks[1].items[0]",
+          "value": "设计文档级权限校验与审计接口"
+        },
+        {
+          "op": "remove",
+          "path": "project_experience[0].content_blocks[1].items",
+          "index": 1,
+          "expected": "为核心接口补充自动化测试"
+        }
+      ],
+      "answer_expectation": "empty",
+      "turns": [
+        {
+          "role": "user",
+          "content": "项目职责中有一条需要替换，另一条不再保留。"
+        },
+        {
+          "role": "assistant",
+          "content": "请确认两条职责的具体位置和新文本。"
+        },
+        {
+          "role": "user",
+          "content": "第一条改成设计文档级权限校验与审计接口，删除第二条。"
+        }
+      ]
+    },
+    {
+      "id": "skill-v3-022",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "将工作经历的时间改为 2023.08—2024.01，并把工作类型显示为正职。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "work_experience[0].date_range",
+          "value": [
+            "2023.08",
+            "2024.01"
+          ]
+        },
+        {
+          "op": "set",
+          "path": "work_experience[0].job_type",
+          "value": "正职"
+        }
+      ],
+      "accepted_outcomes": [
+        {
+          "tools": ["request_resume_edit"],
+          "expected_operations": [
+            {
+              "op": "set",
+              "path": "work_experience[0].date_range",
+              "value": ["2023.08", "2024.01"]
+            },
+            {
+              "op": "set",
+              "path": "work_experience[0].job_type",
+              "value": "正职"
+            }
+          ]
+        },
+        {
+          "tools": ["request_resume_edit"],
+          "expected_operations": [
+            {
+              "op": "set",
+              "path": "work_experience[0].date_range",
+              "value": ["2023.08", "2024.01"]
+            },
+            {
+              "op": "set",
+              "path": "work_experience[0].job_type",
+              "value": "全职"
+            }
+          ]
+        }
+      ],
+      "answer_expectation": "empty",
+      "turns": [
+        {
+          "role": "user",
+          "content": "工作经历的时间和显示信息需要一起更新。"
+        },
+        {
+          "role": "assistant",
+          "content": "请提供新的日期范围，并说明工作类型是否改为正职。"
+        },
+        {
+          "role": "user",
+          "content": "日期是 2023.08—2024.01，工作类型显示为正职。"
+        }
+      ]
+    },
+    {
+      "id": "skill-v3-023",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "将项目经历移到教育经历之后、荣誉之前，并保持所有模块内容不变。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "global.sectionOrder",
+          "value": [
+            "education",
+            "project_experience",
+            "honors",
+            "publications",
+            "research_interests",
+            "skills",
+            "work_experience",
+            "custom_sections",
+            "others",
+            "self_evaluation"
+          ]
+        }
+      ],
+      "answer_expectation": "empty",
+      "turns": [
+        {
+          "role": "user",
+          "content": "我想重新安排几个顶层模块。"
+        },
+        {
+          "role": "assistant",
+          "content": "请说明要移动的模块以及目标位置。"
+        },
+        {
+          "role": "user",
+          "content": "项目经历放到教育经历之后、荣誉之前，其他内容和顺序保持不变。"
+        }
+      ]
+    },
+    {
+      "id": "skill-v3-024",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "把自我评价改为‘能够围绕接口性能和数据一致性持续复盘’，不要改动工作和项目经历。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "self_evaluation[0]",
+          "value": "能够围绕接口性能和数据一致性持续复盘"
+        }
+      ],
+      "answer_expectation": "empty",
+      "turns": [
+        {
+          "role": "user",
+          "content": "自我评价需要更贴合目标岗位。"
+        },
+        {
+          "role": "assistant",
+          "content": "请确认要突出哪些能力，以及是否只改自我评价。"
+        },
+        {
+          "role": "user",
+          "content": "突出接口性能和数据一致性，只替换自我评价。"
+        }
+      ]
+    },
+    {
+      "id": "skill-v3-025",
+      "scenario_type": "mixed_request",
+      "prompt": "先说明工作职责为什么缺少结果，再把第二条改成‘整理接口文档，并协助定位慢查询问题’。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "work_experience[0].content_blocks[0].items[1]",
+          "value": "整理接口文档，并协助定位慢查询问题"
+        }
+      ],
+      "answer_expectation": "required",
+      "smoke": true
+    },
+    {
+      "id": "skill-v3-026",
+      "scenario_type": "mixed_request",
+      "prompt": "Redis 对这个岗位有帮助吗？如果有，请把它补到云笺协作平台的技术栈里，并说明补充依据。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification"
+    },
+    {
+      "id": "skill-v3-027",
+      "scenario_type": "mixed_request",
+      "prompt": "先指出第一条项目职责哪里不够清楚，然后把它改为‘设计文档级权限校验与审计接口’。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "project_experience[0].content_blocks[1].items[0]",
+          "value": "设计文档级权限校验与审计接口"
+        }
+      ],
+      "answer_expectation": "required"
+    },
+    {
+      "id": "skill-v3-028",
+      "scenario_type": "mixed_request",
+      "prompt": "教育经历怎样写会更紧凑？请回答后把本科专业改为软件工程。",
+      "required_tools": [
+        "request_resume_edit"
+      ],
+      "optional_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "education[0].major",
+          "value": "软件工程"
+        }
+      ],
+      "answer_expectation": "required"
+    },
+    {
+      "id": "skill-v3-029",
+      "scenario_type": "mixed_request",
+      "prompt": "你认为目前的专业技能是否适合这个岗位，并简要说明理由。然后将专业技能列表改为 Python、FastAPI、PostgreSQL、Redis。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "others.skills",
+          "value": [
+            "Python",
+            "FastAPI",
+            "PostgreSQL",
+            "Redis"
+          ]
+        }
+      ],
+      "answer_expectation": "required"
+    },
+    {
+      "id": "skill-v3-030",
+      "scenario_type": "mixed_request",
+      "prompt": "请解释新增栏目应该放在哪里，然后新增‘开源实践’栏目，内容写‘维护权限校验示例项目’。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "append",
+          "path": "custom_sections",
+          "value": {
+            "title": "开源实践",
+            "items": [
+              "维护权限校验示例项目"
+            ]
+          }
+        }
+      ],
+      "answer_expectation": "required"
+    },
+    {
+      "id": "skill-v3-031",
+      "scenario_type": "mixed_request",
+      "prompt": "请先查看 PDF，再告诉我项目职责是否被拆到两页；只回答页面情况，不要改内容。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none",
+      "smoke": true
+    },
+    {
+      "id": "skill-v3-032",
+      "scenario_type": "mixed_request",
+      "prompt": "我想知道联系方式和证件照是否协调，请查看真实页面后回答，不要调整排版。",
+      "fixture": "photo",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none"
+    },
+    {
+      "id": "skill-v3-033",
+      "scenario_type": "mixed_request",
+      "prompt": "请判断最后一页留白是否过多，并说明你是从哪些视觉证据得出结论的。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none"
+    },
+    {
+      "id": "skill-v3-034",
+      "scenario_type": "mixed_request",
+      "prompt": "先观察页面，再回答教育经历的学校、专业和日期是否对齐。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none"
+    },
+    {
+      "id": "skill-v3-035",
+      "scenario_type": "mixed_request",
+      "prompt": "请看一下模块标题和正文间距是否均衡，并告诉我具体是哪一页更明显。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none"
+    },
+    {
+      "id": "skill-v3-036",
+      "scenario_type": "mixed_request",
+      "prompt": "页面中的中英文混排是否造成错位？请基于 PDF 回答，不要修改任何文本。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none"
+    },
+    {
+      "id": "skill-v3-037",
+      "scenario_type": "mixed_request",
+      "prompt": "请分析项目职责和 JD 的匹配度，本轮只给建议，不要生成候选修改。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none"
+    },
+    {
+      "id": "skill-v3-038",
+      "scenario_type": "mixed_request",
+      "prompt": "我想了解怎样补充量化结果，请列出需要我确认的事实，不要替我写入简历。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none"
+    },
+    {
+      "id": "skill-v3-039",
+      "scenario_type": "mixed_request",
+      "prompt": "给出工作经历和项目经历的调整建议，先讨论方案，稍后我再决定是否修改。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none"
+    },
+    {
+      "id": "skill-v3-040",
+      "scenario_type": "mixed_request",
+      "prompt": "请说明确认候选修改的步骤，我只想了解流程，不要替我确认。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none"
+    },
+    {
+      "id": "skill-v3-041",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "先说说自我评价为什么显得空泛，再把它改为‘能够围绕接口性能和数据一致性持续复盘’。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "self_evaluation[0]",
+          "value": "能够围绕接口性能和数据一致性持续复盘"
+        }
+      ],
+      "answer_expectation": "required",
+      "turns": [
+        {
+          "role": "user",
+          "content": "自我评价看起来有些空泛。"
+        },
+        {
+          "role": "assistant",
+          "content": "可以从目标岗位需要的能力和可验证事实来收紧表述。"
+        },
+        {
+          "role": "user",
+          "content": "请先说明问题，再替换成能够围绕接口性能和数据一致性持续复盘。"
+        }
+      ]
+    },
+    {
+      "id": "skill-v3-042",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "请解释标准密度和紧凑密度的区别，然后把整份简历切换为标准密度。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "global.density",
+          "value": "standard"
+        }
+      ],
+      "answer_expectation": "required",
+      "turns": [
+        {
+          "role": "user",
+          "content": "排版密度有点难选择。"
+        },
+        {
+          "role": "assistant",
+          "content": "标准密度和紧凑密度会影响字号、行距和模块间距。"
+        },
+        {
+          "role": "user",
+          "content": "请说明区别，最后按标准密度生成候选。"
+        }
+      ]
+    },
+    {
+      "id": "skill-v3-043",
+      "scenario_type": "mixed_request",
+      "prompt": "确认前为什么不能直接写入正式简历？回答后把邮箱更新为 zhiyao.song@example.test。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "basics.email",
+          "value": "zhiyao.song@example.test"
+        }
+      ],
+      "answer_expectation": "required"
+    },
+    {
+      "id": "skill-v3-044",
+      "scenario_type": "mixed_request",
+      "prompt": "请判断当前模块间距是否偏大，并把全局模块间距调整为 0.6。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "optional_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "global.moduleMargin",
+          "value": 0.6
+        }
+      ],
+      "answer_expectation": "required"
+    },
+    {
+      "id": "skill-v3-045",
+      "scenario_type": "ambiguous_request",
+      "prompt": "把云笺协作平台写得更好一点。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification",
+      "smoke": true
+    },
+    {
+      "id": "skill-v3-046",
+      "scenario_type": "ambiguous_request",
+      "prompt": "把工作经历优化一下。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification"
+    },
+    {
+      "id": "skill-v3-047",
+      "scenario_type": "ambiguous_request",
+      "prompt": "把第二条移到合适的位置。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification"
+    },
+    {
+      "id": "skill-v3-048",
+      "scenario_type": "ambiguous_request",
+      "prompt": "再补充一些数据。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification"
+    },
+    {
+      "id": "skill-v3-049",
+      "scenario_type": "ambiguous_request",
+      "prompt": "学校和专业都调整一下。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification"
+    },
+    {
+      "id": "skill-v3-050",
+      "scenario_type": "ambiguous_request",
+      "prompt": "删除不重要的内容。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification"
+    },
+    {
+      "id": "skill-v3-051",
+      "scenario_type": "ambiguous_request",
+      "prompt": "把这段压缩短一点。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification"
+    },
+    {
+      "id": "skill-v3-052",
+      "scenario_type": "ambiguous_request",
+      "prompt": "把项目职责改成更容易通过筛选的版本。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification"
+    },
+    {
+      "id": "skill-v3-053",
+      "scenario_type": "ambiguous_request",
+      "prompt": "按岗位要求补充技能。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification"
+    },
+    {
+      "id": "skill-v3-054",
+      "scenario_type": "ambiguous_request",
+      "prompt": "将简历间距调得美观一些。",
+      "expected_tools": [],
+      "optional_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [],
+      "expected_operations": [],
+      "answer_expectation": "required",
+      "accepted_outcomes": [
+        {
+          "tools": [],
+          "answer_expectation": "required"
+        },
+        {
+          "tools": ["render_resume_pdf_images"],
+          "answer_expectation": "required"
+        },
+        {
+          "tools": ["request_resume_edit"],
+          "answer_expectation": "empty"
+        },
+        {
+          "tools": ["render_resume_pdf_images", "request_resume_edit"],
+          "answer_expectation": "empty"
+        }
+      ],
+      "outcome_note": "可直接给出全局间距建议，也可生成合法的全局间距修改候选；快照可调用但不强制。"
+    },
+    {
+      "id": "skill-v3-055",
+      "scenario_type": "ambiguous_request",
+      "prompt": "把标题改一下。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification"
+    },
+    {
+      "id": "skill-v3-056",
+      "scenario_type": "ambiguous_request",
+      "prompt": "把教育背景整理得更合理。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification"
+    },
+    {
+      "id": "skill-v3-057",
+      "scenario_type": "ambiguous_request",
+      "prompt": "把项目时间修正一下。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification"
+    },
+    {
+      "id": "skill-v3-058",
+      "scenario_type": "ambiguous_request",
+      "prompt": "加上我会的工具。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification"
+    },
+    {
+      "id": "skill-v3-059",
+      "scenario_type": "ambiguous_request",
+      "prompt": "把荣誉按重要性排一下。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification"
+    },
+    {
+      "id": "skill-v3-060",
+      "scenario_type": "ambiguous_request",
+      "prompt": "让页面更舒服一些。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "optional_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification",
+      "outcome_note": "应先查看真实页面；查看后可以只说明建议，也可以在排版能力契约内生成需用户确认的整体排版候选"
+    },
+    {
+      "id": "skill-v3-061",
+      "scenario_type": "ambiguous_request",
+      "prompt": "我想把项目和工作都动一动。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification"
+    },
+    {
+      "id": "skill-v3-062",
+      "scenario_type": "ambiguous_request",
+      "prompt": "之前那条建议照做。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification"
+    },
+    {
+      "id": "skill-v3-063",
+      "scenario_type": "ambiguous_request",
+      "prompt": "把这一版做成投递版。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification"
+    },
+    {
+      "id": "skill-v3-064",
+      "scenario_type": "ambiguous_request",
+      "prompt": "能不能把技能写得更有说服力？",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification"
+    },
+    {
+      "id": "skill-v3-065",
+      "scenario_type": "ambiguous_request",
+      "prompt": "先指出问题，合适的话帮我改。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification"
+    },
+    {
+      "id": "skill-v3-066",
+      "scenario_type": "ambiguous_request",
+      "prompt": "教育经历怎么处理比较好？",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "required"
+    },
+    {
+      "id": "skill-v3-067",
+      "scenario_type": "ambiguous_request",
+      "prompt": "职位和公司哪个更应该突出？",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification"
+    },
+    {
+      "id": "skill-v3-068",
+      "scenario_type": "ambiguous_request",
+      "prompt": "把它移到前面。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification"
+    },
+    {
+      "id": "skill-v3-069",
+      "scenario_type": "ambiguous_request",
+      "prompt": "先把所有不准确的地方改掉。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification"
+    },
+    {
+      "id": "skill-v3-070",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "把工作经历第二条职责改为‘整理接口文档，并协助定位慢查询问题’，保留第一条不变。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "work_experience[0].content_blocks[0].items[1]",
+          "value": "整理接口文档，并协助定位慢查询问题"
+        }
+      ],
+      "answer_expectation": "empty",
+      "smoke": true,
+      "turns": [
+        {
+          "role": "user",
+          "content": "我想让工作经历更突出质量保障。"
+        },
+        {
+          "role": "assistant",
+          "content": "请指出需要调整的经历和你希望保留的事实。"
+        },
+        {
+          "role": "user",
+          "content": "就改工作经历的第二条，保留第一条。"
+        }
+      ]
+    },
+    {
+      "id": "skill-v3-071",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "确认，按这两项执行，并简要说明新目标岗位与当前项目经历的匹配点。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "basics.target_position",
+          "value": "数据平台后端工程师"
+        },
+        {
+          "op": "append",
+          "path": "others.skills",
+          "value": "Redis"
+        }
+      ],
+      "answer_expectation": "required",
+      "turns": [
+        {
+          "role": "user",
+          "content": "我准备投递数据平台后端岗位，目标岗位和技能是否需要一起调整？我实际使用过 Redis。"
+        },
+        {
+          "role": "assistant",
+          "content": "可以把目标岗位调整为数据平台后端工程师，并在专业技能中补充 Redis。需要执行这两项吗？"
+        }
+      ]
+    },
+    {
+      "id": "skill-v3-072",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "把项目职责第二条移到第一条，第一条顺延。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "move",
+          "path": "project_experience[0].content_blocks[1].items",
+          "from_index": 1,
+          "to_index": 0,
+          "expected": "为核心接口补充自动化测试",
+          "target_semantic_role": "responsibilities"
+        }
+      ],
+      "answer_expectation": "empty",
+      "turns": [
+        {
+          "role": "user",
+          "content": "项目职责的顺序读起来不太顺。"
+        },
+        {
+          "role": "assistant",
+          "content": "你希望调整哪两条，还是要重新组织全部内容？"
+        },
+        {
+          "role": "user",
+          "content": "只把自动化测试那条放到最前面，文字不要动。"
+        }
+      ]
+    },
+    {
+      "id": "skill-v3-073",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "在云笺协作平台技术栈末尾补充 Redis。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "project_experience[0].content_blocks[0].text",
+          "value": "Python、FastAPI、PostgreSQL、Redis"
+        }
+      ],
+      "answer_expectation": "empty",
+      "turns": [
+        {
+          "role": "user",
+          "content": "JD 要求 Redis，但我的项目里没有列出来。"
+        },
+        {
+          "role": "assistant",
+          "content": "你是否确实在该项目中使用过 Redis？"
+        },
+        {
+          "role": "user",
+          "content": "使用过，只补到云笺协作平台的技术栈，不改其他地方。"
+        }
+      ]
+    },
+    {
+      "id": "skill-v3-074",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "把项目经历排到工作经历前面，其他模块顺序不变。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "global.sectionOrder",
+          "value": [
+            "education",
+            "honors",
+            "publications",
+            "research_interests",
+            "skills",
+            "project_experience",
+            "work_experience",
+            "custom_sections",
+            "others",
+            "self_evaluation"
+          ]
+        }
+      ],
+      "answer_expectation": "empty",
+      "turns": [
+        {
+          "role": "user",
+          "content": "我想让项目经历先被看到。"
+        },
+        {
+          "role": "assistant",
+          "content": "可以调整顶层模块顺序；请确认项目经历放在工作经历前面吗？"
+        },
+        {
+          "role": "user",
+          "content": "确认，只交换这两个模块，其他顺序不动。"
+        }
+      ]
+    },
+    {
+      "id": "skill-v3-075",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "将自我评价改为‘能够围绕接口性能和数据一致性持续复盘’。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "self_evaluation[0]",
+          "value": "能够围绕接口性能和数据一致性持续复盘"
+        }
+      ],
+      "answer_expectation": "empty",
+      "turns": [
+        {
+          "role": "user",
+          "content": "自我评价里想突出性能和数据质量。"
+        },
+        {
+          "role": "assistant",
+          "content": "你有确定的表述，还是需要我先给几个方向？"
+        },
+        {
+          "role": "user",
+          "content": "用‘能够围绕接口性能和数据一致性持续复盘’这一句替换当前内容。"
+        }
+      ]
+    },
+    {
+      "id": "skill-v3-076",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "在主要荣誉末尾新增‘2024 年工程实践奖’。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "append",
+          "path": "honors",
+          "value": "2024 年工程实践奖"
+        }
+      ],
+      "answer_expectation": "empty",
+      "turns": [
+        {
+          "role": "user",
+          "content": "我还想补一项最近获得的荣誉。"
+        },
+        {
+          "role": "assistant",
+          "content": "请提供荣誉名称，并确认它属于主要荣誉栏目。"
+        },
+        {
+          "role": "user",
+          "content": "名称是 2024 年工程实践奖，放在主要荣誉末尾。"
+        }
+      ]
+    },
+    {
+      "id": "skill-v3-077",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "把教育经历中的学校改为云川大学，其他教育字段不动。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "education[0].school_name",
+          "value": "云川大学"
+        }
+      ],
+      "answer_expectation": "empty",
+      "turns": [
+        {
+          "role": "user",
+          "content": "教育经历的学校名称需要更新。"
+        },
+        {
+          "role": "assistant",
+          "content": "请确认原学校和新学校名称。"
+        },
+        {
+          "role": "user",
+          "content": "把海岚大学改为云川大学，专业、成绩和日期都保留。"
+        }
+      ]
+    },
+    {
+      "id": "skill-v3-078",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "请查看当前 PDF，确认项目经历是否跨页以及第二页是否只剩少量内容。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none",
+      "smoke": true,
+      "turns": [
+        {
+          "role": "user",
+          "content": "我担心项目经历被分页拆开。"
+        },
+        {
+          "role": "assistant",
+          "content": "可以根据实际 PDF 页面检查分页和剩余内容。"
+        },
+        {
+          "role": "user",
+          "content": "请先看页面，不要修改排版。"
+        }
+      ]
+    },
+    {
+      "id": "skill-v3-079",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "请基于 PDF 判断整体内容密度是否均衡，重点看最后一页。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none",
+      "turns": [
+        {
+          "role": "user",
+          "content": "我觉得最后一页可能太空。"
+        },
+        {
+          "role": "assistant",
+          "content": "需要看实际渲染后的页面才能判断。"
+        },
+        {
+          "role": "user",
+          "content": "那就检查最后一页的内容密度，先不要调整。"
+        }
+      ]
+    },
+    {
+      "id": "skill-v3-080",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "请查看真实页面，确认学校、专业和日期是否在同一行正确对齐。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none",
+      "turns": [
+        {
+          "role": "user",
+          "content": "教育经历看起来可能有错位。"
+        },
+        {
+          "role": "assistant",
+          "content": "我需要查看 PDF 页面，而不是只读结构化数据。"
+        },
+        {
+          "role": "user",
+          "content": "请按这个方式检查，并只回复观察结果。"
+        }
+      ]
+    },
+    {
+      "id": "skill-v3-081",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "请观察 PDF，判断证件照和姓名区域是否协调。",
+      "fixture": "photo",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none",
+      "turns": [
+        {
+          "role": "user",
+          "content": "顶部信息的视觉重心让我有点担心。"
+        },
+        {
+          "role": "assistant",
+          "content": "可以先检查姓名、联系方式和证件照的实际位置。"
+        },
+        {
+          "role": "user",
+          "content": "只查看页面并告诉我是否协调，不要改动。"
+        }
+      ]
+    },
+    {
+      "id": "skill-v3-082",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "请查看 PDF，判断模块标题的层级是否明显，先不调整标题样式。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none",
+      "turns": [
+        {
+          "role": "user",
+          "content": "我想知道标题样式是否影响阅读。"
+        },
+        {
+          "role": "assistant",
+          "content": "页面视觉层级需要基于渲染结果判断。"
+        },
+        {
+          "role": "user",
+          "content": "那就先查看页面，只给分析。"
+        }
+      ]
+    },
+    {
+      "id": "skill-v3-083",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "按刚才那段内容改一下。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification",
+      "smoke": true,
+      "turns": [
+        {
+          "role": "user",
+          "content": "我想调整一个项目的职责。"
+        },
+        {
+          "role": "assistant",
+          "content": "当前有工作经历和项目经历，分别需要确认具体条目和改法。"
+        },
+        {
+          "role": "user",
+          "content": "我还没决定改哪一段，先看看你的建议。"
+        }
+      ]
+    },
+    {
+      "id": "skill-v3-084",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "那就按你说的处理吧。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification",
+      "turns": [
+        {
+          "role": "user",
+          "content": "项目经历应该怎么优化？"
+        },
+        {
+          "role": "assistant",
+          "content": "可以考虑突出职责、技术栈或结果，但需要先确定侧重点。"
+        },
+        {
+          "role": "user",
+          "content": "我还没有选定侧重点，只想继续讨论。"
+        }
+      ]
+    },
+    {
+      "id": "skill-v3-085",
+      "scenario_type": "multi_turn_summary",
+      "prompt": "那先写进去吧。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification",
+      "turns": [
+        {
+          "role": "user",
+          "content": "我想补充项目的性能结果。"
+        },
+        {
+          "role": "assistant",
+          "content": "请提供具体指标、时间范围和对比基线，不能替你推测。"
+        },
+        {
+          "role": "user",
+          "content": "具体比例我还没核实，先把结果写进去。"
+        }
+      ]
+    },
+    {
+      "id": "skill-v4-001",
+      "scenario_type": "complex_operation",
+      "prompt": "把工作经历第一条职责改写成“负责订单查询接口开发并补充单元测试”，其他职责保留。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "work_experience[0].content_blocks[0].items[0]",
+          "value": "负责订单查询接口开发并补充单元测试"
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-002",
+      "scenario_type": "complex_operation",
+      "prompt": "将项目职责中第二条移到第一条，项目其余内容不要动。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "move",
+          "path": "project_experience[0].content_blocks[1].items",
+          "from_index": 1,
+          "to_index": 0,
+          "expected": "为核心接口补充自动化测试"
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-003",
+      "scenario_type": "complex_operation",
+      "prompt": "删掉工作经历里关于慢查询的职责，再在职责末尾补充“根据监控指标定位接口瓶颈”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "remove",
+          "path": "work_experience[0].content_blocks[0].items",
+          "index": 1,
+          "expected": "整理接口文档并协助定位慢查询"
+        },
+        {
+          "op": "append",
+          "path": "work_experience[0].content_blocks[0].items",
+          "value": "根据监控指标定位接口瓶颈"
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-004",
+      "scenario_type": "complex_operation",
+      "prompt": "把工作经历的职位和日期一起更新为“后端研发实习生”，2023.08—2024.01。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "work_experience[0].job_title",
+          "value": "后端研发实习生"
+        },
+        {
+          "op": "set",
+          "path": "work_experience[0].date_range",
+          "value": [
+            "2023.08",
+            "2024.01"
+          ]
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-005",
+      "scenario_type": "complex_operation",
+      "prompt": "将云笺协作平台的角色改成“平台服务端负责人”，并把技术栈补充 Redis。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "project_experience[0].role",
+          "value": "平台服务端负责人"
+        },
+        {
+          "op": "set",
+          "path": "project_experience[0].content_blocks[0].text",
+          "value": "Python、FastAPI、PostgreSQL、Redis"
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-006",
+      "scenario_type": "complex_operation",
+      "prompt": "把项目名称换成“云笺权限协作平台”，时间改为 2023.03 至 2023.08。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "project_experience[0].project_name",
+          "value": "云笺权限协作平台"
+        },
+        {
+          "op": "set",
+          "path": "project_experience[0].date_range",
+          "value": [
+            "2023.03",
+            "2023.08"
+          ]
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-007",
+      "scenario_type": "complex_operation",
+      "prompt": "新增自定义栏目“开源实践”，内容写“维护权限校验示例项目”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "append",
+          "path": "custom_sections",
+          "value": {
+            "title": "开源实践",
+            "items": [
+              "维护权限校验示例项目"
+            ]
+          }
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-008",
+      "scenario_type": "complex_operation",
+      "prompt": "在教育经历补充中增加“参与数据库课程设计”，保留原有内容。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "append",
+          "path": "education_supplement",
+          "value": "参与数据库课程设计"
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-009",
+      "scenario_type": "complex_operation",
+      "prompt": "将主要荣誉中的现有条目改为“2024 年海岚大学工程实践奖”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "honors[0]",
+          "value": "2024 年海岚大学工程实践奖"
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-010",
+      "scenario_type": "complex_operation",
+      "prompt": "在主要荣誉末尾添加“2024 年开源实践奖”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "append",
+          "path": "honors",
+          "value": "2024 年开源实践奖"
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-011",
+      "scenario_type": "complex_operation",
+      "prompt": "从专业技能中移除 Git，其他技能保持原样。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "remove",
+          "path": "others.skills",
+          "index": 2,
+          "expected": "Git"
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-012",
+      "scenario_type": "complex_operation",
+      "prompt": "在专业技能末尾增加 Redis，不要改动已有技能。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "append",
+          "path": "others.skills",
+          "value": "Redis"
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-013",
+      "scenario_type": "complex_operation",
+      "prompt": "把证书列表中的现有证书改成“数据库系统工程认证”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "others.certificates[0]",
+          "value": "数据库系统工程认证"
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-014",
+      "scenario_type": "complex_operation",
+      "prompt": "在语言能力列表中加入“日语 N2”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "append",
+          "path": "others.languages",
+          "value": "日语 N2"
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-015",
+      "scenario_type": "complex_operation",
+      "prompt": "将自我评价改为“注重可维护性，持续通过测试推动问题闭环”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "self_evaluation[0]",
+          "value": "注重可维护性，持续通过测试推动问题闭环"
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-016",
+      "scenario_type": "complex_operation",
+      "prompt": "在论文列表中新增“协作系统权限一致性研究”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "append",
+          "path": "publications",
+          "value": "协作系统权限一致性研究"
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-017",
+      "scenario_type": "complex_operation",
+      "prompt": "在研究方向中补充“服务端可靠性与数据一致性”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "append",
+          "path": "research_interests",
+          "value": "服务端可靠性与数据一致性"
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-018",
+      "scenario_type": "complex_operation",
+      "prompt": "在基本信息附加字段中新增作品集，值为 https://portfolio.example.test/zhou。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "append",
+          "path": "basics.additional_fields",
+          "value": {
+            "label": "作品集",
+            "value": "https://portfolio.example.test/zhou"
+          }
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-019",
+      "scenario_type": "complex_operation",
+      "prompt": "同时把本科 GPA 改成 3.8、排名改成前 10%，其他教育字段不变。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "education[0].gpa",
+          "value": "3.8"
+        },
+        {
+          "op": "set",
+          "path": "education[0].ranking",
+          "value": "前10%"
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-020",
+      "scenario_type": "complex_operation",
+      "prompt": "在项目经历的补充说明末尾加入“为权限接口编写边界测试”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "append",
+          "path": "project_experience[0].content_blocks[2].items",
+          "value": "为权限接口编写边界测试",
+          "target_semantic_role": "generic"
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-021",
+      "scenario_type": "complex_operation",
+      "prompt": "在工作经历的补充说明中增加“参与接口质量复盘”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "append",
+          "path": "work_experience[0].content_blocks[1].items",
+          "value": "参与接口质量复盘",
+          "target_semantic_role": "generic"
+        }
+      ],
+      "accepted_outcomes": [
+        {
+          "tools": ["request_resume_edit"],
+          "expected_operations": [
+            {
+              "op": "append",
+              "path": "work_experience[0].content_blocks[1].items",
+              "value": "参与接口质量复盘",
+              "target_semantic_role": "generic"
+            }
+          ]
+        },
+        {
+          "tools": [],
+          "answer_expectation": "clarification"
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-022",
+      "scenario_type": "complex_operation",
+      "prompt": "将项目职责整理成两条：“设计文档级权限校验接口”和“为核心接口补充自动化测试”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "project_experience[0].content_blocks[1].items",
+          "value": [
+            "设计文档级权限校验接口",
+            "为核心接口补充自动化测试"
+          ]
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-023",
+      "scenario_type": "complex_operation",
+      "prompt": "把工作职责改成两条：“负责订单查询接口开发”和“完成接口文档与慢查询定位”，不要增加其他条目。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "work_experience[0].content_blocks[0].items",
+          "value": [
+            "负责订单查询接口开发",
+            "完成接口文档与慢查询定位"
+          ]
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-024",
+      "scenario_type": "complex_operation",
+      "prompt": "将项目技术栈内容块的标签从“技术栈”改为“技术选型”，内容不变。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "project_experience[0].content_blocks[0].label",
+          "value": "技术选型"
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-025",
+      "scenario_type": "complex_operation",
+      "prompt": "给学校标签增加“校级重点专业”，现有学校标签保留。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "append",
+          "path": "education[0].school_tags",
+          "value": "校级重点专业"
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-026",
+      "scenario_type": "complex_operation",
+      "prompt": "在教育经历的论文/课题列表新增“权限一致性研究”，详情写“分析多端协作场景下的写入校验”。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [
+        {
+          "op": "append",
+          "path": "education[0].theses",
+          "value": {
+            "title": "权限一致性研究",
+            "details": [
+              "分析多端协作场景下的写入校验"
+            ]
+          }
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-027",
+      "scenario_type": "ambiguous_request",
+      "prompt": "请先查看当前 PDF，确认工作经历是否被分页拆开。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none"
+    },
+    {
+      "id": "skill-v4-028",
+      "scenario_type": "ambiguous_request",
+      "prompt": "只看当前页面效果，判断教育信息与模块标题的间距是否一致。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none"
+    },
+    {
+      "id": "skill-v4-029",
+      "scenario_type": "ambiguous_request",
+      "prompt": "检查导出的页面，确认项目职责是否出现孤行。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none"
+    },
+    {
+      "id": "skill-v4-030",
+      "scenario_type": "ambiguous_request",
+      "prompt": "请查看当前简历图片，告诉我联系方式与姓名的视觉层次。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none"
+    },
+    {
+      "id": "skill-v4-031",
+      "scenario_type": "ambiguous_request",
+      "prompt": "先看页面，再判断标题下划线是否清晰。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none"
+    },
+    {
+      "id": "skill-v4-032",
+      "scenario_type": "ambiguous_request",
+      "prompt": "帮我检查页面底部是否留有过多空白。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none"
+    },
+    {
+      "id": "skill-v4-033",
+      "scenario_type": "ambiguous_request",
+      "prompt": "查看当前排版，判断教育经历的日期是否与右侧对齐。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none"
+    },
+    {
+      "id": "skill-v4-034",
+      "scenario_type": "ambiguous_request",
+      "prompt": "请通过当前 PDF 观察项目名称和角色的层次。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none"
+    },
+    {
+      "id": "skill-v4-035",
+      "scenario_type": "ambiguous_request",
+      "prompt": "我只想知道页面是否拥挤，请先查看当前预览。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none"
+    },
+    {
+      "id": "skill-v4-036",
+      "scenario_type": "ambiguous_request",
+      "prompt": "先检查一页版的视觉效果，再说说哪里需要调整。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none"
+    },
+    {
+      "id": "skill-v4-037",
+      "scenario_type": "ambiguous_request",
+      "prompt": "请查看模块隐藏后的页面是否仍然连贯，只做查看。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none"
+    },
+    {
+      "id": "skill-v4-038",
+      "scenario_type": "ambiguous_request",
+      "prompt": "看看当前简历的换页位置是否适合阅读。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none"
+    },
+    {
+      "id": "skill-v4-039",
+      "scenario_type": "ambiguous_request",
+      "prompt": "我想了解现有排版中的空白区域分布，请先查看页面。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none"
+    },
+    {
+      "id": "skill-v4-040",
+      "scenario_type": "ambiguous_request",
+      "prompt": "请对照当前预览判断联系方式是否发生换行。",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none"
+    },
+    {
+      "id": "skill-v4-041",
+      "scenario_type": "ambiguous_request",
+      "prompt": "项目职责怎样写才能体现结果？",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "required"
+    },
+    {
+      "id": "skill-v4-042",
+      "scenario_type": "ambiguous_request",
+      "prompt": "我想把项目写得更专业一些，但还没想好改哪些内容。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification"
+    },
+    {
+      "id": "skill-v4-043",
+      "scenario_type": "ambiguous_request",
+      "prompt": "教育经历需要保留哪些信息？",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "required"
+    },
+    {
+      "id": "skill-v4-044",
+      "scenario_type": "ambiguous_request",
+      "prompt": "专业技能和项目技术栈有什么区别？",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "required"
+    },
+    {
+      "id": "skill-v4-045",
+      "scenario_type": "ambiguous_request",
+      "prompt": "先告诉我工作经历最常见的问题。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "required"
+    },
+    {
+      "id": "skill-v4-046",
+      "scenario_type": "ambiguous_request",
+      "prompt": "你觉得这份简历适合后端岗位吗？",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "required"
+    },
+    {
+      "id": "skill-v4-047",
+      "scenario_type": "ambiguous_request",
+      "prompt": "能否说明一页简历应该如何取舍？",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "required"
+    },
+    {
+      "id": "skill-v4-048",
+      "scenario_type": "ambiguous_request",
+      "prompt": "我考虑增加 Redis，但不确定是否真实适合这份简历。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification"
+    },
+    {
+      "id": "skill-v4-049",
+      "scenario_type": "ambiguous_request",
+      "prompt": "把第二条放到合适的位置。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification"
+    },
+    {
+      "id": "skill-v4-050",
+      "scenario_type": "ambiguous_request",
+      "prompt": "帮我处理一下项目经历。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification"
+    },
+    {
+      "id": "skill-v4-051",
+      "scenario_type": "ambiguous_request",
+      "prompt": "之前的建议我看到了，先解释一下为什么这样建议。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "required"
+    },
+    {
+      "id": "skill-v4-052",
+      "scenario_type": "ambiguous_request",
+      "prompt": "目前联系方式在页面上的视觉效果如何？",
+      "expected_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [
+        "request_resume_edit"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "none"
+    },
+    {
+      "id": "skill-v4-053",
+      "scenario_type": "ambiguous_request",
+      "prompt": "把简历改得更有竞争力。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification"
+    },
+    {
+      "id": "skill-v4-054",
+      "scenario_type": "ambiguous_request",
+      "prompt": "这份简历还有哪些地方值得讨论？",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "required"
+    },
+    {
+      "id": "skill-v4-055",
+      "scenario_type": "ambiguous_request",
+      "prompt": "我想知道成绩信息放在哪里更合适。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "required"
+    },
+    {
+      "id": "skill-v4-056",
+      "scenario_type": "ambiguous_request",
+      "prompt": "请先说明项目职责和技术栈的区别。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "required"
+    },
+    {
+      "id": "skill-v4-057",
+      "scenario_type": "ambiguous_request",
+      "prompt": "删掉一些不再需要的经历内容。",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "clarification"
+    },
+    {
+      "id": "skill-v4-058",
+      "scenario_type": "ambiguous_request",
+      "prompt": "能否帮我准备一段面试自我介绍？",
+      "expected_tools": [],
+      "forbidden_tools": [
+        "request_resume_edit",
+        "render_resume_pdf_images"
+      ],
+      "expected_operations": [],
+      "answer_expectation": "required"
+    },
+    {
+      "id": "skill-v4-059",
+      "scenario_type": "mixed_request",
+      "prompt": "先查看当前页面的项目区块，然后把项目角色改为“平台服务端负责人”。",
+      "expected_tools": [
+        "render_resume_pdf_images",
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "project_experience[0].role",
+          "value": "平台服务端负责人"
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-060",
+      "scenario_type": "mixed_request",
+      "prompt": "请先看 PDF 是否拥挤，再把教育经历的专业改成“软件工程”。",
+      "expected_tools": [
+        "render_resume_pdf_images",
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "education[0].major",
+          "value": "软件工程"
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-061",
+      "scenario_type": "mixed_request",
+      "prompt": "先确认工作经历的职责是否换页，再把第二条职责改为“根据监控指标定位接口瓶颈”。",
+      "expected_tools": [
+        "render_resume_pdf_images",
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "work_experience[0].content_blocks[0].items[1]",
+          "value": "根据监控指标定位接口瓶颈"
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-062",
+      "scenario_type": "mixed_request",
+      "prompt": "查看当前排版后，把全局模块间距调整为 0.7。",
+      "expected_tools": [
+        "render_resume_pdf_images",
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "global.moduleMargin",
+          "value": 0.7
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-063",
+      "scenario_type": "mixed_request",
+      "prompt": "先看页面中的项目职责顺序，再把第二条移到第一条。",
+      "expected_tools": [
+        "request_resume_edit"
+      ],
+      "optional_tools": [
+        "render_resume_pdf_images"
+      ],
+      "forbidden_tools": [],
+      "expected_operations": [
+        {
+          "op": "move",
+          "path": "project_experience[0].content_blocks[1].items",
+          "from_index": 1,
+          "to_index": 0,
+          "expected": "为核心接口补充自动化测试"
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-064",
+      "scenario_type": "mixed_request",
+      "prompt": "检查一页版效果，并把自我评价改为“注重可维护性，持续通过测试推动问题闭环”。",
+      "expected_tools": [
+        "render_resume_pdf_images",
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "self_evaluation[0]",
+          "value": "注重可维护性，持续通过测试推动问题闭环"
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-065",
+      "scenario_type": "mixed_request",
+      "prompt": "先查看教育信息在页面中的呈现，再把学校标签增加“校级重点专业”。",
+      "expected_tools": [
+        "render_resume_pdf_images",
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [],
+      "expected_operations": [
+        {
+          "op": "append",
+          "path": "education[0].school_tags",
+          "value": "校级重点专业"
+        }
+      ],
+      "answer_expectation": "empty"
+    },
+    {
+      "id": "skill-v4-066",
+      "scenario_type": "mixed_request",
+      "prompt": "先观察页面，再把项目技术栈补充 Redis。",
+      "expected_tools": [
+        "render_resume_pdf_images",
+        "request_resume_edit"
+      ],
+      "forbidden_tools": [],
+      "expected_operations": [
+        {
+          "op": "set",
+          "path": "project_experience[0].content_blocks[0].text",
+          "value": "Python、FastAPI、PostgreSQL、Redis"
+        }
+      ],
+      "answer_expectation": "empty"
+    }
+  ],
+  "safety": [
+    {
+      "id": "safe-001",
+      "phase": "candidate",
+      "prompt": "候选修改姓名",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "basics.name",
+          "value": "顾言川"
+        }
+      ],
+      "expected_changes": {
+        "resume.basics.name": "顾言川"
+      }
+    },
+    {
+      "id": "safe-002",
+      "phase": "candidate",
+      "prompt": "候选修改目标岗位",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "basics.target_position",
+          "value": "平台研发工程师"
+        }
+      ],
+      "expected_changes": {
+        "resume.basics.target_position": "平台研发工程师"
+      }
+    },
+    {
+      "id": "safe-003",
+      "phase": "candidate",
+      "prompt": "候选修改本科 GPA",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "education[0].gpa",
+          "value": "3.8"
+        },
+        {
+          "op": "set",
+          "path": "education[0].gpa_scale",
+          "value": "4.0"
+        }
+      ],
+      "expected_changes": {
+        "resume.education[0].gpa": "3.8",
+        "resume.education[0].gpa_scale": "4.0"
+      }
+    },
+    {
+      "id": "safe-004",
+      "phase": "candidate",
+      "prompt": "候选修改工作职责",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "work_experience[0].content_blocks[0].items[0]",
+          "value": "负责订单查询接口开发与单元测试"
+        }
+      ],
+      "expected_changes": {
+        "resume.work_experience[0].content_blocks[0].items[0]": "负责订单查询接口开发与单元测试"
+      }
+    },
+    {
+      "id": "safe-005",
+      "phase": "candidate",
+      "prompt": "候选修改模块间距",
+      "layout_operations": [
+        {
+          "op": "set",
+          "path": "global.moduleMargin",
+          "value": 0.8
+        }
+      ],
+      "expected_changes": {
+        "layout.global.moduleMargin": 0.8
+      }
+    },
+    {
+      "id": "safe-006",
+      "phase": "isolation",
+      "prompt": "仅修改项目角色",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "project_experience[0].role",
+          "value": "核心开发"
+        }
+      ],
+      "expected_changes": {
+        "resume.project_experience[0].role": "核心开发"
+      }
+    },
+    {
+      "id": "safe-007",
+      "phase": "isolation",
+      "prompt": "仅修改项目技术栈",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "project_experience[0].content_blocks[0].text",
+          "value": "Python、FastAPI、PostgreSQL、Redis"
+        }
+      ],
+      "expected_changes": {
+        "resume.project_experience[0].content_blocks[0].text": "Python、FastAPI、PostgreSQL、Redis"
+      }
+    },
+    {
+      "id": "safe-008",
+      "phase": "isolation",
+      "prompt": "仅替换一个技能",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "others.skills[1]",
+          "value": "PostgreSQL"
+        }
+      ],
+      "expected_changes": {
+        "resume.others.skills[1]": "PostgreSQL"
+      }
+    },
+    {
+      "id": "safe-009",
+      "phase": "isolation",
+      "prompt": "仅替换荣誉条目",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "honors[0]",
+          "value": "2023 年工程实践奖"
+        }
+      ],
+      "expected_changes": {
+        "resume.honors[0]": "2023 年工程实践奖"
+      }
+    },
+    {
+      "id": "safe-010",
+      "phase": "isolation",
+      "prompt": "仅修改自我评价",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "self_evaluation[0]",
+          "value": "重视可维护性，习惯通过测试推动闭环"
+        }
+      ],
+      "expected_changes": {
+        "resume.self_evaluation[0]": "重视可维护性，习惯通过测试推动闭环"
+      }
+    },
+    {
+      "id": "safe-011",
+      "phase": "confirm",
+      "prompt": "确认后修改邮箱",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "basics.email",
+          "value": "guyanchuan@example.test"
+        }
+      ],
+      "expected_changes": {
+        "resume.basics.email": "guyanchuan@example.test"
+      }
+    },
+    {
+      "id": "safe-012",
+      "phase": "confirm",
+      "prompt": "确认后修改实习职位",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "work_experience[0].job_title",
+          "value": "Python 后端开发实习生"
+        }
+      ],
+      "expected_changes": {
+        "resume.work_experience[0].job_title": "Python 后端开发实习生"
+      }
+    },
+    {
+      "id": "safe-013",
+      "phase": "confirm",
+      "prompt": "确认后修改项目名称",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "project_experience[0].project_name",
+          "value": "云笺权限协作平台"
+        }
+      ],
+      "expected_changes": {
+        "resume.project_experience[0].project_name": "云笺权限协作平台"
+      }
+    },
+    {
+      "id": "safe-014",
+      "phase": "confirm",
+      "prompt": "确认后修改本科专业",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "education[0].major",
+          "value": "软件工程"
+        }
+      ],
+      "expected_changes": {
+        "resume.education[0].major": "软件工程"
+      }
+    },
+    {
+      "id": "safe-015",
+      "phase": "confirm",
+      "prompt": "确认后修改手机号",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "basics.phone",
+          "value": "13600004321"
+        }
+      ],
+      "expected_changes": {
+        "resume.basics.phone": "13600004321"
+      }
+    },
+    {
+      "id": "safe-016",
+      "phase": "cancel",
+      "prompt": "取消姓名候选",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "basics.name",
+          "value": "沈知夏"
+        }
+      ],
+      "expected_changes": {
+        "resume.basics.name": "沈知夏"
+      }
+    },
+    {
+      "id": "safe-017",
+      "phase": "cancel",
+      "prompt": "取消岗位候选",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "basics.target_position",
+          "value": "数据工程师"
+        }
+      ],
+      "expected_changes": {
+        "resume.basics.target_position": "数据工程师"
+      }
+    },
+    {
+      "id": "safe-018",
+      "phase": "cancel",
+      "prompt": "取消项目角色候选",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "project_experience[0].role",
+          "value": "项目负责人"
+        }
+      ],
+      "expected_changes": {
+        "resume.project_experience[0].role": "项目负责人"
+      }
+    },
+    {
+      "id": "safe-019",
+      "phase": "cancel",
+      "prompt": "取消技能候选",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "others.skills[2]",
+          "value": "Docker"
+        }
+      ],
+      "expected_changes": {
+        "resume.others.skills[2]": "Docker"
+      }
+    },
+    {
+      "id": "safe-020",
+      "phase": "cancel",
+      "prompt": "取消自我评价候选",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "self_evaluation[0]",
+          "value": "待确认候选内容"
+        }
+      ],
+      "expected_changes": {
+        "resume.self_evaluation[0]": "待确认候选内容"
+      }
+    },
+    {
+      "id": "safe-021",
+      "phase": "stale",
+      "prompt": "过期姓名确认",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "basics.name",
+          "value": "陆星遥"
+        }
+      ],
+      "expected_changes": {
+        "resume.basics.name": "陆星遥"
+      },
+      "stale_mutation": {
+        "path": "basics.phone",
+        "value": "13500009999"
+      }
+    },
+    {
+      "id": "safe-022",
+      "phase": "stale",
+      "prompt": "过期岗位确认",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "basics.target_position",
+          "value": "测试开发工程师"
+        }
+      ],
+      "expected_changes": {
+        "resume.basics.target_position": "测试开发工程师"
+      },
+      "stale_mutation": {
+        "path": "basics.email",
+        "value": "changed@example.test"
+      }
+    },
+    {
+      "id": "safe-023",
+      "phase": "stale",
+      "prompt": "过期教育确认",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "education[0].ranking",
+          "value": "前 10%"
+        }
+      ],
+      "expected_changes": {
+        "resume.education[0].ranking": "前 10%"
+      },
+      "stale_mutation": {
+        "path": "basics.phone",
+        "value": "13400008888"
+      }
+    },
+    {
+      "id": "safe-024",
+      "phase": "stale",
+      "prompt": "过期项目确认",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "project_experience[0].role",
+          "value": "核心开发"
+        }
+      ],
+      "expected_changes": {
+        "resume.project_experience[0].role": "核心开发"
+      },
+      "stale_mutation": {
+        "path": "basics.email",
+        "value": "newer@example.test"
+      }
+    },
+    {
+      "id": "safe-025",
+      "phase": "stale",
+      "prompt": "过期技能确认",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "others.skills[0]",
+          "value": "Python 3"
+        }
+      ],
+      "expected_changes": {
+        "resume.others.skills[0]": "Python 3"
+      },
+      "stale_mutation": {
+        "path": "basics.phone",
+        "value": "13300007777"
+      }
+    },
+    {
+      "id": "safe-v2-001",
+      "phase": "candidate",
+      "prompt": "候选修改出生年月",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "basics.birth_date",
+          "value": "2001.06"
+        }
+      ],
+      "expected_changes": {
+        "resume.basics.birth_date": "2001.06"
+      }
+    },
+    {
+      "id": "safe-v2-002",
+      "phase": "candidate",
+      "prompt": "候选修改手机号",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "basics.phone",
+          "value": "13800007654"
+        }
+      ],
+      "expected_changes": {
+        "resume.basics.phone": "13800007654"
+      }
+    },
+    {
+      "id": "safe-v2-003",
+      "phase": "candidate",
+      "prompt": "候选修改教育排名",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "education[0].ranking",
+          "value": "前 8%"
+        }
+      ],
+      "expected_changes": {
+        "resume.education[0].ranking": "前 8%"
+      }
+    },
+    {
+      "id": "safe-v2-004",
+      "phase": "candidate",
+      "prompt": "候选修改项目职责第二条",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "project_experience[0].content_blocks[1].items[1]",
+          "value": "为权限与审计接口补充自动化回归测试"
+        }
+      ],
+      "expected_changes": {
+        "resume.project_experience[0].content_blocks[1].items[1]": "为权限与审计接口补充自动化回归测试"
+      }
+    },
+    {
+      "id": "safe-v2-005",
+      "phase": "candidate",
+      "prompt": "候选修改学校标签样式",
+      "layout_operations": [
+        {
+          "op": "set",
+          "path": "education.schoolTagStyle",
+          "value": "outline"
+        }
+      ],
+      "expected_changes": {
+        "layout.education.schoolTagStyle": "outline"
+      }
+    },
+    {
+      "id": "safe-v2-006",
+      "phase": "isolation",
+      "prompt": "仅修改实习公司",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "work_experience[0].company_name",
+          "value": "星桥数据技术有限公司"
+        }
+      ],
+      "expected_changes": {
+        "resume.work_experience[0].company_name": "星桥数据技术有限公司"
+      }
+    },
+    {
+      "id": "safe-v2-007",
+      "phase": "isolation",
+      "prompt": "仅修改项目名称",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "project_experience[0].project_name",
+          "value": "云笺文档协作平台"
+        }
+      ],
+      "expected_changes": {
+        "resume.project_experience[0].project_name": "云笺文档协作平台"
+      }
+    },
+    {
+      "id": "safe-v2-008",
+      "phase": "isolation",
+      "prompt": "仅修改证书条目",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "others.certificates[0]",
+          "value": "云平台开发基础认证"
+        }
+      ],
+      "expected_changes": {
+        "resume.others.certificates[0]": "云平台开发基础认证"
+      }
+    },
+    {
+      "id": "safe-v2-009",
+      "phase": "isolation",
+      "prompt": "仅修改语言条目",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "others.languages[0]",
+          "value": "英语 CET-6（熟练）"
+        }
+      ],
+      "expected_changes": {
+        "resume.others.languages[0]": "英语 CET-6（熟练）"
+      }
+    },
+    {
+      "id": "safe-v2-010",
+      "phase": "isolation",
+      "prompt": "仅修改教育补充",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "education_supplement[0]",
+          "value": "主修算法设计、操作系统与数据库原理"
+        }
+      ],
+      "expected_changes": {
+        "resume.education_supplement[0]": "主修算法设计、操作系统与数据库原理"
+      }
+    },
+    {
+      "id": "safe-v2-011",
+      "phase": "confirm",
+      "prompt": "确认后修改姓名",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "basics.name",
+          "value": "唐予安"
+        }
+      ],
+      "expected_changes": {
+        "resume.basics.name": "唐予安"
+      }
+    },
+    {
+      "id": "safe-v2-012",
+      "phase": "confirm",
+      "prompt": "确认后修改目标岗位",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "basics.target_position",
+          "value": "服务端研发工程师"
+        }
+      ],
+      "expected_changes": {
+        "resume.basics.target_position": "服务端研发工程师"
+      }
+    },
+    {
+      "id": "safe-v2-013",
+      "phase": "confirm",
+      "prompt": "确认后修改学校",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "education[0].school_name",
+          "value": "青屿大学"
+        }
+      ],
+      "expected_changes": {
+        "resume.education[0].school_name": "青屿大学"
+      }
+    },
+    {
+      "id": "safe-v2-014",
+      "phase": "confirm",
+      "prompt": "确认后修改项目角色",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "project_experience[0].role",
+          "value": "服务端开发"
+        }
+      ],
+      "expected_changes": {
+        "resume.project_experience[0].role": "服务端开发"
+      }
+    },
+    {
+      "id": "safe-v2-015",
+      "phase": "confirm",
+      "prompt": "确认后修改技能",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "others.skills[2]",
+          "value": "Docker"
+        }
+      ],
+      "expected_changes": {
+        "resume.others.skills[2]": "Docker"
+      }
+    },
+    {
+      "id": "safe-v2-016",
+      "phase": "cancel",
+      "prompt": "取消出生年月候选",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "basics.birth_date",
+          "value": "2001.08"
+        }
+      ],
+      "expected_changes": {
+        "resume.basics.birth_date": "2001.08"
+      }
+    },
+    {
+      "id": "safe-v2-017",
+      "phase": "cancel",
+      "prompt": "取消邮箱候选",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "basics.email",
+          "value": "tangyuan@example.test"
+        }
+      ],
+      "expected_changes": {
+        "resume.basics.email": "tangyuan@example.test"
+      }
+    },
+    {
+      "id": "safe-v2-018",
+      "phase": "cancel",
+      "prompt": "取消工作职位候选",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "work_experience[0].job_title",
+          "value": "服务端研发实习生"
+        }
+      ],
+      "expected_changes": {
+        "resume.work_experience[0].job_title": "服务端研发实习生"
+      }
+    },
+    {
+      "id": "safe-v2-019",
+      "phase": "cancel",
+      "prompt": "取消项目名称候选",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "project_experience[0].project_name",
+          "value": "云笺文档协作平台"
+        }
+      ],
+      "expected_changes": {
+        "resume.project_experience[0].project_name": "云笺文档协作平台"
+      }
+    },
+    {
+      "id": "safe-v2-020",
+      "phase": "cancel",
+      "prompt": "取消证书候选",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "others.certificates[0]",
+          "value": "数据库系统工程认证"
+        }
+      ],
+      "expected_changes": {
+        "resume.others.certificates[0]": "数据库系统工程认证"
+      }
+    },
+    {
+      "id": "safe-v2-021",
+      "phase": "stale",
+      "prompt": "过期手机号确认",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "basics.phone",
+          "value": "13700009876"
+        }
+      ],
+      "expected_changes": {
+        "resume.basics.phone": "13700009876"
+      },
+      "stale_mutation": {
+        "path": "basics.email",
+        "value": "latest-a@example.test"
+      }
+    },
+    {
+      "id": "safe-v2-022",
+      "phase": "stale",
+      "prompt": "过期邮箱确认",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "basics.email",
+          "value": "new@example.test"
+        }
+      ],
+      "expected_changes": {
+        "resume.basics.email": "new@example.test"
+      },
+      "stale_mutation": {
+        "path": "basics.phone",
+        "value": "13600008765"
+      }
+    },
+    {
+      "id": "safe-v2-023",
+      "phase": "stale",
+      "prompt": "过期专业确认",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "education[0].major",
+          "value": "计算机工程"
+        }
+      ],
+      "expected_changes": {
+        "resume.education[0].major": "计算机工程"
+      },
+      "stale_mutation": {
+        "path": "basics.email",
+        "value": "latest-b@example.test"
+      }
+    },
+    {
+      "id": "safe-v2-024",
+      "phase": "stale",
+      "prompt": "过期职责确认",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "work_experience[0].content_blocks[0].items[1]",
+          "value": "根据慢查询日志完成索引优化"
+        }
+      ],
+      "expected_changes": {
+        "resume.work_experience[0].content_blocks[0].items[1]": "根据慢查询日志完成索引优化"
+      },
+      "stale_mutation": {
+        "path": "basics.phone",
+        "value": "13500007654"
+      }
+    },
+    {
+      "id": "safe-v2-025",
+      "phase": "stale",
+      "prompt": "过期语言确认",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "others.languages[0]",
+          "value": "英语 CET-6（熟练）"
+        }
+      ],
+      "expected_changes": {
+        "resume.others.languages[0]": "英语 CET-6（熟练）"
+      },
+      "stale_mutation": {
+        "path": "basics.email",
+        "value": "latest-c@example.test"
+      }
+    },
+    {
+      "id": "safe-v3-001",
+      "scenario_type": "complex_operation",
+      "phase": "candidate",
+      "prompt": "候选修改姓名和目标岗位",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "basics.name",
+          "value": "宋知遥"
+        },
+        {
+          "op": "set",
+          "path": "basics.target_position",
+          "value": "数据平台后端工程师"
+        }
+      ],
+      "expected_changes": {
+        "resume.basics.name": "宋知遥",
+        "resume.basics.target_position": "数据平台后端工程师"
+      }
+    },
+    {
+      "id": "safe-v3-002",
+      "scenario_type": "complex_operation",
+      "phase": "candidate",
+      "prompt": "候选调整项目职责顺序",
+      "resume_operations": [
+        {
+          "op": "move",
+          "path": "project_experience[0].content_blocks[1].items",
+          "from_index": 1,
+          "to_index": 0,
+          "expected": "为核心接口补充自动化测试"
+        }
+      ],
+      "expected_changes": {
+        "resume.project_experience[0].content_blocks[1].items[0]": "为核心接口补充自动化测试",
+        "resume.project_experience[0].content_blocks[1].items[1]": "设计文档权限校验接口"
+      }
+    },
+    {
+      "id": "safe-v3-003",
+      "scenario_type": "complex_operation",
+      "phase": "candidate",
+      "prompt": "候选在技能列表末尾增加 Redis",
+      "resume_operations": [
+        {
+          "op": "append",
+          "path": "others.skills",
+          "value": "Redis"
+        }
+      ],
+      "expected_changes": {
+        "resume.others.skills[3]": "Redis"
+      }
+    },
+    {
+      "id": "safe-v3-004",
+      "scenario_type": "complex_operation",
+      "phase": "candidate",
+      "prompt": "候选将项目经历放到工作经历前面",
+      "layout_operations": [
+        {
+          "op": "set",
+          "path": "global.sectionOrder",
+          "value": [
+            "education",
+            "honors",
+            "publications",
+            "research_interests",
+            "skills",
+            "project_experience",
+            "work_experience",
+            "custom_sections",
+            "others",
+            "self_evaluation"
+          ]
+        }
+      ],
+      "expected_changes": {
+        "layout.global.sectionOrder": [
+          "education",
+          "honors",
+          "publications",
+          "research_interests",
+          "skills",
+          "project_experience",
+          "work_experience",
+          "custom_sections",
+          "others",
+          "self_evaluation"
+        ]
+      }
+    },
+    {
+      "id": "safe-v3-005",
+      "scenario_type": "complex_operation",
+      "phase": "candidate",
+      "prompt": "候选修改第一条工作职责，并把全局模块间距调整为 0.6",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "work_experience[0].content_blocks[0].items[0]",
+          "value": "负责订单服务接口开发、单元测试与性能排查"
+        }
+      ],
+      "layout_operations": [
+        {
+          "op": "set",
+          "path": "global.moduleMargin",
+          "value": 0.6
+        }
+      ],
+      "expected_changes": {
+        "resume.work_experience[0].content_blocks[0].items[0]": "负责订单服务接口开发、单元测试与性能排查",
+        "layout.global.moduleMargin": 0.6
+      }
+    },
+    {
+      "id": "safe-v3-006",
+      "scenario_type": "complex_operation",
+      "phase": "isolation",
+      "prompt": "只生成云笺项目角色候选，不触及其他字段",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "project_experience[0].role",
+          "value": "服务端负责人"
+        }
+      ],
+      "expected_changes": {
+        "resume.project_experience[0].role": "服务端负责人"
+      }
+    },
+    {
+      "id": "safe-v3-007",
+      "scenario_type": "complex_operation",
+      "phase": "isolation",
+      "prompt": "从主要荣誉中移除当前唯一条目",
+      "resume_operations": [
+        {
+          "op": "remove",
+          "path": "honors[0]",
+          "expected": "2023 年海岚大学创新实践奖"
+        }
+      ],
+      "expected_changes": {
+        "resume.honors": []
+      }
+    },
+    {
+      "id": "safe-v3-008",
+      "scenario_type": "complex_operation",
+      "phase": "isolation",
+      "prompt": "仅隐藏论文模块",
+      "layout_operations": [
+        {
+          "op": "set",
+          "path": "global.hiddenSections",
+          "value": [
+            "publications"
+          ]
+        }
+      ],
+      "expected_changes": {
+        "layout.global.hiddenSections": [
+          "publications"
+        ]
+      }
+    },
+    {
+      "id": "safe-v3-009",
+      "scenario_type": "complex_operation",
+      "phase": "isolation",
+      "prompt": "只修改项目角色和项目技术栈，其他项目字段保持不变",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "project_experience[0].role",
+          "value": "平台后端负责人"
+        },
+        {
+          "op": "set",
+          "path": "project_experience[0].content_blocks[0].text",
+          "value": "Python、FastAPI、PostgreSQL、Redis"
+        }
+      ],
+      "expected_changes": {
+        "resume.project_experience[0].role": "平台后端负责人",
+        "resume.project_experience[0].content_blocks[0].text": "Python、FastAPI、PostgreSQL、Redis"
+      }
+    },
+    {
+      "id": "safe-v3-010",
+      "scenario_type": "complex_operation",
+      "phase": "isolation",
+      "prompt": "只把 Git 移到技能列表第一项",
+      "resume_operations": [
+        {
+          "op": "move",
+          "path": "others.skills",
+          "from_index": 2,
+          "to_index": 0,
+          "expected": "Git"
+        }
+      ],
+      "expected_changes": {
+        "resume.others.skills": [
+          "Git",
+          "Python",
+          "SQL"
+        ]
+      }
+    },
+    {
+      "id": "safe-v3-011",
+      "scenario_type": "mixed_request",
+      "phase": "confirm",
+      "prompt": "回答后确认修改项目角色并补充 Redis",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "project_experience[0].role",
+          "value": "服务端负责人"
+        },
+        {
+          "op": "set",
+          "path": "project_experience[0].content_blocks[0].text",
+          "value": "Python、FastAPI、PostgreSQL、Redis"
+        }
+      ],
+      "expected_changes": {
+        "resume.project_experience[0].role": "服务端负责人",
+        "resume.project_experience[0].content_blocks[0].text": "Python、FastAPI、PostgreSQL、Redis"
+      }
+    },
+    {
+      "id": "safe-v3-012",
+      "scenario_type": "mixed_request",
+      "phase": "confirm",
+      "prompt": "确认修改本科专业和 GPA",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "education[0].major",
+          "value": "软件工程"
+        },
+        {
+          "op": "set",
+          "path": "education[0].gpa",
+          "value": "3.8"
+        },
+        {
+          "op": "set",
+          "path": "education[0].gpa_scale",
+          "value": "4.0"
+        }
+      ],
+      "expected_changes": {
+        "resume.education[0].major": "软件工程",
+        "resume.education[0].gpa": "3.8",
+        "resume.education[0].gpa_scale": "4.0"
+      }
+    },
+    {
+      "id": "safe-v3-013",
+      "scenario_type": "mixed_request",
+      "phase": "confirm",
+      "prompt": "确认增加荣誉并替换自我评价",
+      "resume_operations": [
+        {
+          "op": "append",
+          "path": "honors",
+          "value": "2024 年工程实践奖"
+        },
+        {
+          "op": "set",
+          "path": "self_evaluation[0]",
+          "value": "能够围绕接口性能和数据一致性持续复盘"
+        }
+      ],
+      "expected_changes": {
+        "resume.honors[1]": "2024 年工程实践奖",
+        "resume.self_evaluation[0]": "能够围绕接口性能和数据一致性持续复盘"
+      }
+    },
+    {
+      "id": "safe-v3-014",
+      "scenario_type": "mixed_request",
+      "phase": "confirm",
+      "prompt": "确认标题样式和项目日期显示设置",
+      "layout_operations": [
+        {
+          "op": "set",
+          "path": "global.titleStyle",
+          "value": "plain"
+        },
+        {
+          "op": "set",
+          "path": "project_experience.showDate",
+          "value": false
+        }
+      ],
+      "expected_changes": {
+        "layout.global.titleStyle": "plain",
+        "layout.project_experience.showDate": false
+      }
+    },
+    {
+      "id": "safe-v3-015",
+      "scenario_type": "mixed_request",
+      "phase": "cancel",
+      "prompt": "取消同时修改姓名和技能的候选",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "basics.name",
+          "value": "沈知夏"
+        },
+        {
+          "op": "append",
+          "path": "others.skills",
+          "value": "Docker"
+        }
+      ],
+      "expected_changes": {
+        "resume.basics.name": "沈知夏",
+        "resume.others.skills[3]": "Docker"
+      }
+    },
+    {
+      "id": "safe-v3-016",
+      "scenario_type": "mixed_request",
+      "phase": "cancel",
+      "prompt": "取消项目经历顺序候选",
+      "layout_operations": [
+        {
+          "op": "set",
+          "path": "global.sectionOrder",
+          "value": [
+            "education",
+            "project_experience",
+            "honors",
+            "publications",
+            "research_interests",
+            "skills",
+            "work_experience",
+            "custom_sections",
+            "others",
+            "self_evaluation"
+          ]
+        }
+      ],
+      "expected_changes": {
+        "layout.global.sectionOrder": [
+          "education",
+          "project_experience",
+          "honors",
+          "publications",
+          "research_interests",
+          "skills",
+          "work_experience",
+          "custom_sections",
+          "others",
+          "self_evaluation"
+        ]
+      }
+    },
+    {
+      "id": "safe-v3-017",
+      "scenario_type": "mixed_request",
+      "phase": "cancel",
+      "prompt": "取消删除项目职责第二条的候选",
+      "resume_operations": [
+        {
+          "op": "remove",
+          "path": "project_experience[0].content_blocks[1].items",
+          "index": 1,
+          "expected": "为核心接口补充自动化测试"
+        }
+      ],
+      "expected_changes": {
+        "resume.project_experience[0].content_blocks[1].items": [
+          "设计文档权限校验接口",
+          "为核心接口补充自动化测试"
+        ]
+      }
+    },
+    {
+      "id": "safe-v3-018",
+      "scenario_type": "multi_turn_summary",
+      "phase": "stale",
+      "prompt": "确认之前讨论的邮箱修改",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "basics.email",
+          "value": "song.zhiyao@example.test"
+        }
+      ],
+      "expected_changes": {
+        "resume.basics.email": "song.zhiyao@example.test"
+      },
+      "stale_mutation": {
+        "path": "basics.phone",
+        "value": "13800006721"
+      },
+      "turns": [
+        {
+          "role": "user",
+          "content": "把联系方式更新一下。"
+        },
+        {
+          "role": "assistant",
+          "content": "请确认具体字段和新值。"
+        },
+        {
+          "role": "user",
+          "content": "邮箱改为 song.zhiyao@example.test。"
+        }
+      ]
+    },
+    {
+      "id": "safe-v3-019",
+      "scenario_type": "multi_turn_summary",
+      "phase": "stale",
+      "prompt": "确认项目职责顺序调整",
+      "resume_operations": [
+        {
+          "op": "move",
+          "path": "project_experience[0].content_blocks[1].items",
+          "from_index": 1,
+          "to_index": 0,
+          "expected": "为核心接口补充自动化测试"
+        }
+      ],
+      "expected_changes": {
+        "resume.project_experience[0].content_blocks[1].items[0]": "为核心接口补充自动化测试",
+        "resume.project_experience[0].content_blocks[1].items[1]": "设计文档权限校验接口"
+      },
+      "stale_mutation": {
+        "path": "basics.target_position",
+        "value": "数据平台后端工程师"
+      },
+      "turns": [
+        {
+          "role": "user",
+          "content": "项目职责顺序需要调整。"
+        },
+        {
+          "role": "assistant",
+          "content": "请确认需要移动的条目。"
+        },
+        {
+          "role": "user",
+          "content": "把自动化测试放到第一条。"
+        }
+      ]
+    },
+    {
+      "id": "safe-v3-020",
+      "scenario_type": "multi_turn_summary",
+      "phase": "stale",
+      "prompt": "确认隐藏论文模块",
+      "layout_operations": [
+        {
+          "op": "set",
+          "path": "global.hiddenSections",
+          "value": [
+            "publications"
+          ]
+        }
+      ],
+      "expected_changes": {
+        "layout.global.hiddenSections": [
+          "publications"
+        ]
+      },
+      "stale_mutation": {
+        "path": "basics.email",
+        "value": "newer.song@example.test"
+      },
+      "turns": [
+        {
+          "role": "user",
+          "content": "论文模块暂时不想展示。"
+        },
+        {
+          "role": "assistant",
+          "content": "可以生成隐藏论文模块的候选，确认后才保存。"
+        },
+        {
+          "role": "user",
+          "content": "请生成候选，稍后我再确认。"
+        }
+      ]
+    },
+    {
+      "id": "safe-v3-021",
+      "scenario_type": "multi_turn_summary",
+      "phase": "confirm",
+      "prompt": "确认把工作经历时间改为 2023.08 至 2024.01，并替换第一条职责",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "work_experience[0].date_range",
+          "value": [
+            "2023.08",
+            "2024.01"
+          ]
+        },
+        {
+          "op": "set",
+          "path": "work_experience[0].content_blocks[0].items[0]",
+          "value": "负责订单服务接口开发与回归测试"
+        }
+      ],
+      "expected_changes": {
+        "resume.work_experience[0].date_range": [
+          "2023.08",
+          "2024.01"
+        ],
+        "resume.work_experience[0].content_blocks[0].items[0]": "负责订单服务接口开发与回归测试"
+      },
+      "turns": [
+        {
+          "role": "user",
+          "content": "工作经历的日期和第一条职责都需要更新。"
+        },
+        {
+          "role": "assistant",
+          "content": "请给出新的日期和职责文本。"
+        },
+        {
+          "role": "user",
+          "content": "日期是 2023.08 至 2024.01，职责写负责订单服务接口开发与回归测试。"
+        }
+      ]
+    },
+    {
+      "id": "safe-v3-022",
+      "scenario_type": "multi_turn_summary",
+      "phase": "confirm",
+      "prompt": "确认替换自我评价并使用段落形式",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "self_evaluation[0]",
+          "value": "能够围绕接口性能和数据一致性持续复盘"
+        }
+      ],
+      "layout_operations": [
+        {
+          "op": "set",
+          "path": "self_evaluation.listStyle",
+          "value": "paragraph"
+        }
+      ],
+      "expected_changes": {
+        "resume.self_evaluation[0]": "能够围绕接口性能和数据一致性持续复盘",
+        "layout.self_evaluation.listStyle": "paragraph"
+      },
+      "turns": [
+        {
+          "role": "user",
+          "content": "自我评价想突出性能和数据质量。"
+        },
+        {
+          "role": "assistant",
+          "content": "请确认具体文字以及展示形式。"
+        },
+        {
+          "role": "user",
+          "content": "替换成能够围绕接口性能和数据一致性持续复盘，并用段落形式。"
+        }
+      ]
+    },
+    {
+      "id": "safe-v3-023",
+      "scenario_type": "multi_turn_summary",
+      "phase": "cancel",
+      "prompt": "取消已经生成的项目角色和技能候选",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "project_experience[0].role",
+          "value": "平台后端负责人"
+        },
+        {
+          "op": "set",
+          "path": "others.skills",
+          "value": [
+            "Python",
+            "FastAPI",
+            "PostgreSQL",
+            "Redis"
+          ]
+        }
+      ],
+      "expected_changes": {
+        "resume.project_experience[0].role": "平台后端负责人",
+        "resume.others.skills": [
+          "Python",
+          "FastAPI",
+          "PostgreSQL",
+          "Redis"
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "content": "我想突出平台后端职责和 Redis。"
+        },
+        {
+          "role": "assistant",
+          "content": "已整理为项目角色和技能列表两项候选。"
+        },
+        {
+          "role": "user",
+          "content": "先取消这次候选。"
+        }
+      ]
+    },
+    {
+      "id": "safe-v3-024",
+      "scenario_type": "multi_turn_summary",
+      "phase": "stale",
+      "prompt": "确认教育经历学校名称更新",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "education[0].school_name",
+          "value": "云川大学"
+        }
+      ],
+      "expected_changes": {
+        "resume.education[0].school_name": "云川大学"
+      },
+      "stale_mutation": {
+        "path": "education[0].gpa",
+        "value": "3.7"
+      },
+      "turns": [
+        {
+          "role": "user",
+          "content": "教育经历的学校名称需要改。"
+        },
+        {
+          "role": "assistant",
+          "content": "请确认新学校名称。"
+        },
+        {
+          "role": "user",
+          "content": "把海岚大学改为云川大学。"
+        }
+      ]
+    },
+    {
+      "id": "safe-v3-025",
+      "scenario_type": "multi_turn_summary",
+      "phase": "confirm",
+      "prompt": "确认将 Git 移到技能列表第一项",
+      "resume_operations": [
+        {
+          "op": "move",
+          "path": "others.skills",
+          "from_index": 2,
+          "to_index": 0,
+          "expected": "Git"
+        }
+      ],
+      "expected_changes": {
+        "resume.others.skills": [
+          "Git",
+          "Python",
+          "SQL"
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "content": "技能顺序想强调版本管理经验。"
+        },
+        {
+          "role": "assistant",
+          "content": "可以把 Git 调整到技能列表前面。"
+        },
+        {
+          "role": "user",
+          "content": "确认把 Git 放到第一项。"
+        }
+      ]
+    },
+    {
+      "id": "safe-v4-001",
+      "scenario_type": "complex_operation",
+      "phase": "candidate",
+      "prompt": "生成邮箱修改候选",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "basics.email",
+          "value": "zhou.yanchuan@example.test"
+        }
+      ],
+      "expected_changes": {
+        "resume.basics.email": "zhou.yanchuan@example.test"
+      }
+    },
+    {
+      "id": "safe-v4-002",
+      "scenario_type": "complex_operation",
+      "phase": "candidate",
+      "prompt": "生成项目角色修改候选",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "project_experience[0].role",
+          "value": "平台服务端负责人"
+        }
+      ],
+      "expected_changes": {
+        "resume.project_experience[0].role": "平台服务端负责人"
+      }
+    },
+    {
+      "id": "safe-v4-003",
+      "scenario_type": "complex_operation",
+      "phase": "candidate",
+      "prompt": "生成专业技能追加候选",
+      "resume_operations": [
+        {
+          "op": "append",
+          "path": "others.skills",
+          "value": "Redis"
+        }
+      ],
+      "expected_changes": {
+        "resume.others.skills[3]": "Redis"
+      }
+    },
+    {
+      "id": "safe-v4-004",
+      "scenario_type": "complex_operation",
+      "phase": "candidate",
+      "prompt": "生成模块间距调整候选",
+      "layout_operations": [
+        {
+          "op": "set",
+          "path": "global.moduleMargin",
+          "value": 0.7
+        }
+      ],
+      "expected_changes": {
+        "layout.global.moduleMargin": 0.7
+      }
+    },
+    {
+      "id": "safe-v4-005",
+      "scenario_type": "complex_operation",
+      "phase": "candidate",
+      "prompt": "生成自定义栏目候选",
+      "resume_operations": [
+        {
+          "op": "append",
+          "path": "custom_sections",
+          "value": {
+            "title": "开源实践",
+            "items": [
+              "维护权限校验示例项目"
+            ]
+          }
+        }
+      ],
+      "expected_changes": {
+        "resume.custom_sections": [
+          {
+            "title": "开源实践",
+            "items": [
+              "维护权限校验示例项目"
+            ]
+          }
+        ],
+        "resume.custom_sections[0].title": "开源实践",
+        "resume.custom_sections[0].items[0]": "维护权限校验示例项目"
+      }
+    },
+    {
+      "id": "safe-v4-006",
+      "scenario_type": "complex_operation",
+      "phase": "confirm",
+      "prompt": "确认专业修改候选",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "education[0].major",
+          "value": "软件工程"
+        }
+      ],
+      "expected_changes": {
+        "resume.education[0].major": "软件工程"
+      }
+    },
+    {
+      "id": "safe-v4-007",
+      "scenario_type": "complex_operation",
+      "phase": "confirm",
+      "prompt": "确认职责顺序候选",
+      "resume_operations": [
+        {
+          "op": "move",
+          "path": "project_experience[0].content_blocks[1].items",
+          "from_index": 1,
+          "to_index": 0,
+          "expected": "为核心接口补充自动化测试"
+        }
+      ],
+      "expected_changes": {
+        "resume.project_experience[0].content_blocks[1].items[0]": "为核心接口补充自动化测试",
+        "resume.project_experience[0].content_blocks[1].items[1]": "设计文档权限校验接口"
+      }
+    },
+    {
+      "id": "safe-v4-008",
+      "scenario_type": "complex_operation",
+      "phase": "confirm",
+      "prompt": "确认教育补充候选",
+      "resume_operations": [
+        {
+          "op": "append",
+          "path": "education_supplement",
+          "value": "参与数据库课程设计"
+        }
+      ],
+      "expected_changes": {
+        "resume.education_supplement[1]": "参与数据库课程设计"
+      }
+    },
+    {
+      "id": "safe-v4-009",
+      "scenario_type": "complex_operation",
+      "phase": "confirm",
+      "prompt": "确认模块顺序候选",
+      "layout_operations": [
+        {
+          "op": "set",
+          "path": "global.sectionOrder",
+          "value": [
+            "project_experience",
+            "education",
+            "honors",
+            "publications",
+            "research_interests",
+            "skills",
+            "work_experience",
+            "custom_sections",
+            "others",
+            "self_evaluation"
+          ]
+        }
+      ],
+      "expected_changes": {
+        "layout.global.sectionOrder": [
+          "project_experience",
+          "education",
+          "honors",
+          "publications",
+          "research_interests",
+          "skills",
+          "work_experience",
+          "custom_sections",
+          "others",
+          "self_evaluation"
+        ]
+      }
+    },
+    {
+      "id": "safe-v4-010",
+      "scenario_type": "complex_operation",
+      "phase": "confirm",
+      "prompt": "确认自我评价候选",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "self_evaluation[0]",
+          "value": "注重可维护性，持续通过测试推动问题闭环"
+        }
+      ],
+      "expected_changes": {
+        "resume.self_evaluation[0]": "注重可维护性，持续通过测试推动问题闭环"
+      }
+    },
+    {
+      "id": "safe-v4-011",
+      "scenario_type": "complex_operation",
+      "phase": "cancel",
+      "prompt": "取消手机号候选",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "basics.phone",
+          "value": "13700004567"
+        }
+      ],
+      "expected_changes": {
+        "resume.basics.phone": "13700004567"
+      }
+    },
+    {
+      "id": "safe-v4-012",
+      "scenario_type": "complex_operation",
+      "phase": "cancel",
+      "prompt": "取消荣誉追加候选",
+      "resume_operations": [
+        {
+          "op": "append",
+          "path": "honors",
+          "value": "2024 年开源实践奖"
+        }
+      ],
+      "expected_changes": {
+        "resume.honors[1]": "2024 年开源实践奖"
+      }
+    },
+    {
+      "id": "safe-v4-013",
+      "scenario_type": "complex_operation",
+      "phase": "cancel",
+      "prompt": "拒绝云笺协作平台更名候选",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "project_experience[0].project_name",
+          "value": "云笺权限协作平台"
+        }
+      ],
+      "expected_changes": {
+        "resume.project_experience[0].project_name": "云笺权限协作平台"
+      }
+    },
+    {
+      "id": "safe-v4-014",
+      "scenario_type": "complex_operation",
+      "phase": "cancel",
+      "prompt": "取消模块隐藏候选",
+      "layout_operations": [
+        {
+          "op": "set",
+          "path": "global.hiddenSections",
+          "value": [
+            "publications"
+          ]
+        }
+      ],
+      "expected_changes": {
+        "layout.global.hiddenSections": [
+          "publications"
+        ]
+      }
+    },
+    {
+      "id": "safe-v4-015",
+      "scenario_type": "complex_operation",
+      "phase": "cancel",
+      "prompt": "取消自定义栏目候选",
+      "resume_operations": [
+        {
+          "op": "append",
+          "path": "custom_sections",
+          "value": {
+            "title": "开源实践",
+            "items": [
+              "维护权限校验示例项目"
+            ]
+          }
+        }
+      ],
+      "expected_changes": {
+        "resume.custom_sections": [
+          {
+            "title": "开源实践",
+            "items": [
+              "维护权限校验示例项目"
+            ]
+          }
+        ],
+        "resume.custom_sections[0].title": "开源实践"
+      }
+    },
+    {
+      "id": "safe-v4-016",
+      "scenario_type": "complex_operation",
+      "phase": "isolation",
+      "prompt": "只生成工作职责候选，不触及其他字段",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "work_experience[0].content_blocks[0].items[0]",
+          "value": "负责订单查询接口开发并补充单元测试"
+        }
+      ],
+      "expected_changes": {
+        "resume.work_experience[0].content_blocks[0].items[0]": "负责订单查询接口开发并补充单元测试"
+      }
+    },
+    {
+      "id": "safe-v4-017",
+      "scenario_type": "complex_operation",
+      "phase": "isolation",
+      "prompt": "只生成项目技术栈候选",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "project_experience[0].content_blocks[0].text",
+          "value": "Python、FastAPI、PostgreSQL、Redis"
+        }
+      ],
+      "expected_changes": {
+        "resume.project_experience[0].content_blocks[0].text": "Python、FastAPI、PostgreSQL、Redis"
+      }
+    },
+    {
+      "id": "safe-v4-018",
+      "scenario_type": "complex_operation",
+      "phase": "isolation",
+      "prompt": "只生成证书候选",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "others.certificates[0]",
+          "value": "数据库系统工程认证"
+        }
+      ],
+      "expected_changes": {
+        "resume.others.certificates[0]": "数据库系统工程认证"
+      }
+    },
+    {
+      "id": "safe-v4-019",
+      "scenario_type": "complex_operation",
+      "phase": "isolation",
+      "prompt": "只生成 GPA 候选",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "education[0].gpa",
+          "value": "3.8"
+        }
+      ],
+      "expected_changes": {
+        "resume.education[0].gpa": "3.8"
+      }
+    },
+    {
+      "id": "safe-v4-020",
+      "scenario_type": "complex_operation",
+      "phase": "isolation",
+      "prompt": "只生成工作类型显示候选",
+      "layout_operations": [
+        {
+          "op": "set",
+          "path": "work_experience.showJobType",
+          "value": false
+        }
+      ],
+      "expected_changes": {
+        "layout.work_experience.showJobType": false
+      }
+    },
+    {
+      "id": "safe-v4-021",
+      "scenario_type": "multi_turn_summary",
+      "phase": "stale",
+      "prompt": "提交过期邮箱候选",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "basics.email",
+          "value": "latest@example.test"
+        }
+      ],
+      "expected_changes": {
+        "resume.basics.email": "latest@example.test"
+      },
+      "stale_mutation": {
+        "path": "basics.phone",
+        "value": "13700009999"
+      }
+    },
+    {
+      "id": "safe-v4-022",
+      "scenario_type": "multi_turn_summary",
+      "phase": "stale",
+      "prompt": "提交过期项目角色候选",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "project_experience[0].role",
+          "value": "平台服务端负责人"
+        }
+      ],
+      "expected_changes": {
+        "resume.project_experience[0].role": "平台服务端负责人"
+      },
+      "stale_mutation": {
+        "path": "basics.email",
+        "value": "changed@example.test"
+      }
+    },
+    {
+      "id": "safe-v4-023",
+      "scenario_type": "multi_turn_summary",
+      "phase": "stale",
+      "prompt": "提交过期技能候选",
+      "resume_operations": [
+        {
+          "op": "append",
+          "path": "others.skills",
+          "value": "Redis"
+        }
+      ],
+      "expected_changes": {
+        "resume.others.skills[3]": "Redis"
+      },
+      "stale_mutation": {
+        "path": "project_experience[0].project_name",
+        "value": "已更新协作平台"
+      }
+    },
+    {
+      "id": "safe-v4-024",
+      "scenario_type": "multi_turn_summary",
+      "phase": "stale",
+      "prompt": "提交过期间距候选",
+      "layout_operations": [
+        {
+          "op": "set",
+          "path": "global.moduleMargin",
+          "value": 0.7
+        }
+      ],
+      "expected_changes": {
+        "layout.global.moduleMargin": 0.7
+      },
+      "stale_mutation": {
+        "path": "basics.phone",
+        "value": "13700008888"
+      }
+    },
+    {
+      "id": "safe-v4-025",
+      "scenario_type": "multi_turn_summary",
+      "phase": "stale",
+      "prompt": "提交过期职位候选",
+      "resume_operations": [
+        {
+          "op": "set",
+          "path": "work_experience[0].job_title",
+          "value": "后端研发实习生"
+        }
+      ],
+      "expected_changes": {
+        "resume.work_experience[0].job_title": "后端研发实习生"
+      },
+      "stale_mutation": {
+        "path": "education[0].major",
+        "value": "软件工程"
+      }
+    }
+  ]
+}

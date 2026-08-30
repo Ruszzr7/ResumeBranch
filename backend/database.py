@@ -1147,7 +1147,10 @@ def undo_latest_resume_revision(db, user_id: int, task_id: str) -> tuple[str, di
     if not revision:
         return "no_revision", None, None
     current_data = normalize_resume_data(task.resume_data or {})
-    if resume_digest(current_data) != resume_digest(revision.after_data or {}):
+    # Stored revisions may predate removal of empty experience-level ``details``.
+    # Normalize both sides before comparing so legacy test snapshots remain undoable
+    # without retaining the deprecated field in the active data contract.
+    if resume_digest(current_data) != resume_digest(normalize_resume_data(revision.after_data or {})):
         return "conflict", None, None
     current_layout = normalize_layout_config(task.layout_config)
     if revision.after_layout is not None and current_layout != normalize_layout_config(revision.after_layout):

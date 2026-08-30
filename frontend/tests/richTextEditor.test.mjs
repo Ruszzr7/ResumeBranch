@@ -111,6 +111,8 @@ test('work and project semantic labels use the same inline bold editor and hide 
   assert.ok(appSource.includes('v-model="work._dutiesLabel"'))
   assert.ok(appSource.includes('v-model="proj._introLabel"'))
   assert.ok(appSource.includes('v-model="proj._techStackLabel"'))
+  assert.ok(appSource.includes("_introLabel: '**工作简介**'"))
+  assert.ok(appSource.includes("_dutiesLabel: '**工作职责**'"))
   assert.ok(appSource.includes("_introLabel: '**项目简介**'"))
   assert.equal(appSource.includes('简介标签</label>'), false)
   assert.equal(appSource.includes('_introLabelBold = !'), false)

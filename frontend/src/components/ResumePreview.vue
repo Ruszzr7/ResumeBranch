@@ -141,17 +141,10 @@ const moduleOrder = name => {
 const hiddenBasicField = field => moduleLayout('basics').hiddenFields?.includes(field)
 const workSections = computed(() => {
   const make = (id, fallback) => ({ id, title: displayTitle(id, fallback), entries: workEntries(id) })
-  if (layout.value.global.splitWorkExperience) {
-    return [
-      make('work_experience', props.lang === 'en' ? 'Work Experience' : '工作经历'),
-      make('internship_experience', props.lang === 'en' ? 'Internship Experience' : '实习经历')
-    ].filter(section => !hiddenSection(section) && section.entries.length)
-  }
   return hiddenSection('work_experience')
     ? []
     : [make('work_experience', t.value.workExperience)].filter(section => section.entries.length)
 })
-const workTypePrefix = sectionId => sectionId === 'internship_experience' ? 'internship' : 'work'
 const visibleOtherFields = computed(() => (moduleLayout('others').fieldOrder || [])
   .filter(field => field !== 'skills'
     && !moduleLayout('others').hiddenFields?.includes(field)
@@ -299,7 +292,7 @@ function academicMetrics(item) {
 }
 
 function projectContentBlocks(item, experienceKind = 'project') {
-  return normalizeContentBlocks(item?.content_blocks, item?.details, { experienceKind })
+  return normalizeContentBlocks(item?.content_blocks, { experienceKind })
     .filter(block => resolveContentBlockFlow(block).visible)
 }
 
@@ -348,18 +341,17 @@ function visibleComponentRows(moduleId, excluded = []) {
 }
 
 function componentRowStyle(row, moduleId) {
-  const isCompactEducationHeader = moduleId === 'education'
-    && moduleLayout('education').preset === 'compact'
+  const isCurrentEducationHeader = moduleId === 'education'
     && row.cells.length === 3
     && row.cells[0]?.components?.includes('school')
     && row.cells[1]?.components?.some(component => ['degree', 'major', 'metrics'].includes(component))
     && row.cells[2]?.components?.includes('date')
   const width = cell => cell.width === 'content' ? 'max-content' : 'minmax(0, 1fr)'
   return {
-    gridTemplateColumns: isCompactEducationHeader
+    gridTemplateColumns: isCurrentEducationHeader
       ? 'var(--education-compact-side-column) var(--education-middle-column) var(--education-compact-side-column)'
       : row.cells.map(width).join(' '),
-    gap: isCompactEducationHeader ? 0 : '0.3em',
+    gap: isCurrentEducationHeader ? 0 : '0.3em',
     marginBottom: `${layoutTokens.value.modules?.[moduleId]?.rowSpacingPt || 0}pt`
   }
 }
@@ -381,9 +373,7 @@ function educationComponentText(item, component) {
   if (component === 'degree') return item?.degree || ''
   if (component === 'major') return item?.major || ''
   if (component === 'metrics') {
-    return moduleLayout('education').preset === 'compact'
-      ? compactAcademicMetric(item)
-      : joinInlineWithInheritedSeparator(academicMetrics(item), ' · ')
+    return compactAcademicMetric(item)
   }
   if (component === 'date') return dateRangeText(item)
   return ''
@@ -505,7 +495,7 @@ const emit = defineEmits(['open-jd-dialog', 'open-resume-edit', 'open-resume-imp
 const SECTION_LABELS = {
   education: '教育经历', skills: '专业技能', research_interests: '研究方向', honors: '主要荣誉',
   publications: '论文',
-  work_experience: '工作经历', internship_experience: '实习经历', project_experience: '项目经历',
+  work_experience: '工作经历', project_experience: '项目经历',
   custom_sections: '自定义栏目', others: '证书与语言', self_evaluation: '自我评价'
 }
 const isEducationChildSection = section => section !== 'education' && sectionMergedIntoEducation(section)
@@ -522,16 +512,7 @@ const sectionHasContent = section => {
   if (section === 'research_interests') return hasResumeListContent(data.research_interests)
   if (section === 'honors') return hasResumeListContent(data.honors)
   if (section === 'publications') return hasResumeListContent(data.publications)
-  if (section === 'work_experience') {
-    const entries = data.work_experience || []
-    return layout.value.global.splitWorkExperience
-      ? entries.some(item => !/实习|intern/i.test(String(item?.job_type || '')))
-      : entries.length > 0
-  }
-  if (section === 'internship_experience') {
-    return layout.value.global.splitWorkExperience
-      && (data.work_experience || []).some(item => /实习|intern/i.test(String(item?.job_type || '')))
-  }
+  if (section === 'work_experience') return (data.work_experience || []).length > 0
   if (section === 'project_experience') return hasResumeListContent(data.project_experience || data.projects)
   if (section === 'custom_sections') {
     return (data.custom_sections || []).some(item => String(item?.title || '').trim() && hasResumeListContent(item?.items))
@@ -562,7 +543,8 @@ function sectionLabel(section) {
   if (customIndex !== null) {
     return plainInlineText(props.data?.custom_sections?.[customIndex]?.title || `自定义栏目 ${customIndex + 1}`)
   }
-  return SECTION_LABELS[section] || ''
+  const fallback = SECTION_LABELS[section] || ''
+  return fallback ? displayTitleText(section, fallback) : ''
 }
 
 function editableSectionPlacement(section) {
@@ -578,6 +560,7 @@ function setEditableSectionPlacement(section, value) {
 
 function openSectionSettingsDialog() {
   if (isSavingSectionOrder.value || isSavingFontSizes.value) return
+  closeSpacingDialog()
   closeSectionOrderDialog()
   closeFontSizeDialog()
   sectionSettingsDraft.value = normalizeLayoutConfig(layout.value)
@@ -671,6 +654,7 @@ function moveSection(section, direction) {
 
 function openSectionOrderDialog() {
   if (isSavingFontSizes.value || isSavingSectionSettings.value) return
+  closeSpacingDialog()
   closeFontSizeDialog()
   closeSectionSettingsDialog()
   closeToolbarMenu()
@@ -770,6 +754,7 @@ const fontSizeSaveError = ref('')
 const overflowBeyondPageLimit = ref(false)
 const pageBreakBefore = ref('')
 const spacingSnapshot = ref(null)
+const showSpacingDialog = ref(false)
 
 // Keep the exact browser pagination/style payload used by document export
 // available to visual analysis. Without this, the snapshot renderer falls
@@ -842,7 +827,7 @@ async function migrateLegacyLayoutSettings() {
 let layoutSaveTimer = null
 let syncingLayoutProps = false
 function saveLayoutSettings() {
-  if (!props.taskId || syncingLayoutProps || activeToolbarMenu.value === 'layout') return
+  if (!props.taskId || syncingLayoutProps || showSpacingDialog.value) return
   clearTimeout(layoutSaveTimer)
   layoutSaveTimer = setTimeout(async () => {
     const candidate = normalizeLayoutConfig(layout.value)
@@ -893,6 +878,7 @@ function contentBlockClasses(block) {
 
 function openFontSizeDialog() {
   if (isSavingSectionOrder.value || isSavingSectionSettings.value) return
+  closeSpacingDialog()
   closeSectionOrderDialog()
   closeSectionSettingsDialog()
   fontSizeDraft.value = { ...fontSizes.value }
@@ -958,9 +944,36 @@ function resetSpacingDraft() {
   lineHeight.value = DEFAULT_STYLE.lineHeight
 }
 
+function openSpacingDialog() {
+  if (isSavingSectionOrder.value || isSavingFontSizes.value || isSavingSectionSettings.value) return
+  closeFontSizeDialog()
+  closeSectionOrderDialog()
+  closeSectionSettingsDialog()
+  spacingSnapshot.value = {
+    marginVertical: marginVertical.value,
+    marginHorizontal: marginHorizontal.value,
+    moduleMargin: moduleMargin.value,
+    lineHeight: lineHeight.value
+  }
+  closeToolbarMenu()
+  activateResumeSettingsDialog('spacing')
+  showSpacingDialog.value = true
+}
+
+function closeSpacingDialog() {
+  if (spacingSnapshot.value) {
+    marginVertical.value = spacingSnapshot.value.marginVertical
+    marginHorizontal.value = spacingSnapshot.value.marginHorizontal
+    moduleMargin.value = spacingSnapshot.value.moduleMargin
+    lineHeight.value = spacingSnapshot.value.lineHeight
+  }
+  spacingSnapshot.value = null
+  showSpacingDialog.value = false
+}
+
 function confirmSpacingSettings() {
   spacingSnapshot.value = null
-  activeToolbarMenu.value = null
+  showSpacingDialog.value = false
   saveLayoutSettings()
 }
 
@@ -972,25 +985,10 @@ function toggleToolbarMenu(menu, event) {
     return
   }
   closeToolbarMenu()
-  if (menu === 'layout') {
-    spacingSnapshot.value = {
-      marginVertical: marginVertical.value,
-      marginHorizontal: marginHorizontal.value,
-      moduleMargin: moduleMargin.value,
-      lineHeight: lineHeight.value
-    }
-  }
   activeToolbarMenu.value = menu
 }
 
 function closeToolbarMenu() {
-  if (activeToolbarMenu.value === 'layout' && spacingSnapshot.value) {
-    marginVertical.value = spacingSnapshot.value.marginVertical
-    marginHorizontal.value = spacingSnapshot.value.marginHorizontal
-    moduleMargin.value = spacingSnapshot.value.moduleMargin
-    lineHeight.value = spacingSnapshot.value.lineHeight
-  }
-  spacingSnapshot.value = null
   activeToolbarMenu.value = null
 }
 
@@ -1168,7 +1166,6 @@ const pageStyles = computed(() => ({
   '--list-text-indent': `${layoutTokens.value.listTextIndentPt}pt`,
   '--module-indent': '0pt',
   '--list-marker-gap': `${layoutTokens.value.listMarkerGapPt}pt`,
-  '--education-side-column': `${layoutTokens.value.educationSideColumnMm}mm`,
   '--education-compact-side-column': `${educationColumnWidths.value.sideMm}mm`,
   '--education-middle-column': `${educationColumnWidths.value.middleMm}mm`,
   '--photo-width': `${photoRenderHeightMm.value * photoAspectRatio.value}mm`,
@@ -1284,13 +1281,9 @@ function applyAutomaticPagination(elementHeights, capacity) {
   emitCurrentRenderStyle()
 }
 
-const isInternship = item => /实习|intern/i.test(String(item?.job_type || ''))
 const workEntries = section => (props.data?.work_experience || [])
   .map((item, dataIndex) => ({ item, dataIndex }))
-  .filter(({ item }) => {
-    if (!layout.value.global.splitWorkExperience) return section === 'work_experience'
-    return section === 'internship_experience' ? isInternship(item) : !isInternship(item)
-  })
+  .filter(() => section === 'work_experience')
 
 // 扁平化的所有可分页项目，顺序由 layout_config 控制。
 const allItems = computed(() => {
@@ -1329,14 +1322,13 @@ const allItems = computed(() => {
       push({ type: 'publications-title', groupId: 'publications', breakKey: 'publications', isSectionTitle: true })
       moduleListValues('publications', props.data.publications).forEach((_, i) => push({ type: 'publications-item', dataIndex: i, groupId: 'publications', breakKey: 'publications' }))
     }
-    if ((section === 'work_experience' || section === 'internship_experience')) {
+    if (section === 'work_experience') {
       const entries = workEntries(section)
       if (entries.length) {
-        const prefix = section === 'internship_experience' ? 'internship' : 'work'
-        push({ type: `${prefix}-title`, groupId: `${section}:${entries[0].dataIndex}`, breakKey: `${section}:${entries[0].dataIndex}`, isSectionTitle: true })
+        push({ type: 'work-title', groupId: `${section}:${entries[0].dataIndex}`, breakKey: `${section}:${entries[0].dataIndex}`, isSectionTitle: true })
         entries.forEach(({ item, dataIndex }) => {
-          push({ type: `${prefix}-item`, dataIndex, groupId: `${section}:${dataIndex}`, breakKey: `${section}:${dataIndex}` })
-          if (projectContentBlocks(item, 'work').length) push({ type: `${prefix}-details`, dataIndex, groupId: `${section}:${dataIndex}`, breakKey: `${section}:${dataIndex}` })
+          push({ type: 'work-item', dataIndex, groupId: `${section}:${dataIndex}`, breakKey: `${section}:${dataIndex}` })
+          if (projectContentBlocks(item, 'work').length) push({ type: 'work-details', dataIndex, groupId: `${section}:${dataIndex}`, breakKey: `${section}:${dataIndex}` })
         })
       }
     }
@@ -1769,6 +1761,7 @@ function activateResumeSettingsDialog(dialogId) {
 
 function handleResumeSettingsDialogOpen(event) {
   const activeDialog = String(event.detail || '')
+  if (activeDialog !== 'spacing' && showSpacingDialog.value) closeSpacingDialog()
   if (activeDialog !== 'section-order' && showSectionOrderDialog.value) closeSectionOrderDialog()
   if (activeDialog !== 'font-size' && showFontSizeDialog.value) closeFontSizeDialog()
   if (activeDialog !== 'section-settings' && showSectionSettingsDialog.value) closeSectionSettingsDialog()
@@ -1934,32 +1927,24 @@ const getItemIndex = (type, dataIndex) => {
             </button>
             <div v-if="activeToolbarMenu === 'layout'" class="compact-popover layout-popover" @click.stop>
               <div class="compact-popover-title">排版设置</div>
-              <section class="layout-settings-section layout-spacing-section">
-                <div class="layout-settings-heading">间距</div>
-                <div class="auto-page-hint">页数自动识别，最多两页</div>
-                <label class="compact-control">
-                  <span>上下页边距 <strong>{{ marginVertical }}mm</strong></span>
-                  <input type="range" v-model.number="marginVertical" min="3" max="12" step="0.25" class="slider">
-                </label>
-                <label class="compact-control">
-                  <span>左右页边距 <strong>{{ marginHorizontal }}mm</strong></span>
-                  <input type="range" v-model.number="marginHorizontal" min="3" max="12" step="0.25" class="slider">
-                </label>
-                <label class="compact-control">
-                  <span>模块间距 <strong>{{ moduleMargin }}rem</strong></span>
-                  <input type="range" v-model.number="moduleMargin" min="0.1" max="1" step="0.1" class="slider">
-                </label>
-                <label class="compact-control">
-                  <span>行间距 <strong>{{ lineHeight }}</strong></span>
-                  <input type="range" v-model.number="lineHeight" min="1" max="1.8" step="0.05" class="slider">
-                </label>
-                <div class="layout-spacing-actions">
-                  <button type="button" @click="resetSpacingDraft">恢复默认</button>
-                  <button type="button" class="primary" @click="confirmSpacingSettings">确认</button>
-                </div>
-              </section>
-              <button type="button" class="layout-guide-btn font-size-open-btn" aria-haspopup="dialog" :aria-label="`文字大小，当前正文字号 ${fontSizes.body}pt`" @click="openFontSizeDialog">文字大小</button>
-              <button class="layout-guide-btn section-order-open-btn" @click="openSectionOrderDialog">模块顺序</button>
+              <button type="button" class="compact-menu-item" aria-haspopup="dialog" @click="openSpacingDialog">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M7 14v6"/>
+                </svg>
+                <span><strong>间距</strong><small>调整页边距、模块与行间距</small></span>
+              </button>
+              <button type="button" class="compact-menu-item" aria-haspopup="dialog" :aria-label="`文字大小，当前正文字号 ${fontSizes.body}pt`" @click="openFontSizeDialog">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path d="M4 6V4h16v2M9 20h6M12 4v16"/>
+                </svg>
+                <span><strong>文字大小</strong><small>调整各类简历文字字号</small></span>
+              </button>
+              <button type="button" class="compact-menu-item" aria-haspopup="dialog" @click="openSectionOrderDialog">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/>
+                </svg>
+                <span><strong>模块顺序</strong><small>调整当前已有模块的排列顺序</small></span>
+              </button>
             </div>
           </div>
 
@@ -1984,6 +1969,18 @@ const getItemIndex = (type, dataIndex) => {
               <path d="M8 13h8M8 17h5"/>
             </svg>
             <span>{{ showSourceDocument ? '当前版' : '原版' }}</span>
+          </button>
+          <button
+            v-if="localMode"
+            class="compact-toolbar-btn export-folder-btn"
+            :disabled="isOpeningExportFolder"
+            aria-label="打开导出文件夹"
+            @click="openExportFolder"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/>
+            </svg>
+            <span>{{ isOpeningExportFolder ? '正在打开…' : '导出文件夹' }}</span>
           </button>
           </div>
 
@@ -2029,7 +2026,7 @@ const getItemIndex = (type, dataIndex) => {
       <!-- 隐藏的完整内容（用于测量） -->
       <div ref="contentRef" class="content-source" :style="[pageStyles, pagePaddingStyle]">
       <!-- 个人信息 -->
-      <div v-if="data.basics" class="pageable-item personal-info" :class="[`basics-${moduleLayout('basics').preset}`, `contact-${moduleLayout('basics').contactLayout}`, { 'module-highlight': highlightedModule === 'basics', 'has-photo': data.basics.photo && !hiddenBasicField('photo') }]" data-module="basics">
+      <div v-if="data.basics" class="pageable-item personal-info" :class="{ 'module-highlight': highlightedModule === 'basics', 'has-photo': data.basics.photo && !hiddenBasicField('photo') }" data-module="basics">
         <div class="module-component-rows basics-component-rows">
           <div v-for="(row, rowIndex) in visibleComponentRows('basics')" :key="rowIndex" class="module-component-row" :style="componentRowStyle(row, 'basics')">
             <div v-for="(cell, cellIndex) in row.cells" :key="cellIndex" class="module-component-cell" :class="`flow-${cell.flow}`" :style="componentCellStyle(cell)">
@@ -2045,7 +2042,7 @@ const getItemIndex = (type, dataIndex) => {
       <!-- {{ t.education }} -->
       <template v-if="data.education && data.education.length && !hiddenSection('education')">
         <h2 class="pageable-item section-title" :class="[`title-${moduleTitleStyle('education')}`, { 'title-highlight': highlightedModule === 'education' }]" :style="moduleOrder('education')" data-module="education" v-html="formatText(displayTitle('education', t.education))"></h2>
-        <div v-for="(item, idx) in data.education" :key="idx" class="pageable-item education-item" :class="`preset-${moduleLayout('education').preset}`" :style="moduleOrder('education')">
+        <div v-for="(item, idx) in data.education" :key="idx" class="pageable-item education-item" :style="moduleOrder('education')">
           <div class="module-component-rows">
             <div v-for="(row, rowIndex) in visibleComponentRows('education', ['theses'])" :key="rowIndex" class="module-component-row" :style="componentRowStyle(row, 'education')">
               <div v-for="(cell, cellIndex) in row.cells" :key="cellIndex" class="module-component-cell" :class="`flow-${cell.flow}`" :style="componentCellStyle(cell)">
@@ -2092,7 +2089,7 @@ const getItemIndex = (type, dataIndex) => {
       <template v-for="section in workSections" :key="`source-${section.id}`">
         <h2 class="pageable-item section-title" :class="[`title-${moduleTitleStyle(section.id)}`, { 'title-highlight': highlightedModule === 'work_experience' }]" :style="moduleOrder(section.id)" :data-module="section.id" v-html="formatText(section.title)"></h2>
         <template v-for="entry in section.entries" :key="`source-${section.id}-${entry.dataIndex}`">
-          <div class="pageable-item work-item" :class="[`preset-${moduleLayout(section.id).preset}`, `date-${moduleLayout(section.id).datePosition}`]" :style="moduleOrder(section.id)">
+          <div class="pageable-item work-item" :class="`date-${moduleLayout(section.id).datePosition}`" :style="moduleOrder(section.id)">
             <div class="module-component-rows">
               <div v-for="(row, rowIndex) in visibleComponentRows(section.id, ['content'])" :key="rowIndex" class="module-component-row" :style="componentRowStyle(row, section.id)">
                 <div v-for="(cell, cellIndex) in row.cells" :key="cellIndex" class="module-component-cell" :class="`flow-${cell.flow}`" :style="componentCellStyle(cell)">
@@ -2122,7 +2119,7 @@ const getItemIndex = (type, dataIndex) => {
       <template v-if="(data.project_experience || data.projects) && (data.project_experience || data.projects).length && !hiddenSection('project_experience')">
         <h2 class="pageable-item section-title" :class="[`title-${moduleTitleStyle('project_experience')}`, { 'title-highlight': highlightedModule === 'project_experience' }]" :style="moduleOrder('project_experience')" data-module="project_experience" v-html="formatText(displayTitle('project_experience', t.projectExperience))"></h2>
         <template v-for="(item, idx) in (data.project_experience || data.projects)" :key="'source-project-'+idx">
-          <div class="pageable-item project-item" :class="[`preset-${moduleLayout('project_experience').preset}`, `date-${moduleLayout('project_experience').datePosition}`]" :style="moduleOrder('project_experience')">
+          <div class="pageable-item project-item" :class="`date-${moduleLayout('project_experience').datePosition}`" :style="moduleOrder('project_experience')">
             <div class="module-component-rows">
               <div v-for="(row, rowIndex) in visibleComponentRows('project_experience', ['content'])" :key="rowIndex" class="module-component-row" :style="componentRowStyle(row, 'project_experience')">
                 <div v-for="(cell, cellIndex) in row.cells" :key="cellIndex" class="module-component-cell" :class="`flow-${cell.flow}`" :style="componentCellStyle(cell)">
@@ -2158,7 +2155,7 @@ const getItemIndex = (type, dataIndex) => {
       <!-- 其他 -->
       <template v-if="data.others && visibleOtherFields.length && !hiddenSection('others') && !sectionMergedIntoEducation('others')">
         <h2 class="pageable-item section-title" :class="[`title-${moduleTitleStyle('others')}`, { 'title-highlight': highlightedModule === 'others' }]" :style="moduleOrder('others')" data-module="others" v-html="formatText(displayTitle('others', props.lang === 'en' ? 'Certificates & Languages' : '证书与语言'))"></h2>
-        <div class="pageable-item cert-lang-line" :class="`others-${moduleLayout('others').preset}`" :style="moduleOrder('others')">
+        <div class="pageable-item cert-lang-line" :style="moduleOrder('others')">
           <div class="module-component-rows">
             <div v-for="(row, rowIndex) in visibleOtherComponentRows()" :key="rowIndex" class="module-component-row" :style="componentRowStyle(row, 'others')">
               <div v-for="(cell, cellIndex) in row.cells" :key="cellIndex" class="module-component-cell" :class="`flow-${cell.flow}`" :style="componentCellStyle(cell)">
@@ -2345,7 +2342,7 @@ const getItemIndex = (type, dataIndex) => {
         <div class="page-inner" :style="pagePaddingStyle">
           <div class="page-content" :style="pageStyles">
             <!-- 个人信息 -->
-            <div v-if="data.basics && isItemVisible({index: getItemIndex('basics', 0)}, page - 1)" class="personal-info" :class="[`basics-${moduleLayout('basics').preset}`, `contact-${moduleLayout('basics').contactLayout}`, { 'module-highlight': highlightedModule === 'basics', 'has-photo': data.basics.photo && !hiddenBasicField('photo') }]" data-module="basics">
+            <div v-if="data.basics && isItemVisible({index: getItemIndex('basics', 0)}, page - 1)" class="personal-info" :class="{ 'module-highlight': highlightedModule === 'basics', 'has-photo': data.basics.photo && !hiddenBasicField('photo') }" data-module="basics">
               <div class="module-component-rows basics-component-rows">
                 <div v-for="(row, rowIndex) in visibleComponentRows('basics')" :key="rowIndex" class="module-component-row" :style="componentRowStyle(row, 'basics')">
                   <div v-for="(cell, cellIndex) in row.cells" :key="cellIndex" class="module-component-cell" :class="`flow-${cell.flow}`" :style="componentCellStyle(cell)">
@@ -2362,11 +2359,11 @@ const getItemIndex = (type, dataIndex) => {
             <template v-if="data.education && data.education.length && !hiddenSection('education')">
               <h2 v-if="isItemVisible({index: getItemIndex('education-title', 0)}, page - 1)" class="section-title" :class="[`title-${moduleTitleStyle('education')}`, { 'title-highlight': highlightedModule === 'education' }]" :style="moduleOrder('education')" data-module="education" v-html="formatText(displayTitle('education', t.education))"></h2>
               <template v-for="(item, idx) in data.education">
-                <div v-if="isItemVisible({index: getItemIndex('education-item', idx)}, page - 1)" :key="'edu-'+idx" class="education-item" :class="[`preset-${moduleLayout('education').preset}`, { 'content-highlight': highlightedModule === 'education' }]" :style="moduleOrder('education')">
+                <div v-if="isItemVisible({index: getItemIndex('education-item', idx)}, page - 1)" :key="'edu-'+idx" class="education-item" :class="{ 'content-highlight': highlightedModule === 'education' }" :style="moduleOrder('education')">
                   <div class="module-component-rows">
                     <div v-for="(row, rowIndex) in visibleComponentRows('education', ['theses'])" :key="rowIndex" class="module-component-row" :style="componentRowStyle(row, 'education')">
                       <div v-for="(cell, cellIndex) in row.cells" :key="cellIndex" class="module-component-cell" :class="`flow-${cell.flow}`" :style="componentCellStyle(cell)">
-                        <span v-for="component in cell.components" v-show="educationComponentText(item, component)" :key="component" class="module-component" :class="[`component-${component}`, { school: component === 'school', 'graduation-date': component === 'date', 'component-explicit-bold': componentIsFullyBold(educationComponentText(item, component)), 'component-leading-bold': component === 'metrics' && moduleLayout('education').preset === 'compact' && isCompactAcademicMetricLeadingBold(item, moduleLayout('education').hiddenMetrics || []) }]" v-html="formatText(educationComponentText(item, component))"></span>
+                        <span v-for="component in cell.components" v-show="educationComponentText(item, component)" :key="component" class="module-component" :class="[`component-${component}`, { school: component === 'school', 'graduation-date': component === 'date', 'component-explicit-bold': componentIsFullyBold(educationComponentText(item, component)), 'component-leading-bold': component === 'metrics' && isCompactAcademicMetricLeadingBold(item, moduleLayout('education').hiddenMetrics || []) }]" v-html="formatText(educationComponentText(item, component))"></span>
                       </div>
                     </div>
                   </div>
@@ -2407,9 +2404,9 @@ const getItemIndex = (type, dataIndex) => {
 
             <!-- {{ t.workExperience }} -->
             <template v-for="section in workSections" :key="`page-${page}-${section.id}`">
-              <h2 v-if="isItemVisible({index: getItemIndex(`${workTypePrefix(section.id)}-title`, 0)}, page - 1)" class="section-title" :class="[`title-${moduleTitleStyle(section.id)}`, { 'title-highlight': highlightedModule === 'work_experience' }]" :style="moduleOrder(section.id)" :data-module="section.id" v-html="formatText(section.title)"></h2>
+              <h2 v-if="isItemVisible({index: getItemIndex('work-title', 0)}, page - 1)" class="section-title" :class="[`title-${moduleTitleStyle(section.id)}`, { 'title-highlight': highlightedModule === 'work_experience' }]" :style="moduleOrder(section.id)" :data-module="section.id" v-html="formatText(section.title)"></h2>
               <template v-for="entry in section.entries" :key="`${section.id}-${entry.dataIndex}`">
-                <div v-if="isItemVisible({index: getItemIndex(`${workTypePrefix(section.id)}-item`, entry.dataIndex)}, page - 1)" class="work-item" :class="[`preset-${moduleLayout(section.id).preset}`, `date-${moduleLayout(section.id).datePosition}`, { 'content-highlight': highlightedModule === 'work_experience' }]" :style="moduleOrder(section.id)">
+                <div v-if="isItemVisible({index: getItemIndex('work-item', entry.dataIndex)}, page - 1)" class="work-item" :class="[`date-${moduleLayout(section.id).datePosition}`, { 'content-highlight': highlightedModule === 'work_experience' }]" :style="moduleOrder(section.id)">
                   <div class="module-component-rows">
                     <div v-for="(row, rowIndex) in visibleComponentRows(section.id, ['content'])" :key="rowIndex" class="module-component-row" :style="componentRowStyle(row, section.id)">
                       <div v-for="(cell, cellIndex) in row.cells" :key="cellIndex" class="module-component-cell" :class="`flow-${cell.flow}`" :style="componentCellStyle(cell)">
@@ -2419,7 +2416,7 @@ const getItemIndex = (type, dataIndex) => {
                   </div>
                 </div>
                 <!-- 工作详情（独立分页项） -->
-                <div v-if="projectContentBlocks(entry.item, 'work').length && isItemVisible({index: getItemIndex(`${workTypePrefix(section.id)}-details`, entry.dataIndex)}, page - 1)" class="work-details" :class="`details-${moduleLayout(section.id).detailsStyle}`" :style="moduleOrder(section.id)">
+                <div v-if="projectContentBlocks(entry.item, 'work').length && isItemVisible({index: getItemIndex('work-details', entry.dataIndex)}, page - 1)" class="work-details" :class="`details-${moduleLayout(section.id).detailsStyle}`" :style="moduleOrder(section.id)">
                   <div v-for="(block, bIdx) in projectContentBlocks(entry.item, 'work')" :key="bIdx" class="project-content-block" :class="contentBlockClasses(block)">
                     <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(paragraphText(block.text))"></span></p>
                     <template v-else>
@@ -2440,7 +2437,7 @@ const getItemIndex = (type, dataIndex) => {
             <template v-if="(data.project_experience || data.projects) && (data.project_experience || data.projects).length && !hiddenSection('project_experience')">
               <h2 v-if="isItemVisible({index: getItemIndex('projects-title', 0)}, page - 1)" class="section-title" :class="[`title-${moduleTitleStyle('project_experience')}`, { 'title-highlight': highlightedModule === 'project_experience' }]" :style="moduleOrder('project_experience')" data-module="project_experience" v-html="formatText(displayTitle('project_experience', t.projectExperience))"></h2>
               <template v-for="(item, idx) in (data.project_experience || data.projects)">
-                <div v-if="isItemVisible({index: getItemIndex('project-item', idx)}, page - 1)" :key="'proj-'+idx" class="project-item" :class="[`preset-${moduleLayout('project_experience').preset}`, `date-${moduleLayout('project_experience').datePosition}`, { 'content-highlight': highlightedModule === 'project_experience' }]" :style="moduleOrder('project_experience')">
+                <div v-if="isItemVisible({index: getItemIndex('project-item', idx)}, page - 1)" :key="'proj-'+idx" class="project-item" :class="[`date-${moduleLayout('project_experience').datePosition}`, { 'content-highlight': highlightedModule === 'project_experience' }]" :style="moduleOrder('project_experience')">
                   <div class="module-component-rows">
                     <div v-for="(row, rowIndex) in visibleComponentRows('project_experience', ['content'])" :key="rowIndex" class="module-component-row" :style="componentRowStyle(row, 'project_experience')">
                       <div v-for="(cell, cellIndex) in row.cells" :key="cellIndex" class="module-component-cell" :class="`flow-${cell.flow}`" :style="componentCellStyle(cell)">
@@ -2481,7 +2478,7 @@ const getItemIndex = (type, dataIndex) => {
                    elements share one semantic pagination unit, so the value
                    visibility follows the heading index instead of being
                    independently rounded into the adjacent page. -->
-              <div v-if="isItemVisible({index: getItemIndex('others-title', 0)}, page - 1)" class="cert-lang-line" :class="`others-${moduleLayout('others').preset}`" :style="moduleOrder('others')">
+              <div v-if="isItemVisible({index: getItemIndex('others-title', 0)}, page - 1)" class="cert-lang-line" :style="moduleOrder('others')">
                 <div class="module-component-rows">
                   <div v-for="(row, rowIndex) in visibleOtherComponentRows()" :key="rowIndex" class="module-component-row" :style="componentRowStyle(row, 'others')">
                     <div v-for="(cell, cellIndex) in row.cells" :key="cellIndex" class="module-component-cell" :class="`flow-${cell.flow}`" :style="componentCellStyle(cell)">
@@ -2530,6 +2527,42 @@ const getItemIndex = (type, dataIndex) => {
         </svg>
         <span>编辑简历</span>
       </button>
+    </div>
+  </div>
+
+  <div v-if="showSpacingDialog" class="success-dialog-overlay spacing-overlay">
+    <div class="spacing-dialog" role="dialog" aria-modal="true" aria-labelledby="spacing-title">
+      <div class="layout-guide-header">
+        <div>
+          <h3 id="spacing-title">间距</h3>
+          <p>修改会先显示在右侧预览，点击确认后才保存。</p>
+        </div>
+        <button class="layout-guide-close" aria-label="关闭间距设置" @click="closeSpacingDialog">×</button>
+      </div>
+      <div class="spacing-dialog-body">
+        <div class="auto-page-hint">页数自动识别，最多两页</div>
+        <label class="compact-control">
+          <span>上下页边距 <strong>{{ marginVertical }}mm</strong></span>
+          <input type="range" v-model.number="marginVertical" min="3" max="12" step="0.25" class="slider">
+        </label>
+        <label class="compact-control">
+          <span>左右页边距 <strong>{{ marginHorizontal }}mm</strong></span>
+          <input type="range" v-model.number="marginHorizontal" min="3" max="12" step="0.25" class="slider">
+        </label>
+        <label class="compact-control">
+          <span>模块间距 <strong>{{ moduleMargin }}rem</strong></span>
+          <input type="range" v-model.number="moduleMargin" min="0.1" max="1" step="0.1" class="slider">
+        </label>
+        <label class="compact-control">
+          <span>行间距 <strong>{{ lineHeight }}</strong></span>
+          <input type="range" v-model.number="lineHeight" min="1" max="1.8" step="0.05" class="slider">
+        </label>
+      </div>
+      <div class="spacing-dialog-actions">
+        <button type="button" class="settings-dialog-action" @click="resetSpacingDraft">恢复默认</button>
+        <span class="font-size-action-spacer"></span>
+        <button type="button" class="settings-dialog-action primary" @click="confirmSpacingSettings">确认</button>
+      </div>
     </div>
   </div>
 
@@ -2981,27 +3014,6 @@ const getItemIndex = (type, dataIndex) => {
   overflow-y: auto;
 }
 
-.layout-settings-section {
-  margin-top: 9px;
-  padding: 10px;
-  background: rgba(255, 255, 255, 0.035);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  border-radius: 9px;
-}
-.layout-settings-heading { color: #d9dce4; font-size: 0.7rem; font-weight: 600; }
-.layout-spacing-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin-top: 12px; }
-.layout-spacing-actions button {
-  min-height: 30px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 7px;
-  color: #d8dbe3;
-  background: rgba(255, 255, 255, 0.08);
-  font-size: 0.68rem;
-  cursor: pointer;
-}
-.layout-spacing-actions button.primary { color: #fff; background: #4d6fb8; }
-
 .auto-page-hint {
   margin: 7px 0 10px;
   padding: 6px 8px;
@@ -3069,18 +3081,6 @@ const getItemIndex = (type, dataIndex) => {
   background: rgba(255, 255, 255, 0.11);
 }
 
-.layout-guide-btn {
-  width: 100%;
-  min-height: 30px;
-  margin-top: 7px;
-  border: 0;
-  border-radius: 7px;
-  color: #dce7ff;
-  background: rgba(88, 132, 230, 0.12);
-  font-size: 0.72rem;
-  cursor: pointer;
-}
-.layout-guide-btn:hover { background: rgba(88, 132, 230, 0.2); }
 .section-order-row {
   display: grid;
   grid-template-columns: 18px 1fr auto;
@@ -3108,8 +3108,6 @@ const getItemIndex = (type, dataIndex) => {
   cursor: pointer;
 }
 .section-order-actions button:hover:not(:disabled) { background: rgba(255, 255, 255, 0.1); }
-.section-order-open-btn { margin-top: 7px; }
-
 .compact-zoom-stepper button:disabled {
   opacity: 0.35;
   cursor: default;
@@ -3321,20 +3319,11 @@ const getItemIndex = (type, dataIndex) => {
   color: #111;
 }
 .personal-info {
-  text-align: center;
+  text-align: left;
   position: relative;
   min-height: 0;
   margin-bottom: 0.35em;
 }
-.personal-info.basics-left-aligned { text-align: left; }
-.personal-info.basics-left-aligned .contact-info { justify-content: flex-start; }
-.personal-info.contact-stacked .contact-info { flex-direction: column; gap: 0.1em; }
-.personal-info.contact-inline .contact-info > span + span::before {
-  content: '|';
-  margin-right: 0.5em;
-  color: #333333;
-}
-
 .personal-info .name {
   font-size: var(--name-font-size);
   font-weight: var(--name-font-weight);
@@ -3344,7 +3333,7 @@ const getItemIndex = (type, dataIndex) => {
 
 .contact-info {
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 0.5em;
   flex-wrap: wrap;
   font-size: var(--meta-font-size);
@@ -3364,6 +3353,11 @@ const getItemIndex = (type, dataIndex) => {
   object-fit: cover;
   border-radius: 0;
   border: 0;
+}
+
+.export-folder-btn:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 .photo-container .profile-photo {
   width: var(--photo-width);
@@ -3492,7 +3486,7 @@ const getItemIndex = (type, dataIndex) => {
   overflow-wrap: break-word;
   word-break: break-word;
 }
-.education-item.preset-compact .education-header {
+.education-item .education-header {
   display: grid;
   width: 100%;
   grid-template-columns: var(--education-compact-side-column) var(--education-middle-column) var(--education-compact-side-column);
@@ -3529,25 +3523,12 @@ const getItemIndex = (type, dataIndex) => {
 .education-item .module-component.component-metrics,
 .education-item .module-component.component-date { font-weight: var(--body-font-weight); }
 .module-component.component-role { font-size: var(--meta-font-size); font-weight: var(--meta-font-weight); }
-.education-item.preset-three-column .education-header {
-  display: grid;
-  width: 100%;
-  grid-template-columns: var(--education-side-column) minmax(0, 1fr) var(--education-side-column);
-  column-gap: 0;
-  align-items: baseline;
-}
-.education-item.preset-compact .school-info,
-.education-item.preset-three-column .school-info,
-.education-item.preset-compact .education-middle-column,
-.education-item.preset-three-column .education-middle-column,
-.education-item.preset-compact .education-degree-column,
-.education-item.preset-three-column .education-degree-column,
-.education-item.preset-compact .education-metrics-column,
-.education-item.preset-three-column .education-metrics-column { min-width: 0; }
-.education-item.preset-compact .school-info,
-.education-item.preset-three-column .school-info { grid-column: 1; grid-row: 1; gap: 0.3em; }
-.education-item.preset-compact .education-middle-column,
-.education-item.preset-three-column .education-middle-column {
+.education-item .school-info,
+.education-item .education-middle-column,
+.education-item .education-degree-column,
+.education-item .education-metrics-column { min-width: 0; }
+.education-item .school-info { grid-column: 1; grid-row: 1; gap: 0.3em; }
+.education-item .education-middle-column {
   grid-column: 2;
   grid-row: 1;
   display: flex;
@@ -3557,8 +3538,7 @@ const getItemIndex = (type, dataIndex) => {
   row-gap: 0;
   text-align: left;
 }
-.education-item.preset-compact .graduation-date,
-.education-item.preset-three-column .graduation-date {
+.education-item .graduation-date {
   grid-column: 3;
   grid-row: 1;
   position: static;
@@ -3567,8 +3547,7 @@ const getItemIndex = (type, dataIndex) => {
   margin-right: 0;
   text-align: right;
 }
-.education-item.preset-compact .academic-metrics,
-.education-item.preset-three-column .academic-metrics { margin-top: 0; }
+.education-item .academic-metrics { margin-top: 0; }
 .academic-metrics {
   display: flex;
   flex-wrap: wrap;
@@ -3734,24 +3713,6 @@ const getItemIndex = (type, dataIndex) => {
 .project-item.date-inline .project-header { justify-content: flex-start; }
 .work-item.date-inline .work-period,
 .project-item.date-inline .project-role { margin-left: 0.55em; }
-.others-tags .other-value {
-  display: inline-block;
-  padding: 0.08em 0.45em;
-  margin: 0.1em 0.2em 0.1em 0;
-  border: 1px solid #9ca3af;
-  border-radius: 999px;
-}
-.others-tags .cert-lang-separator { display: none; }
-.others-stacked { display: flex; flex-direction: column; align-items: flex-start; }
-.self-bullets { position: relative; padding-left: var(--list-text-indent); }
-.self-bullets::before {
-  content: '•';
-  position: absolute;
-  left: 0;
-  width: calc(var(--list-text-indent) - var(--list-marker-gap));
-  text-align: center;
-  font-weight: 700;
-}
 .self-eval-item {
   font-size: var(--body-font-size);
   line-height: var(--line-height, 1.6);
@@ -3908,7 +3869,8 @@ const getItemIndex = (type, dataIndex) => {
 }
 
 .layout-guide-overlay { padding: 24px; background: rgba(7, 8, 11, 0.72); }
-.font-size-overlay {
+.font-size-overlay,
+.spacing-overlay {
   right: auto;
   left: 156px;
   width: calc((100vw - 156px) * 0.39);
@@ -3917,7 +3879,8 @@ const getItemIndex = (type, dataIndex) => {
   background: rgba(7, 8, 11, 0.16);
 }
 .inline-label { font-size: var(--label-font-size); }
-.font-size-dialog {
+.font-size-dialog,
+.spacing-dialog {
   width: min(390px, calc(100vw - 40px));
   max-height: calc(100vh - 48px);
   padding: 18px;
@@ -3928,8 +3891,19 @@ const getItemIndex = (type, dataIndex) => {
   background: #25262c;
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
 }
-.font-size-dialog .layout-guide-header h3 { color: #fff; }
-.font-size-dialog .layout-guide-header p { color: #b9bdc8; }
+.font-size-dialog .layout-guide-header h3,
+.spacing-dialog .layout-guide-header h3 { color: #fff; }
+.font-size-dialog .layout-guide-header p,
+.spacing-dialog .layout-guide-header p { color: #b9bdc8; }
+.spacing-dialog-body { margin-top: 14px; }
+.spacing-dialog .compact-control { margin-top: 14px; }
+.spacing-dialog .compact-control > span { font-size: 0.76rem; }
+.spacing-dialog-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 18px;
+}
 .font-size-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4130,7 +4104,8 @@ const getItemIndex = (type, dataIndex) => {
   line-height: 1.4;
 }
 @media (max-width: 820px) {
-  .font-size-overlay {
+  .font-size-overlay,
+  .spacing-overlay {
     right: 0;
     left: 0;
     width: 100%;
@@ -4138,7 +4113,8 @@ const getItemIndex = (type, dataIndex) => {
     padding: 16px;
     background: rgba(7, 8, 11, 0.62);
   }
-  .font-size-dialog { width: min(390px, calc(100vw - 32px)); padding: 18px; overflow-y: auto; }
+  .font-size-dialog,
+  .spacing-dialog { width: min(390px, calc(100vw - 32px)); padding: 18px; overflow-y: auto; }
   .font-size-grid { grid-template-columns: 1fr; }
   .section-order-overlay,
   .section-settings-overlay {
@@ -4156,6 +4132,7 @@ const getItemIndex = (type, dataIndex) => {
   .section-settings-dialog { width: min(390px, calc(100vw - 32px)); height: min(440px, calc(100vh - 48px)); max-height: calc(100vh - 48px); }
 }
 .font-size-dialog,
+.spacing-dialog,
 .section-order-dialog,
 .section-settings-dialog { position: relative; }
 .layout-guide-header { display: flex; justify-content: space-between; gap: 24px; padding-right: 38px; }

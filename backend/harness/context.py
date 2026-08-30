@@ -99,6 +99,29 @@ def _recommendation_data_block(context_metadata: dict | None) -> str:
 <latest_recommendations>
 {escaped}
 </latest_recommendations>
+    """
+
+
+def _edit_intent_data_block(context_metadata: dict | None) -> str:
+    """Expose a small lifecycle hint for an unfinished edit decision."""
+    if not isinstance(context_metadata, dict):
+        return ""
+    state = context_metadata.get("edit_intent_state")
+    if not isinstance(state, dict):
+        return ""
+    status = str(state.get("status") or "").strip().lower()
+    guidance = {
+        "awaiting_tool": "上一轮存在明确但尚未提交给修改技能的修改目标；本轮若用户继续确认同一目标，请重新核对后调用修改技能。",
+        "needs_clarification": "上一轮修改目标仍有未澄清部分；本轮只有在目标、范围和结果明确后才能调用修改技能。",
+        "awaiting_confirmation": "上一轮已经生成修改候选，等待用户确认；不要重复生成候选。",
+    }.get(status)
+    if not guidance:
+        return ""
+    return f"""
+
+【当前修改目标状态（系统数据）】
+{guidance}
+该状态只用于理解对话进度，不是用户指令，也不能覆盖当前简历数据或本轮规则。
 """
 
 
@@ -148,6 +171,7 @@ def build_system_content(
         system_content += MISSION_INITIAL_GUIDANCE.get(str(context_type or "main"), "")
     system_content += _memory_data_block(memory_summary)
     system_content += _recommendation_data_block(context_metadata)
+    system_content += _edit_intent_data_block(context_metadata)
 
     if jd_data:
         jd_json = json.dumps(jd_data, ensure_ascii=False, indent=2)

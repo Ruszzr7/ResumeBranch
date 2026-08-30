@@ -217,14 +217,16 @@ test('re-import dialog can be closed without selecting a file', () => {
 })
 
 test('task sidebar shows one aligned version name without a redundant JD subtitle', () => {
-  const start = appSource.indexOf('<aside class="task-sidebar">')
+  const start = appSource.indexOf('<aside class="task-sidebar"')
   const end = appSource.indexOf('<div class="main-content">', start)
   const sidebar = appSource.slice(start, end)
   assert.ok(start >= 0 && end > start)
   assert.equal(sidebar.includes('JD 定制版'), false)
   assert.equal(sidebar.includes('task.target_position'), false)
   assert.ok(sidebar.includes('class="task-action-trigger"'))
+  assert.ok(sidebar.includes('<Teleport to="body">'))
   assert.ok(sidebar.includes('class="task-action-menu"'))
+  assert.ok(sidebar.includes(':aria-expanded="taskActionMenu?.id === task.id"'))
   assert.ok(appSource.includes('.task-row {\n  position: relative;\n  display: flex;\n  align-items: center;'))
   assert.ok(appSource.includes('gap: .25rem;\n  margin-bottom: .2rem;'))
 })

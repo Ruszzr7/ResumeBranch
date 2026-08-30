@@ -4,12 +4,11 @@ from backend.render_contract import iter_experience_content_blocks
 
 
 class RenderContractTests(unittest.TestCase):
-    def test_pdf_and_docx_inputs_share_legacy_experience_blocks(self):
+    def test_pdf_and_docx_inputs_share_canonical_experience_blocks(self):
         item = {
-            "details": [
-                "项目简介：负责导航系统",
-                "完成模块设计",
-                "完成联调验证",
+            "content_blocks": [
+                {"type": "paragraph", "semantic_role": "introduction", "label": "项目简介", "text": "负责导航系统"},
+                {"type": "numbered_list", "semantic_role": "responsibilities", "label": "项目职责", "items": ["完成模块设计", "完成联调验证"]},
             ],
         }
         blocks = list(iter_experience_content_blocks(item, experience_kind="work"))

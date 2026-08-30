@@ -368,7 +368,7 @@ async def run_interview_turn(
 3. action=start 时先诊断；action=answer 时只从“本轮用户原话”提取 fact_candidates。
 4. 每个 fact_candidate 必须包含 claim、source_quote、section、dimension；source_quote 必须逐字摘自本轮用户原话。
 5. 不得补造数字。claim 中的每个数字必须在 source_quote 中出现。
-6. 信息足够时可给 suggestion，包含 target_path、suggested、rationale。target_path 必须指向当前简历中一个既有字符串字段，例如 work_experience.0.details.0；建议只能使用已核实事实。
+6. 信息足够时可给 suggestion，包含 target_path、suggested、rationale。target_path 必须指向当前简历中一个既有字符串字段，例如 work_experience.0.content_blocks.0.items.0；建议只能使用已核实事实。
 7. 如果给出 suggestion，将 phase 设为 awaiting_apply；否则为 questioning。
 8. diagnosis_summary、strengths、gaps、acknowledgement 均应简洁；不要在这些字段中提问。
 

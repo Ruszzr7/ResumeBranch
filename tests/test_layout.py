@@ -22,8 +22,8 @@ def resume_with_two_jobs():
         "basics": {"name": "测试", "gender": "", "phone": "", "email": "", "target_position": ""},
         "education": [],
         "work_experience": [
-            {"company_name": "甲", "job_title": "开发", "date_range": ["2024", "2025"], "job_type": "", "details": ["内容"]},
-            {"company_name": "乙", "job_title": "开发", "date_range": ["2025", "至今"], "job_type": "", "details": ["内容"]},
+            {"company_name": "甲", "job_title": "开发", "date_range": ["2024", "2025"], "job_type": "", "content_blocks": [{"type": "bullet_list", "semantic_role": "generic", "items": ["内容"]}]},
+            {"company_name": "乙", "job_title": "开发", "date_range": ["2025", "至今"], "job_type": "", "content_blocks": [{"type": "bullet_list", "semantic_role": "generic", "items": ["内容"]}]},
         ],
         "project_experience": [],
         "others": {"skills": [], "certificates": [], "languages": []},
@@ -179,7 +179,7 @@ class LayoutRuleTests(unittest.TestCase):
                 "sectionOrder": ["education", "project_experience", "others"],
             },
         })
-        self.assertEqual(layout["version"], 9)
+        self.assertEqual(layout["version"], 10)
         self.assertEqual(layout["global"]["fontSize"], 9)
         self.assertEqual(layout["global"]["lineHeight"], 1.28)
         self.assertIn("skills", layout["global"]["sectionOrder"])
@@ -218,7 +218,7 @@ class LayoutRuleTests(unittest.TestCase):
         style = {"pageBreakBefore": "work_experience:1"}
         html = render_resume_to_html(resume_with_two_jobs(), style)
         self.assertIn(
-            'class="work-item preset-compact date-right page-break-before"',
+            'class="work-item date-right page-break-before"',
             html,
         )
 
@@ -227,7 +227,7 @@ class LayoutRuleTests(unittest.TestCase):
             document_xml = archive.read("word/document.xml").decode("utf-8")
         self.assertIn('w:type="page"', document_xml)
 
-    def test_pdf_applies_controlled_layout_presets(self):
+    def test_pdf_applies_supported_layout_controls_and_discards_retired_presets(self):
         data = resume_with_two_jobs()
         data["education"] = [{
             "school_name": "示例大学", "school_tags": ["211"], "degree": "本科",
@@ -241,14 +241,16 @@ class LayoutRuleTests(unittest.TestCase):
         layout["work_experience"]["detailsStyle"] = "paragraph"
         layout["global"]["titleStyle"] = "plain"
         html = render_resume_to_html(data, layout_config=layout)
-        self.assertIn("basics-left-aligned", html)
-        self.assertIn("preset-three-column", html)
+        self.assertNotIn("basics-left-aligned", html)
+        self.assertNotIn("contact-stacked", html)
+        self.assertNotIn("contact-inline", html)
+        self.assertNotIn("preset-three-column", html)
         header_start = html.index('<div class="module-component-rows">', html.index('class="education-item'))
         header_end = html.index('</div></div></div>', header_start)
         header = html[header_start:header_end]
         self.assertIn('component-degree', header)
         self.assertIn('component-metrics', header)
-        self.assertIn('GPA：3.8/4.0', header)
+        self.assertIn('component-metrics">3.8/4.0</span>', header)
         self.assertIn('component-school_tags', header)
         self.assertIn("details-paragraph", html)
         self.assertIn("title-plain", html)
@@ -304,14 +306,13 @@ class LayoutRuleTests(unittest.TestCase):
             "project_name": "协作臂轨迹跟踪系统",
             "role": "",
             "date_range": ["2026.01", "至今"],
-            "details": [],
+            "content_blocks": [],
         }]
 
         layout = default_layout_config()
         tokens = resolve_layout_tokens(layout)
         html = render_resume_to_html(data, layout_config=layout)
-        self.assertIn('class="work-item preset-', html)
-        self.assertIn('date-right', html)
+        self.assertIn('class="work-item date-right"', html)
         self.assertIn('.project-item.date-right .project-header', html)
         self.assertIn('grid-template-columns: minmax(0, 1fr) auto', html)
         self.assertIn('page-break-inside: avoid', html)
@@ -359,13 +360,13 @@ class LayoutRuleTests(unittest.TestCase):
                 "job_title": "后端开发",
                 "job_type": "",
                 "date_range": ["**2024.01**", "**2024.06**"],
-                "details": [],
+                "content_blocks": [],
             }],
             "project_experience": [{
                 "project_name": "**示例项目**",
                 "role": "**项目负责人**",
                 "date_range": ["", ""],
-                "details": [],
+                "content_blocks": [],
             }],
             "others": {
                 "skills": [],
@@ -450,7 +451,7 @@ class LayoutRuleTests(unittest.TestCase):
     def test_word_applies_section_order_and_hidden_sections(self):
         data = resume_with_two_jobs()
         data["project_experience"] = [{
-            "project_name": "先展示项目", "role": "开发", "date_range": [], "details": []
+            "project_name": "先展示项目", "role": "开发", "date_range": [], "content_blocks": []
         }]
         data["self_evaluation"] = ["不应出现"]
         layout = default_layout_config()
@@ -559,7 +560,10 @@ class LayoutRuleTests(unittest.TestCase):
             "project_name": "机器人控制",
             "role": "",
             "date_range": ["2025.01", "2025.06"],
-            "details": ["项目简介：面向展厅导航", "项目职责：", "（1）训练策略", "（2）验证性能"],
+            "content_blocks": [
+                {"type": "paragraph", "semantic_role": "introduction", "label": "项目简介", "text": "面向展厅导航"},
+                {"type": "numbered_list", "semantic_role": "responsibilities", "label": "项目职责", "items": ["训练策略", "验证性能"]},
+            ],
         }]
         data["others"]["skills"] = ["ROS2", "Python"]
 
@@ -705,7 +709,7 @@ class LayoutRuleTests(unittest.TestCase):
             layout_config=default_layout_config(),
         )
         self.assertIn(
-            'class="project-item preset-compact date-right page-break-before"',
+            'class="project-item date-right page-break-before"',
             html,
         )
 
@@ -880,7 +884,6 @@ class LayoutRuleTests(unittest.TestCase):
             "job_title": "后端工程师",
             "job_type": "实习",
             "date_range": ["2025.01", "2025.06"],
-            "details": [],
             "content_blocks": [{
                 "type": "paragraph",
                 "label": "成果",
@@ -948,7 +951,7 @@ class LayoutRuleTests(unittest.TestCase):
         self.assertIn('&lt;img src=x onerror=&quot;boom&quot;&gt; <strong>张三</strong>', html)
         self.assertNotIn('<img src=x onerror="boom">', html)
 
-    def test_word_left_aligned_header_uses_full_row_when_photo_is_absent(self):
+    def test_word_header_uses_full_row_when_photo_is_absent(self):
         data = resume_with_two_jobs()
         data["basics"].update({
             "birth_date": "2002.06",
@@ -956,7 +959,6 @@ class LayoutRuleTests(unittest.TestCase):
             "email": "2776553477@qq.com",
         })
         layout = default_layout_config()
-        layout["basics"]["preset"] = "left-aligned"
 
         with ZipFile(BytesIO(generate_docx(data, layout_config=layout))) as archive:
             document_xml = archive.read("word/document.xml").decode("utf-8")
@@ -973,8 +975,7 @@ class LayoutRuleTests(unittest.TestCase):
         self.assertIn("font-kerning: none", html)
         self.assertIn("font-variant-ligatures: none", html)
         self.assertIn("font-synthesis: none", html)
-        self.assertIn("--education-side-column: 42mm", html)
-        self.assertIn("grid-template-columns: var(--education-side-column) minmax(0, 1fr) var(--education-side-column)", html)
+        self.assertIn("grid-template-columns: var(--education-compact-side-column) var(--education-middle-column) var(--education-compact-side-column)", html)
         self.assertIn(".education-item .education-middle-column", html)
         self.assertIn("text-align: left", html)
         self.assertIn("margin-right: 0", html)
@@ -997,7 +998,6 @@ class LayoutRuleTests(unittest.TestCase):
             "date_range": ["2024.09", "2027.06"],
         }]
         layout = default_layout_config()
-        layout["education"]["preset"] = "compact"
 
         with ZipFile(BytesIO(generate_docx(data, layout_config=layout))) as archive:
             document_xml = archive.read("word/document.xml").decode("utf-8")
@@ -1107,7 +1107,9 @@ class LayoutRuleTests(unittest.TestCase):
     def test_mixed_text_keeps_source_spaces_and_section_divider_gap_matches(self):
         data = resume_with_two_jobs()
         mixed_text = "混排正文与 ASCII token 保留普通空格和自然换行"
-        data["work_experience"][0]["details"] = [mixed_text]
+        data["work_experience"][0]["content_blocks"] = [{
+            "type": "paragraph", "semantic_role": "generic", "label": "", "text": mixed_text,
+        }]
         layout = default_layout_config()
 
         html = render_resume_to_html(data, layout_config=layout)

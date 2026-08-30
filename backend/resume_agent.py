@@ -22,12 +22,12 @@ from contextvars import ContextVar
 from copy import deepcopy
 from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
-from dataclasses import field
+from dataclasses import field, replace
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 from dataclasses import dataclass
-from typing import List
+from typing import Annotated, List
 from pydantic import BaseModel, Field
 
 from .resume_data import normalize_resume_data
@@ -48,6 +48,7 @@ from .layout_config import (
     normalize_layout_config,
     reset_layout_section,
 )
+from .layout_capabilities import localize_user_visible_layout_text
 from .llm_providers import active_profile, role_temperature
 from .harness.context import build_conversation_context
 from .harness.interview import (
@@ -177,8 +178,7 @@ class WorkExperience(BaseModel):
     job_title: str = Field(default="", description="职位名称；原文没有时留空")
     date_range: List[str] = Field(default_factory=list, description="就职时间；原文没有时留空")
     job_type: str = Field(default="", description="工作类型；原文没有明确标注时必须留空，不得推断")
-    content_blocks: List[ProjectContentBlock] = Field(default_factory=list, description="项目简介、项目职责、普通内容等语义内容块；工作经历不使用项目技术栈角色")
-    details: List[str] = Field(default_factory=list, description="工作详细内容")
+    content_blocks: List[ProjectContentBlock] = Field(default_factory=list, description="工作简介、工作职责、其他工作内容等语义内容块；每种内容均可按原文或用户要求使用段落、分点或编号形式；工作经历不使用项目技术栈角色")
 
 
 class ProjectExperience(BaseModel):
@@ -187,9 +187,8 @@ class ProjectExperience(BaseModel):
     role: str = Field(default="", description="项目角色；原文未提供时必须留空")
     date_range: List[str] = Field(default_factory=list, description="项目时间")
     content_blocks: List[ProjectContentBlock] = Field(
-        default_factory=list, description="优先使用的技术栈、项目简介、项目职责、普通内容语义块；固定顺序为技术栈、项目简介、项目职责、普通内容"
+        default_factory=list, description="技术栈、项目简介、项目职责、其他项目内容语义块；语义角色与段落、分点、编号形式相互独立"
     )
-    details: List[str] = Field(default_factory=list, description="旧数据兼容字段；新解析优先写入 content_blocks")
 
 
 class Others(BaseModel):
@@ -365,7 +364,8 @@ CONVERSATION_PROMPT = """
 6. **其他**：技能、证书、语言
 7. **自我评价**：总结性描述
 
-## 规则
+## 深度打磨规则
+以下规则仅用于用户明确进入深度打磨、连续追问或 JD 对照流程时，不得阻断主对话中的明确合法修改：
 - **禁止跳跃**：不能跳过当前模块去优化下一个模块
 - **精准打击**：每次只问/优化一个点，不要长篇大论
 - **当前模块不完善时**：不能进入下一模块
@@ -396,7 +396,8 @@ CONVERSATION_PROMPT = """
 - **基本完善**：60-80分，框架完整但有细节需要打磨
 - **完善**：80分以上，质量达标
 
-## 完善度状态处理
+## 深度打磨流程中的完善度状态处理
+以下状态只用于诊断、连续追问和深度打磨流程；主对话中的明确合法修改仍按用户授权生成候选：
 - 如果简历不完善（低于60分），优先引导用户补充缺失模块、改进负面特征，**不要结束对话**
 - 每次对话后，判断当前分数，决定是否进入下一模块或继续当前模块
 - 只有当简历达到"完善"标准后，才能引导用户聊面试话题或结束对话
@@ -415,7 +416,7 @@ CONVERSATION_PROMPT = """
 2. **结果导向**：坚信没有量化结果的经历等同于"流水账"。每个经历必须包含数字或对比（如效率提升30%、用户增长500+等），否则引导用户补充。
 3. **决策挖掘**：关注用户"为什么做"而不仅仅是"做了什么"。询问决策背后的原因、选型依据、权衡考虑，体现思考深度。
 4. **避免黑话**：禁止使用"赋能、闭环、沉淀、颗粒度"等空洞话术。引导用户用具体、直白的语言描述实际贡献。
-5. **负面惩罚意识**：如果用户提供的内容存在"过程劳务化"、"话术空心化"、"缺乏决策痕迹"，应指出并引导改进，而非直接采用。
+5. **负面惩罚意识**：如果用户提供的内容存在"过程劳务化"、"话术空心化"、"缺乏决策痕迹"，应指出并引导改进。用户已明确授权合法修改时，可以同时给出简短建议和修改候选，内容质量一般不能成为拒绝执行的理由。
 
 # 用户的简历数据：{{resume_data}}
 
@@ -424,65 +425,26 @@ CONVERSATION_PROMPT = """
 # 当前排版与经历内容契约：{{layout_contract}}
 
 # 对话逻辑规则与输出风格
-1. **单点质询原则**：每次对话只输出一个核心问题的提问或一个具体的修改点，严禁一次性抛出多个问题分散用户注意力。
-2. **引导式提问**：若描述简略，严禁说“很棒”，应通过提问启发细节。例：“这个项目方向很有意思。你能细说下当时遇到最难的技术点是什么吗？或者你用什么指标衡量它的成功？”
-3. **确认修改**：当用户明确要求执行、应用或修改某个已经讨论清楚的方案时，调用 `request_resume_edit`；只分析、提问或给建议时不要调用修改工具。
+1. **明确授权优先**：用户提供了事实、目标和期望结果的合法修改，不得被主动质量建议阻断；必要建议可以与修改候选同时提供。只有真实性、歧义、能力边界或相互冲突的问题才能阻止修改。
+2. **单点质询原则**：仅在分析、诊断或深度打磨时，每次聚焦一个核心问题；不得据此遗漏同一请求中可独立执行的明确修改。
+3. **引导式提问**：若描述简略且修改结果仍不明确，应通过提问启发细节，不得替用户编造事实。
 
-# 工具调用规则
-- **render_resume_pdf_images**：只读视觉能力。只有判断真实分页、留白、对齐、溢出、照片位置或整体视觉层级确实需要查看页面时才调用。工具自动读取当前简历、排版配置、证件照和渲染参数；不要传入简历数据。纯内容讨论、明确的简单字段修改、本轮已经得到快照时不要重复调用。排版建议任务的首次分析已由系统附加快照，不要再次调用。
-- **request_resume_edit**：这是通用的预览优先修改技能入口。你必须先结合当前简历、当前布局、当前任务上下文和此前建议，解析用户的真实意图与指代，再传入结构化操作；技能不会再次调用模型，也不会猜测自然语言。参数必须是：
-  - `reply_text`：确认框出现前展示给用户的完整回复。用户同时提出问题和修改要求时，必须先在这里回答问题，再说明已生成修改预览；仅要求修改时简短说明已生成候选。不得声称修改已经保存。
+# Skill 协调规则
+- 根据当前请求、对话上下文和可用 Skill 的名称与描述自主选择能力。具体使用条件和确认边界以 Skill 描述为准，结构化参数以注入的操作契约为准。
+- **render_resume_pdf_images**：只读查看当前简历的 PDF 页面快照。当问题涉及页面、排版或视觉效果，或需要判断实际分页、留白、对齐、溢出、层级、一致性或整体观感时必须调用；不能只根据排版配置或简历文字推断。纯内容或字段问题不要调用；本轮已经实际附加同一快照时不要重复调用。无需传入简历数据，且不会修改或保存简历。
+- **request_resume_edit 参数**：
+  - `answer_text`：修改预览出现前需要向用户展示的问答或澄清内容。本轮同时包含需要回答的问题，或存在可与已明确修改独立处理的待澄清事项时，填写相应回答或追问；纯修改请求时留空。`answer_text` 只承载问答与澄清，执行状态由系统根据实际结果生成。
   - `resume_operations`：对简历内容的操作列表；`layout_operations`：对排版配置的操作列表。没有对应修改时传空列表。
-  - 每项操作使用 `{"op":"set|replace|append|insert|remove|move", "path":"字段路径", ...}`。`set/replace` 需要 `value`；`append` 需要列表路径和 `value`；`insert` 还需要 `index`；`remove` 使用目标路径，或使用列表路径加 `index`；`move` 使用列表路径、`from_index` 和 `to_index`。必要时加 `expected` 做并发保护。
-  - 路径只使用当前简历/布局中已存在的字段，例如 `basics.name`、`education[0].major`、`project_experience[0].content_blocks[1].items`、`global.sectionOrder`。只发送本次明确要求的操作，其他内容不得重写；不要发送完整简历或完整布局 JSON。
+  - 结构化操作字段、列表索引和并发保护字段以注入的操作契约为准。
+  - 操作的 `op`、`path`、`value` 和列表索引只能符合上方注入的简历编辑与排版能力契约；不符合契约时不得调用技能，技能不会替换或修正操作结构。
+  - 只发送本次明确要求的操作，不得提交完整简历或完整布局 JSON；不确定的目标先追问。
   - 字号和字体仍由专用排版设置管理，不要生成相关操作；不得生成 CSS、坐标或任意新字段。
   - 主模型负责解析“第 1 点”等上下文指代。若指代或目标仍不明确，先向用户澄清，不要调用工具；不要把原始短句、混合咨询内容或整段聊天传给技能。
 - 用户一次消息同时包含“执行某点”和新的咨询问题时，只把明确执行的部分整理进对应的操作列表，其余咨询保留在当前对话中，不要顺手修改。
-- **面向用户的表达边界**：回复正文只能使用与界面一致的中文栏目名、组件名和自然语言。字段路径、数据键、工具名、协议标记、数据库字段、异常类型与堆栈只用于内部推理或结构化工具参数，绝不能出现在回复正文中；无需逐项穷举。简历原文中的英文、技术名词、公司名和岗位名不受此规则影响。调用修改技能只会生成候选预览，只有用户在确认框中接受后才会保存，不得提前声称已经生效。
+- 用户一次消息同时包含需要澄清的修改和独立且明确的修改时，在 `answer_text` 中追问需要澄清的修改，同时只把独立且明确的修改整理进操作列表并生成预览；不得猜测未明确的内容，也不得遗漏可独立执行的明确操作。若两部分互相依赖，则只追问，不调用修改技能。
+- **面向用户的表达边界**：回复正文只能使用排版契约 `user_facing_labels` 中的中文名称及与界面一致的中文栏目名、组件名和自然语言。字段路径、数据键、内部枚举值、工具名、协议标记、数据库字段、异常类型与堆栈只用于内部推理或结构化工具参数，绝不能出现在回复正文中；面向用户提出的可执行排版建议必须对应契约中存在的字段和值。简历原文中的英文、技术名词、公司名和岗位名不受此规则影响。调用修改技能只会生成候选预览，只有用户在确认框中接受后才会保存，不得提前声称已经生效。
 - **教育成绩字段约束**：用户提到“GPA”“绩点”“平均绩点”时写入 `gpa`，满分写入 `gpa_scale`；“专业排名/年级排名”写入 `ranking`。这些内容绝对不能写入 `theses`。
-- 旧版完整 JSON 保存格式如下，仅用于理解当前数据结构；正常修改不得调用旧版保存工具：
-```json
-{
-  "basics": {
-    "name": "姓名",
-    "gender": "性别",
-    "phone": "手机号",
-    "email": "邮箱",
-    "target_position": "期望岗位"
-  },
-  "education": [{
-    "school_name": "学校",
-    "major": "专业",
-    "degree": "学位",
-    "date_range": ["开始时间", "结束时间"],
-    "school_tags": ["标签1", "标签2"],
-    "gpa": "3.72",
-    "gpa_scale": "4.0",
-    "ranking": "前10%"
-  }],
-  "education_supplement": [],
-  "publications": ["论文标题（中科院一区 Top，IF 10），已接收"],
-  "work_experience": [{
-    "company_name": "公司",
-    "job_title": "职位",
-    "date_range": ["开始时间", "结束时间"],
-    "job_type": "实习/全职",
-    "details": ["具体工作内容1", "具体工作内容2"]
-  }],
-  "project_experience": [{
-    "project_name": "项目名称",
-    "role": "角色",
-    "date_range": ["开始时间", "结束时间"],
-    "details": ["具体内容1", "具体内容2"]
-  }],
-  "others": {
-    "skills": ["技能1", "技能2"],
-    "certificates": ["证书1", "证书2"],
-    "languages": ["语言"]
-  },
-  "self_evaluation": ["自我评价1", "自我评价2"]
-}
-```
+  - 当前简历字段结构以注入的规范化简历和“当前排版与经历内容契约”为准；结构化修改只能提交 `resume_operations`/`layout_operations`，不得按旧版完整 JSON 重写。
 
 # 重要规则
 - **重要** 当 just_saved=True（简历刚保存）时，说明简历已经修改完成了，不要调用任何工具。
@@ -568,7 +530,7 @@ def build_resume_extract_prompt() -> str:
         "也不要跨数组重复同一内容。若一个可见栏目标题同时包含语言、荣誉、奖项、论文或证书等多个类别，必须保留为一个"
         "custom_sections 项目，保留原标题和原阅读顺序，不得为了套用系统栏目而拆成多个数组。不能把顶层专业技能放入 custom_sections。项目经历内部若存在独立的‘技术栈’、‘技术选型’、‘使用技术’或‘技术工具’标题，才将该标题及其原文内容写入对应项目的 content_blocks，semantic_role=tech_stack；项目内部技术栈不能写入 others.skills，不能仅凭正文出现技术名词创建该块，"
         "也不能把荣誉混入 certificates。\n"
-        "【文字格式】在生成 JSON 前先按页面阅读顺序在内部建立带字重的逐行转写。以下固定标题字段不受原文视觉字重影响，必须默认加粗：basics.name、basics.target_position、education.school_name、work_experience.company_name、work_experience.job_title、project_experience.project_name，以及项目技术栈、项目简介和项目职责的 label（label_bold=true）。以下固定字段必须保持普通字重，不得写 **：基本信息中的性别、出生年月、手机、邮箱和其他基本信息；教育经历中的学校标签、学历、专业、绩点、排名、日期；工作/实习经历中的工作类型、日期；项目经历中的角色、日期。"
+        "【文字格式】在生成 JSON 前先按页面阅读顺序在内部建立带字重的逐行转写。以下固定标题字段不受原文视觉字重影响，必须默认加粗：basics.name、basics.target_position、education.school_name、work_experience.company_name、work_experience.job_title、project_experience.project_name，以及技术栈、工作简介、工作职责、项目简介和项目职责的 label（label_bold=true）。以下固定字段必须保持普通字重，不得写 **：基本信息中的性别、出生年月、手机、邮箱和其他基本信息；教育经历中的学校标签、学历、专业、绩点、排名、日期；工作/实习经历中的工作类型、日期；项目经历中的角色、日期。"
         "其余编辑内容中的大输入框需保留段落内部真实存在的重点词汇粗体，但只保留原文有明确视觉证据的局部粗体：只有能确认原文字符确实使用粗体时，才使用成对的 **文字** 标记；段落或分点开头出现完整粗体片段并紧接冒号/中文冒号或其他分隔符（例如 **重点内容**：XXXXX）时，必须优先检查并保留开头实际粗体片段，这是高优先级的局部粗体证据；只标记冒号前实际粗体范围，不延伸到后文。不能因为是英文、缩写、技术名词、数字、百分比或看起来重要就推断加粗。无法确认时保持普通字重，宁可漏标也不要误标。列表按每一条独立判断，条目内部的局部粗体同样要保留。内容块的 label 不要写 ** 标记，使用 label_bold=true/false 表示标签字重；不要输出其他 Markdown 标记，列表序号不要写入 items。\n"
         + CONTENT_STRUCTURE_GUIDANCE
         + "\n"
@@ -576,7 +538,7 @@ def build_resume_extract_prompt() -> str:
         "原文中的（1）（2）或 (1)(2) 等编号只作为 items 的边界，items 内不要重复序号。"
         "原文没有项目角色时 role 必须为空，禁止输出‘角色’、‘项目成员’等占位词。\n"
         "【教育经历边界】教育经历栏目下、下一个顶层栏目标题之前的无标题分点，必须按原顺序逐条写入顶层 education_supplement；不要因为内容像奖项、活动或成果就写入 honors。只有原文明确出现独立的荣誉/奖项/奖学金标题时，才写入 honors。\n"
-        "【经历粒度】项目或工作一旦使用 content_blocks，就不要再把同一内容重复写入 details；没有语义标题的普通工作描述才逐条进入 details，禁止合成一个长字符串；"
+        "【经历粒度】工作和项目经历的全部可见正文统一写入 content_blocks；没有语义标题的内容使用 semantic_role=generic，不能写入旧的 details 或其他未声明字段；"
         "论文完整内容在原文存在独立论文栏目时逐条写入顶层 publications；若论文与语言、荣誉、证书等共用一个可见栏目标题，"
         "混合栏目保留规则优先，此时整栏只能作为一个 custom_sections 项目保存，不得拆分。GPA、满分、排名进入对应字段。\n"
         "【兜底保留】任何不能可靠映射到固定字段的原栏目，都必须按原栏目标题和阅读顺序写入 custom_sections，"
@@ -725,14 +687,18 @@ def save_resume_tool(content: str = "", user_id: int = None, task_id: str = None
 
 @tool
 def request_resume_edit(
-    reply_text: str,
+    answer_text: Annotated[
+        str,
+        "修改预览前需要展示的问答或独立澄清；纯修改请求留空，执行状态由系统生成。",
+    ] = "",
     resume_operations: list[dict] | None = None,
     layout_operations: list[dict] | None = None,
 ) -> str:
-    """把主对话模型已解析的结构化修改操作交给预览优先的修改技能。
+    """用于生成待用户确认的简历修改候选。
 
-    该工具只接受结构化操作，不接受自然语言指令；技能会生成候选并
-    等待用户确认，确认前不会写入简历。
+    当用户明确要求修改简历内容或允许范围内的排版，或者经过多轮对话后已经确认执行
+    具体方案，并且目标、范围和期望结果足够明确时使用。信息或指代仍不明确时先澄清。
+    只提交本次明确要求的修改；技能只生成候选，确认后才保存。
     """
     # The graph intercepts this tool before invocation.  Returning a stable
     # message keeps direct/unit invocations safe and makes accidental execution
@@ -742,11 +708,12 @@ def request_resume_edit(
 
 @tool("render_resume_pdf_images")
 def render_resume_pdf_images_tool(reason: str = "") -> str:
-    """按需查看当前简历的 PDF 页面快照，以判断真实分页、留白、对齐和视觉层级。
+    """只读查看当前简历的 PDF 页面快照。
 
-    只在回答确实依赖页面视觉证据时调用。工具会自动使用当前简历、排版、
-    证件照和渲染参数；不要在参数中传入简历内容。简单字段修改、纯内容讨论，
-    或本轮已经查看过快照时不要调用。
+    当问题涉及页面、排版或视觉效果，或需要判断实际分页、留白、对齐、溢出、
+    层级、一致性或整体观感时必须调用；不能只根据排版配置或简历文字推断。
+    纯内容或字段问题不要调用；本轮已经实际附加同一快照时不要重复调用。
+    无需传入简历数据，且不会修改或保存简历。
     """
     return "已请求当前简历视觉快照。"
 
@@ -784,6 +751,7 @@ class AgentState:
     user_id: int = None  # 当前用户ID
     task_id: str = None  # 当前任务ID
     proposal_error: str = None  # 候选修改生成失败时返回给前端的可恢复错误
+    edit_noop: bool = False  # 当前状态已满足修改请求，用于终止本轮工具循环
     memory_summary: str = ""  # 分层记忆摘要，仅作为不可执行的上下文数据
     memory_version: int = 0  # 乐观并发版本，由持久化层管理
     interview_memory: dict = None  # 带来源的已核实事实与最近建议
@@ -846,7 +814,8 @@ def extract_user_intent(state: AgentState) -> str:
 
 
 _CHANGE_ACTION_RE = re.compile(
-    r"(?:修改|更改|改为|改成|替换|更新|填写|写入|新增|添加|删除|移除|补充|优化|调整|设置|设为|变更)"
+    r"(?:修改|更改|改为|改成|替换|更新|填写|写入|新增|添加|删除|移除|补充|优化|调整|设置|设为|变更|"
+    r"改写|重写|重新撰写|撰写|润色|重新组织|重组|精炼|扩写|缩写)"
 )
 _MISSION_POINT_RE = re.compile(
     r"(?:第\s*[0-9一二三四五六七八九十百]+\s*[点条项]|问题\s*[0-9一二三四五六七八九十百]+|上述|前面|这(?:一|几)点|该建议|这些建议)"
@@ -856,17 +825,29 @@ _MISSION_ACTION_RE = re.compile(
 )
 _COACHING_INTENT_RE = re.compile(
     r"(?:诊断|点评|评估|审阅|审查|分析|拷打|追问|模拟面试官|修改建议|优化建议|"
-    r"不足之处|不足|短板|问题在哪里|匹配度|怎么改|如何改|怎样改|如何修改|"
+    r"不足之处|不足|短板|问题在哪里|匹配度|怎么写|如何写|怎样写|怎么改|如何改|怎样改|如何修改|"
     r"怎么优化|如何优化|怎样优化|怎么完善|如何完善|怎样完善)"
 )
+_QUESTION_INTENT_RE = re.compile(r"[?？]|(?:怎么|如何|怎样|为什么|为何|是否|能否|可否|请问)")
 _DIRECT_APPLY_RE = re.compile(
     r"(?:直接|立即|马上)(?:帮我|替我|给我)?(?:修改|优化|改写|重写|应用)|"
     r"(?:修改|优化|改写|重写)后(?:直接)?(?:应用|保存|写入)|(?:应用|保存|写入)(?:这些|上述|该)"
 )
+_EXPLICIT_CHANGE_AUTH_RE = re.compile(
+    r"(?:把|将).{1,100}(?:改为|改成|替换为|更新为|设为|设置为|删除|移除|新增|添加|补充|移动|放到|并入)|"
+    r"(?:基本信息|基本资料|联系方式|姓名|性别|年龄|出生年月|生日|电话|手机|邮箱|所在地|目标岗位|求职岗位|GPA|绩点|满绩|"
+    r"排名|学校|专业|学历|学位|教育经历|教育背景|教育经历补充|主要荣誉|论文|研究方向|专业技能|工作经历|工作职责|实习经历|项目经历|项目经验|项目职责|项目|"
+    r"公司|职位|研究兴趣|荣誉|奖项|技能|证书|语言|自定义栏目|自定义项目|证书与语言|自我评价|个人总结|其他信息|简历内容)"
+    r".{0,30}(?:改为|改成|替换为|更新为|设为|设置为|删除|移除|新增|添加|补充)|"
+    r"(?:执行|应用|采纳|落实|采用).{0,30}(?:第\s*[0-9一二三四五六七八九十百]+\s*[点条项]|上述|前面|该建议|这些建议)"
+)
+_AUTH_CLAUSE_SPLIT_RE = re.compile(
+    r"[。！？!?；;\n]+|(?:然后|随后|接着|再|同时|另外|并且|并|回答后)(?=\s*(?:请)?(?:把|将))"
+)
 _RESUME_DATA_FIELD_RE = re.compile(
-    r"(?:姓名|性别|年龄|出生年月|生日|电话|手机|邮箱|所在地|目标岗位|求职岗位|GPA|绩点|满绩|"
-    r"排名|学校|专业|学历|学位|教育经历|工作经历|实习经历|项目经历|项目|"
-    r"公司|职位|研究方向|研究兴趣|荣誉|奖项|技能|证书|语言|自定义栏目|自我评价|简历内容)"
+    r"(?:基本信息|基本资料|联系方式|姓名|性别|年龄|出生年月|生日|电话|手机|邮箱|所在地|目标岗位|求职岗位|GPA|绩点|满绩|"
+    r"排名|学校|专业|学历|学位|教育经历|教育背景|教育经历补充|主要荣誉|论文|研究方向|专业技能|工作经历|工作职责|实习经历|项目经历|项目经验|项目职责|项目|"
+    r"公司|职位|研究方向|研究兴趣|荣誉|奖项|技能|证书|语言|自定义栏目|自定义项目|证书与语言|自我评价|个人总结|其他信息|简历内容)"
 )
 _STYLE_ONLY_RE = re.compile(
     r"(?:字体|字号|颜色|填充|背景|边距|行距|间距|排版|页眉|页脚|标签样式)"
@@ -976,12 +957,48 @@ def _attach_visual_resume_parts(messages: list, image_parts: list[dict]) -> list
     return result
 
 
+def has_explicit_change_authorization(message: str) -> bool:
+    """Return True when one independent clause authorizes a concrete mutation."""
+    text = str(message or "").strip()
+    if not text or "[CONFIRM_REPLY:" in text:
+        return False
+    for clause in _AUTH_CLAUSE_SPLIT_RE.split(text):
+        clause = clause.strip(" \t，,")
+        if not clause or _QUESTION_INTENT_RE.search(clause):
+            continue
+        if _DIRECT_APPLY_RE.search(clause) or _EXPLICIT_CHANGE_AUTH_RE.search(clause):
+            return True
+    return False
+
+
+def _all_non_question_clauses_are_explicitly_authorized(message: str) -> bool:
+    """Return whether every actionable clause has a concrete mutation target.
+
+    This is intentionally stricter than ``has_explicit_change_authorization``:
+    a mixed request such as "先重写项目职责，再调整模块顺序" is not recorded as
+    a fully resolved edit intent merely because one clause is locally recognizable.
+    """
+    text = str(message or "").strip()
+    if not text or "[CONFIRM_REPLY:" in text:
+        return False
+    saw_authorized_clause = False
+    for raw_clause in _AUTH_CLAUSE_SPLIT_RE.split(text):
+        clause = re.sub(r"^(?:请|然后|随后|接着|再)\s*", "", raw_clause.strip(" \t，,"))
+        if not clause or _QUESTION_INTENT_RE.search(clause):
+            continue
+        if _DIRECT_APPLY_RE.search(clause) or _EXPLICIT_CHANGE_AUTH_RE.search(clause):
+            saw_authorized_clause = True
+            continue
+        return False
+    return saw_authorized_clause
+
+
 def is_resume_coaching_request(message: str) -> bool:
     """Return True for read-only review, coaching, and interview-style requests."""
     text = str(message or "").strip()
     if not text or "[CONFIRM_REPLY:" in text:
         return False
-    return bool(_COACHING_INTENT_RE.search(text) and not _DIRECT_APPLY_RE.search(text))
+    return bool(_COACHING_INTENT_RE.search(text) and not has_explicit_change_authorization(text))
 
 
 def latest_human_text(state: AgentState) -> str:
@@ -1027,7 +1044,10 @@ def is_explicit_resume_change_request(message: str) -> bool:
     # to generate or persist a mutation candidate.
     if is_resume_coaching_request(text):
         return False
-    if not (_CHANGE_ACTION_RE.search(text) and _RESUME_DATA_FIELD_RE.search(text)):
+    if not (
+        _CHANGE_ACTION_RE.search(text)
+        and _RESUME_DATA_FIELD_RE.search(text)
+    ):
         return False
     # A request that only concerns presentation must stay in the normal dialog
     # path. Mixed data + presentation requests may still produce a data preview.
@@ -1090,7 +1110,7 @@ _LAYOUT_SECTION_NAMES = {
     "教育经历": "education", "教育背景": "education",
     "专业技能": "skills", "技能": "skills",
     "研究方向": "research_interests", "主要荣誉": "honors", "荣誉": "honors",
-    "工作经历": "work_experience", "实习经历": "internship_experience",
+    "工作经历": "work_experience",
     "项目经历": "project_experience", "其他信息": "others",
     "技能证书": "others", "自我评价": "self_evaluation", "个人总结": "self_evaluation",
 }
@@ -1106,123 +1126,84 @@ def is_explicit_layout_change_request(message: str) -> bool:
 
 
 def build_local_layout_candidate(state: AgentState) -> dict | None:
-    """Map common natural-language layout requests to the bounded preset contract."""
+    """Map common natural-language layout requests to the bounded layout contract."""
     text = latest_human_text(state)
-    if not is_explicit_layout_change_request(text):
+    if "引号" in text or not is_explicit_layout_change_request(text):
         return None
     current = normalize_layout_config(state.layout_data)
     candidate = deepcopy(current)
+    recognized = False
 
-    if re.search(
+    def match_layout(pattern: str, flags: int = 0):
+        nonlocal recognized
+        match = re.search(pattern, text, flags)
+        if match:
+            recognized = True
+        return match
+
+    if match_layout(
         r"(?:(?:使用|应用|切换到|改成|换成).{0,4}默认(?:排版|布局|样式|风格)|"
         r"(?:恢复|重置)(?:整份简历|全局)?(?:为)?默认(?:排版|布局|样式|风格)?(?:[。！!]|$))",
-        text,
     ):
         candidate = default_layout_config()
+        candidate["basics"] = deepcopy(current["basics"])
 
-    reset_match = re.search(r"(?:恢复|重置)(?:(教育经历|工作经历|实习经历|项目经历|其他信息|自我评价|基本信息))?(?:布局|排版|样式)?(?:为)?默认", text)
+    reset_match = match_layout(r"(?:恢复|重置)(?:(教育经历|工作经历|项目经历|其他信息|自我评价))?(?:布局|排版|样式)?(?:为)?默认")
     if reset_match:
         name = reset_match.group(1)
         reset_map = {
-            "基本信息": "basics", "教育经历": "education", "工作经历": "work_experience",
-            "实习经历": "work_experience", "项目经历": "project_experience",
+            "教育经历": "education", "工作经历": "work_experience",
+            "项目经历": "project_experience",
             "其他信息": "others", "自我评价": "self_evaluation",
         }
         candidate = reset_layout_section(candidate, reset_map.get(name, "all"))
 
-    if re.search(r"(?:整体|全局|整份简历)?.{0,6}(?:更紧凑|紧凑一些|紧凑版)", text):
+    if match_layout(r"(?:整体|全局|整份简历).{0,6}(?:更紧凑|紧凑一些|紧凑版)"):
         candidate = apply_density(candidate, "compact")
-    if re.search(r"(?:整体|全局|整份简历)?.{0,6}(?:更舒展|宽松一些|舒展版)", text):
+    if match_layout(r"(?:整体|全局|整份简历)?.{0,6}(?:更舒展|宽松一些|舒展版)"):
         candidate = apply_density(candidate, "comfortable")
-    if re.search(r"(?:标准密度|恢复标准间距)", text):
+    if match_layout(r"(?:标准密度|恢复标准间距)"):
         candidate = apply_density(candidate, "standard")
-    if re.search(r"(?:模块|章节)?标题.{0,8}(?:不要下划线|去掉下划线|纯文字)", text):
+    if match_layout(r"(?:模块|章节)?标题.{0,8}(?:不要下划线|去掉下划线|纯文字)"):
         candidate["global"]["titleStyle"] = "plain"
-    if re.search(r"(?:模块|章节)?标题.{0,8}(?:加下划线|使用下划线)", text):
+    if match_layout(r"(?:模块|章节)?标题.{0,8}(?:加下划线|使用下划线)"):
         candidate["global"]["titleStyle"] = "underline"
 
-    if re.search(r"(?:姓名|基本信息|页眉).{0,8}左对齐|左对齐.{0,8}(?:姓名|基本信息|页眉)", text):
-        candidate["basics"]["preset"] = "left-aligned"
-    if re.search(r"(?:姓名|基本信息|页眉).{0,8}居中|居中.{0,8}(?:姓名|基本信息|页眉)", text):
-        candidate["basics"]["preset"] = "centered"
-    if re.search(r"(?:联系方式).{0,8}(?:分行|竖排|纵向)", text):
-        candidate["basics"]["contactLayout"] = "stacked"
-    if re.search(r"(?:联系方式).{0,8}(?:同一行|横排|行内)", text):
-        candidate["basics"]["contactLayout"] = "inline"
-    if re.search(r"(?:隐藏|不要|去掉).{0,5}(?:照片|头像)|(?:照片|头像).{0,5}(?:隐藏|不要|去掉)", text):
-        candidate["basics"]["photoPosition"] = "hidden"
-        if "photo" not in candidate["basics"]["hiddenFields"]:
-            candidate["basics"]["hiddenFields"].append("photo")
-    for label, field_name in (("性别", "gender"), ("电话", "phone"), ("手机号", "phone"), ("邮箱", "email"), ("目标岗位", "target_position")):
-        if re.search(rf"(?:隐藏|不要|去掉).{{0,5}}{label}|{label}.{{0,5}}(?:隐藏|不要|去掉)", text):
-            if field_name not in candidate["basics"]["hiddenFields"]:
-                candidate["basics"]["hiddenFields"].append(field_name)
-
-    if re.search(r"(?:学校|院校|211|985).{0,10}(?:不要黑底|普通文字|纯文字)", text):
+    if match_layout(r"(?:学校|院校|211|985).{0,10}(?:不要黑底|普通文字|纯文字)"):
         candidate["education"]["schoolTagStyle"] = "text"
-    if re.search(r"(?:学校|院校|211|985).{0,10}(?:描边|边框)", text):
+    if match_layout(r"(?:学校|院校|211|985).{0,10}(?:描边|边框)"):
         candidate["education"]["schoolTagStyle"] = "outline"
-    if re.search(r"(?:学校|院校|211|985).{0,10}(?:使用黑底|改成黑底|设为黑底|实心)", text):
+    if match_layout(r"(?:学校|院校|211|985).{0,10}(?:使用黑底|改成黑底|设为黑底|实心)"):
         candidate["education"]["schoolTagStyle"] = "filled"
-    if re.search(r"(?:隐藏|不要|去掉).{0,5}(?:学校标签|211|985)", text):
+    if match_layout(r"(?:隐藏|不要|去掉).{0,5}(?:学校标签|211|985)"):
         candidate["education"]["schoolTagStyle"] = "hidden"
     for label, field_name in (("GPA", "gpa"), ("绩点", "gpa"), ("排名", "ranking")):
-        if re.search(rf"(?:隐藏|不要|去掉).{{0,5}}{label}|{label}.{{0,5}}(?:隐藏|不要|去掉)", text, re.I):
+        if match_layout(rf"(?:隐藏|不要|去掉).{{0,5}}{label}|{label}.{{0,5}}(?:隐藏|不要|去掉)", re.I):
             if field_name not in candidate["education"]["hiddenMetrics"]:
                 candidate["education"]["hiddenMetrics"].append(field_name)
-    if re.search(r"(?:GPA|绩点|专业|学历).{0,15}(?:学校|院校).{0,6}(?:右边|右侧)|(?:学校|院校).{0,15}(?:GPA|绩点|专业|学历).{0,6}(?:右边|右侧)", text, re.I):
-        candidate["education"]["preset"] = "three-column"
-        candidate["education"]["metricsPlacement"] = "info-column"
-    elif re.search(r"教育经历.{0,8}紧凑|紧凑.{0,8}教育经历", text):
-        candidate["education"]["preset"] = "compact"
-    elif re.search(r"教育经历.{0,8}(?:经典|默认)", text):
-        candidate["education"]["preset"] = "classic"
-
-    if re.search(r"(?:工作|实习)经历.{0,8}紧凑|紧凑.{0,8}(?:工作|实习)经历", text):
-        candidate["work_experience"]["preset"] = "compact"
-    if re.search(r"项目经历.{0,8}紧凑|紧凑.{0,8}项目经历", text):
-        candidate["project_experience"]["preset"] = "compact"
-    if re.search(r"(?:工作|实习)经历.{0,10}(?:不要圆点|改成段落|段落形式)", text):
+    if match_layout(r"(?:工作|实习)经历.{0,10}(?:不要圆点|改成段落|段落形式)"):
         candidate["work_experience"]["detailsStyle"] = "paragraph"
-    if re.search(r"项目经历.{0,10}(?:不要圆点|改成段落|段落形式)", text):
+    if match_layout(r"项目经历.{0,10}(?:不要圆点|改成段落|段落形式)"):
         candidate["project_experience"]["detailsStyle"] = "paragraph"
-    if re.search(r"(?:工作|实习)经历.{0,10}(?:圆点|列表)", text):
+    if match_layout(r"(?:工作|实习)经历.{0,10}(?:圆点|列表)"):
         candidate["work_experience"]["detailsStyle"] = "bullets"
-    if re.search(r"(?:隐藏|不要|去掉).{0,5}(?:工作类型|实习类型|全职兼职)", text):
+    if match_layout(r"(?:隐藏|不要|去掉).{0,5}(?:工作类型|实习类型|全职兼职)"):
         candidate["work_experience"]["showJobType"] = False
-    if re.search(r"项目经历.{0,10}(?:圆点|列表)", text):
+    if match_layout(r"项目经历.{0,10}(?:圆点|列表)"):
         candidate["project_experience"]["detailsStyle"] = "bullets"
-    if re.search(r"项目经历.{0,10}(?:隐藏|不要|去掉).{0,4}(?:角色|职责)", text):
+    if match_layout(r"项目经历.{0,10}(?:隐藏|不要|去掉).{0,4}(?:角色|职责)"):
         candidate["project_experience"]["showRole"] = False
-    if re.search(r"项目经历.{0,10}(?:隐藏|不要|去掉).{0,4}(?:日期|时间)", text):
+    if match_layout(r"项目经历.{0,10}(?:隐藏|不要|去掉).{0,4}(?:日期|时间)"):
         candidate["project_experience"]["showDate"] = False
-    if re.search(r"(?:工作|实习).{0,5}(?:拆开|分开|分别显示)", text):
-        candidate["global"]["splitWorkExperience"] = True
-    if re.search(r"(?:工作|实习).{0,5}(?:合并|放在一起)", text):
-        candidate["global"]["splitWorkExperience"] = False
-
-    if re.search(r"(?:技能|证书|语言|其他信息).{0,8}标签", text):
-        candidate["others"]["preset"] = "tags"
-    if re.search(r"(?:技能|证书|语言|其他信息).{0,8}(?:分行|纵向)", text):
-        candidate["others"]["preset"] = "stacked"
-    if re.search(r"(?:技能|证书|语言|其他信息).{0,8}(?:同一行|行内)", text):
-        candidate["others"]["preset"] = "inline"
-    if re.search(r"自我评价.{0,8}(?:圆点|列表)", text):
-        candidate["self_evaluation"]["preset"] = "bullets"
-    if re.search(r"自我评价.{0,8}(?:紧凑|一段)", text):
-        candidate["self_evaluation"]["preset"] = "compact"
-    if re.search(r"自我评价.{0,8}(?:分段|段落)", text):
-        candidate["self_evaluation"]["preset"] = "paragraphs"
-
     for label, section_id in _LAYOUT_SECTION_NAMES.items():
-        if re.search(rf"(?:隐藏|不要|去掉).{{0,5}}{re.escape(label)}|{re.escape(label)}.{{0,5}}(?:隐藏|不要|去掉)", text):
+        if match_layout(rf"(?:隐藏|不要|去掉).{{0,5}}{re.escape(label)}|{re.escape(label)}.{{0,5}}(?:隐藏|不要|去掉)"):
             if section_id not in candidate["global"]["hiddenSections"]:
                 candidate["global"]["hiddenSections"].append(section_id)
-        if re.search(rf"(?:显示|恢复显示).{{0,5}}{re.escape(label)}|{re.escape(label)}.{{0,5}}(?:显示|恢复显示)", text):
+        if match_layout(rf"(?:显示|恢复显示).{{0,5}}{re.escape(label)}|{re.escape(label)}.{{0,5}}(?:显示|恢复显示)"):
             candidate["global"]["hiddenSections"] = [value for value in candidate["global"]["hiddenSections"] if value != section_id]
 
-    section_pattern = r"教育经历|专业技能|技能|研究方向|主要荣誉|荣誉|工作经历|实习经历|项目经历|其他信息|自我评价"
-    order_match = re.search(rf"({section_pattern}).{{0,8}}(?:放到|移到)({section_pattern})(前面|后面)", text)
+    section_pattern = r"教育经历|专业技能|技能|研究方向|主要荣誉|荣誉|工作经历|项目经历|其他信息|自我评价"
+    order_match = match_layout(rf"({section_pattern}).{{0,8}}(?:放到|移到)({section_pattern})(前面|后面)")
     if order_match:
         source = _LAYOUT_SECTION_NAMES[order_match.group(1)]
         target = _LAYOUT_SECTION_NAMES[order_match.group(2)]
@@ -1231,13 +1212,16 @@ def build_local_layout_candidate(state: AgentState) -> dict | None:
         order.insert(target_index + (1 if order_match.group(3) == "后面" else 0), source)
         candidate["global"]["sectionOrder"] = order
 
-    title_match = re.search(r"(教育经历|工作经历|实习经历|项目经历|其他信息|自我评价)(?:的)?标题(?:改为|改成|叫做)\s*([^，。；;\n]+)", text)
+    title_match = match_layout(r"(教育经历|工作经历|项目经历|其他信息|自我评价)(?:的)?标题(?:改为|改成|叫做)\s*([^，。；;\n]+)")
     if title_match:
         section_id = _LAYOUT_SECTION_NAMES[title_match.group(1)]
-        candidate["global"].setdefault("titleOverrides", {}).setdefault(section_id, {})["zh"] = title_match.group(2).strip()
+        title = _parse_local_value(title_match.group(2))
+        if not title:
+            return None
+        candidate["global"].setdefault("titleOverrides", {}).setdefault(section_id, {})["zh"] = title
 
     candidate = normalize_layout_config(candidate)
-    return candidate if candidate != current else None
+    return candidate if recognized else None
 
 
 def _plain_response_text(content) -> str:
@@ -1256,46 +1240,133 @@ def _plain_response_text(content) -> str:
     return str(content or "")
 
 
-def parse_resume_candidate(content) -> dict:
-    """Extract and validate a full resume JSON object from a plain LLM reply."""
-    text = _plain_response_text(content).strip()
-    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"\s*```$", "", text)
-    start, end = text.find("{"), text.rfind("}")
-    if start < 0 or end <= start:
-        raise ValueError("模型没有返回完整的简历 JSON")
-    raw_json = text[start:end + 1]
-    try:
-        candidate = json.loads(raw_json)
-    except json.JSONDecodeError:
-        candidate = json.loads(fix_unquoted_json_strings(raw_json))
-    return normalize_and_validate_resume(candidate)
+_UNVERIFIED_EXECUTION_CLAIM_RE = re.compile(
+    r"(?:右侧已显示(?:临时)?预览|"
+    r"(?:已|已经|现已)[^。！？\n]{0,80}(?:生成|显示|准备(?:好)?|应用|保存|完成)[^。！？\n]{0,30}(?:修改(?:排版)?预览|预览|候选|简历)|"
+    r"我先[^。！？\n]{0,80}(?:生成|显示|应用|保存|完成)[^。！？\n]{0,30}(?:修改(?:排版)?预览|预览|候选|简历))"
+)
+_NON_EXECUTION_CONTEXT_RE = re.compile(r"(?:建议|可以|是否|如果|无法|不能|未能|尚未|没有)")
 
 
-def parse_edit_candidate(content, current_resume: dict, current_layout: dict) -> tuple[dict, dict]:
-    """Parse a combined resume/layout proposal while preserving omitted domains."""
+def _contains_unverified_execution_claim(content: object) -> bool:
+    """Detect positive execution claims when no tool actually ran.
+
+    The check is deliberately limited to completion-style wording.  Advice
+    such as "可以生成预览" or an error such as "尚未生成预览" must remain
+    ordinary assistant text.
+    """
     text = _plain_response_text(content).strip()
-    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"\s*```$", "", text)
-    start, end = text.find("{"), text.rfind("}")
-    if start < 0 or end <= start:
-        raise ValueError("模型没有返回完整的修改 JSON")
-    raw = text[start:end + 1]
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        payload = json.loads(fix_unquoted_json_strings(raw))
-    if "resume_data" not in payload and "layout_config" not in payload:
-        return normalize_and_validate_resume(payload), normalize_layout_config(current_layout)
+    if not text:
+        return False
+    for match in _UNVERIFIED_EXECUTION_CLAIM_RE.finditer(text):
+        sentence_start = max(
+            text.rfind("\n", 0, match.start()),
+            text.rfind("。", 0, match.start()),
+            text.rfind("！", 0, match.start()),
+            text.rfind("？", 0, match.start()),
+        ) + 1
+        sentence_end_candidates = [
+            position for position in (
+                text.find("\n", match.end()),
+                text.find("。", match.end()),
+                text.find("！", match.end()),
+                text.find("？", match.end()),
+            )
+            if position >= 0
+        ]
+        sentence_end = min(sentence_end_candidates, default=len(text))
+        sentence = text[sentence_start:sentence_end]
+        if not _NON_EXECUTION_CONTEXT_RE.search(sentence):
+            return True
+    return False
+
+
+def _sanitize_unverified_execution_reply(content: object) -> str:
+    """Replace a model-only success claim with a truthful safe status."""
+    text = _plain_response_text(content).strip()
+    if not _contains_unverified_execution_claim(text):
+        return text
     return (
-        normalize_and_validate_resume(payload.get("resume_data", current_resume)),
-        normalize_layout_config(payload.get("layout_config", current_layout)),
+        "当前尚未生成修改候选。若需要执行修改，请明确修改目标；"
+        "系统会在真实生成候选后再提供确认。"
     )
 
 
-_COMPLEX_EDIT_FIELD_RE = re.compile(
-    r"(?:工作经历|实习经历|项目经历|项目|研究方向|研究兴趣|荣誉|技能|证书|语言|自定义栏目|自我评价|论文|课程|奖项)"
+def _edit_intent_metadata_for_response(state: AgentState, response: object) -> dict:
+    """Project the current edit-decision lifecycle without storing user text.
+
+    This metadata is only a compact cross-turn hint for the harness.  It does
+    not choose a Skill or alter canonical resume data; the model still makes
+    the tool decision from the full request and the injected contract.
+    """
+    request = latest_human_text(state)
+    status = "none"
+    if _all_non_question_clauses_are_explicitly_authorized(request):
+        status = "awaiting_tool"
+    elif has_explicit_change_authorization(request):
+        status = "needs_clarification"
+
+    for call in list(getattr(response, "tool_calls", None) or []):
+        name = call.get("name") if isinstance(call, dict) else getattr(call, "name", "")
+        if name == "request_resume_edit":
+            status = "tool_called"
+            break
+    return {"status": status}
+
+
+_LOCAL_CONTEXTUAL_SECTION_ALIASES = {
+    "基本信息": "basics",
+    "基本资料": "basics",
+    "联系方式": "basics",
+    "教育经历": "education",
+    "教育背景": "education",
+    "教育经历补充": "education_supplement",
+    "工作经历": "work_experience",
+    "工作职责": "work_experience",
+    "项目经历": "project_experience",
+    "项目经验": "project_experience",
+    "项目职责": "project_experience",
+    "其他信息": "others",
+    "专业技能": "others.skills",
+    "技能": "others.skills",
+    "证书": "others.certificates",
+    "语言": "others.languages",
+    "证书与语言": "others",
+    "研究方向": "research_interests",
+    "研究兴趣": "research_interests",
+    "主要荣誉": "honors",
+    "荣誉": "honors",
+    "奖项": "honors",
+    "论文": "publications",
+    "自定义栏目": "custom_sections",
+    "自定义项目": "custom_sections",
+    "自我评价": "self_evaluation",
+    "个人总结": "self_evaluation",
+}
+_LOCAL_CONTEXTUAL_SECTION_PATTERN = "|".join(
+    re.escape(value)
+    for value in sorted(_LOCAL_CONTEXTUAL_SECTION_ALIASES, key=len, reverse=True)
 )
+_LOCAL_CONTEXTUAL_REPLACE_RE = re.compile(
+    rf"^\s*(?:请|帮我|麻烦)?\s*(?:将|把)\s*(?P<section>{_LOCAL_CONTEXTUAL_SECTION_PATTERN})\s*"
+    r"(?:中的|里面的|里的|内的)\s*"
+    r"(?P<old>[^，,。；;\n]+?)\s*"
+    r"(?:修改为|更改为|改为|改成|设置为|调整为|替换为)\s*"
+    r"(?P<new>[^，,。；;\n]+?)\s*[。.!！]?\s*$"
+)
+_LOCAL_CONTEXTUAL_REPLACE_SUFFIX_RE = re.compile(
+    r"[，,]\s*(?:其余|其他|其余的|其他的)[^。；;\n]{0,40}?"
+    r"(?:保持(?:原样|不变)|不变|不要改动|不修改)\s*[。.!！]?\s*$"
+)
+_LOCAL_CONTEXTUAL_IGNORED_KEYS = {
+    "photo",
+    "type",
+    "semantic_role",
+    "label_bold",
+    "source_layout_group",
+    "source_indent_level",
+    "source_marker_type",
+}
 _LOCAL_BASIC_PATTERNS = {
     "name": re.compile(r"(?:将|把)?\s*姓名\s*(?:修改为|更改为|改为|改成|设置为|调整为)\s*([^，,。；;\n]+)"),
     "target_position": re.compile(r"(?:将|把)?\s*(?:目标岗位|求职岗位|期望岗位)\s*(?:修改为|更改为|改为|改成|设置为|调整为)\s*([^，,。；;\n]+)"),
@@ -1326,8 +1397,102 @@ _LOCAL_EDUCATION_SCHOOL_RE = re.compile(
 )
 
 
-def _clean_local_value(value: str) -> str:
-    return plain_inline_text(str(value or "")).strip().strip('"\'“”‘’ ')
+_LOCAL_OUTER_QUOTE_PAIRS = {
+    '"': '"', "'": "'", "“": "”", "‘": "’", "「": "」", "『": "』",
+}
+
+
+def _plain_local_value(value: str) -> str:
+    return plain_inline_text(str(value or "")).strip()
+
+
+def _parse_local_value(value: str) -> str | None:
+    text = _plain_local_value(value)
+    if not text:
+        return None
+    quote_characters = set(_LOCAL_OUTER_QUOTE_PAIRS) | set(_LOCAL_OUTER_QUOTE_PAIRS.values())
+    if text[0] in quote_characters or text[-1] in quote_characters:
+        if len(text) < 2 or _LOCAL_OUTER_QUOTE_PAIRS.get(text[0]) != text[-1]:
+            return None
+        text = text[1:-1].strip()
+    return text or None
+
+
+def _iter_local_text_paths(value: object, path: tuple[str | int, ...] = ()):
+    """Yield user-visible text leaves under a known resume module."""
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key in _LOCAL_CONTEXTUAL_IGNORED_KEYS:
+                continue
+            yield from _iter_local_text_paths(child, (*path, str(key)))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            yield from _iter_local_text_paths(child, (*path, index))
+    elif isinstance(value, str) and path:
+        yield path, value
+
+
+def _strip_local_replace_suffix(text: str) -> str:
+    return _LOCAL_CONTEXTUAL_REPLACE_SUFFIX_RE.sub("", text).strip()
+
+
+def _parse_local_contextual_replacement(text: str) -> tuple[str, str, str] | None:
+    match = _LOCAL_CONTEXTUAL_REPLACE_RE.fullmatch(_strip_local_replace_suffix(text))
+    if not match:
+        return None
+    section = _LOCAL_CONTEXTUAL_SECTION_ALIASES[match.group("section")]
+    old_value = _parse_local_value(match.group("old"))
+    new_value = _parse_local_value(match.group("new"))
+    if not old_value or not new_value:
+        return None
+    return section, old_value, new_value
+
+
+def _set_local_text_path(candidate: dict, path: tuple[str | int, ...], value: str) -> bool:
+    if not path:
+        return False
+    parent: object = candidate
+    try:
+        for token in path[:-1]:
+            parent = parent[token]  # type: ignore[index]
+        leaf = path[-1]
+        current = parent[leaf]  # type: ignore[index]
+        parent[leaf] = _inherit_whole_field_format(current, value)  # type: ignore[index]
+    except (KeyError, IndexError, TypeError):
+        return False
+    return True
+
+
+def build_local_contextual_replace_candidate(current: dict, text: str) -> dict | None:
+    """Resolve one or more exact module-scoped literal replacements locally."""
+    clauses = _split_local_edit_clauses(text)
+    if not clauses:
+        return None
+
+    candidate = deepcopy(current)
+    for clause in clauses:
+        parsed = _parse_local_contextual_replacement(clause)
+        if parsed is None:
+            return None
+        section, old_value, new_value = parsed
+        section_path = tuple(section.split("."))
+        root: object = candidate
+        for token in section_path:
+            if not isinstance(root, dict):
+                root = None
+                break
+            root = root.get(token)
+        matches = [
+            (path, value)
+            for path, value in _iter_local_text_paths(root, section_path)
+            if _plain_local_value(value) == old_value
+        ]
+        if len(matches) != 1:
+            return None
+        if not _set_local_text_path(candidate, matches[0][0], new_value):
+            return None
+
+    return normalize_and_validate_resume(candidate)
 
 
 def _inherit_whole_field_format(current_value: object, new_value: str) -> str:
@@ -1367,13 +1532,22 @@ def _education_index_for_gpa(current: dict, qualifier: str | None, new_gpa: str)
     return populated[0] if len(populated) == 1 else None
 
 
-def build_local_edit_candidate(state: AgentState) -> dict | None:
+def _build_local_edit_candidate_for_text(state: AgentState, text: str) -> dict | None:
     """Return a candidate only when every requested edit is locally unambiguous."""
-    text = latest_human_text(state)
-    if not is_explicit_resume_change_request(text) or _COMPLEX_EDIT_FIELD_RE.search(text):
+    if (
+        not text
+        or "引号" in text
+        or "[CONFIRM_REPLY:" in text
+        or _QUESTION_INTENT_RE.search(text)
+        or is_resume_coaching_request(text)
+    ):
         return None
 
     current = normalize_resume_data(state.resume_data or {})
+    contextual_candidate = build_local_contextual_replace_candidate(current, text)
+    if contextual_candidate is not None:
+        return contextual_candidate
+
     candidate = deepcopy(current)
     parsed_fields: set[str] = set()
     mentioned_fields = {
@@ -1386,16 +1560,18 @@ def build_local_edit_candidate(state: AgentState) -> dict | None:
         school_match = _LOCAL_EDUCATION_SCHOOL_RE.search(text)
         if not school_match:
             return None
-        source_school = _clean_local_value(school_match.group(1))
-        target_school = _clean_local_value(school_match.group(2))
+        source_school = _parse_local_value(school_match.group(1))
+        target_school = _parse_local_value(school_match.group(2))
+        if not source_school or not target_school:
+            return None
         education = candidate.get("education") or []
         source_matches = [
             index for index, item in enumerate(education)
-            if _clean_local_value(item.get("school_name", "")) == source_school
+            if _plain_local_value(item.get("school_name", "")) == source_school
         ]
         target_matches = [
             index for index, item in enumerate(education)
-            if _clean_local_value(item.get("school_name", "")) == target_school
+            if _plain_local_value(item.get("school_name", "")) == target_school
         ]
         if len(source_matches) == 1:
             index = source_matches[0]
@@ -1413,7 +1589,7 @@ def build_local_edit_candidate(state: AgentState) -> dict | None:
         match = pattern.search(text)
         if not match:
             continue
-        value = _clean_local_value(match.group(1))
+        value = _parse_local_value(match.group(1))
         if not value or (field_name == "gender" and value not in {"男", "女", "其他"}):
             return None
         basics = candidate.setdefault("basics", {})
@@ -1438,6 +1614,82 @@ def build_local_edit_candidate(state: AgentState) -> dict | None:
     if not mentioned_fields or parsed_fields != mentioned_fields:
         return None
     return normalize_and_validate_resume(candidate)
+
+
+_EDIT_CLAUSE_SPLIT_RE = re.compile(
+    r"[。；;\n]+|(?:然后|随后|接着|再|回答后|并且|同时|另外|并)(?=(?:请|把|将|再|隐藏|显示|恢复|重置|调整|修改|更改|改写|重写|润色|优化|补全|完善|让|移到|放到))"
+)
+
+
+def _split_local_edit_clauses(text: str) -> list[str]:
+    """Split independent edit clauses without assigning meaning to them."""
+    return [
+        value.strip().strip(" \t，,")
+        for value in _EDIT_CLAUSE_SPLIT_RE.split(text)
+        if value.strip().strip(" \t，,")
+    ]
+
+
+def build_local_edit_candidate(state: AgentState) -> dict | None:
+    """Build one resume candidate using the shared local parser vocabulary."""
+    return _build_local_edit_candidate_for_text(state, latest_human_text(state))
+
+
+def _resolve_local_edit_candidates(
+    state: AgentState,
+) -> tuple[dict | None, dict | None, bool]:
+    """Resolve every independent clause into one combined resume/layout candidate."""
+    text = latest_human_text(state)
+    if (
+        not text
+        or _QUESTION_INTENT_RE.search(text)
+        or is_resume_coaching_request(text)
+    ):
+        return None, None, False
+    clauses = _split_local_edit_clauses(text)
+    if not clauses:
+        return None, None, False
+
+    resume_candidate = normalize_resume_data(state.resume_data or {})
+    layout_candidate = normalize_layout_config(state.layout_data)
+    for clause in clauses:
+        clause_state = replace(
+            state,
+            messages=[HumanMessage(content=clause)],
+            resume_data=resume_candidate,
+            layout_data=layout_candidate,
+        )
+        local_resume = _build_local_edit_candidate_for_text(clause_state, clause)
+        local_layout = build_local_layout_candidate(clause_state)
+        if local_resume is None and local_layout is None:
+            return None, None, False
+        if local_resume is not None:
+            resume_candidate = local_resume
+        if local_layout is not None:
+            layout_candidate = local_layout
+
+    return resume_candidate, layout_candidate, True
+
+
+def classify_local_edit_request(state: AgentState) -> str:
+    """Classify a local edit attempt without interpreting unresolved language.
+
+    ``resolved`` and ``resolved_noop`` are the only states eligible for the
+    deterministic route.  Anything that cannot be resolved completely stays
+    in the conversation node, where the model can clarify it.
+    """
+    current_resume = normalize_resume_data(state.resume_data or {})
+    current_layout = normalize_layout_config(state.layout_data)
+    resume_candidate, layout_candidate, resolved = _resolve_local_edit_candidates(state)
+    if not resolved:
+        return "unresolved"
+    changed = resume_candidate != current_resume or layout_candidate != current_layout
+    return "resolved" if changed else "resolved_noop"
+
+
+def is_fully_resolved_local_edit_request(state: AgentState) -> bool:
+    """Return True only when every independent edit clause is deterministic."""
+    return classify_local_edit_request(state) in {"resolved", "resolved_noop"}
 
 
 def _preview_summary(changes: list[dict]) -> str:
@@ -1516,7 +1768,9 @@ async def direct_edit_node(state: AgentState) -> dict:
     """Build a preview for unambiguous field assignments without calling an LLM."""
     current = normalize_resume_data(state.resume_data or {})
     current_layout = normalize_layout_config(state.layout_data)
+    metadata_updates = dict(getattr(state, "context_metadata_updates", None) or {})
     if is_font_size_chat_change_request(latest_human_text(state)):
+        metadata_updates["edit_intent_state"] = {"status": "none"}
         return {
             "messages": list(state.messages) + [AIMessage(content=(
                 "字号不会通过对话命令直接修改。请打开简历预览上方的“排版”，进入“设置各部分字号”，"
@@ -1530,15 +1784,18 @@ async def direct_edit_node(state: AgentState) -> dict:
             "just_saved": False,
             "user_id": state.user_id,
             "task_id": state.task_id,
+            "context_metadata_updates": metadata_updates,
         }
     await acquire_current_edit_lock()
     inline_request = is_inline_format_request(latest_human_text(state))
     inline_quote = ""
     inline_bold = True
+    local_layout_candidate = None
     if inline_request:
         try:
             resume_candidate, inline_quote, inline_bold = build_inline_format_candidate(state)
         except InlineFormatError as exc:
+            metadata_updates["edit_intent_state"] = {"status": "none"}
             return {
                 "messages": list(state.messages) + [AIMessage(content=str(exc))],
                 "resume_data": current,
@@ -1549,10 +1806,14 @@ async def direct_edit_node(state: AgentState) -> dict:
                 "just_saved": False,
                 "user_id": state.user_id,
                 "task_id": state.task_id,
+                "context_metadata_updates": metadata_updates,
             }
     else:
-        resume_candidate = build_local_edit_candidate(state)
-    local_layout_candidate = build_local_layout_candidate(state)
+        resume_candidate, local_layout_candidate, resolved = _resolve_local_edit_candidates(state)
+        if not resolved:
+            raise ValueError("本地修改路由收到无法确定解析的请求")
+    if inline_request:
+        local_layout_candidate = build_local_layout_candidate(state)
     candidate = resume_candidate if resume_candidate is not None else current
     layout_candidate = local_layout_candidate if local_layout_candidate is not None else current_layout
     if resume_candidate is None and local_layout_candidate is None:
@@ -1572,6 +1833,9 @@ async def direct_edit_node(state: AgentState) -> dict:
         else:
             assistant_message = AIMessage(content=_preview_summary(changes))
     LOGGER.debug("本地修改候选生成完成，变更数=%s", len(changes))
+    metadata_updates["edit_intent_state"] = {
+        "status": "awaiting_confirmation" if pending else "none",
+    }
     return {
         "messages": list(state.messages) + [assistant_message],
         "resume_data": current,
@@ -1582,6 +1846,7 @@ async def direct_edit_node(state: AgentState) -> dict:
         "just_saved": False,
         "user_id": state.user_id,
         "task_id": state.task_id,
+        "context_metadata_updates": metadata_updates,
     }
 
 
@@ -1590,6 +1855,7 @@ async def proposal_generator_node(state: AgentState) -> dict:
     start_time = time.time()
     current = normalize_resume_data(state.resume_data or {})
     current_layout = normalize_layout_config(state.layout_data)
+    metadata_updates = dict(getattr(state, "context_metadata_updates", None) or {})
 
     try:
         metadata = state.context_metadata or {}
@@ -1603,6 +1869,9 @@ async def proposal_generator_node(state: AgentState) -> dict:
             time.time() - start_time,
             bool(preview.get("pending_confirmation")),
         )
+        metadata_updates["edit_intent_state"] = {
+            "status": "awaiting_confirmation" if preview.get("pending_confirmation") else "none",
+        }
         return {
             "messages": list(state.messages) + [AIMessage(content=preview.get("message", ""))],
             "resume_data": current,
@@ -1613,9 +1882,11 @@ async def proposal_generator_node(state: AgentState) -> dict:
             "just_saved": False,
             "user_id": state.user_id,
             "task_id": state.task_id,
+            "context_metadata_updates": metadata_updates,
         }
     except Exception as exc:
         LOGGER.warning("修改候选生成失败: %s", exc)
+        metadata_updates["edit_intent_state"] = {"status": "none"}
         return {
             "messages": list(state.messages),
             "resume_data": current,
@@ -1626,6 +1897,7 @@ async def proposal_generator_node(state: AgentState) -> dict:
             "just_saved": False,
             "user_id": state.user_id,
             "task_id": state.task_id,
+            "context_metadata_updates": metadata_updates,
         }
 
 
@@ -1660,7 +1932,6 @@ async def _generate_resume_edit_preview(
             layout_config=current_layout,
             resume_operations=tuple(resume_operations or ()),
             layout_operations=tuple(layout_operations or ()),
-            target_paths=(),
             base_revision=resume_digest(current),
         ),
     )
@@ -1670,6 +1941,7 @@ async def _generate_resume_edit_preview(
     if not changes:
         return {
             "pending_confirmation": None,
+            "already_satisfied": True,
             "message": "当前简历已经符合这项要求，没有需要应用的修改。",
             "resume_data": current,
             "layout_data": current_layout,
@@ -1689,6 +1961,7 @@ async def interview_coach_node(state: AgentState) -> dict:
     current_layout = normalize_layout_config(state.layout_data)
     memory = normalize_interview_memory(state.interview_memory or {}, state.interaction_mode)
     action = str(state.interaction_action or "answer")
+    metadata_updates = dict(getattr(state, "context_metadata_updates", None) or {})
 
     if action == "apply":
         suggestion = memory.get("latest_suggestion")
@@ -1703,6 +1976,7 @@ async def interview_coach_node(state: AgentState) -> dict:
             candidate = apply_suggestion_candidate(current, suggestion)
             pending = make_pending_confirmation(state, candidate, current_layout)
             assistant_message = AIMessage(content=_preview_summary(pending.get("changes", [])))
+            metadata_updates["edit_intent_state"] = {"status": "awaiting_confirmation"}
             return {
                 "messages": list(state.messages) + [assistant_message],
                 "resume_data": state.resume_data or {},
@@ -1722,8 +1996,10 @@ async def interview_coach_node(state: AgentState) -> dict:
                 "just_saved": False,
                 "user_id": state.user_id,
                 "task_id": state.task_id,
+                "context_metadata_updates": metadata_updates,
             }
         except Exception as exc:
+            metadata_updates["edit_intent_state"] = {"status": "none"}
             return {
                 "messages": list(state.messages) + [AIMessage(content=str(exc))],
                 "resume_data": state.resume_data or {},
@@ -1741,6 +2017,7 @@ async def interview_coach_node(state: AgentState) -> dict:
                 "just_saved": False,
                 "user_id": state.user_id,
                 "task_id": state.task_id,
+                "context_metadata_updates": metadata_updates,
             }
 
     try:
@@ -1772,6 +2049,7 @@ async def interview_coach_node(state: AgentState) -> dict:
                 "last_node": "interview_fallback",
             },
         }
+    metadata_updates["edit_intent_state"] = {"status": "none"}
     return {
         "messages": list(state.messages) + [AIMessage(content=result["content"])],
         "resume_data": state.resume_data or {},
@@ -1784,6 +2062,7 @@ async def interview_coach_node(state: AgentState) -> dict:
         "just_saved": False,
         "user_id": state.user_id,
         "task_id": state.task_id,
+        "context_metadata_updates": metadata_updates,
     }
 # =============================================================================
 # Nodes
@@ -1815,13 +2094,6 @@ async def conversation_node(state: AgentState) -> dict:
     coaching_mode = is_resume_coaching_request(latest_request)
     context_type = getattr(state, "context_type", "main") or "main"
     mission_initial_turn = is_initial_mission_turn(state)
-    explicit_edit_authorization = (
-        is_mission_resume_edit_request(latest_request, context_type)
-        or bool(_DIRECT_APPLY_RE.search(str(latest_request or "")))
-    )
-    read_only_turn = (coaching_mode and not explicit_edit_authorization) or (
-        str(context_type).strip().lower() == "layout" and mission_initial_turn
-    )
     visual_parts = list(getattr(state, "visual_snapshot_parts", None) or [])
     visual_calls = int(getattr(state, "visual_snapshot_calls", 0) or 0)
     visual_revision = str(getattr(state, "visual_snapshot_revision", "") or "")
@@ -1902,23 +2174,13 @@ async def conversation_node(state: AgentState) -> dict:
     # 调用 LLM
     LOGGER.debug("开始调用 LLM，消息数=%s，估算 token=%s", len(messages), llm_input_tokens)
     try:
-        # The model owns both decisions. Read-only analysis can request a
-        # snapshot but cannot mutate; after a snapshot has been supplied the
-        # same turn cannot request it again.
-        if visual_attached:
-            available_tools = [] if read_only_turn else [request_resume_edit]
-        else:
-            available_tools = (
-                [render_resume_pdf_images_tool]
-                if read_only_turn
-                else conversation_tools
-            )
-        model = conversation_llm
-        if available_tools:
-            model = conversation_llm.bind_tools(
-                available_tools,
-                tool_choice="auto"
-            )
+        # Skill selection belongs to the model. The execution layer remains
+        # responsible for schema validation, preview-only edits, confirmation,
+        # and the one-snapshot-per-turn guard.
+        model = conversation_llm.bind_tools(
+            conversation_tools,
+            tool_choice="auto"
+        )
         # 不要添加 stop 序列，否则可能导致工具名称被截断
         # 增加超时时间到120秒，因为上下文可能较大
         async with asyncio.timeout(120.0):
@@ -1933,6 +2195,23 @@ async def conversation_node(state: AgentState) -> dict:
         if visual_attached:
             raise RuntimeError(f"视觉快照分析失败：{str(e)}")
         raise RuntimeError(f"LLM 调用失败: {str(e)}")
+
+    response_updates = {}
+    if isinstance(getattr(response, "content", None), str):
+        response_content = response.content
+        if not (getattr(response, "tool_calls", None) or []):
+            response_content = _sanitize_unverified_execution_reply(response_content)
+        response_updates["content"] = localize_user_visible_layout_text(response_content)
+    tool_calls = deepcopy(getattr(response, "tool_calls", None) or [])
+    for call in tool_calls:
+        args = call.get("args") if isinstance(call, dict) else None
+        if isinstance(args, dict) and isinstance(args.get("answer_text"), str):
+            args["answer_text"] = localize_user_visible_layout_text(args["answer_text"])
+    metadata_updates["edit_intent_state"] = _edit_intent_metadata_for_response(state, response)
+    if tool_calls:
+        response_updates["tool_calls"] = tool_calls
+    if response_updates:
+        response = response.model_copy(update=response_updates)
 
     elapsed_time = time.time() - start_time
     LOGGER.debug(
@@ -2027,6 +2306,7 @@ async def tool_node(state: AgentState) -> dict:
     LOGGER.debug("工具节点开始")
     last_message = state.messages[-1]
     user_content = getattr(last_message, 'content', '') or ''
+    metadata_updates = dict(getattr(state, "context_metadata_updates", None) or {})
     
     # 处理确认回复
     if '[CONFIRM_REPLY:' in user_content:
@@ -2227,6 +2507,8 @@ async def tool_node(state: AgentState) -> dict:
             result = "确认回复格式错误"
             saved_resume = False
             pending_confirmation = None
+
+        metadata_updates["edit_intent_state"] = {"status": "none"}
         
         # 创建 ToolMessage
         new_messages = [ToolMessage(content=result, tool_call_id="confirm", name="confirmation_handler")]
@@ -2247,6 +2529,7 @@ async def tool_node(state: AgentState) -> dict:
             "just_saved": saved_resume,
             "user_id": state.user_id,
             "task_id": state.task_id,
+            "context_metadata_updates": metadata_updates,
         }
     
     # 普通工具调用处理
@@ -2261,19 +2544,23 @@ async def tool_node(state: AgentState) -> dict:
             "layout_data": normalize_layout_config(state.layout_data),
             "user_id": state.user_id,
             "task_id": state.task_id,
+            "context_metadata_updates": metadata_updates,
         }
 
     # 执行工具调用
     new_messages = []
     assistant_reply = ""
+    edit_preview_reply = ""
     updated_resume_data = None  # 用于保存从工具参数中提取的简历数据
     pending_confirmation = None  # 用于触发确认按钮
     proposal_error = None
+    edit_tool_called = False
+    edit_noop = False
+    seen_tool_call_fingerprints: set[str] = set()
     visual_parts = list(getattr(state, "visual_snapshot_parts", None) or [])
     visual_calls = int(getattr(state, "visual_snapshot_calls", 0) or 0)
     visual_revision = str(getattr(state, "visual_snapshot_revision", "") or "")
     visual_error = str(getattr(state, "visual_snapshot_error", "") or "")
-    metadata_updates = dict(getattr(state, "context_metadata_updates", None) or {})
     requested_tool_names = {
         tool_call.name if hasattr(tool_call, "name") else tool_call.get("name")
         for tool_call in last_message.tool_calls
@@ -2307,6 +2594,33 @@ async def tool_node(state: AgentState) -> dict:
                 tool_args = {}
         if not isinstance(tool_args, dict):
             tool_args = {}
+
+        try:
+            call_fingerprint = json.dumps(
+                {"name": tool_name, "args": tool_args},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        except (TypeError, ValueError):
+            call_fingerprint = f"{tool_name}:{repr(tool_args)}"
+        if call_fingerprint in seen_tool_call_fingerprints:
+            LOGGER.debug("忽略本轮重复工具调用: %s", tool_name)
+            result = "本轮已处理相同工具调用，已忽略重复请求。"
+            tool_call_id = (
+                tool_call.id
+                if hasattr(tool_call, "id")
+                else tool_call.get("id", f"call_{uuid.uuid4().hex[:8]}")
+                if isinstance(tool_call, dict)
+                else f"call_{uuid.uuid4().hex[:8]}"
+            )
+            new_messages.append(ToolMessage(
+                content=result,
+                tool_call_id=tool_call_id,
+                name=tool_name,
+            ))
+            continue
+        seen_tool_call_fingerprints.add(call_fingerprint)
 
         # 查找工具函数
         tool_func = None
@@ -2373,6 +2687,7 @@ async def tool_node(state: AgentState) -> dict:
                                 f"{page_summary}；版本 {snapshot.revision[:12]}。"
                             )
                 elif tool_name == 'request_resume_edit':
+                    edit_tool_called = True
                     if defer_edit_for_visual:
                         result = (
                             "本轮同时请求了视觉检查和修改。系统已先获取视觉证据，"
@@ -2386,26 +2701,14 @@ async def tool_node(state: AgentState) -> dict:
                         pass
                     else:
                         try:
-                            nested_operations = tool_args.get("operations")
-                            if isinstance(nested_operations, dict):
-                                nested_resume = nested_operations.get("resume_operations", ())
-                                nested_layout = nested_operations.get("layout_operations", ())
-                            else:
-                                nested_resume = nested_layout = ()
                             resume_operations = _coerce_resume_edit_operations(
-                                tool_args.get("resume_operations", nested_resume),
+                                tool_args.get("resume_operations"),
                                 field_name="resume_operations",
                             )
                             layout_operations = _coerce_resume_edit_operations(
-                                tool_args.get("layout_operations", nested_layout),
+                                tool_args.get("layout_operations"),
                                 field_name="layout_operations",
                             )
-                            # Legacy natural-language arguments are intentionally
-                            # rejected rather than sent to another model.
-                            if not resume_operations and not layout_operations and tool_args.get("instruction"):
-                                raise ResumeEditOperationError(
-                                    "主模型未提供结构化修改操作，不能把自然语言直接交给修改技能"
-                                )
                             preview = await _generate_resume_edit_preview(
                                 state,
                                 resume_operations,
@@ -2417,8 +2720,12 @@ async def tool_node(state: AgentState) -> dict:
                             result = proposal_error
                         else:
                             pending_confirmation = preview.get("pending_confirmation")
-                            assistant_reply = str(tool_args.get("reply_text", "") or "").strip()
-                            result = preview.get("message", "已生成修改预览。")
+                            edit_noop = bool(preview.get("already_satisfied"))
+                            assistant_reply = str(tool_args.get("answer_text", "") or "").strip()
+                            edit_preview_reply = str(
+                                preview.get("message", "已生成修改预览。") or ""
+                            ).strip()
+                            result = edit_preview_reply
                 else:
                     # 其他工具直接执行
                     result = tool_func.invoke(tool_args)
@@ -2440,12 +2747,12 @@ async def tool_node(state: AgentState) -> dict:
         )
         new_messages.append(tool_message)
 
-    # Tool-only model responses commonly have empty assistant content.  Keep
-    # the user-facing answer as a normal assistant message after the tool
-    # result so the existing SSE placeholder is filled before the confirmation
-    # card, without requiring a second LLM call.
-    if pending_confirmation and assistant_reply:
-        new_messages.append(AIMessage(content=assistant_reply))
+    # Tool-only model responses commonly have empty assistant content.  After
+    # the candidate really exists, expose any pre-preview answer followed by
+    # the system-generated execution status before the confirmation card.
+    if (pending_confirmation or edit_noop) and edit_preview_reply:
+        reply_parts = [value for value in (assistant_reply, edit_preview_reply) if value]
+        new_messages.append(AIMessage(content="\n\n".join(reply_parts)))
 
     elapsed_time = time.time() - start_time
     LOGGER.debug("工具节点结束，耗时=%.2fs，结果数=%s", elapsed_time, len(new_messages))
@@ -2458,6 +2765,10 @@ async def tool_node(state: AgentState) -> dict:
         (isinstance(m, ToolMessage) and '简历已成功保存' in m.content)
         for m in new_messages
     )
+    if pending_confirmation:
+        metadata_updates["edit_intent_state"] = {"status": "awaiting_confirmation"}
+    elif edit_tool_called:
+        metadata_updates["edit_intent_state"] = {"status": "none"}
     
     return {
         "messages": all_messages,
@@ -2466,6 +2777,7 @@ async def tool_node(state: AgentState) -> dict:
         "layout_data": normalize_layout_config(state.layout_data),
         "pending_confirmation": pending_confirmation,
         "proposal_error": proposal_error,
+        "edit_noop": edit_noop,
         "just_saved": saved_resume,
         "user_id": state.user_id,
         "task_id": state.task_id,
@@ -2571,17 +2883,11 @@ def entry_router(state: AgentState) -> str:
         return "direct_edit"
     if is_inline_format_request(user_request):
         return "direct_edit"
-    resume_change = is_explicit_resume_change_request(user_request)
-    layout_change = is_explicit_layout_change_request(user_request)
-    if resume_change or layout_change:
-        try:
-            local_resume = build_local_edit_candidate(state) if resume_change else None
-            local_layout = build_local_layout_candidate(state) if layout_change else None
-            if (not resume_change or local_resume is not None) and (not layout_change or local_layout is not None):
-                return "direct_edit"
-        except Exception as exc:
-            LOGGER.debug("本地解析不可用，转入结构化生成: %s", exc)
-        return "conversation_llm"
+    try:
+        if classify_local_edit_request(state) in {"resolved", "resolved_noop"}:
+            return "direct_edit"
+    except Exception as exc:
+        LOGGER.debug("本地解析不可用，转入结构化生成: %s", exc)
 
     return "conversation_llm"
 
@@ -2597,6 +2903,9 @@ def tool_node_router(state: AgentState) -> str:
         return END
 
     if getattr(state, "proposal_error", None):
+        return END
+
+    if getattr(state, "edit_noop", False):
         return END
 
     # 所有确认结果都是确定性操作，不再调用 LLM。否则模型可能错误总结

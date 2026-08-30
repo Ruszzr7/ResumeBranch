@@ -25,6 +25,11 @@ test('education supplement list style is normalized as part of the shared educat
   assert.equal(normalizeLayoutConfig({ version: 8, education: { supplementListStyle: 'invalid' } }).education.supplementListStyle, 'bullet')
 })
 
+test('retired education metrics placement is discarded', () => {
+  const education = normalizeLayoutConfig({ education: { metricsPlacement: 'below' } }).education
+  assert.equal('metricsPlacement' in education, false)
+})
+
 test('v7 default section order migrates without overwriting a user order', () => {
   const oldDefault = [
     'education', 'skills', 'research_interests', 'honors', 'publications',
@@ -62,19 +67,20 @@ test('custom sections expand into individually sortable virtual modules', () => 
   assert.deepEqual(resolveModuleLayout(reordered, 'custom_sections:1').componentRows, reordered.custom_sections.componentRows)
 })
 
-test('module headings stay global and retired work layouts normalize to compact', () => {
+test('module headings stay global and retired module layouts are discarded', () => {
   const result = normalizeLayoutConfig({
-    basics: { photoWidthMm: 99, titleAlignment: 'center' },
+    basics: { photoWidthMm: 99, titleAlignment: 'center', contactLayout: 'stacked' },
     education: { titleStyle: 'plain', titleAlignment: 'right' },
     work_experience: { preset: 'classic' },
     internship_experience: { preset: 'classic' }
   })
   assert.equal(result.basics.photoWidthMm, 30)
+  assert.equal('contactLayout' in result.basics, false)
   assert.equal(result.basics.titleAlignment, null)
   assert.equal(result.education.titleStyle, null)
   assert.equal(result.education.titleAlignment, null)
-  assert.equal(result.work_experience.preset, 'compact')
-  assert.equal(result.internship_experience.preset, 'compact')
+  assert.equal('preset' in result.work_experience, false)
+  assert.equal('internship_experience' in result, false)
   const tokens = resolveLayoutTokens(result)
   assert.equal(tokens.photoWidthMm, 30)
   assert.equal(tokens.photoHeightMm, 30 * 26 / 21)
@@ -109,7 +115,7 @@ test('content block flow keeps inline and separate labels explicit', () => {
   assert.equal(resolveContentBlockFlow({ type: 'numbered_list', semantic_role: 'responsibilities', label: '主要贡献' }).contentIndentLevels, 2)
 })
 
-test('legacy default layout migrates to schema v9 and exposes every module in the new default order', () => {
+test('legacy default layout migrates to schema v10 and exposes every module in the new default order', () => {
   const result = normalizeLayoutConfig({
     version: 1,
     global: {
@@ -121,7 +127,7 @@ test('legacy default layout migrates to schema v9 and exposes every module in th
     }
   })
 
-  assert.equal(result.version, 9)
+  assert.equal(result.version, 10)
   assert.equal(result.global.fontSize, 9)
   assert.equal(result.global.lineHeight, 1.28)
   assert.ok(result.global.sectionOrder.indexOf('skills') > result.global.sectionOrder.indexOf('education'))
@@ -191,13 +197,13 @@ test('compact metric treats score and ranking as separate groups', () => {
   assert.equal(isCompactAcademicMetricLeadingBold({ gpa: '', gpa_scale: '', ranking: '**前5%**' }), false)
 })
 
-test('saved v3 defaults migrate through the semantic scale to schema v9', () => {
+test('saved v3 defaults migrate through the semantic scale to schema v10', () => {
   const result = normalizeLayoutConfig({
     version: 3,
     global: { fontSize: 10.5, lineHeight: 1.32, moduleMargin: 0.45 }
   })
 
-  assert.equal(result.version, 9)
+  assert.equal(result.version, 10)
   assert.equal(result.global.fontSize, 9)
   assert.equal(result.global.lineHeight, 1.28)
   assert.equal(result.global.moduleMargin, 0.55)
@@ -233,7 +239,7 @@ test('semantic font sizes use half-point bounds and discard unknown roles', () =
 
 test('v5 standard default line height migrates to the compact export rhythm', () => {
   const result = normalizeLayoutConfig({ version: 5, global: { density: 'standard', lineHeight: 1.35 } })
-  assert.equal(result.version, 9)
+  assert.equal(result.version, 10)
   assert.equal(result.global.lineHeight, 1.28)
 
   const custom = normalizeLayoutConfig({ version: 5, global: { density: 'standard', lineHeight: 1.4 } })

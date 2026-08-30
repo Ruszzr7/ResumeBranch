@@ -5,7 +5,6 @@ const FIELD_LABELS = Object.freeze({
   honors: '主要荣誉',
   publications: '论文',
   work_experience: '工作经历',
-  internship_experience: '实习经历',
   project_experience: '项目经历',
   custom_sections: '自定义模块',
   others: '专业技能与补充信息',

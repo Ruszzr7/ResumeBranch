@@ -9,7 +9,7 @@ import BrandLogo from './components/BrandLogo.vue'
 import AccountMenu from './components/AccountMenu.vue'
 import { labels } from './utils/labels.js'
 import { buildAuthorizationHeaders, loadAppConfig } from './config/appMode.js'
-import { normalizeLayoutConfig, resolveContentBlockFlow, resolveLayoutTokens } from './utils/layoutConfig.js'
+import { normalizeLayoutConfig, resolveContentBlockFlow, resolveLayoutTokens, sectionTitle } from './utils/layoutConfig.js'
 import {
   CONTENT_BLOCK_TYPE_OPTIONS,
   EDITABLE_RESUME_MODULE_ORDER,
@@ -81,20 +81,6 @@ const RESUME_SETTINGS_DIALOG_EVENT = 'resume-settings-dialog-open'
 const directEditForm = reactive({ scope: 'all', original_text: '', target_text: '' })
 const directEditError = ref('')
 const isBuildingDirectPreview = ref(false)
-const directEditScopeOptions = Object.freeze([
-  { value: 'all', label: '整份简历' },
-  { value: 'basics', label: '基本信息' },
-  { value: 'education', label: '教育经历' },
-  { value: 'honors', label: '主要荣誉' },
-  { value: 'publications', label: '论文' },
-  { value: 'research_interests', label: '研究方向' },
-  { value: 'skills', label: '专业技能' },
-  { value: 'work_experience', label: '工作经历' },
-  { value: 'project_experience', label: '项目经历' },
-  { value: 'custom_sections', label: '自定义项目' },
-  { value: 'certificates_languages', label: '证书与语言' },
-  { value: 'self_evaluation', label: '自我评价' }
-])
 
 // 检测是否为移动端视图
 function checkMobileView() {
@@ -531,6 +517,7 @@ const renameTaskTitle = ref('')
 const isRenamingTask = ref(false)
 const taskRenameError = ref('')
 const taskActionMenu = ref(null)
+const taskActionMenuPosition = ref({ top: 0, left: 0 })
 const taskToSetBase = ref(null)
 const isSettingBaseTask = ref(false)
 const setBaseError = ref('')
@@ -579,6 +566,40 @@ const resumeData = ref(null)
 // 确认框出现期间使用的未保存简历候选，仅用于右侧临时预览
 const previewResumeData = contextField('previewResumeData')
 const activeResumeData = computed(() => previewResumeData.value || resumeData.value)
+const directEditScopeOptions = computed(() => {
+  const data = activeResumeData.value || {}
+  const layout = activeLayoutConfig.value
+  const title = (section, fallback) => plainDisplayText(
+    sectionTitle(layout, section, currentLang.value, fallback)
+  ) || fallback
+  const options = [{ value: 'all', label: '整份简历' }]
+  const add = (value, label, content) => {
+    if (hasMeaningfulResumeContent(content)) options.push({ value, label })
+  }
+  add('basics', '基本信息', data.basics)
+  add('education', title('education', '教育经历'), [data.education, data.education_supplement])
+  add('honors', title('honors', '主要荣誉'), data.honors)
+  add('publications', title('publications', '论文'), data.publications)
+  add('research_interests', title('research_interests', '研究方向'), data.research_interests)
+  add('skills', title('skills', '专业技能'), data.others?.skills)
+  add('work_experience', title('work_experience', '工作经历'), data.work_experience)
+  add('project_experience', title('project_experience', '项目经历'), data.project_experience)
+  ;(data.custom_sections || []).forEach((section, index) => {
+    if (String(section?.title || '').trim() && hasMeaningfulResumeContent(section?.items)) {
+      options.push({
+        value: `custom_sections:${index}`,
+        label: plainDisplayText(section.title) || `自定义栏目 ${index + 1}`
+      })
+    }
+  })
+  add(
+    'certificates_languages',
+    title('others', '证书与语言'),
+    [data.others?.certificates, data.others?.languages]
+  )
+  add('self_evaluation', title('self_evaluation', '自我评价'), data.self_evaluation)
+  return options
+})
 // JD数据（新增）
 const jdData = ref(null)
 // 加载状态
@@ -930,6 +951,7 @@ onMounted(() => {
   // 监听 localStorage 变化
   window.addEventListener('storage', handleStorageChange)
   window.addEventListener('focus', refreshEditStateOnFocus)
+  window.addEventListener('resize', closeTaskActionMenu)
   window.addEventListener(RESUME_SETTINGS_DIALOG_EVENT, handleResumeSettingsDialogOpen)
 
   // 使用 ResizeObserver 监听窗口大小变化
@@ -955,6 +977,7 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('storage', handleStorageChange)
   window.removeEventListener('focus', refreshEditStateOnFocus)
+  window.removeEventListener('resize', closeTaskActionMenu)
   window.removeEventListener(RESUME_SETTINGS_DIALOG_EVENT, handleResumeSettingsDialogOpen)
   stopParsingStatusPoll()
   if (uiNoticeTimer) clearTimeout(uiNoticeTimer)
@@ -2581,7 +2604,7 @@ function closeJDDialog() {
 // ==================== 简历编辑功能（新增） ====================
 
 function initializeExperienceContentEditor(proj, migrateDefaultBold = false, experienceKind = 'project') {
-  const blocks = normalizeContentBlocks(proj.content_blocks, proj.details, { experienceKind })
+  const blocks = normalizeContentBlocks(proj.content_blocks, { experienceKind })
   const techStack = experienceKind === 'project'
     ? blocks.find(block => resolveContentBlockFlow(block).semanticRole === 'tech_stack')
     : null
@@ -2609,8 +2632,8 @@ function initializeExperienceContentEditor(proj, migrateDefaultBold = false, exp
       : [prefix.replace(/[：:]$/, '')]
   }
   proj._techStackLabel = techStack ? editorLabel(techStack) : '**技术栈**'
-  proj._introLabel = intro ? editorLabel(intro) : '**项目简介**'
-  proj._dutiesLabel = duties ? editorLabel(duties) : '**项目职责**'
+  proj._introLabel = intro ? editorLabel(intro) : (experienceKind === 'work' ? '**工作简介**' : '**项目简介**')
+  proj._dutiesLabel = duties ? editorLabel(duties) : (experienceKind === 'work' ? '**工作职责**' : '**项目职责**')
   proj._techStackType = techStack?.type || 'paragraph'
   proj._introType = intro?.type || 'paragraph'
   proj._dutiesType = duties?.type || 'numbered_list'
@@ -2620,36 +2643,6 @@ function initializeExperienceContentEditor(proj, migrateDefaultBold = false, exp
   proj._dutiesText = duties?.type === 'paragraph' ? (duties?.text || '') : arrayToMultiline(duties?.items || [])
   proj._extraDetailsText = arrayToMultiline(extraBlocks.flatMap(extraBlockValues))
 
-  if (!blocks.length && Array.isArray(proj.details)) {
-    let dutyMode = false
-    const extras = []
-    const dutiesFromLegacy = []
-    for (const raw of proj.details) {
-      const text = String(raw || '').trim()
-      const introMatch = text.match(/^(项目简介|项目背景|项目概述|项目说明)\s*[：:]\s*(.*)$/)
-      const dutyMatch = text.match(/^(项目职责|主要职责|个人职责|负责内容)\s*[：:]?\s*(.*)$/)
-      const techStackMatch = text.match(/^(技术栈|技术选型|使用技术|技术工具)\s*[：:]?\s*(.*)$/)
-      if (techStackMatch) {
-        proj._techStackLabel = techStackMatch[1]
-        proj._techStackText = techStackMatch[2]
-        dutyMode = false
-      } else if (introMatch) {
-        proj._introLabel = introMatch[1]
-        proj._introText = introMatch[2]
-        dutyMode = false
-      } else if (dutyMatch) {
-        proj._dutiesLabel = dutyMatch[1]
-        dutyMode = true
-        if (dutyMatch[2]) dutiesFromLegacy.push(dutyMatch[2].replace(/^\s*[（(]?\d+[）).、]\s*/, ''))
-      } else if (dutyMode || /^\s*[（(]?\d+[）).、]/.test(text)) {
-        dutiesFromLegacy.push(text.replace(/^\s*[（(]?\d+[）).、]\s*/, ''))
-      } else if (text) {
-        extras.push(text)
-      }
-    }
-    proj._dutiesText = arrayToMultiline(dutiesFromLegacy)
-    proj._extraDetailsText = arrayToMultiline(extras)
-  }
   if (migrateDefaultBold) {
     proj._techStackLabel = wrapDefaultBold(proj._techStackLabel)
     proj._introLabel = wrapDefaultBold(proj._introLabel)
@@ -2657,9 +2650,21 @@ function initializeExperienceContentEditor(proj, migrateDefaultBold = false, exp
   }
 }
 
-function toggleTaskActionMenu(task) {
+function toggleTaskActionMenu(task, event) {
   if (!task) return
-  taskActionMenu.value = taskActionMenu.value?.id === task.id ? null : task
+  if (taskActionMenu.value?.id === task.id) {
+    closeTaskActionMenu()
+    return
+  }
+  const triggerRect = event?.currentTarget?.getBoundingClientRect?.()
+  if (triggerRect) {
+    const menuWidth = 126
+    taskActionMenuPosition.value = {
+      top: triggerRect.bottom + 4,
+      left: Math.max(8, Math.min(triggerRect.right - menuWidth, window.innerWidth - menuWidth - 8))
+    }
+  }
+  taskActionMenu.value = task
 }
 
 function closeTaskActionMenu() {
@@ -3136,9 +3141,8 @@ function addWork() {
     date_range: ['', ''],
     job_type: '',
     content_blocks: [],
-    details: [],
-    _introLabel: '**项目简介**',
-    _dutiesLabel: '**项目职责**',
+    _introLabel: '**工作简介**',
+    _dutiesLabel: '**工作职责**',
     _introType: 'paragraph',
     _dutiesType: 'numbered_list',
     _detailsType: 'bullet_list',
@@ -3160,7 +3164,6 @@ function addProject() {
     role: '',
     date_range: ['', ''],
     content_blocks: [],
-    details: [],
     _techStackLabel: '**技术栈**',
     _introLabel: '**项目简介**',
     _dutiesLabel: '**项目职责**',
@@ -3301,14 +3304,12 @@ async function saveResume() {
       convertDateRangeToSave(work)
       if (work._detailsText !== undefined) {
         work.content_blocks = editableExperienceToContentBlocks(work)
-        work.details = []
         for (const key of ['_techStackLabel', '_techStackType', '_techStackText', '_introLabel', '_dutiesLabel', '_introLabelBold', '_dutiesLabelBold', '_introType', '_dutiesType', '_detailsType', '_introText', '_dutiesText', '_detailsText', '_extraDetailsText']) delete work[key]
       }
     })
     dataToSave.project_experience?.forEach(proj => {
       convertDateRangeToSave(proj)
       proj.content_blocks = editableExperienceToContentBlocks(proj)
-      proj.details = []
       delete proj._techStackLabel
       delete proj._techStackType
       delete proj._techStackText
@@ -4569,7 +4570,7 @@ watch(
 
     <!-- 已登录且非管理页面：显示主内容（聊天界面） -->
     <div v-if="isLoggedIn && isWorkspaceRoute" class="workspace-shell" @click="closeTaskActionMenu">
-      <aside class="task-sidebar">
+      <aside class="task-sidebar" @scroll="closeTaskActionMenu">
         <div class="task-sidebar-title">岗位版本</div>
         <div
           v-for="task in projectTasks"
@@ -4588,27 +4589,35 @@ watch(
             class="task-action-trigger"
             title="版本操作"
             aria-label="打开版本操作"
-            @click.stop="toggleTaskActionMenu(task)"
+            :aria-expanded="taskActionMenu?.id === task.id"
+            @click.stop="toggleTaskActionMenu(task, $event)"
           >⋯</button>
-          <div v-if="taskActionMenu?.id === task.id" class="task-action-menu" @click.stop>
-            <button type="button" class="task-action-menu-item" @click="openRenameTaskDialog(task)">重命名</button>
-            <button
-              v-if="!task.is_base"
-              type="button"
-              class="task-action-menu-item"
-              @click="openSetBaseDialog(task)"
-            >设为主简历</button>
-            <button
-              v-if="!task.is_base"
-              type="button"
-              class="task-action-menu-item danger"
-              @click="deleteProjectTask(task)"
-            >删除</button>
-            <span v-else class="task-action-menu-note">当前主简历</span>
-          </div>
         </div>
         <button class="new-task-btn" @click="createProjectTask">＋ 新建版本</button>
       </aside>
+      <Teleport to="body">
+        <div
+          v-if="taskActionMenu"
+          class="task-action-menu"
+          :style="{ top: `${taskActionMenuPosition.top}px`, left: `${taskActionMenuPosition.left}px` }"
+          @click.stop
+        >
+          <button type="button" class="task-action-menu-item" @click="openRenameTaskDialog(taskActionMenu)">重命名</button>
+          <button
+            v-if="!taskActionMenu.is_base"
+            type="button"
+            class="task-action-menu-item"
+            @click="openSetBaseDialog(taskActionMenu)"
+          >设为主简历</button>
+          <button
+            v-if="!taskActionMenu.is_base"
+            type="button"
+            class="task-action-menu-item danger"
+            @click="deleteProjectTask(taskActionMenu)"
+          >删除</button>
+          <span v-else class="task-action-menu-note">当前主简历</span>
+        </div>
+      </Teleport>
       <div class="main-content">
       <!-- 桌面端：并排显示 -->
       <template v-if="!isMobileView">
@@ -5447,11 +5456,11 @@ watch(
                   </div>
                 </div>
               </div>
-              <!-- 可选的项目化工作内容；普通工作内容仍可无标签显示。 -->
+              <!-- 可选的结构化工作内容；其他工作内容仍可无标签显示。 -->
               <div class="array-item-nested">
                 <div class="content-block-heading-row">
-                  <RichTextEditor v-model="work._introLabel" placeholder="例如 项目简介" compact default-bold />
-                  <select v-model="work._introType" aria-label="项目简介内容形式">
+                  <RichTextEditor v-model="work._introLabel" placeholder="例如 工作简介" compact default-bold />
+                  <select v-model="work._introType" aria-label="工作简介内容形式">
                     <option v-for="(label, value) in CONTENT_BLOCK_TYPE_OPTIONS" :key="value" :value="value">{{ label }}</option>
                   </select>
                 </div>
@@ -5466,8 +5475,8 @@ watch(
               </div>
               <div class="array-item-nested">
                 <div class="content-block-heading-row">
-                  <RichTextEditor v-model="work._dutiesLabel" placeholder="例如 项目职责" compact default-bold />
-                  <select v-model="work._dutiesType" aria-label="项目职责内容形式">
+                  <RichTextEditor v-model="work._dutiesLabel" placeholder="例如 工作职责" compact default-bold />
+                  <select v-model="work._dutiesType" aria-label="工作职责内容形式">
                     <option v-for="(label, value) in CONTENT_BLOCK_TYPE_OPTIONS" :key="value" :value="value">{{ label }}</option>
                   </select>
                 </div>
@@ -5482,8 +5491,8 @@ watch(
               </div>
               <div class="array-item-nested">
                 <div class="content-block-heading-row generic-content-heading">
-                  <label>普通工作内容（可选）</label>
-                  <select v-model="work._detailsType" aria-label="普通工作内容分点形式">
+                  <label>其他工作内容（可选）</label>
+                  <select v-model="work._detailsType" aria-label="其他工作内容分点形式">
                     <option v-for="(label, value) in CONTENT_BLOCK_TYPE_OPTIONS" :key="value" :value="value">{{ label }}</option>
                   </select>
                 </div>
@@ -6137,15 +6146,24 @@ watch(
 }
 
 .task-action-trigger:hover {
-  background: rgba(120, 166, 255, .12);
+  background: transparent;
   color: #dbe6ff;
+  outline: none;
+  box-shadow: none;
+}
+
+.task-action-trigger:focus,
+.task-action-trigger:focus-visible,
+.task-action-trigger[aria-expanded="true"] {
+  color: #dbe6ff;
+  background: transparent;
+  outline: none;
+  box-shadow: none;
 }
 
 .task-action-menu {
-  position: absolute;
-  top: calc(100% - .1rem);
-  right: 0;
-  z-index: 20;
+  position: fixed;
+  z-index: 3000;
   display: grid;
   min-width: 126px;
   padding: .3rem;
@@ -6203,6 +6221,7 @@ watch(
 
   .task-sidebar {
     display: flex;
+    align-items: center;
     flex: 0 0 auto;
     gap: .4rem;
     padding: .5rem;
@@ -6217,16 +6236,28 @@ watch(
 
   .task-link {
     flex: 0 0 auto;
+    align-self: stretch;
+    justify-content: center;
     margin: 0;
   }
 
   .task-row {
     flex: 0 0 auto;
+    min-height: 42px;
+    box-sizing: border-box;
+  }
+
+  .task-row.base-task-row {
+    margin-bottom: .2rem;
+    padding-bottom: 0;
   }
 
   .new-task-btn {
+    display: inline-flex;
+    align-items: center;
     flex: 0 0 auto;
     width: auto;
+    min-height: 42px;
     margin: 0;
   }
 

@@ -858,24 +858,12 @@ def generate_docx(
             if cfg["schoolTagStyle"] == "hidden":
                 tag_text = ""
             date = dates[index]
-            metrics = []
-            if item.get("gpa") and "gpa" not in hidden_metrics:
-                value = (
-                    join_inline_with_inherited_separator(
-                        [item["gpa"], item["gpa_scale"]], "/"
-                    )
-                    if item.get("gpa_scale")
-                    else str(item["gpa"])
-                )
-                metrics.append(f'{labels["gpa"]}{colon}{value}')
-            if item.get("ranking") and "ranking" not in hidden_metrics:
-                metrics.append(f'{labels["ranking"]}{colon}{item["ranking"]}')
             component_values = {
                 "school": school,
                 "school_tags": tag_text,
                 "degree": item.get("degree", ""),
                 "major": item.get("major", ""),
-                "metrics": compact_metrics[index] if cfg["preset"] == "compact" else join_inline_with_inherited_separator(metrics, " · "),
+                "metrics": compact_metrics[index],
                 "date": date,
             }
             hidden_components = set(cfg["hiddenComponents"]) | {"theses"}
@@ -896,14 +884,13 @@ def generate_docx(
                         active_cells.append((cell_config, components))
                 if not active_cells:
                     continue
-                is_compact_header = (
-                    cfg["preset"] == "compact"
-                    and len(active_cells) == 3
+                is_current_header = (
+                    len(active_cells) == 3
                     and "school" in active_cells[0][1]
                     and any(component in active_cells[1][1] for component in ("degree", "major", "metrics"))
                     and "date" in active_cells[2][1]
                 )
-                if is_compact_header:
+                if is_current_header:
                     widths = (compact_widths["sideMm"], compact_widths["middleMm"], compact_widths["sideMm"])
                 else:
                     content_width = min(42.0, printable_width_mm / max(1, len(active_cells)))
@@ -940,11 +927,7 @@ def generate_docx(
                             # These are user-entered field values. Their visual
                             # weight comes only from explicit inline-bold marks.
                             base_bold = False
-                            current_bold = (
-                                compact_metric_leading_bold[index]
-                                if component == "metrics" and cfg["preset"] == "compact"
-                                else _is_fully_bold(component_values[component])
-                            )
+                            current_bold = compact_metric_leading_bold[index] if component == "metrics" else _is_fully_bold(component_values[component])
                             if prefix and previous_bold and current_bold:
                                 prefix = f"**{prefix}**"
                             _add_markdown_runs(paragraph, prefix + component_values[component], label_font_size, fonts=font_spec, base_bold=base_bold)
@@ -1102,11 +1085,7 @@ def generate_docx(
 
     def work_groups():
         items = list(data.get("work_experience") or [])
-        if not global_layout["splitWorkExperience"]:
-            return [("work_experience", labels["workExperience"], items)]
-        regular = [item for item in items if not re.search(r"实习|intern", str(item.get("job_type", "")), re.I)]
-        interns = [item for item in items if re.search(r"实习|intern", str(item.get("job_type", "")), re.I)]
-        return [("work_experience", labels["workExperience"], regular), ("internship_experience", "Internship Experience" if lang == "en" else "实习经历", interns)]
+        return [("work_experience", labels["workExperience"], items)]
 
     def render_work(section_id: str, fallback: str, items: list) -> None:
         if not items or section_id in hidden_sections:
@@ -1136,7 +1115,7 @@ def generate_docx(
         module_tokens = tokens["modules"][module_id]
         module_indent_mm = module_tokens["indentPt"] * 25.4 / 72.0
         semantic_indent_mm = module_indent_mm + list_text_indent_mm
-        blocks = iter_experience_content_blocks(item, experience_kind="work" if module_id in {"work_experience", "internship_experience"} else "project")
+        blocks = iter_experience_content_blocks(item, experience_kind="work" if module_id == "work_experience" else "project")
         rendered = False
         for block, flow in blocks:
             rendered = True
@@ -1190,8 +1169,6 @@ def generate_docx(
                         fonts=font_spec,
                         text_indent_mm=module_indent_mm + list_text_indent_mm * max(1, flow["contentIndentLevels"]),
                     )
-        if not rendered:
-            add_details(item.get("details"), "bullets")
 
     def render_projects() -> None:
         items = data.get("project_experience") or []

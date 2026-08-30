@@ -147,15 +147,14 @@ class ResumeFileApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("高优先级的局部粗体证据", prompt)
         self.assertIn("宁可漏标也不要误标", prompt)
         self.assertIn("generic 的 label 必须为空", prompt)
-        self.assertIn("普通内容用分点", prompt)
-        self.assertIn("内容块边界与分类顺序", prompt)
+        self.assertIn("semantic_role 只说明内容含义，不决定排列形式", prompt)
+        self.assertIn("paragraph、bullet_list、numbered_list 三种 type", prompt)
+        self.assertIn("内容块边界与分类", prompt)
         self.assertIn("视觉边界优先于语义猜测", prompt)
-        self.assertIn("只有项目简介正文结束后的后续内容才进入职责候选区", prompt)
-        self.assertIn("此后的连续内容默认属于 responsibilities", prompt)
+        self.assertIn("没有明确语义标题时不根据词义或技术名词自行补造角色", prompt)
         self.assertIn("source_layout_group", prompt)
-        self.assertIn("若整个经历没有任何明确的项目简介/项目职责/技术栈标题，全部内容归入 generic", prompt)
         self.assertIn("不能仅凭正文出现技术名词创建该块", prompt)
-        self.assertIn("所有可见内容必须原样进入某个 content_blocks", prompt)
+        self.assertIn("所有可见经历正文必须原样进入某个 content_blocks 且只能出现一次", prompt)
 
 
 if __name__ == "__main__":

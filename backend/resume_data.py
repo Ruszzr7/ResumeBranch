@@ -119,7 +119,6 @@ _TOP_LEVEL_ALIASES = {
     "projects": "project_experience",
 }
 
-_NUMBERED_MARKER_RE = re.compile(r"(?<![A-Za-z0-9])[（(]\s*\d{1,2}\s*[）)]")
 _SKILL_SECTION_RE = re.compile(r"^(?:专业技能|技能特长|技术栈|核心技能|技能)$", re.IGNORECASE)
 _LANGUAGE_SKILL_HINT_RE = re.compile(r"(?:英语|英文|语言能力|外语|CET[- ]?[四六46]|IELTS|TOEFL|雅思|托福)", re.IGNORECASE)
 _CERTIFICATE_SKILL_HINT_RE = re.compile(r"(?:证书|认证|资格)", re.IGNORECASE)
@@ -141,36 +140,6 @@ def _string_list(value: Any) -> list[str]:
             text = _text(item)
         if text and text not in result:
             result.append(text)
-    return result
-
-
-def _split_numbered_text(text: str) -> list[str]:
-    """Split visibly numbered clauses without rewriting their wording."""
-    value = _text(text)
-    markers = list(_NUMBERED_MARKER_RE.finditer(value))
-    if not markers:
-        return [value] if value else []
-    # A lone parenthesized number inside ordinary prose is not a safe split.
-    prefix = value[: markers[0].start()].strip()
-    if len(markers) == 1 and not re.search(r"(?:职责|内容|成果|工作|任务)\s*[：:]?\s*$", prefix):
-        return [value]
-    parts: list[str] = []
-    if prefix:
-        parts.append(prefix.rstrip("；;，,"))
-    for index, marker in enumerate(markers):
-        end = markers[index + 1].start() if index + 1 < len(markers) else len(value)
-        part = value[marker.start():end].strip().rstrip("；;")
-        if part:
-            parts.append(part)
-    return parts
-
-
-def _normalize_details(value: Any) -> list[str]:
-    result: list[str] = []
-    for item in _string_list(value):
-        for part in _split_numbered_text(item):
-            if part and part not in result:
-                result.append(part)
     return result
 
 
@@ -316,9 +285,12 @@ def normalize_resume_data(data: dict) -> dict:
         item.setdefault("job_title", _text(item.pop("position", "")))
         item.setdefault("job_type", _text(item.pop("type", "")))
         item["date_range"] = _date_range(item)
-        item["details"] = _normalize_details(item.get("details", item.pop("content", [])))
+        for legacy_field in ("details", "content"):
+            if item.get(legacy_field):
+                raise ValueError(f"工作经历不再支持旧字段：{legacy_field}")
+            item.pop(legacy_field, None)
         item["content_blocks"] = normalize_content_blocks(
-            item.get("content_blocks"), item["details"], experience_kind="work",
+            item.get("content_blocks"), experience_kind="work",
         )
     normalized["work_experience"] = work_items
 
@@ -331,9 +303,12 @@ def normalize_resume_data(data: dict) -> dict:
         item.setdefault("project_name", _text(item.pop("name", "")))
         item["role"] = _text(item.get("role"))
         item["date_range"] = _date_range(item)
-        item["details"] = _normalize_details(item.get("details", item.pop("content", [])))
+        for legacy_field in ("details", "content"):
+            if item.get(legacy_field):
+                raise ValueError(f"项目经历不再支持旧字段：{legacy_field}")
+            item.pop(legacy_field, None)
         item["content_blocks"] = normalize_content_blocks(
-            item.get("content_blocks"), item["details"], experience_kind="project",
+            item.get("content_blocks"), experience_kind="project",
         )
     normalized["project_experience"] = project_items
 

@@ -27,7 +27,10 @@ def resume_payload():
         "work_experience": [{
             "company_name": "示例科技", "job_title": "产品实习生",
             "date_range": ["2025.01", "2025.06"], "job_type": "实习",
-            "details": ["参与落地页优化。"],
+            "content_blocks": [{
+                "type": "bullet_list", "semantic_role": "generic", "label": "",
+                "items": ["参与落地页优化。"],
+            }],
         }],
         "project_experience": [],
         "others": {"skills": [], "certificates": [], "languages": []},
@@ -82,7 +85,7 @@ class InterviewHarnessTests(unittest.IsolatedAsyncioTestCase):
             "open_items": ["实验设计"],
             "rejected_suggestions": [],
             "suggestion": {
-                "target_path": "work_experience.0.details.0",
+                "target_path": "work_experience.0.content_blocks.0.items.0",
                 "suggested": "参与落地页 A/B 测试，推动注册转化率提升20%。",
                 "rationale": "补充已核实结果",
             },
@@ -117,14 +120,14 @@ class InterviewHarnessTests(unittest.IsolatedAsyncioTestCase):
         resume = resume_payload()
         facts = [{"claim": "注册转化率提升20%", "source_quote": "注册转化率提升20%"}]
         suggestion = validate_suggestion({
-            "target_path": "work_experience.0.details.0",
+            "target_path": "work_experience.0.content_blocks.0.items.0",
             "suggested": "推动注册转化率提升20%。",
             "rationale": "量化结果",
         }, resume, facts)
         candidate = apply_suggestion_candidate(resume, suggestion)
 
-        self.assertEqual(resume["work_experience"][0]["details"][0], "参与落地页优化。")
-        self.assertEqual(candidate["work_experience"][0]["details"][0], "推动注册转化率提升20%。")
+        self.assertEqual(resume["work_experience"][0]["content_blocks"][0]["items"][0], "参与落地页优化。")
+        self.assertEqual(candidate["work_experience"][0]["content_blocks"][0]["items"][0], "推动注册转化率提升20%。")
         stale = dict(suggestion)
         stale["original"] = "已变化"
         with self.assertRaisesRegex(ValueError, "简历已变化"):
@@ -157,7 +160,7 @@ class InterviewHarnessTests(unittest.IsolatedAsyncioTestCase):
     async def test_graph_entry_and_apply_reuse_existing_confirmation_preview(self):
         resume = resume_payload()
         suggestion = {
-            "target_path": "work_experience.0.details.0",
+            "target_path": "work_experience.0.content_blocks.0.items.0",
             "original": "参与落地页优化。",
             "suggested": "推动注册转化率提升20%。",
             "rationale": "量化结果",

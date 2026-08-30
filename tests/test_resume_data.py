@@ -142,80 +142,55 @@ class ResumeDataNormalizationTests(unittest.TestCase):
         self.assertEqual(result["honors"], ["研究生二等奖学金"])
         self.assertEqual(result["custom_sections"], [{"title": "志愿服务", "items": ["校级志愿服务队成员"]}])
 
-    def test_splits_numbered_responsibilities_without_rewriting(self):
-        source = {
-            "basics": {"name": "测试"},
-            "work_experience": [{
-                "company": "示例公司",
-                "position": "实习生",
-                "time": "2025.01 - 2025.06",
-                "content": ["项目职责：（1）完成模块A；（2）完成模块B；（3）验证模块C"],
-            }],
-        }
+    def test_rejects_retired_work_content_field(self):
+        with self.assertRaisesRegex(ValueError, "工作经历不再支持旧字段：content"):
+            normalize_and_validate_resume({
+                "basics": {"name": "测试"},
+                "work_experience": [{
+                    "company": "示例公司", "position": "实习生",
+                    "time": "2025.01 - 2025.06",
+                    "content": ["项目职责：（1）完成模块A；（2）完成模块B"],
+                }],
+            })
 
-        result = normalize_and_validate_resume(source)
-        work = result["work_experience"][0]
-        details = work["details"]
+    def test_rejects_retired_project_details_field(self):
+        with self.assertRaisesRegex(ValueError, "项目经历不再支持旧字段：details"):
+            normalize_resume_data({
+                "basics": {"name": "测试"},
+                "project_experience": [{
+                    "project_name": "机器人项目", "details": ["项目简介：面向展厅导航场景"],
+                }],
+            })
 
-        self.assertEqual(details, ["项目职责：", "（1）完成模块A", "（2）完成模块B", "（3）验证模块C"])
-        self.assertEqual(work["date_range"], ["2025.01", "2025.06"])
-        self.assertEqual(work["content_blocks"][0]["type"], "numbered_list")
-        self.assertEqual(work["content_blocks"][0]["semantic_role"], "responsibilities")
-        self.assertEqual(work["content_blocks"][0]["label"], "项目职责")
-        self.assertEqual(work["content_blocks"][0]["items"], ["完成模块A", "完成模块B", "验证模块C"])
-
-    def test_migrates_project_details_into_semantic_blocks(self):
-        source = {
-            "basics": {"name": "测试"},
-            "project_experience": [{
-                "project_name": "机器人项目",
-                "role": "",
-                "details": [
-                    "项目简介：面向展厅导航场景",
-                    "项目职责：",
-                    "（1）完成轨迹训练",
-                    "（2）验证控制策略",
-                ],
-            }],
-        }
-
-        project = normalize_resume_data(source)["project_experience"][0]
-
-        self.assertEqual(project["role"], "")
-        self.assertEqual(project["content_blocks"][0], {
-            "type": "paragraph", "semantic_role": "introduction", "label": "项目简介", "label_bold": True,
-            "text": "面向展厅导航场景", "items": [],
-        })
-        self.assertEqual(project["content_blocks"][1]["type"], "numbered_list")
-        self.assertEqual(project["content_blocks"][1]["items"], ["完成轨迹训练", "验证控制策略"])
-
-    def test_intro_followed_by_unlabelled_lines_becomes_responsibilities(self):
+    def test_explicit_intro_and_responsibilities_are_canonical_blocks(self):
         source = {
             "basics": {"name": "测试"},
             "work_experience": [{
                 "company_name": "示例公司",
-                "details": [
-                    "项目简介：负责展厅导航系统",
-                    "完成模块设计与实现",
-                    "完成联调与性能验证",
+                "content_blocks": [
+                    {"type": "paragraph", "semantic_role": "introduction", "label": "项目简介", "text": "负责展厅导航系统"},
+                    {"type": "numbered_list", "semantic_role": "responsibilities", "label": "项目职责", "items": ["完成模块设计与实现", "完成联调与性能验证"]},
                 ],
             }],
             "project_experience": [{
                 "project_name": "机器人项目",
-                "details": [
-                    "项目简介：面向复杂场景",
-                    "（1）完成轨迹训练",
-                    "（2）验证控制策略",
+                "content_blocks": [
+                    {"type": "paragraph", "semantic_role": "introduction", "label": "项目简介", "text": "面向复杂场景"},
+                    {"type": "numbered_list", "semantic_role": "responsibilities", "label": "项目职责", "items": ["完成轨迹训练", "验证控制策略"]},
                 ],
             }],
         }
 
         result = normalize_resume_data(source)
-        for item in (result["work_experience"][0], result["project_experience"][0]):
+        for item, intro_label, duties_label in (
+            (result["work_experience"][0], "工作简介", "工作职责"),
+            (result["project_experience"][0], "项目简介", "项目职责"),
+        ):
             blocks = item["content_blocks"]
             self.assertEqual(blocks[0]["semantic_role"], "introduction")
+            self.assertEqual(blocks[0]["label"], intro_label)
             self.assertEqual(blocks[1]["semantic_role"], "responsibilities")
-            self.assertEqual(blocks[1]["label"], "项目职责")
+            self.assertEqual(blocks[1]["label"], duties_label)
             self.assertEqual(blocks[1]["type"], "numbered_list")
             self.assertEqual(len(blocks[1]["items"]), 2)
 
@@ -240,15 +215,14 @@ class ResumeDataNormalizationTests(unittest.TestCase):
         self.assertFalse(block["label_bold"])
         self.assertEqual(block["items"], ["设计模块", "验证模块"])
 
-    def test_bold_headings_and_following_points_keep_project_responsibility_semantics(self):
+    def test_explicit_bold_content_blocks_keep_project_responsibility_semantics(self):
         result = normalize_resume_data({
             "basics": {"name": "测试"},
             "work_experience": [{
                 "company_name": "示例公司",
-                "details": [
-                    "**项目简介**：**负责导航系统设计**",
-                    "**完成模块实现**",
-                    "完成联调验证",
+                "content_blocks": [
+                    {"type": "paragraph", "semantic_role": "introduction", "label": "项目简介", "text": "**负责导航系统设计**"},
+                    {"type": "bullet_list", "semantic_role": "responsibilities", "label": "项目职责", "items": ["**完成模块实现**", "完成联调验证"]},
                 ],
             }],
             "project_experience": [{
@@ -262,8 +236,10 @@ class ResumeDataNormalizationTests(unittest.TestCase):
 
         work_blocks = result["work_experience"][0]["content_blocks"]
         self.assertEqual(work_blocks[0]["semantic_role"], "introduction")
+        self.assertEqual(work_blocks[0]["label"], "工作简介")
         self.assertEqual(work_blocks[0]["text"], "**负责导航系统设计**")
         self.assertEqual(work_blocks[1]["semantic_role"], "responsibilities")
+        self.assertEqual(work_blocks[1]["label"], "工作职责")
         self.assertEqual(work_blocks[1]["items"], ["**完成模块实现**", "完成联调验证"])
 
         project_blocks = result["project_experience"][0]["content_blocks"]

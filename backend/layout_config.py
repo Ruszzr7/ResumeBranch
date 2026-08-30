@@ -19,7 +19,7 @@ from .inline_formatting import (
 from .resume_contract import normalize_content_block
 
 
-LAYOUT_SCHEMA_VERSION = 9
+LAYOUT_SCHEMA_VERSION = 10
 # Physical clearance between the photo bottom and the first visible section
 # divider for browser/PDF geometry.  Word keeps its own table-specific cap.
 PHOTO_BOTTOM_GAP_MM = 1.5
@@ -134,7 +134,6 @@ SECTION_IDS = (
     "research_interests",
     "skills",
     "work_experience",
-    "internship_experience",
     "project_experience",
     "custom_sections",
     "others",
@@ -167,7 +166,6 @@ MODULE_COMPONENTS: dict[str, tuple[str, ...]] = {
     "honors": ("items",),
     "publications": ("items",),
     "work_experience": ("organization", "position", "job_type", "date", "content"),
-    "internship_experience": ("organization", "position", "job_type", "date", "content"),
     "project_experience": ("project_name", "role", "date", "content"),
     "custom_sections": ("items",),
     "others": ("certificates", "languages"),
@@ -182,7 +180,6 @@ REQUIRED_COMPONENTS = {
     "honors": {"items"},
     "publications": {"items"},
     "work_experience": {"organization", "content"},
-    "internship_experience": {"organization", "content"},
     "project_experience": {"project_name", "content"},
     "custom_sections": {"items"},
     "others": set(),
@@ -192,7 +189,6 @@ REQUIRED_COMPONENTS = {
 LONG_TEXT_COMPONENTS = {
     ("education", "theses"),
     ("work_experience", "content"),
-    ("internship_experience", "content"),
     ("project_experience", "content"),
     ("skills", "items"),
     ("research_interests", "items"),
@@ -213,10 +209,6 @@ DEFAULT_COMPONENT_ROWS: dict[str, list[dict[str, Any]]] = {
         {"cells": [{"components": ["theses"], "flow": "stacked", "width": "fill", "alignment": "justify"}]},
     ],
     "work_experience": [
-        {"cells": [{"components": ["organization", "position", "job_type"], "flow": "inline", "width": "fill", "alignment": "left"}, {"components": ["date"], "flow": "inline", "width": "content", "alignment": "right"}]},
-        {"cells": [{"components": ["content"], "flow": "stacked", "width": "fill", "alignment": "justify"}]},
-    ],
-    "internship_experience": [
         {"cells": [{"components": ["organization", "position", "job_type"], "flow": "inline", "width": "fill", "alignment": "left"}, {"components": ["date"], "flow": "inline", "width": "content", "alignment": "right"}]},
         {"cells": [{"components": ["content"], "flow": "stacked", "width": "fill", "alignment": "justify"}]},
     ],
@@ -283,22 +275,17 @@ DEFAULT_LAYOUT_CONFIG: dict[str, Any] = {
             "self_evaluation",
         ],
         "hiddenSections": [],
-        "splitWorkExperience": False,
         "titleOverrides": {},
         "sectionPlacements": {},
     },
     "basics": _module_contract("basics",
-        preset="left-aligned",
-        contactLayout="inline",
         photoPosition="right",
         photoHeightMm=26.0,
         photoWidthMm=21.0,
         hiddenFields=[],
     ),
     "education": _module_contract("education",
-        preset="compact",
         schoolTagStyle="text",
-        metricsPlacement="with-degree",
         hiddenMetrics=[],
         thesisDisplay="expanded",
         supplementListStyle="bullet",
@@ -308,16 +295,11 @@ DEFAULT_LAYOUT_CONFIG: dict[str, Any] = {
     "honors": _module_contract("honors", listStyle="bullet"),
     "publications": _module_contract("publications", listStyle="bullet"),
     "work_experience": _module_contract("work_experience",
-        preset="compact",
         detailsStyle="bullets",
         datePosition="right",
         showJobType=True,
     ),
-    "internship_experience": _module_contract("internship_experience",
-        preset="compact", detailsStyle="bullets", datePosition="right", showJobType=True,
-    ),
     "project_experience": _module_contract("project_experience",
-        preset="compact",
         detailsStyle="bullets",
         datePosition="right",
         showRole=True,
@@ -325,12 +307,11 @@ DEFAULT_LAYOUT_CONFIG: dict[str, Any] = {
     ),
     "custom_sections": _module_contract("custom_sections", listStyle="bullet"),
     "others": _module_contract("others",
-        preset="tags",
         fieldOrder=["skills", "certificates", "languages"],
         hiddenFields=[],
         separator="dot",
     ),
-    "self_evaluation": _module_contract("self_evaluation", preset="compact", listStyle="paragraph"),
+    "self_evaluation": _module_contract("self_evaluation", listStyle="paragraph"),
 }
 
 DENSITY_VALUES = {
@@ -343,26 +324,15 @@ ENUMS = {
     ("typography", "preset"): set(TYPOGRAPHY_PRESETS),
     ("global", "density"): set(DENSITY_VALUES),
     ("global", "titleStyle"): {"underline", "plain"},
-    ("basics", "preset"): {"centered", "left-aligned"},
-    ("basics", "contactLayout"): {"inline", "stacked"},
     ("basics", "photoPosition"): {"right", "hidden"},
-    ("education", "preset"): {"classic", "compact", "three-column"},
     ("education", "schoolTagStyle"): {"filled", "outline", "text", "hidden"},
-    ("education", "metricsPlacement"): {"below", "with-degree", "info-column"},
     ("education", "thesisDisplay"): {"expanded", "compact", "hidden"},
     ("education", "supplementListStyle"): {"paragraph", "bullet", "numbered"},
-    ("work_experience", "preset"): {"compact"},
     ("work_experience", "detailsStyle"): {"bullets", "paragraph"},
     ("work_experience", "datePosition"): {"right", "inline"},
-    ("internship_experience", "preset"): {"compact"},
-    ("internship_experience", "detailsStyle"): {"bullets", "paragraph"},
-    ("internship_experience", "datePosition"): {"right", "inline"},
-    ("project_experience", "preset"): {"classic", "compact"},
     ("project_experience", "detailsStyle"): {"bullets", "paragraph"},
     ("project_experience", "datePosition"): {"right", "inline"},
-    ("others", "preset"): {"inline", "tags", "stacked"},
     ("others", "separator"): {"pipe", "dot"},
-    ("self_evaluation", "preset"): {"paragraphs", "bullets", "compact"},
 }
 
 ALLOWED_HIDDEN_FIELDS = {
@@ -381,7 +351,6 @@ MODULE_LABELS = {
     "honors": "主要荣誉",
     "publications": "论文",
     "work_experience": "工作/实习经历",
-    "internship_experience": "实习经历",
     "project_experience": "项目经历",
     "custom_sections": "自定义栏目",
     "others": "其他信息",
@@ -391,7 +360,7 @@ MODULE_LABELS = {
 VALUE_LABELS = {
     "compact": "紧凑", "standard": "标准", "comfortable": "舒展",
     "underline": "强调标题", "plain": "简洁标题",
-    "centered": "居中式", "left-aligned": "左对齐式",
+    "left-aligned": "左对齐式",
     "inline": "同行", "stacked": "纵向", "right": "右侧", "hidden": "隐藏",
     "classic": "经典", "three-column": "三列", "filled": "实心标签",
     "outline": "描边标签", "text": "普通文字", "below": "独立下一行",
@@ -415,37 +384,34 @@ FIELD_LABELS = {
     ("global", "titleStyle"): "模块标题样式",
     ("global", "sectionOrder"): "模块顺序",
     ("global", "hiddenSections"): "隐藏模块",
-    ("global", "splitWorkExperience"): "工作与实习拆分",
     ("global", "titleOverrides"): "模块标题名称",
-    ("basics", "preset"): "基本信息布局",
-    ("basics", "contactLayout"): "联系方式排列",
+    ("global", "sectionPlacements"): "模块归属位置",
     ("basics", "photoPosition"): "照片位置",
     ("basics", "hiddenFields"): "隐藏字段",
-    ("education", "preset"): "教育信息布局",
     ("education", "schoolTagStyle"): "学校标签样式",
-    ("education", "metricsPlacement"): "成绩信息位置",
     ("education", "hiddenMetrics"): "隐藏成绩项",
     ("education", "thesisDisplay"): "论文展示方式",
     ("education", "supplementListStyle"): "教育经历补充分点形式",
-    ("work_experience", "preset"): "工作经历布局",
+    ("skills", "listStyle"): "专业技能展示形式",
+    ("research_interests", "listStyle"): "研究方向展示形式",
+    ("honors", "listStyle"): "主要荣誉展示形式",
+    ("publications", "listStyle"): "论文展示形式",
     ("work_experience", "detailsStyle"): "工作描述样式",
     ("work_experience", "datePosition"): "工作日期位置",
     ("work_experience", "showJobType"): "显示工作类型",
-    ("project_experience", "preset"): "项目经历布局",
     ("project_experience", "detailsStyle"): "项目描述样式",
     ("project_experience", "datePosition"): "项目日期位置",
     ("project_experience", "showRole"): "显示项目角色",
     ("project_experience", "showDate"): "显示项目日期",
-    ("others", "preset"): "其他信息布局",
+    ("custom_sections", "listStyle"): "自定义栏目展示形式",
     ("others", "fieldOrder"): "信息顺序",
     ("others", "hiddenFields"): "隐藏字段",
     ("others", "separator"): "信息分隔符",
-    ("self_evaluation", "preset"): "自我评价布局",
+    ("self_evaluation", "listStyle"): "自我评价展示形式",
 }
 
 ITEM_LABELS = {
     **MODULE_LABELS,
-    "internship_experience": "实习经历",
     "skills": "技能",
     "certificates": "证书",
     "languages": "语言",
@@ -469,6 +435,13 @@ def _display_layout_value(value: Any, field_key: str = "") -> str:
             for item in value
         ) or "无"
     if isinstance(value, dict):
+        if field_key == "titleOverrides":
+            return "、".join(
+                f"{ITEM_LABELS.get(str(key), str(key))}："
+                f"{str(item.get('zh') or item.get('en') or '').strip()}"
+                for key, item in value.items()
+                if isinstance(item, dict) and (item.get("zh") or item.get("en"))
+            ) or "无"
         placement_labels = {"standalone": "独立栏目", "education": "并入教育经历"} if field_key == "sectionPlacements" else {}
         return "、".join(
             f"{ITEM_LABELS.get(str(key), str(key))}：{placement_labels.get(str(item), VALUE_LABELS.get(str(item), str(item)))}"
@@ -516,19 +489,7 @@ def _half_point(value: Any, minimum: float, maximum: float, fallback: float) -> 
 def _legacy_component_rows(module_id: str, config: dict[str, Any]) -> list[dict[str, Any]]:
     """Translate v1-v6 presets into the renderer-neutral v7 row contract."""
     rows = deepcopy(DEFAULT_COMPONENT_ROWS[module_id])
-    if module_id == "basics" and config.get("preset") == "centered":
-        return [
-            {"cells": [{"components": ["name", "target_position"], "flow": "stacked", "width": "fill", "alignment": "center"}, {"components": ["photo"], "flow": "stacked", "width": "content", "alignment": "right"}]},
-            {"cells": [{"components": ["personal_meta", "contact", "additional_fields"], "flow": config.get("contactLayout", "inline"), "width": "fill", "alignment": "center"}]},
-        ]
-    if module_id == "education" and config.get("preset") == "classic":
-        return [
-            {"cells": [{"components": ["school", "school_tags"], "flow": "inline", "width": "fill", "alignment": "left"}, {"components": ["date"], "flow": "inline", "width": "content", "alignment": "right"}]},
-            {"cells": [{"components": ["degree", "major"], "flow": "inline", "width": "fill", "alignment": "left"}]},
-            {"cells": [{"components": ["metrics"], "flow": "inline", "width": "fill", "alignment": "left"}]},
-            {"cells": [{"components": ["theses"], "flow": "stacked", "width": "fill", "alignment": "justify"}]},
-        ]
-    if module_id in {"work_experience", "internship_experience"} and config.get("datePosition") == "inline":
+    if module_id == "work_experience" and config.get("datePosition") == "inline":
         rows[0] = {"cells": [{"components": ["organization", "position", "job_type", "date"], "flow": "inline", "width": "fill", "alignment": "left"}]}
     if module_id == "project_experience" and config.get("datePosition") == "inline":
         rows[0] = {"cells": [{"components": ["project_name", "role", "date"], "flow": "inline", "width": "fill", "alignment": "left"}]}
@@ -647,26 +608,11 @@ def _normalize_module_contract(result: dict[str, Any], source: dict | None, supp
         fallback = _legacy_component_rows(module_id, module) if supplied_version < 7 else deepcopy(DEFAULT_COMPONENT_ROWS[module_id])
         raw_module = source.get(module_id) if isinstance(source.get(module_id), dict) else {}
         raw_rows = raw_module.get("componentRows") if supplied_version >= 7 else fallback
+        if module_id in {"basics", "education"}:
+            raw_rows = deepcopy(DEFAULT_COMPONENT_ROWS[module_id])
         module["componentRows"] = _normalize_component_rows(module_id, raw_rows, fallback, hidden)
         if module_id == "others":
             module["componentRows"] = _normalize_other_component_rows(module["componentRows"])
-        # Compact/three-column education keeps a stable three-column geometry:
-        # the middle column is centered by the equal side widths, while its
-        # content is left aligned. Migrate old persisted rows so all renderers
-        # use the same alignment contract.
-        if module_id == "education" and module.get("preset") in {"compact", "three-column"}:
-            for row in module["componentRows"]:
-                if len(row["cells"]) != 3:
-                    continue
-                if (
-                    "school" not in row["cells"][0]["components"]
-                    or not any(component in row["cells"][1]["components"] for component in ("degree", "major", "metrics"))
-                    or "date" not in row["cells"][2]["components"]
-                ):
-                    continue
-                row["cells"][0]["alignment"] = "left"
-                row["cells"][1]["alignment"] = "left"
-                row["cells"][2]["alignment"] = "right"
 
 
 def normalize_layout_config(value: dict | None) -> dict:
@@ -754,8 +700,6 @@ def normalize_layout_config(value: dict | None) -> dict:
     global_config["moduleMargin"] = _bounded_number(global_config.get("moduleMargin"), 0.1, 1.0, 0.5)
     global_config["marginVertical"] = _bounded_number(global_config.get("marginVertical"), 3, 12, 9)
     global_config["marginHorizontal"] = _bounded_number(global_config.get("marginHorizontal"), 3, 12, 9)
-    global_config["splitWorkExperience"] = bool(global_config.get("splitWorkExperience"))
-
     old_default_order = [
         "education", "skills", "research_interests", "honors", "publications",
         "work_experience", "project_experience", "custom_sections", "others", "self_evaluation",
@@ -765,12 +709,7 @@ def normalize_layout_config(value: dict | None) -> dict:
     order = list(dict.fromkeys(
         item for item in global_config.get("sectionOrder", []) if _is_valid_section_id(item)
     ))
-    if not global_config["splitWorkExperience"]:
-        order = [item for item in order if item != "internship_experience"]
-    elif "internship_experience" not in order:
-        work_index = order.index("work_experience") + 1 if "work_experience" in order else 0
-        order.insert(work_index, "internship_experience")
-    required = [item for item in SECTION_IDS if item != "internship_experience" or global_config["splitWorkExperience"]]
+    required = list(SECTION_IDS)
     has_custom_section_modules = any(is_custom_section_module(item) for item in order)
     insertion_points = {
         "honors": "education",
@@ -827,12 +766,6 @@ def normalize_layout_config(value: dict | None) -> dict:
     if "photo" in basics["hiddenFields"]:
         basics["photoPosition"] = "hidden"
 
-    education = result["education"]
-    if education["preset"] == "three-column":
-        education["metricsPlacement"] = "info-column"
-    elif education["metricsPlacement"] == "info-column":
-        education["metricsPlacement"] = "below" if education["preset"] == "classic" else "with-degree"
-
     others = result["others"]
     fields = [item for item in others.get("fieldOrder", []) if item in ALLOWED_HIDDEN_FIELDS["others"]]
     for item in ("skills", "certificates", "languages"):
@@ -842,7 +775,6 @@ def normalize_layout_config(value: dict | None) -> dict:
 
     for key in ("showJobType",):
         result["work_experience"][key] = bool(result["work_experience"].get(key))
-        result["internship_experience"][key] = bool(result["internship_experience"].get(key))
     for key in ("showRole", "showDate"):
         result["project_experience"][key] = bool(result["project_experience"].get(key))
     placements = supplied_global_config.get("sectionPlacements", global_config.get("sectionPlacements"))
@@ -954,7 +886,6 @@ def resolve_layout_tokens(config: dict | None = None, style: dict | None = None)
         "listMarkerGapPt": body_font_size * 0.25,
         "educationMiddleMinMm": 30.0,
         "educationColumnBreathingMm": 4.0,
-        "educationSideColumnMm": 42.0,
         # photoWidthMm is retained for old layout clients. The actual width is
         # derived by each renderer from photoHeightMm and the imported image
         # aspect ratio.
@@ -1094,15 +1025,7 @@ def resolve_photo_height_mm(
         if section in {"research_interests", "honors", "publications", "self_evaluation"}:
             return has_values(data.get(section))
         if section == "work_experience":
-            entries = data.get("work_experience") or []
-            if global_config.get("splitWorkExperience"):
-                return any(not re.search(r"实习|intern", str(item.get("job_type") or ""), re.I) for item in entries if isinstance(item, dict))
-            return bool(entries)
-        if section == "internship_experience":
-            return bool(global_config.get("splitWorkExperience")) and any(
-                re.search(r"实习|intern", str(item.get("job_type") or ""), re.I)
-                for item in (data.get("work_experience") or []) if isinstance(item, dict)
-            )
+            return bool(data.get("work_experience"))
         if section == "project_experience":
             return bool(data.get("project_experience") or data.get("projects"))
         if section == "custom_sections":

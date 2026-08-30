@@ -88,6 +88,10 @@ class ImportContractTests(unittest.TestCase):
         self.assertEqual(work["company_name"], "**广东图灵智新技术有限公司**")
         self.assertEqual(work["job_title"], "**宇树 G1 导览项目**")
         self.assertEqual(work["job_type"], "实习")
+        self.assertEqual(
+            [block["label"] for block in work["content_blocks"]],
+            ["工作简介", "工作职责"],
+        )
         self.assertTrue(work["content_blocks"][0]["label_bold"])
         self.assertEqual(work["content_blocks"][0]["text"], "项目背景 **与目标**")
         self.assertEqual(work["content_blocks"][1]["items"], ["**完成设计** 与验证", "**完成联调**"])
@@ -112,6 +116,24 @@ class ImportContractTests(unittest.TestCase):
         self.assertEqual([block["label"] for block in blocks], ["项目简介", "项目职责"])
         self.assertEqual(blocks[1]["type"], "numbered_list")
         self.assertTrue(all(block["label_bold"] for block in blocks))
+
+    def test_finalize_import_restores_contextual_work_labels(self):
+        result, quality = finalize_import_resume({
+            "basics": {"name": "张三", "phone": "13800138000", "email": "a@example.com"},
+            "work_experience": [{
+                "company_name": "示例公司",
+                "content_blocks": [{
+                    "type": "paragraph", "semantic_role": "introduction", "label": "", "text": "背景",
+                }, {
+                    "type": "bullet_list", "semantic_role": "responsibilities", "label": "", "items": ["完成设计"],
+                }],
+            }],
+        }, normalize_and_validate_resume)
+
+        self.assertTrue(quality.accepted)
+        blocks = result["work_experience"][0]["content_blocks"]
+        self.assertEqual([block["label"] for block in blocks], ["工作简介", "工作职责"])
+        self.assertEqual(blocks[1]["type"], "numbered_list")
 
     def test_finalize_import_distinguishes_project_tech_stack_from_top_level_skills(self):
         result, quality = finalize_import_resume({

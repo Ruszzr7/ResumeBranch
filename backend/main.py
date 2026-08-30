@@ -30,6 +30,11 @@ from urllib.parse import quote
 
 import httpx
 
+from .layout_capabilities import (
+    localize_user_visible_layout_text,
+    user_visible_layout_internal_identifiers,
+)
+
 
 def _configure_console_encoding():
     """Keep diagnostic output from crashing on Unicode characters on Windows."""
@@ -65,7 +70,7 @@ def _public_error_response(code: str, message: str, status_code: int = 500):
 
 def _sanitize_user_visible_text(value: object) -> str:
     """Last-line guard for protocol markers and known internal identifiers."""
-    text_value = str(value or "")
+    text_value = localize_user_visible_layout_text(value)
     text_value = re.sub(r"\[CONFIRM_REPLY:[^\]]+\]", "确认操作", text_value)
     text_value = re.sub(
         r"\b(?:request_resume_edit|render_resume_pdf_images)\b",
@@ -79,6 +84,33 @@ def _sanitize_user_visible_text(value: object) -> str:
     )
     text_value = re.sub(r"(?:Traceback[\s\S]*|[A-Za-z_]+Error:\s*[^\n]+)", "系统处理异常", text_value)
     return text_value
+
+
+_STREAM_INTERNAL_IDENTIFIERS = frozenset({
+    *user_visible_layout_internal_identifiers(),
+    "request_resume_edit", "render_resume_pdf_images",
+    "layout_config", "resume_data", "jd_data", "session_id", "confirm_id", "request_id",
+})
+
+
+def _stable_user_visible_stream_prefix(value: object) -> str:
+    """Withhold an incomplete internal identifier until it can be localized."""
+    text_value = str(value or "")
+    if text_value.count("`") % 2:
+        text_value = text_value[:text_value.rfind("`")]
+    marker_match = re.search(r"\[[A-Z_]*(?::[^\]]*)?$", text_value)
+    if marker_match and "[CONFIRM_REPLY:".startswith(marker_match.group(0)):
+        text_value = text_value[:marker_match.start()]
+    token_match = re.search(r"[A-Za-z_][A-Za-z0-9_.-]*$", text_value)
+    if token_match:
+        token = token_match.group(0)
+        if any(identifier != token and identifier.startswith(token) for identifier in _STREAM_INTERNAL_IDENTIFIERS):
+            text_value = text_value[:token_match.start()]
+    return text_value
+
+
+def _sanitize_streaming_user_visible_text(value: object) -> str:
+    return _sanitize_user_visible_text(_stable_user_visible_stream_prefix(value))
 
 from fastapi import FastAPI, Request, UploadFile, File, Form, Depends, HTTPException, status
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -1254,19 +1286,60 @@ async def reset_task_layout(
 
 
 _DIRECT_REPLACE_SCOPES = {
-    "all": None,
-    "basics": "basics",
-    "education": "education",
-    "honors": "honors",
-    "publications": "publications",
-    "research_interests": "research_interests",
-    "skills": "others",
-    "work_experience": "work_experience",
-    "project_experience": "project_experience",
-    "custom_sections": "custom_sections",
-    "certificates_languages": "others",
-    "self_evaluation": "self_evaluation",
+    "all": ((),),
+    "basics": (("basics",),),
+    "education": (("education",), ("education_supplement",)),
+    "honors": (("honors",),),
+    "publications": (("publications",),),
+    "research_interests": (("research_interests",),),
+    "skills": (("others", "skills"),),
+    "work_experience": (("work_experience",),),
+    "project_experience": (("project_experience",),),
+    "custom_sections": (("custom_sections",),),
+    "certificates_languages": (
+        ("others", "certificates"),
+        ("others", "languages"),
+        ("others", "field_labels"),
+    ),
+    "self_evaluation": (("self_evaluation",),),
 }
+
+
+def _direct_replace_scope_paths(scope: str, current: dict) -> tuple[tuple[str | int, ...], ...]:
+    if scope in _DIRECT_REPLACE_SCOPES:
+        return _DIRECT_REPLACE_SCOPES[scope]
+    match = re.fullmatch(r"custom_sections:(\d+)", scope)
+    if not match:
+        raise HTTPException(status_code=400, detail="不支持的作用区域")
+    index = int(match.group(1))
+    sections = current.get("custom_sections")
+    if not isinstance(sections, list) or index >= len(sections):
+        raise HTTPException(status_code=400, detail="所选自定义栏目当前不存在")
+    return (("custom_sections", index),)
+
+
+def _direct_replace_path_value(current: dict, path: tuple[str | int, ...]):
+    value = current
+    for part in path:
+        if isinstance(part, int):
+            if not isinstance(value, list) or part >= len(value):
+                return None
+            value = value[part]
+        else:
+            if not isinstance(value, dict) or part not in value:
+                return None
+            value = value[part]
+    return value
+
+
+def _set_direct_replace_path(current: dict, path: tuple[str | int, ...], value) -> dict:
+    if not path:
+        return value
+    parent = current
+    for part in path[:-1]:
+        parent = parent[part]
+    parent[path[-1]] = value
+    return current
 
 
 def _replace_unique_resume_text(value, original: str, target: str) -> tuple[object, int]:
@@ -1307,28 +1380,29 @@ async def direct_replace_preview(
         context = get_context_by_session(db, current_user.id, task_id, request.session_id)
         if not context or context.status != "active":
             raise HTTPException(status_code=409, detail="当前任务会话不可用")
-    scope_key = _DIRECT_REPLACE_SCOPES.get(request.scope)
-    if request.scope not in _DIRECT_REPLACE_SCOPES:
-        raise HTTPException(status_code=400, detail="不支持的作用区域")
-
     original = request.original_text.strip()
     target = request.target_text.strip()
     if not original:
         raise HTTPException(status_code=400, detail="原内容不能为空")
     current = deepcopy(task.resume_data or {})
-    subtree = current if scope_key is None else current.get(scope_key)
-    if subtree is None:
+    scope_paths = _direct_replace_scope_paths(request.scope, current)
+    available_paths = [
+        path for path in scope_paths
+        if _direct_replace_path_value(current, path) is not None
+    ]
+    if not available_paths:
         raise HTTPException(status_code=400, detail="所选区域当前没有可修改内容")
-    replaced, count = _replace_unique_resume_text(subtree, original, target)
+    candidate = deepcopy(current)
+    count = 0
+    for path in available_paths:
+        subtree = _direct_replace_path_value(current, path)
+        replaced, subtree_count = _replace_unique_resume_text(subtree, original, target)
+        count += subtree_count
+        candidate = _set_direct_replace_path(candidate, path, replaced)
     if count == 0:
         raise HTTPException(status_code=400, detail="所选区域中未找到完全一致的原内容")
     if count > 1:
         raise HTTPException(status_code=409, detail="所选区域中找到多处相同内容，请缩小作用区域或补充更完整的原文")
-    if scope_key is None:
-        candidate = replaced
-    else:
-        candidate = deepcopy(current)
-        candidate[scope_key] = replaced
 
     from .database import (
         find_task_pending_confirmation,
@@ -2165,6 +2239,10 @@ async def chat_endpoint(
                 explicit_legacy_change = (
                     resume_agent.is_explicit_resume_change_request(message)
                     or resume_agent.is_explicit_layout_change_request(message)
+                    or (
+                        not requested_action
+                        and resume_agent.is_mission_resume_edit_request(message, context_type)
+                    )
                 )
                 if feature_config["enabled"] and not is_confirm_click and not explicit_legacy_change:
                     if requested_mode:
@@ -2178,11 +2256,13 @@ async def chat_endpoint(
 
                 legacy_workflow_mode = None
                 if not selected_interview_mode:
-                    if (
+                    preserve_active_interview = active_interview and (
                         is_confirm_click
-                        or resume_agent.is_explicit_resume_change_request(message)
-                        or resume_agent.is_explicit_layout_change_request(message)
-                    ):
+                        or explicit_legacy_change
+                    )
+                    if preserve_active_interview:
+                        legacy_workflow_mode = None
+                    elif is_confirm_click or explicit_legacy_change:
                         legacy_workflow_mode = "chat"
                     elif resume_agent.is_resume_coaching_request(message):
                         legacy_workflow_mode = "jd_review" if "jd" in message.lower() else "coaching"
@@ -2190,12 +2270,14 @@ async def chat_endpoint(
                 record_kwargs = {
                     "session_id": session_id,
                     "request_id": request_id,
-                    "interaction_mode": (
-                        selected_interview_mode
-                        if selected_interview_action == "start"
-                        else legacy_workflow_mode
-                    ),
                 }
+                interaction_mode_to_record = (
+                    selected_interview_mode
+                    if selected_interview_action == "start"
+                    else legacy_workflow_mode
+                )
+                if interaction_mode_to_record:
+                    record_kwargs["interaction_mode"] = interaction_mode_to_record
                 if workflow_context_id:
                     record_kwargs["context_id"] = workflow_context_id
                 workflow_state = await workflow_manager.record_turn(
@@ -2312,6 +2394,7 @@ async def chat_endpoint(
             confirmation_success = False
             final_content = None
             accumulated_content = ""
+            last_streamed_content = ""
             current_node = None
             node_start_time = {}
             sent_progress_phases = set()
@@ -2388,7 +2471,10 @@ async def chat_endpoint(
 
                         if token:
                             accumulated_content += token
-                            yield f'data: {json.dumps({"type": "stream", "content": accumulated_content, "request_id": request_id})}\n\n'
+                            visible_content = _sanitize_streaming_user_visible_text(accumulated_content)
+                            if visible_content != last_streamed_content:
+                                last_streamed_content = visible_content
+                                yield f'data: {json.dumps({"type": "stream", "content": visible_content, "request_id": request_id})}\n\n'
 
                     elif event_type == "on_chain_end":
                         if node_name in node_start_time:
@@ -2453,7 +2539,8 @@ async def chat_endpoint(
                                     reply = str(getattr(item, "content", "") or "").strip()
                                     if not reply or getattr(item, "tool_calls", None):
                                         continue
-                                    accumulated_content = reply
+                                    accumulated_content = _sanitize_user_visible_text(reply)
+                                    last_streamed_content = accumulated_content
                                     yield f'data: {json.dumps({"type": "stream", "content": accumulated_content, "request_id": request_id})}\n\n'
                                     break
                             sent_confirm_ids.add(confirm_id)

@@ -15,7 +15,18 @@ import re
 from typing import Any
 
 from ..layout_config import normalize_layout_config
-from ..layout_capabilities import validate_layout_operations
+from ..layout_capabilities import (
+    EDITABLE_GLOBAL_FIELDS,
+    EDITABLE_MODULE_FIELDS,
+    validate_layout_operations,
+)
+from ..resume_contract import (
+    CONTENT_BLOCK_SEMANTIC_ROLES,
+    RESUME_EDIT_ROOTS,
+    validate_resume_operation_path,
+    validate_resume_operation_item,
+    validate_resume_operation_value,
+)
 from ..resume_changes import resume_digest
 from ..resume_data import normalize_resume_data
 
@@ -27,35 +38,8 @@ MAX_PATH_DEPTH = 32
 _PATH_SEGMENT_RE = re.compile(r"^(?P<key>[A-Za-z_][A-Za-z0-9_]*)(?P<indexes>(?:\[\d+\])*)$")
 _INDEX_RE = re.compile(r"\[(\d+)\]")
 
-_RESUME_ROOTS = {
-    "basics",
-    "education",
-    "education_supplement",
-    "research_interests",
-    "honors",
-    "publications",
-    "work_experience",
-    "internship_experience",
-    "project_experience",
-    "custom_sections",
-    "others",
-    "self_evaluation",
-}
-_LAYOUT_ROOTS = {
-    "global",
-    "basics",
-    "education",
-    "skills",
-    "research_interests",
-    "honors",
-    "publications",
-    "work_experience",
-    "internship_experience",
-    "project_experience",
-    "custom_sections",
-    "others",
-    "self_evaluation",
-}
+_RESUME_ROOTS = set(RESUME_EDIT_ROOTS)
+_LAYOUT_ROOTS = {"global", *EDITABLE_MODULE_FIELDS}
 _FORBIDDEN_LAYOUT_PARTS = {
     "fontsize",
     "fontsizes",
@@ -71,21 +55,14 @@ class ResumeEditOperationError(ValueError):
 
 @dataclass(frozen=True)
 class ResumeEditRequest:
-    """Canonical data plus operations resolved by the conversation model.
+    """Canonical data plus operations resolved by the conversation model."""
 
-    ``request_text`` and ``target_paths`` remain optional compatibility fields
-    for older callers, but raw natural-language requests are intentionally not
-    executable.  A caller must provide at least one operation list.
-    """
-
-    request_text: str = ""
     resume_data: dict = field(default_factory=dict)
     layout_config: dict = field(default_factory=dict)
     resume_operations: tuple[dict, ...] = ()
     layout_operations: tuple[dict, ...] = ()
     jd_data: dict = field(default_factory=dict)
     context_type: str = "main"
-    target_paths: tuple[str, ...] = ()
     base_revision: str = ""
     conversation_context: str = ""
 
@@ -94,10 +71,10 @@ class ResumeEditRequest:
 class ResumeEditResult:
     resume_data: dict
     layout_config: dict
-    target_paths: tuple[str, ...]
     base_revision: str
     resume_operations: tuple[dict, ...] = ()
     layout_operations: tuple[dict, ...] = ()
+    already_satisfied: bool = False
 
 
 def _coerce_operations(value: Any, *, field_name: str) -> tuple[dict, ...]:
@@ -163,6 +140,57 @@ def _check_expected(current: Any, operation: dict, *, path: str) -> None:
         raise ResumeEditOperationError(f"目标内容已变化，无法安全修改：{path}")
 
 
+def _validate_semantic_target(
+    root: Any,
+    tokens: tuple[str | int, ...],
+    operation: dict,
+    *,
+    path: str,
+) -> None:
+    """Validate an optional semantic assertion for indexed content blocks.
+
+    Array positions identify a storage location, not a meaning.  When the
+    model supplies ``target_semantic_role`` the assertion is checked against
+    the normalized block before applying the operation, so an index chosen for
+    one role cannot silently mutate another.  The field remains optional for
+    non-indexed/list-level operations and older callers.
+    """
+    if "target_semantic_role" not in operation:
+        return
+    requested = operation.get("target_semantic_role")
+    if not isinstance(requested, str) or requested not in CONTENT_BLOCK_SEMANTIC_ROLES:
+        raise ResumeEditOperationError(f"内容块目标语义角色无效：{path}")
+
+    content_blocks_index: int | None = None
+    for index, token in enumerate(tokens[:-1]):
+        if token == "content_blocks" and isinstance(tokens[index + 1], int):
+            content_blocks_index = index + 1
+            break
+
+    if content_blocks_index is None:
+        # For append/insert, the assertion describes the new block itself;
+        # other paths must not carry a semantic assertion unrelated to a block.
+        if (
+            tokens and tokens[-1] == "content_blocks"
+            and str(operation.get("op", operation.get("type", ""))).lower() in {"append", "insert"}
+        ):
+            value = operation.get("value")
+            actual = value.get("semantic_role") if isinstance(value, dict) else None
+            if actual != requested:
+                raise ResumeEditOperationError(f"新增内容块语义角色与声明不一致：{path}")
+            return
+        raise ResumeEditOperationError(f"内容块目标语义角色只能用于 content_blocks：{path}")
+
+    block = _resolve(root, tokens[:content_blocks_index + 1], path=path)
+    actual = block.get("semantic_role") if isinstance(block, dict) else None
+    if actual not in CONTENT_BLOCK_SEMANTIC_ROLES:
+        actual = "generic"
+    if actual != requested:
+        raise ResumeEditOperationError(
+            f"内容块语义目标不匹配：{path}（当前为 {actual}，声明为 {requested}）"
+        )
+
+
 def _validate_operation_value(operation: dict) -> None:
     try:
         import json
@@ -186,31 +214,53 @@ def _apply_one(root: Any, operation: dict, *, roots: set[str], field_name: str, 
         for token in tokens
     ):
         raise ResumeEditOperationError("字号和字体由专用排版设置管理，不能通过对话修改")
+    if not layout:
+        _validate_semantic_target(root, tokens, operation, path=path)
+        try:
+            validate_resume_operation_path(tokens, operation=op, path=path)
+        except ValueError as exc:
+            raise ResumeEditOperationError(str(exc)) from exc
 
     if op in {"set", "replace"}:
         if "value" not in operation:
             raise ResumeEditOperationError(f"{field_name} 缺少修改值")
-        if len(tokens) == 1:
-            raise ResumeEditOperationError(f"不能整体覆盖简历根栏目：{path}")
+        if not layout:
+            try:
+                current = _resolve(root, tokens, path=path)
+                validate_resume_operation_value(
+                    current, operation.get("value"), tokens, path=path,
+                )
+            except (ResumeEditOperationError, ValueError) as exc:
+                raise ResumeEditOperationError(str(exc)) from exc
+        if len(tokens) == 1 and layout:
+            raise ResumeEditOperationError(f"不能整体覆盖排版根配置：{path}")
         parent, final = _resolve_parent(root, tokens, path=path)
         if isinstance(final, int):
             if not isinstance(parent, list) or final >= len(parent):
                 raise ResumeEditOperationError(f"目标路径不存在：{path}")
             current = parent[final]
             _check_expected(current, operation, path=path)
+            _validate_operation_value(operation)
             parent[final] = deepcopy(operation["value"])
         else:
             if not isinstance(parent, dict) or final not in parent:
                 raise ResumeEditOperationError(f"目标路径不存在：{path}")
             current = parent[final]
             _check_expected(current, operation, path=path)
+            _validate_operation_value(operation)
             parent[final] = deepcopy(operation["value"])
-        _validate_operation_value(operation)
         return
 
     if op in {"append", "insert"}:
         if "value" not in operation:
             raise ResumeEditOperationError(f"{field_name} 缺少新增值")
+        if not layout:
+            try:
+                validate_resume_operation_item(
+                    operation.get("value"), tokens, path=f"{path}[]",
+                )
+            except ValueError as exc:
+                raise ResumeEditOperationError(str(exc)) from exc
         target = _resolve(root, tokens, path=path)
         if not isinstance(target, list):
             raise ResumeEditOperationError(f"目标不是列表：{path}")
@@ -283,20 +333,15 @@ def _apply_operations(
 
 async def run_resume_edit(
     request: ResumeEditRequest,
-    llm: Any | None = None,
-    **_legacy_kwargs: Any,
 ) -> ResumeEditResult:
     """Apply resolved operations and return a normalized candidate.
 
-    ``llm`` and legacy keyword arguments are accepted only so older callers do
-    not fail at import time; they are deliberately ignored.  This function
-    never performs a model call or interprets natural-language instructions.
+    This function never performs a model call or interprets natural-language
+    instructions; callers must provide structured operation lists.
     """
     resume_operations = _coerce_operations(request.resume_operations, field_name="resume_operations")
     layout_operations = _coerce_operations(request.layout_operations, field_name="layout_operations")
     if not resume_operations and not layout_operations:
-        if str(request.request_text or "").strip():
-            raise ResumeEditOperationError("未收到结构化修改操作，不能把自然语言直接交给修改技能")
         raise ResumeEditOperationError("未收到可执行的结构化修改操作")
 
     current_resume = normalize_resume_data(request.resume_data or {})
@@ -327,13 +372,18 @@ async def run_resume_edit(
         layout=True,
     )
 
+    normalized_candidate_resume = normalize_resume_data(candidate_resume)
+    normalized_candidate_layout = normalize_layout_config(candidate_layout)
     return ResumeEditResult(
-        resume_data=normalize_resume_data(candidate_resume),
-        layout_config=normalize_layout_config(candidate_layout),
-        target_paths=tuple(request.target_paths or ()),
+        resume_data=normalized_candidate_resume,
+        layout_config=normalized_candidate_layout,
         base_revision=request.base_revision,
         resume_operations=resume_operations,
         layout_operations=layout_operations,
+        already_satisfied=(
+            normalized_candidate_resume == current_resume
+            and normalized_candidate_layout == current_layout
+        ),
     )
 
 

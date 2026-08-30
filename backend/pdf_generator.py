@@ -157,7 +157,6 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     def compact_education_metric(item: dict) -> str:
         return format_compact_academic_metric(item, education_hidden_metrics)
 
-    compact_education_metrics = [compact_education_metric(item) for item in education_items]
     compact_education_width_metrics = [
         format_compact_academic_metric(item, education_hidden_metrics)
         for item in education_items
@@ -231,9 +230,8 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
                     active_cells.append((cell, components))
             if not active_cells:
                 continue
-            is_compact_education_header = (
+            is_current_education_header = (
                 module_id == "education"
-                and module["preset"] == "compact"
                 and len(active_cells) == 3
                 and "school" in active_cells[0][1]
                 and any(item in active_cells[1][1] for item in ("degree", "major", "metrics"))
@@ -241,7 +239,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
             )
             columns = (
                 "var(--education-compact-side-column) var(--education-middle-column) var(--education-compact-side-column)"
-                if is_compact_education_header
+                if is_current_education_header
                 else " ".join("max-content" if cell["width"] == "content" else "minmax(0, 1fr)" for cell, _ in active_cells)
             )
             spacing = tokens["modules"][module_id]["rowSpacingPt"]
@@ -286,7 +284,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         basics = resume_data["basics"]
         basics_layout = layout_config["basics"]
         hidden_basics = set(basics_layout["hiddenFields"])
-        html_parts.append(f'<div class="personal-info basics-{basics_layout["preset"]} contact-{basics_layout["contactLayout"]}" style="order:0">')
+        html_parts.append('<div class="personal-info" style="order:0">')
         personal_meta = join_inline_with_inherited_separator([
             str(basics.get("gender", "")) if "gender" not in hidden_basics else "",
             str(basics["birth_date"]) if basics.get("birth_date") and "birth_date" not in hidden_basics else "",
@@ -330,36 +328,19 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         education_layout = layout_config["education"]
         education_module = resolve_module_layout(layout_config, "education")
         hidden_metrics = set(education_layout["hiddenMetrics"])
-        html_parts.append(f'<section class="section education-section preset-{education_layout["preset"]}{break_class("education:0")}"{order_style("education")}>')
+        html_parts.append(f'<section class="section education-section{break_class("education:0")}"{order_style("education")}>')
         html_parts.append(title_markup("education", section_title("education", labels["education"])))
 
         for edu_index, edu in enumerate(resume_data["education"]):
             item_break = break_class(f"education:{edu_index}") if edu_index > 0 else ''
-            html_parts.append(f'<div class="education-item preset-{education_layout["preset"]}{item_break}">')
-            academic_metrics = []
-            compact_metric = compact_education_metrics[edu_index]
-            if edu.get("gpa") and "gpa" not in hidden_metrics:
-                gpa_value = (
-                    join_inline_with_inherited_separator(
-                        [edu["gpa"], edu["gpa_scale"]], "/"
-                    )
-                    if edu.get("gpa_scale")
-                    else str(edu["gpa"])
-                )
-                academic_metrics.append(f'{labels["gpa"]}：{gpa_value}')
-            if edu.get("ranking") and "ranking" not in hidden_metrics:
-                academic_metrics.append(f'{labels["ranking"]}：{edu["ranking"]}')
+            html_parts.append(f'<div class="education-item{item_break}">')
             date_str = _date_range_text(edu)
             raw_component_values = {
                 "school": edu.get("school_name", labels["schoolNotSet"]),
                 "school_tags": join_inline_with_inherited_separator(edu.get("school_tags") or [], " · ") if education_layout["schoolTagStyle"] != "hidden" else "",
                 "degree": edu.get("degree", ""),
                 "major": edu.get("major", ""),
-                "metrics": (
-                    compact_education_metric(edu)
-                    if education_layout["preset"] == "compact"
-                    else join_inline_with_inherited_separator(academic_metrics, " · ")
-                ),
+                "metrics": compact_education_metric(edu),
                 "date": date_str,
             }
             component_values = {component: format_markdown(value) for component, value in raw_component_values.items()}
@@ -367,10 +348,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
                 component for component, value in raw_component_values.items() if _is_fully_bold(value)
             }
             leading_bold_components = set()
-            if (
-                education_layout["preset"] == "compact"
-                and is_compact_academic_metric_leading_bold(edu, hidden_metrics)
-            ):
+            if is_compact_academic_metric_leading_bold(edu, hidden_metrics):
                 leading_bold_components.add("metrics")
             hidden_components = set(education_module["hiddenComponents"]) | {"theses"}
             html_parts.append('<div class="module-component-rows">')
@@ -382,16 +360,15 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
                         cells.append((cell, components))
                 if not cells:
                     continue
-                is_compact_header = (
-                    education_layout["preset"] == "compact"
-                    and len(cells) == 3
+                is_current_header = (
+                    len(cells) == 3
                     and "school" in cells[0][1]
                     and any(component in cells[1][1] for component in ("degree", "major", "metrics"))
                     and "date" in cells[2][1]
                 )
                 columns = (
                     "var(--education-compact-side-column) var(--education-middle-column) var(--education-compact-side-column)"
-                    if is_compact_header
+                    if is_current_header
                     else " ".join("max-content" if cell["width"] == "content" else "minmax(0, 1fr)" for cell, _ in cells)
                 )
                 row_spacing = tokens["modules"]["education"]["rowSpacingPt"]
@@ -463,15 +440,9 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         html_parts.append('</section>')
         commit_section("education", chunk_start)
 
-    # 工作/实习经历（拆分时仍共用同一视觉预设）
+    # 工作经历（实习通过 job_type 保留在同一栏目）
     work_items = list(enumerate(resume_data.get("work_experience") or []))
-    if global_layout["splitWorkExperience"]:
-        work_sections = [
-            ("work_experience", labels["workExperience"], [(i, item) for i, item in work_items if not re.search(r"实习|intern", str(item.get("job_type", "")), re.I)]),
-            ("internship_experience", "Internship Experience" if lang == "en" else "实习经历", [(i, item) for i, item in work_items if re.search(r"实习|intern", str(item.get("job_type", "")), re.I)]),
-        ]
-    else:
-        work_sections = [("work_experience", labels["workExperience"], work_items)]
+    work_sections = [("work_experience", labels["workExperience"], work_items)]
 
     for section_id, fallback_title, section_items in work_sections:
         if not section_items or hidden(section_id):
@@ -479,15 +450,12 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         work_layout = layout_config[section_id]
         chunk_start = len(html_parts)
         first_index = section_items[0][0]
-        html_parts.append(f'<section class="section work-section preset-{work_layout["preset"]}{break_class(f"{section_id}:{first_index}")}"{order_style(section_id)}>')
+        html_parts.append(f'<section class="section work-section{break_class(f"{section_id}:{first_index}")}"{order_style(section_id)}>')
         html_parts.append(title_markup(section_id, section_title(section_id, fallback_title)))
 
         for item_position, (work_index, work) in enumerate(section_items):
             item_break = break_class(f"{section_id}:{work_index}") if item_position > 0 else ''
-            work_classes = (
-                f'work-item preset-{work_layout["preset"]} '
-                f'date-{work_layout["datePosition"]}{item_break}'
-            )
+            work_classes = f'work-item date-{work_layout["datePosition"]}{item_break}'
             html_parts.append(f'<div class="{work_classes}">')
             date_str = _date_range_text(work)
             html_parts.append(component_rows_markup(section_id, {
@@ -535,15 +503,12 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     if resume_data.get("project_experience") and len(resume_data["project_experience"]) > 0 and not hidden("project_experience"):
         chunk_start = len(html_parts)
         project_layout = layout_config["project_experience"]
-        html_parts.append(f'<section class="section project-section preset-{project_layout["preset"]}{break_class("project_experience:0")}"{order_style("project_experience")}>')
+        html_parts.append(f'<section class="section project-section{break_class("project_experience:0")}"{order_style("project_experience")}>')
         html_parts.append(title_markup("project_experience", section_title("project_experience", labels["projectExperience"])))
 
         for project_index, project in enumerate(resume_data["project_experience"]):
             item_break = break_class(f"project_experience:{project_index}") if project_index > 0 else ''
-            project_classes = (
-                f'project-item preset-{project_layout["preset"]} '
-                f'date-{project_layout["datePosition"]}{item_break}'
-            )
+            project_classes = f'project-item date-{project_layout["datePosition"]}{item_break}'
             html_parts.append(f'<div class="{project_classes}">')
             role_value = project.get("role", "") if project_layout["showRole"] else ""
             date_value = _date_range_text(project) if project_layout["showDate"] else ""
@@ -622,7 +587,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     ]
     if visible_other_fields and not hidden("others") and not merged_into_education("others"):
         chunk_start = len(html_parts)
-        html_parts.append(f'<section class="section others others-{others_layout["preset"]}{break_class("others")}"{order_style("others")}>')
+        html_parts.append(f'<section class="section others{break_class("others")}"{order_style("others")}>')
         other_title = "Certificates & Languages" if lang == "en" else "证书与语言"
         html_parts.append(title_markup("others", section_title("others", other_title)))
         field_labels = {"skills": labels["skills"], **_other_field_labels(others, labels)}
@@ -664,7 +629,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     if resume_data.get("self_evaluation") and len(resume_data["self_evaluation"]) > 0 and not hidden("self_evaluation"):
         chunk_start = len(html_parts)
         self_layout = layout_config["self_evaluation"]
-        html_parts.append(f'<section class="section self-evaluation self-{self_layout["preset"]}{break_class("self_evaluation")}"{order_style("self_evaluation")}>')
+        html_parts.append(f'<section class="section self-evaluation{break_class("self_evaluation")}"{order_style("self_evaluation")}>')
         html_parts.append(title_markup("self_evaluation", section_title("self_evaluation", labels["selfEvaluation"])))
         list_style = self_layout["listStyle"]
         evaluations = _module_list_values(resume_data["self_evaluation"], list_style)
@@ -727,7 +692,6 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         --list-text-indent: {tokens['listTextIndentPt']:g}pt;
         --module-indent: 0pt;
         --list-marker-gap: {tokens['listMarkerGapPt']:g}pt;
-        --education-side-column: {tokens['educationSideColumnMm']:g}mm;
         --education-compact-side-column: {education_column_widths['sideMm']:g}mm;
         --education-middle-column: {education_column_widths['middleMm']:g}mm;
         --photo-width: {photo_width_mm:g}mm;
@@ -760,21 +724,11 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     }}
 
     .personal-info {{
-        text-align: center;
+        text-align: left;
         position: relative;
         min-height: 0;
         margin-bottom: 0.35em;
     }}
-
-    .personal-info.basics-left-aligned {{ text-align: left; }}
-    .personal-info.basics-left-aligned .contact-info {{ justify-content: flex-start; }}
-    .personal-info.contact-stacked .contact-info {{
-        flex-direction: column;
-        align-items: center;
-        gap: 0.1em;
-    }}
-    .personal-info.basics-left-aligned.contact-stacked .contact-info {{ align-items: flex-start; }}
-    .personal-info.contact-stacked .separator {{ display: none; }}
 
     .personal-info .name {{
         font-size: var(--name-font-size);
@@ -785,7 +739,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
 
     .contact-info {{
         display: flex;
-        justify-content: center;
+        justify-content: flex-start;
         gap: 0.5em;
         flex-wrap: wrap;
         font-size: var(--meta-font-size);
@@ -957,7 +911,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         overflow-wrap: break-word;
         word-break: break-word;
     }}
-    .education-item.preset-compact .education-header {{
+    .education-item .education-header {{
         display: grid;
         width: 100%;
         grid-template-columns: var(--education-compact-side-column) var(--education-middle-column) var(--education-compact-side-column);
@@ -995,25 +949,12 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     .education-item .module-component.component-metrics,
     .education-item .module-component.component-date {{ font-weight: var(--body-font-weight); }}
     .module-component.component-role {{ font-size: var(--meta-font-size); font-weight: var(--meta-font-weight); }}
-    .education-item.preset-three-column .education-header {{
-        display: grid;
-        width: 100%;
-        grid-template-columns: var(--education-side-column) minmax(0, 1fr) var(--education-side-column);
-        column-gap: 0;
-        align-items: baseline;
-    }}
-    .education-item.preset-compact .school-info,
-    .education-item.preset-three-column .school-info,
-    .education-item.preset-compact .education-middle-column,
-    .education-item.preset-three-column .education-middle-column,
-    .education-item.preset-compact .education-degree-column,
-    .education-item.preset-three-column .education-degree-column,
-    .education-item.preset-compact .education-metrics-column,
-    .education-item.preset-three-column .education-metrics-column {{ min-width: 0; }}
-    .education-item.preset-compact .school-info,
-    .education-item.preset-three-column .school-info {{ grid-column: 1; grid-row: 1; gap: 0.3em; }}
-    .education-item.preset-compact .education-middle-column,
-    .education-item.preset-three-column .education-middle-column {{
+    .education-item .school-info,
+    .education-item .education-middle-column,
+    .education-item .education-degree-column,
+    .education-item .education-metrics-column {{ min-width: 0; }}
+    .education-item .school-info {{ grid-column: 1; grid-row: 1; gap: 0.3em; }}
+    .education-item .education-middle-column {{
         grid-column: 2;
         grid-row: 1;
         display: flex;
@@ -1023,8 +964,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         row-gap: 0;
         text-align: left;
     }}
-    .education-item.preset-compact .graduation-date,
-    .education-item.preset-three-column .graduation-date {{
+    .education-item .graduation-date {{
         grid-column: 3;
         grid-row: 1;
         position: static;
@@ -1033,8 +973,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         margin-right: 0;
         text-align: right;
     }}
-    .education-item.preset-compact .academic-metrics,
-    .education-item.preset-three-column .academic-metrics {{ margin-top: 0; }}
+    .education-item .academic-metrics {{ margin-top: 0; }}
 
     .degree-major {{
         font-size: var(--meta-font-size);
@@ -1155,10 +1094,6 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
 
     .details-paragraph .list-item {{ padding-left: 0; }}
     .details-paragraph .list-item::before {{ content: none; }}
-    .work-item.preset-compact .work-header,
-    .project-item.preset-compact .project-header {{ gap: 0.25em; }}
-    .work-item.preset-compact,
-    .project-item.preset-compact {{ margin-bottom: 0.3em; }}
     .work-item.date-inline .work-header,
     .project-item.date-inline .project-header {{ justify-content: flex-start; }}
     .work-item.date-inline .work-period,
@@ -1170,20 +1105,6 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
 
     .others-item {{
         margin-bottom: 0.5em;
-    }}
-
-    .others-tags .inline-list-item {{
-        display: inline-block;
-        padding: 0.1em 0.45em;
-        margin: 0 0.25em 0.2em 0;
-        border: 1px solid #adb5bd;
-        border-radius: 3px;
-    }}
-    .others-tags .cert-lang-separator {{ display: none; }}
-    .others-stacked .others-item {{
-        display: flex;
-        flex-direction: column;
-        gap: 0.1em;
     }}
 
     .others-title {{
@@ -1263,18 +1184,6 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         font-size: var(--body-font-size);
         line-height: var(--line-height);
         color: #212529;
-    }}
-
-    .self-bullets .self-eval-item {{
-        position: relative;
-        padding-left: var(--list-text-indent);
-    }}
-    .self-bullets .self-eval-item::before {{
-        content: "•";
-        position: absolute;
-        left: 0;
-        width: calc(var(--list-text-indent) - var(--list-marker-gap));
-        text-align: center;
     }}
 
     /* 中文简历使用高对比度、紧凑的信息密度。显式指定颜色，避免主题继承。 */

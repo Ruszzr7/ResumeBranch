@@ -21,7 +21,6 @@ def iter_experience_content_blocks(
     item = item if isinstance(item, dict) else {}
     blocks = normalize_content_blocks(
         item.get("content_blocks"),
-        item.get("details"),
         experience_kind=experience_kind,
     )
     for raw in blocks:

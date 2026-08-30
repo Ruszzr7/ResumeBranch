@@ -1,6 +1,7 @@
 import asyncio
 import json
 import unittest
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -195,6 +196,19 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(any(isinstance(message, ToolMessage) for message in sent_messages))
         self.assertFalse(any("CONFIRM_REPLY" in str(message.content) for message in sent_messages))
 
+    async def test_explicit_edit_without_tool_call_is_not_retried(self):
+        bound_model = SimpleNamespace(
+            ainvoke=AsyncMock(return_value=AIMessage(content="请补充希望修改成什么内容。"))
+        )
+        fake_llm = SimpleNamespace(bind_tools=MagicMock(return_value=bound_model))
+        state = AgentState(
+            messages=[HumanMessage(content="把姓名改为新姓名")],
+            resume_data=resume_payload("旧姓名"),
+        )
+        with patch("backend.resume_agent.conversation_llm", fake_llm):
+            await conversation_node(state)
+        bound_model.ainvoke.assert_awaited_once()
+
     async def test_context_compression_contract_keeps_summary_and_last_five_inputs(self):
         captured = {}
 
@@ -314,7 +328,6 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
             "task-1",
             session_id="task-1",
             request_id="request-1",
-            interaction_mode=None,
         )
         workflow_manager.update_state.assert_awaited_once_with(
             7,
@@ -518,6 +531,47 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["resume_candidate"]["basics"]["name"], "暨南大学")
         self.assertEqual(len(payload["changes"]), 1)
         save_pending.assert_called_once()
+
+    def test_direct_replace_scopes_are_precise_and_include_contextual_sections(self):
+        current = {
+            "education": [],
+            "education_supplement": ["补充"],
+            "others": {
+                "skills": ["Python"],
+                "certificates": ["CET-6"],
+                "languages": ["英语"],
+                "field_labels": {"certificates": "证书", "languages": "语言"},
+            },
+            "custom_sections": [
+                {"title": "开源实践", "items": ["项目 A"]},
+                {"title": "校园活动", "items": ["活动 B"]},
+            ],
+        }
+        self.assertEqual(
+            main._direct_replace_scope_paths("education", current),
+            (("education",), ("education_supplement",)),
+        )
+        self.assertEqual(
+            main._direct_replace_scope_paths("skills", current),
+            (("others", "skills"),),
+        )
+        self.assertEqual(
+            main._direct_replace_scope_paths("custom_sections:1", current),
+            (("custom_sections", 1),),
+        )
+
+    def test_direct_replace_path_helpers_only_change_the_selected_subtree(self):
+        current = {
+            "others": {"skills": ["Python"], "certificates": ["Python 证书"]},
+        }
+        path = ("others", "skills")
+        replaced, count = main._replace_unique_resume_text(
+            main._direct_replace_path_value(current, path), "Python", "Go",
+        )
+        candidate = main._set_direct_replace_path(deepcopy(current), path, replaced)
+        self.assertEqual(count, 1)
+        self.assertEqual(candidate["others"]["skills"], ["Go"])
+        self.assertEqual(candidate["others"]["certificates"], ["Python 证书"])
 
 
 if __name__ == "__main__":

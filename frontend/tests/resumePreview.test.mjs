@@ -57,11 +57,13 @@ test('local exports stay in the project folder while hosted exports download in 
   assert.ok(previewSource.includes('const documentBlob = await response.blob()'))
   assert.ok(previewSource.includes("fetch('/local/exports/open'"))
   assert.ok(previewSource.includes('打开导出文件夹'))
+  assert.ok(previewSource.includes('class="compact-toolbar-btn export-folder-btn"'))
+  assert.ok(previewSource.includes("v-if=\"localMode\""))
 })
 
 test('semantic font sizes use a half-point modal with live preview and page-limit guard', () => {
   assert.ok(previewSource.includes('<h3 id="font-size-title">文字大小</h3>'))
-  assert.ok(previewSource.includes('class="layout-guide-btn font-size-open-btn"'))
+  assert.ok(previewSource.includes(':aria-label="`文字大小，当前正文字号 ${fontSizes.body}pt`"'))
   assert.ok(previewSource.includes("const fontSizeRoles = ['name', 'meta', 'sectionTitle', 'entryTitle', 'label', 'body']"))
   assert.equal(previewSource.includes('font-size-slider-track'), false)
   assert.ok(previewSource.includes('FONT_SIZE_LIMITS'))
@@ -102,9 +104,10 @@ test('preview pagination measures shared spacing and uses a strict page boundary
   assert.equal(previewSource.includes('pageContentHeight + 50'), false)
 })
 
-test('legacy work details remain body content regardless of their wording', () => {
+test('work and project previews use only canonical content blocks', () => {
   assert.ok(previewSource.includes("function projectContentBlocks(item, experienceKind = 'project')"))
-  assert.ok(previewSource.includes('normalizeContentBlocks(item?.content_blocks, item?.details, { experienceKind })'))
+  assert.ok(previewSource.includes('normalizeContentBlocks(item?.content_blocks, { experienceKind })'))
+  assert.equal(previewSource.includes('normalizeContentBlocks(item?.content_blocks, item?.details'), false)
   assert.ok(previewSource.includes("projectContentBlocks(entry.item, 'work')"))
   assert.ok(previewSource.includes("projectContentBlocks(item, 'work')"))
 })
@@ -122,6 +125,7 @@ test('layout menu opens a dedicated bidirectional manual ordering dialog', () =>
 
 test('module ordering only exposes visible modules with content', () => {
   assert.ok(previewSource.includes('const sectionHasContent = section =>'))
+  assert.ok(previewSource.includes("return fallback ? displayTitleText(section, fallback) : ''"))
   assert.ok(previewSource.includes(".filter(section => sectionLabel(section) && sectionHasContent(section) && !hiddenSection(section) && !isEducationChildSection(section))"))
   for (const section of ['honors', 'publications', 'research_interests', 'skills', 'work_experience', 'project_experience', 'custom_sections', 'others', 'self_evaluation']) {
     assert.ok(previewSource.includes(`${section}:`), `missing module label: ${section}`)
@@ -129,6 +133,16 @@ test('module ordering only exposes visible modules with content', () => {
   assert.ok(previewSource.includes(".filter(section => sectionLabel(section) && sectionHasContent(section) && !hiddenSection(section) && isEducationChildSection(section))"))
   assert.ok(previewSource.includes('customSectionModuleId(sectionIndex)'))
   assert.ok(previewSource.includes('expandSectionOrderForData(props.layoutConfig, props.data)'))
+})
+
+test('direct edit scopes follow current content and current module titles', () => {
+  assert.ok(appSource.includes('const directEditScopeOptions = computed(() => {'))
+  assert.ok(appSource.includes("sectionTitle(layout, section, currentLang.value, fallback)"))
+  assert.ok(appSource.includes("const options = [{ value: 'all', label: '整份简历' }]"))
+  assert.ok(appSource.includes("add('education', title('education', '教育经历'), [data.education, data.education_supplement])"))
+  assert.ok(appSource.includes("add('skills', title('skills', '专业技能'), data.others?.skills)"))
+  assert.ok(appSource.includes('value: `custom_sections:${index}`'))
+  assert.ok(appSource.includes('if (hasMeaningfulResumeContent(content)) options.push({ value, label })'))
 })
 
 test('font size order and section dialogs are mutually exclusive', () => {
@@ -143,7 +157,7 @@ test('section ordering uses a compact left-side dialog so the PDF stays visible'
   assert.ok(previewSource.includes('justify-content: flex-end'))
   assert.ok(previewSource.includes('width: min(340px, calc(100vw - 40px))'))
   assert.ok(previewSource.includes('background: rgba(7, 8, 11, 0.16)'))
-  assert.ok(previewSource.includes('.font-size-overlay {\n  right: auto;\n  left: 156px;'))
+  assert.ok(previewSource.includes('.font-size-overlay,\n.spacing-overlay {\n  right: auto;\n  left: 156px;'))
   assert.ok(previewSource.includes('.settings-dialog-action {\n  width: 76px;\n  min-width: 76px;\n  height: 34px;'))
 })
 
@@ -271,6 +285,7 @@ test('birth date and merged education headings use body semantics', () => {
 
 test('all basic information components use pipe separators', () => {
   assert.ok(previewSource.includes(".personal-info .module-component-cell.flow-inline .module-component + .module-component::before { content: ' | '; }"))
+  assert.equal(previewSource.includes('contactLayout'), false)
   assert.equal(previewSource.includes("`${t.value.birthDate}：${basics.birth_date}`"), false)
 })
 
@@ -323,18 +338,15 @@ test('single-page preview does not render a redundant 1 / 1 footer', () => {
   assert.ok(previewSource.includes('v-if="pageCount > 1" class="page-footer"'))
 })
 
-test('education uses normalized component rows with configurable alignment and widths', () => {
-  assert.ok(previewSource.includes("'--education-side-column': `${layoutTokens.value.educationSideColumnMm}mm`"))
+test('education uses the normalized current component rows and symmetric widths', () => {
   assert.ok(previewSource.includes("'--education-compact-side-column': `${educationColumnWidths.value.sideMm}mm`"))
   assert.ok(previewSource.includes("'--education-middle-column': `${educationColumnWidths.value.middleMm}mm`"))
   assert.ok(previewSource.includes('grid-template-columns: var(--education-compact-side-column) var(--education-middle-column) var(--education-compact-side-column)'))
-  assert.ok(previewSource.includes('grid-template-columns: var(--education-side-column) minmax(0, 1fr) var(--education-side-column)'))
   assert.ok(previewSource.includes("visibleComponentRows('education', ['theses'])"))
   assert.ok(previewSource.includes('componentRowStyle(row, \'education\')'))
   assert.ok(previewSource.includes('componentCellStyle(cell)'))
   assert.ok(previewSource.includes('educationComponentText(item, component)'))
   assert.ok(previewSource.includes('formatCompactAcademicMetric(item, hidden)'))
-  assert.ok(previewSource.includes("joinInlineWithInheritedSeparator(academicMetrics(item), ' · ')"))
   assert.ok(previewSource.includes("joinInlineWithInheritedSeparator(item?.school_tags, ' · ')"))
   assert.ok(previewSource.includes('text-align: center'))
   assert.ok(previewSource.includes('margin-right: 0'))
@@ -445,10 +457,13 @@ test('zoom stepper reports the live percentage instead of a fixed label', () => 
 })
 
 test('spacing settings preview as a draft and only reset the four spacing values', () => {
-  assert.ok(previewSource.includes('class="layout-settings-section layout-spacing-section"'))
+  assert.ok(previewSource.includes('class="success-dialog-overlay spacing-overlay"'))
+  assert.ok(previewSource.includes('<h3 id="spacing-title">间距</h3>'))
+  assert.ok(previewSource.includes('@click="openSpacingDialog"'))
   assert.ok(previewSource.includes('@click="resetSpacingDraft">恢复默认</button>'))
   assert.ok(previewSource.includes('@click="confirmSpacingSettings">确认</button>'))
-  assert.ok(previewSource.includes("activeToolbarMenu.value === 'layout'"))
+  assert.ok(previewSource.includes('syncingLayoutProps || showSpacingDialog.value'))
+  assert.ok(previewSource.includes("activateResumeSettingsDialog('spacing')"))
   const resetStart = previewSource.indexOf('function resetSpacingDraft')
   const confirmStart = previewSource.indexOf('function confirmSpacingSettings', resetStart)
   const resetBody = previewSource.slice(resetStart, confirmStart)

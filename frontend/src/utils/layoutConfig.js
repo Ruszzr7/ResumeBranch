@@ -6,7 +6,6 @@ export const MODULE_COMPONENTS = Object.freeze({
   education: ['school', 'school_tags', 'degree', 'major', 'metrics', 'date', 'theses'],
   skills: ['items'], research_interests: ['items'], honors: ['items'], publications: ['items'],
   work_experience: ['organization', 'position', 'job_type', 'date', 'content'],
-  internship_experience: ['organization', 'position', 'job_type', 'date', 'content'],
   project_experience: ['project_name', 'role', 'date', 'content'],
   custom_sections: ['items'], others: ['certificates', 'languages'], self_evaluation: ['items']
 })
@@ -18,12 +17,12 @@ export const PHOTO_BOTTOM_GAP_MM = 1.5
 
 const REQUIRED_COMPONENTS = Object.freeze({
   basics: ['name'], education: ['school'], skills: ['items'], research_interests: ['items'], honors: ['items'], publications: ['items'],
-  work_experience: ['organization', 'content'], internship_experience: ['organization', 'content'],
+  work_experience: ['organization', 'content'],
   project_experience: ['project_name', 'content'], custom_sections: ['items'], others: [], self_evaluation: ['items']
 })
 
 const LONG_TEXT_COMPONENTS = new Set([
-  'education.theses', 'work_experience.content', 'internship_experience.content', 'project_experience.content',
+  'education.theses', 'work_experience.content', 'project_experience.content',
   'skills.items', 'research_interests.items', 'honors.items', 'publications.items', 'custom_sections.items', 'self_evaluation.items'
 ])
 
@@ -38,10 +37,6 @@ export const DEFAULT_COMPONENT_ROWS = Object.freeze({
     { cells: [{ components: ['theses'], flow: 'stacked', width: 'fill', alignment: 'justify' }] }
   ],
   work_experience: [
-    { cells: [{ components: ['organization', 'position', 'job_type'], flow: 'inline', width: 'fill', alignment: 'left' }, { components: ['date'], flow: 'inline', width: 'content', alignment: 'right' }] },
-    { cells: [{ components: ['content'], flow: 'stacked', width: 'fill', alignment: 'justify' }] }
-  ],
-  internship_experience: [
     { cells: [{ components: ['organization', 'position', 'job_type'], flow: 'inline', width: 'fill', alignment: 'left' }, { components: ['date'], flow: 'inline', width: 'content', alignment: 'right' }] },
     { cells: [{ components: ['content'], flow: 'stacked', width: 'fill', alignment: 'justify' }] }
   ],
@@ -77,7 +72,7 @@ const LEGACY_V7_DEFAULT_SECTION_ORDER = [
 ]
 
 export const DEFAULT_LAYOUT_CONFIG = Object.freeze({
-  version: 9,
+  version: 10,
   typography: {
     preset: 'microsoft-office',
     latinFont: 'Arial',
@@ -89,25 +84,24 @@ export const DEFAULT_LAYOUT_CONFIG = Object.freeze({
     density: 'compact', fontSize: 9, lineHeight: 1.25, moduleMargin: 0.5,
     marginVertical: 8.5, marginHorizontal: 9, titleStyle: 'underline',
     sectionOrder: ['education', 'honors', 'publications', 'research_interests', 'skills', 'work_experience', 'project_experience', 'custom_sections', 'others', 'self_evaluation'],
-    hiddenSections: [], splitWorkExperience: false, titleOverrides: {}, sectionPlacements: {}
+    hiddenSections: [], titleOverrides: {}, sectionPlacements: {}
   },
   basics: moduleContract('basics', {
-    preset: 'left-aligned', contactLayout: 'inline', photoPosition: 'right',
+    photoPosition: 'right',
     // Photo height is the only user-facing size control. Width is derived from
     // the imported image's aspect ratio at render time.
     photoHeightMm: 26, photoWidthMm: 21, hiddenFields: []
   }),
-  education: moduleContract('education', { preset: 'compact', schoolTagStyle: 'text', metricsPlacement: 'with-degree', hiddenMetrics: [], thesisDisplay: 'expanded', supplementListStyle: 'bullet' }),
+  education: moduleContract('education', { schoolTagStyle: 'text', hiddenMetrics: [], thesisDisplay: 'expanded', supplementListStyle: 'bullet' }),
   skills: moduleContract('skills', { listStyle: 'bullet' }),
   research_interests: moduleContract('research_interests', { listStyle: 'bullet' }),
   honors: moduleContract('honors', { listStyle: 'bullet' }),
   publications: moduleContract('publications', { listStyle: 'bullet' }),
-  work_experience: moduleContract('work_experience', { preset: 'compact', detailsStyle: 'bullets', datePosition: 'right', showJobType: true }),
-  internship_experience: moduleContract('internship_experience', { preset: 'compact', detailsStyle: 'bullets', datePosition: 'right', showJobType: true }),
-  project_experience: moduleContract('project_experience', { preset: 'compact', detailsStyle: 'bullets', datePosition: 'right', showRole: true, showDate: true }),
+  work_experience: moduleContract('work_experience', { detailsStyle: 'bullets', datePosition: 'right', showJobType: true }),
+  project_experience: moduleContract('project_experience', { detailsStyle: 'bullets', datePosition: 'right', showRole: true, showDate: true }),
   custom_sections: moduleContract('custom_sections', { listStyle: 'bullet' }),
-  others: moduleContract('others', { preset: 'tags', fieldOrder: ['skills', 'certificates', 'languages'], hiddenFields: [], separator: 'dot' }),
-  self_evaluation: moduleContract('self_evaluation', { preset: 'compact', listStyle: 'paragraph' })
+  others: moduleContract('others', { fieldOrder: ['skills', 'certificates', 'languages'], hiddenFields: [], separator: 'dot' }),
+  self_evaluation: moduleContract('self_evaluation', { listStyle: 'paragraph' })
 })
 
 const clone = value => JSON.parse(JSON.stringify(value))
@@ -130,7 +124,7 @@ const semanticFontSizes = body => ({
 })
 const SECTION_IDS = new Set([
   'education', 'honors', 'publications', 'research_interests', 'skills', 'work_experience',
-  'internship_experience', 'project_experience', 'custom_sections', 'others', 'self_evaluation'
+  'project_experience', 'custom_sections', 'others', 'self_evaluation'
 ])
 const CUSTOM_SECTION_MODULE_RE = /^custom_sections:(\d+)$/
 
@@ -150,26 +144,15 @@ const ENUMS = Object.freeze({
   'typography.preset': ['microsoft-office'],
   'global.density': ['compact', 'standard', 'comfortable'],
   'global.titleStyle': ['underline', 'plain'],
-  'basics.preset': ['centered', 'left-aligned'],
-  'basics.contactLayout': ['inline', 'stacked'],
   'basics.photoPosition': ['right', 'hidden'],
-  'education.preset': ['classic', 'compact', 'three-column'],
   'education.schoolTagStyle': ['filled', 'outline', 'text', 'hidden'],
-  'education.metricsPlacement': ['below', 'with-degree', 'info-column'],
   'education.thesisDisplay': ['expanded', 'compact', 'hidden'],
   'education.supplementListStyle': ['paragraph', 'bullet', 'numbered'],
-  'work_experience.preset': ['compact'],
   'work_experience.detailsStyle': ['bullets', 'paragraph'],
   'work_experience.datePosition': ['right', 'inline'],
-  'internship_experience.preset': ['compact'],
-  'internship_experience.detailsStyle': ['bullets', 'paragraph'],
-  'internship_experience.datePosition': ['right', 'inline'],
-  'project_experience.preset': ['classic', 'compact'],
   'project_experience.detailsStyle': ['bullets', 'paragraph'],
   'project_experience.datePosition': ['right', 'inline'],
-  'others.preset': ['inline', 'tags', 'stacked'],
   'others.separator': ['pipe', 'dot'],
-  'self_evaluation.preset': ['paragraphs', 'bullets', 'compact']
 })
 const ALLOWED_HIDDEN_FIELDS = Object.freeze({
   basics: new Set(['gender', 'birth_date', 'phone', 'email', 'target_position', 'photo', 'additional_fields']),
@@ -191,21 +174,7 @@ function mergeKnown(target, source, template) {
 
 function legacyComponentRows(moduleId, config) {
   const rows = clone(DEFAULT_COMPONENT_ROWS[moduleId])
-  if (moduleId === 'basics' && config.preset === 'centered') {
-    return [
-      { cells: [{ components: ['name', 'target_position'], flow: 'stacked', width: 'fill', alignment: 'center' }, { components: ['photo'], flow: 'stacked', width: 'content', alignment: 'right' }] },
-      { cells: [{ components: ['personal_meta', 'contact', 'additional_fields'], flow: config.contactLayout || 'inline', width: 'fill', alignment: 'center' }] }
-    ]
-  }
-  if (moduleId === 'education' && config.preset === 'classic') {
-    return [
-      { cells: [{ components: ['school', 'school_tags'], flow: 'inline', width: 'fill', alignment: 'left' }, { components: ['date'], flow: 'inline', width: 'content', alignment: 'right' }] },
-      { cells: [{ components: ['degree', 'major'], flow: 'inline', width: 'fill', alignment: 'left' }] },
-      { cells: [{ components: ['metrics'], flow: 'inline', width: 'fill', alignment: 'left' }] },
-      { cells: [{ components: ['theses'], flow: 'stacked', width: 'fill', alignment: 'justify' }] }
-    ]
-  }
-  if (['work_experience', 'internship_experience'].includes(moduleId) && config.datePosition === 'inline') {
+  if (moduleId === 'work_experience' && config.datePosition === 'inline') {
     rows[0] = { cells: [{ components: ['organization', 'position', 'job_type', 'date'], flow: 'inline', width: 'fill', alignment: 'left' }] }
   }
   if (moduleId === 'project_experience' && config.datePosition === 'inline') {
@@ -305,23 +274,11 @@ function normalizeModuleContracts(result, source, suppliedVersion, bounded) {
     module.hiddenComponents = MODULE_COMPONENTS[moduleId].filter(component => hidden.has(component))
     const fallback = suppliedVersion < 7 ? legacyComponentRows(moduleId, module) : clone(DEFAULT_COMPONENT_ROWS[moduleId])
     const rawModule = source?.[moduleId] && typeof source[moduleId] === 'object' ? source[moduleId] : {}
-    module.componentRows = normalizeComponentRows(moduleId, suppliedVersion >= 7 ? rawModule.componentRows : fallback, fallback, hidden)
+    const rawRows = ['basics', 'education'].includes(moduleId)
+      ? clone(DEFAULT_COMPONENT_ROWS[moduleId])
+      : (suppliedVersion >= 7 ? rawModule.componentRows : fallback)
+    module.componentRows = normalizeComponentRows(moduleId, rawRows, fallback, hidden)
     if (moduleId === 'others') module.componentRows = normalizeOtherComponentRows(module.componentRows)
-    // Compact/three-column education keeps a stable three-column geometry:
-    // the middle column is centered by the equal side widths, while its
-    // content is left aligned. Migrate old persisted rows so all renderers
-    // use the same alignment contract.
-    if (moduleId === 'education' && ['compact', 'three-column'].includes(module.preset)) {
-      for (const row of module.componentRows) {
-        if (row.cells.length !== 3) continue
-        if (!row.cells[0].components.includes('school')
-          || !row.cells[1].components.some(component => ['degree', 'major', 'metrics'].includes(component))
-          || !row.cells[2].components.includes('date')) continue
-        row.cells[0].alignment = 'left'
-        row.cells[1].alignment = 'left'
-        row.cells[2].alignment = 'right'
-      }
-    }
   }
 }
 
@@ -365,20 +322,12 @@ export function normalizeLayoutConfig(value = {}) {
   result.global.moduleMargin = boundedConfigNumber(result.global.moduleMargin, 0.1, 1, 0.5)
   result.global.marginVertical = boundedConfigNumber(result.global.marginVertical, 3, 12, 9)
   result.global.marginHorizontal = boundedConfigNumber(result.global.marginHorizontal, 3, 12, 9)
-  result.global.splitWorkExperience = Boolean(result.global.splitWorkExperience)
   if (suppliedVersion < 8 && Array.isArray(result.global.sectionOrder)
       && result.global.sectionOrder.join('|') === LEGACY_V7_DEFAULT_SECTION_ORDER.join('|')) {
     result.global.sectionOrder = [...DEFAULT_LAYOUT_CONFIG.global.sectionOrder]
   }
   result.global.sectionOrder = [...new Set((Array.isArray(result.global.sectionOrder) ? result.global.sectionOrder : [])
     .filter(item => isValidSectionId(item)))]
-  if (result.global.splitWorkExperience && !result.global.sectionOrder.includes('internship_experience')) {
-    const index = result.global.sectionOrder.indexOf('work_experience')
-    result.global.sectionOrder.splice(Math.max(0, index + 1), 0, 'internship_experience')
-  }
-  if (!result.global.splitWorkExperience) {
-    result.global.sectionOrder = result.global.sectionOrder.filter(item => item !== 'internship_experience')
-  }
   const insertAfter = (item, anchor) => {
     if (result.global.sectionOrder.includes(item)) return
     const index = result.global.sectionOrder.indexOf(anchor)
@@ -392,7 +341,7 @@ export function normalizeLayoutConfig(value = {}) {
   if (!hasCustomSectionModules) insertAfter('custom_sections', 'project_experience')
   for (const item of SECTION_IDS) {
     if (item === 'custom_sections' && hasCustomSectionModules) continue
-    if (item !== 'internship_experience' || result.global.splitWorkExperience) insertAfter(item)
+    insertAfter(item)
   }
   result.global.hiddenSections = [...new Set(
     (Array.isArray(result.global.hiddenSections) ? result.global.hiddenSections : []).filter(item => isValidSectionId(item))
@@ -427,18 +376,12 @@ export function normalizeLayoutConfig(value = {}) {
   )
   if (result.basics.photoPosition === 'hidden' && !result.basics.hiddenFields.includes('photo')) result.basics.hiddenFields.push('photo')
   if (result.basics.hiddenFields.includes('photo')) result.basics.photoPosition = 'hidden'
-  if (result.education.preset === 'three-column') {
-    result.education.metricsPlacement = 'info-column'
-  } else if (result.education.metricsPlacement === 'info-column') {
-    result.education.metricsPlacement = result.education.preset === 'classic' ? 'below' : 'with-degree'
-  }
   result.others.fieldOrder = (Array.isArray(result.others.fieldOrder) ? result.others.fieldOrder : [])
     .filter(item => ALLOWED_HIDDEN_FIELDS.others.has(item))
   for (const item of ['skills', 'certificates', 'languages']) {
     if (!result.others.fieldOrder.includes(item)) result.others.fieldOrder.push(item)
   }
   result.work_experience.showJobType = Boolean(result.work_experience.showJobType)
-  result.internship_experience.showJobType = Boolean(result.internship_experience.showJobType)
   result.project_experience.showRole = Boolean(result.project_experience.showRole)
   result.project_experience.showDate = Boolean(result.project_experience.showDate)
   const suppliedFontSizes = value?.typography?.fontSizes
@@ -591,7 +534,6 @@ export function resolveLayoutTokens(value = {}, style = {}) {
     listMarkerGapPt: bodyFontSizePt * 0.25,
     educationMiddleMinMm: 30,
     educationColumnBreathingMm: 4,
-    educationSideColumnMm: 42,
     // Keep photoWidthMm in the token contract for old callers. Renderers use
     // photoHeightMm plus the stored image ratio for the actual width.
     photoWidthMm: config.basics.photoWidthMm,
@@ -698,16 +640,7 @@ export function resolvePhotoHeightMm(resumeData = {}, config = {}, tokens = {}) 
     if (section === 'education') return Array.isArray(resumeData.education) && resumeData.education.length > 0
     if (section === 'skills') return hasValues(others.skills)
     if (['research_interests', 'honors', 'publications', 'self_evaluation'].includes(section)) return hasValues(resumeData[section])
-    if (section === 'work_experience') {
-      const entries = resumeData.work_experience || []
-      return global.splitWorkExperience
-        ? entries.some(item => !/实习|intern/i.test(String(item?.job_type || '')))
-        : entries.length > 0
-    }
-    if (section === 'internship_experience') {
-      return Boolean(global.splitWorkExperience) && (resumeData.work_experience || [])
-        .some(item => /实习|intern/i.test(String(item?.job_type || '')))
-    }
+    if (section === 'work_experience') return (resumeData.work_experience || []).length > 0
     if (section === 'project_experience') return hasValues(resumeData.project_experience || resumeData.projects)
     if (section === 'custom_sections') return (resumeData.custom_sections || [])
       .some(item => String(item?.title || '').trim() && hasValues(item?.items))

@@ -114,10 +114,10 @@ class ResumeVisualSkillTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("fontSize", parsed)
 
     async def test_initial_layout_turn_forces_one_ephemeral_snapshot(self):
-        model = SimpleNamespace(
+        bound = SimpleNamespace(
             ainvoke=AsyncMock(return_value=AIMessage(content="1. 调整模块间距")),
-            bind_tools=MagicMock(),
         )
+        model = SimpleNamespace(bind_tools=MagicMock(return_value=bound))
         state = AgentState(
             messages=[HumanMessage(content="开始排版建议")],
             resume_data={"basics": {"name": "张三"}},
@@ -131,8 +131,12 @@ class ResumeVisualSkillTests(unittest.IsolatedAsyncioTestCase):
         ):
             result = await conversation_node(state)
         render.assert_called_once()
-        model.bind_tools.assert_not_called()
-        sent = model.ainvoke.await_args.args[0]
+        exposed = {item.name for item in model.bind_tools.call_args.args[0]}
+        self.assertEqual(
+            exposed,
+            {render_resume_pdf_images_tool.name, request_resume_edit.name},
+        )
+        sent = bound.ainvoke.await_args.args[0]
         self.assertTrue(any(
             isinstance(message.content, list)
             and any(isinstance(part, dict) and part.get("type") == "image_url" for part in message.content)

@@ -184,7 +184,6 @@ class ConfirmationFlowTests(unittest.IsolatedAsyncioTestCase):
             "job_title": "后端实习生",
             "job_type": "实习",
             "date_range": ["2025.01", "2025.06"],
-            "details": [],
             "content_blocks": [{
                 "type": "bullet_list", "label": "", "label_bold": True,
                 "text": "", "items": ["将接口延迟降低35%"],

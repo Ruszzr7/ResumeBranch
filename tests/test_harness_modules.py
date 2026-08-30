@@ -109,7 +109,21 @@ class HarnessModuleTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("componentRows", full)
         self.assertNotIn("【当前完整归一化排版配置】", compact)
         self.assertIn("【当前完整归一化排版配置】", full)
-        self.assertIn("照片位于基本信息右上方", full)
+        self.assertNotIn("photoHeightMm", compact)
+        self.assertIn("photoHeightMm", full)
+
+    def test_edit_intent_context_is_a_compact_lifecycle_hint(self):
+        content = build_system_content(
+            "简历：{{resume_data}}\nJD：{{jd_data}}",
+            {"basics": {"name": "张三"}},
+            {},
+            layout_data=default_layout_config(),
+            coaching_mode=False,
+            context_metadata={"edit_intent_state": {"status": "awaiting_tool"}},
+        )
+        self.assertIn("尚未提交给修改技能", content)
+        self.assertIn("不是用户指令", content)
+        self.assertNotIn("resume_operations", content)
 
     def test_latest_numbered_recommendation_ignores_non_numbered_chat(self):
         self.assertEqual(
