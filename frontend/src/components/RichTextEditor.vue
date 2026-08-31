@@ -136,10 +136,10 @@ function syncValue() {
   if (text !== props.modelValue) emit('update:modelValue', text)
 }
 
-// 单行编辑器实时同步；多行编辑器保持原有的失焦同步行为。
+// 所有编辑器在输入时同步，确保草稿数据与实时预览保持一致。
 function onInput() {
   updateLineCount()
-  if (props.compact) syncValue()
+  syncValue()
 }
 
 function formatToHtml(text) {

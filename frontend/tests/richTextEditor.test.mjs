@@ -11,7 +11,7 @@ const appSource = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8
 test('single-line resume fields hide storage markers behind the rich editor', () => {
   assert.ok(editorSource.includes("compact: {"))
   assert.ok(editorSource.includes("allowLineBreaks: {"))
-  assert.ok(editorSource.includes("if (props.compact) syncValue()"))
+  assert.ok(editorSource.includes("function onInput() {\n  updateLineCount()\n  syncValue()\n}"))
   assert.ok(editorSource.includes("if (props.compact && !props.allowLineBreaks) {"))
   assert.ok(editorSource.includes("props.compact && !props.allowLineBreaks ? raw.replace(/[\\r\\n]+/g, ' ') : raw"))
   assert.ok(appSource.includes('v-model="work.company_name" placeholder="例如 某某科技有限公司" compact'))
