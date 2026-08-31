@@ -60,6 +60,10 @@ test('editable module headings use a one-third input and match the basic heading
   assert.ok(appSource.includes('.module-title-editor::after'))
 })
 
+test('resume editor scroll area does not expose decorative horizontal overflow', () => {
+  assert.ok(appSource.includes('.resume-form-section {\n  flex: 1;\n  min-width: 0;\n  overflow-y: auto;\n  overflow-x: hidden;'))
+})
+
 test('bold guidance appears once at the top of the resume dialog', () => {
   assert.equal(editorSource.includes('提示：选中文字后按'), false)
   assert.ok(appSource.includes('class="resume-format-hint" role="note"'))

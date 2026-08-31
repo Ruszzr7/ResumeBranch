@@ -4,7 +4,7 @@
 
 ResumeBranch is an open-source AI resume assistant for maintaining resumes and preparing job applications. It uses a structured resume as its core data model and provides import, editing, version management, layout controls, PDF/DOCX export, job-description analysis, and conversational optimization. It is distributed through three paths: source development/testing, multi-user Docker deployment, and a Windows single-user installation package.
 
-The current version is **Release 1.1**. The feature set and architecture are frozen; this document describes the code, configuration, and launch scripts in the repository.
+The current version is **Release 1.1.1**. The feature set and architecture are frozen; this document describes the code, configuration, and launch scripts in the repository.
 
 ## Main capabilities
 

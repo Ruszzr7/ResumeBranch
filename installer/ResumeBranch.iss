@@ -1,5 +1,5 @@
 #define MyAppName "ResumeBranch"
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.1.1"
 #define MyAppPublisher "ResumeBranch"
 #define MyAppExeName "ResumeBranch.exe"
 
@@ -37,7 +37,7 @@ CloseApplications=yes
 RestartApplications=no
 UsePreviousAppDir=no
 UsePreviousTasks=no
-VersionInfoVersion=1.1.0.0
+VersionInfoVersion=1.1.1.0
 VersionInfoProductName={#MyAppName}
 VersionInfoDescription={#MyAppName} 本地版安装程序
 VersionInfoCompany={#MyAppPublisher}

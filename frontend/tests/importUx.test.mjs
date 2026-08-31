@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 
 const normalizeNewlines = (source) => source.replace(/\r\n?/g, '\n')
 const appSource = normalizeNewlines(readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8'))
+const styleSource = normalizeNewlines(readFileSync(new URL('../src/style.css', import.meta.url), 'utf8'))
 const viteSource = normalizeNewlines(readFileSync(new URL('../vite.config.js', import.meta.url), 'utf8'))
 const logoSource = normalizeNewlines(readFileSync(new URL('../src/components/BrandLogo.vue', import.meta.url), 'utf8'))
 const indexSource = normalizeNewlines(readFileSync(new URL('../index.html', import.meta.url), 'utf8'))
@@ -156,9 +157,25 @@ test('resume setting dialogs share one mutually exclusive group and surface colo
   assert.ok(appSource.includes("const RESUME_SETTINGS_DIALOG_EVENT = 'resume-settings-dialog-open'"))
   assert.ok(appSource.includes("activateResumeSettingsDialog('direct-edit')"))
   assert.ok(appSource.includes("activateResumeSettingsDialog('resume-edit')"))
+  assert.ok(appSource.includes("activateResumeSettingsDialog('translate')"))
+  assert.ok(appSource.includes("activateResumeSettingsDialog('jd')"))
+  assert.ok(appSource.includes("activateResumeSettingsDialog('upload')"))
+  const handlerStart = appSource.indexOf('function handleResumeSettingsDialogOpen')
+  const handlerEnd = appSource.indexOf('// 初始化简历数据', handlerStart)
+  const handler = appSource.slice(handlerStart, handlerEnd)
+  for (const closeCall of ['cancelTranslate()', 'closeJDDialog()', 'closeUploadDialog()']) assert.ok(handler.includes(closeCall))
   assert.ok(resumePreviewSource.includes("activateResumeSettingsDialog('section-order')"))
   assert.ok(resumePreviewSource.includes("activateResumeSettingsDialog('font-size')"))
   assert.ok(appSource.includes('background: #25262c'))
+})
+
+test('resume editor keeps an isolated normalized draft for live preview', () => {
+  assert.ok(appSource.includes('const resumeEditorPreviewData = ref(null)'))
+  assert.ok(appSource.includes('const activeResumeData = computed(() => resumeEditorPreviewData.value || previewResumeData.value || resumeData.value)'))
+  assert.ok(appSource.includes('function buildResumeEditorData()'))
+  assert.ok(appSource.includes('function refreshResumeEditorPreview()'))
+  assert.ok(appSource.includes('[resumeFormData, researchInterestsText, honorsText, publicationsText, educationSupplementText, selfEvalText, isResumeEditDialogOpen]'))
+  assert.ok(appSource.includes('resumeEditorPreviewData.value = null'))
 })
 
 test('resume translation uses a dedicated endpoint and reusable cache', () => {
@@ -203,9 +220,12 @@ test('re-import dialog stays on the current workspace without a redundant back b
   const end = appSource.indexOf('<!-- 顶部导航栏（全屏宽度） -->', start)
   const uploadDialog = appSource.slice(start, end)
   assert.ok(start >= 0 && end > start)
+  assert.ok(uploadDialog.includes('class="modal-mask upload-modal-overlay"'))
   assert.ok(uploadDialog.includes('<h2>导入简历</h2>'))
+  assert.equal(uploadDialog.includes('class="header-badge"'), false)
   assert.equal(uploadDialog.includes('backToStartDialog'), false)
   assert.equal(uploadDialog.includes('class="modal-back"'), false)
+  assert.ok(styleSource.includes('.upload-modal-overlay {\n  z-index: 1000;'))
 })
 
 test('re-import dialog can be closed without selecting a file', () => {

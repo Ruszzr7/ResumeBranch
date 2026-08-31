@@ -2535,7 +2535,7 @@ const getItemIndex = (type, dataIndex) => {
       <div class="layout-guide-header">
         <div>
           <h3 id="spacing-title">间距</h3>
-          <p>修改会先显示在右侧预览，点击确认后才保存。</p>
+          <p>修改会先显示在右侧预览，点击应用后才保存。</p>
         </div>
         <button class="layout-guide-close" aria-label="关闭间距设置" @click="closeSpacingDialog">×</button>
       </div>
@@ -2561,7 +2561,7 @@ const getItemIndex = (type, dataIndex) => {
       <div class="spacing-dialog-actions">
         <button type="button" class="settings-dialog-action" @click="resetSpacingDraft">恢复默认</button>
         <span class="font-size-action-spacer"></span>
-        <button type="button" class="settings-dialog-action primary" @click="confirmSpacingSettings">确认</button>
+        <button type="button" class="settings-dialog-action primary" @click="confirmSpacingSettings">应用</button>
       </div>
     </div>
   </div>

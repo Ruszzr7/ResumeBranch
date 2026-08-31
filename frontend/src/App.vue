@@ -243,6 +243,7 @@ async function switchLang(lang) {
   if (isTranslating.value) return
   if (lang === 'en') {
     if (currentLang.value === 'en') return
+    activateResumeSettingsDialog('translate')
     showTranslateConfirm.value = true
     return
   }
@@ -563,9 +564,11 @@ const userInput = contextField('userInput')
 const uploadedFiles = contextField('uploadedFiles')
 // 简历数据
 const resumeData = ref(null)
+// 编辑简历时的未保存草稿，仅用于右侧实时预览
+const resumeEditorPreviewData = ref(null)
 // 确认框出现期间使用的未保存简历候选，仅用于右侧临时预览
 const previewResumeData = contextField('previewResumeData')
-const activeResumeData = computed(() => previewResumeData.value || resumeData.value)
+const activeResumeData = computed(() => resumeEditorPreviewData.value || previewResumeData.value || resumeData.value)
 const directEditScopeOptions = computed(() => {
   const data = activeResumeData.value || {}
   const layout = activeLayoutConfig.value
@@ -926,6 +929,9 @@ function handleResumeSettingsDialogOpen(event) {
   const activeDialog = String(event.detail || '')
   if (activeDialog !== 'direct-edit' && showDirectEditDialog.value) closeDirectEditDialog()
   if (activeDialog !== 'resume-edit' && isResumeEditDialogOpen.value) closeResumeEditDialog()
+  if (activeDialog !== 'translate' && showTranslateConfirm.value) cancelTranslate()
+  if (activeDialog !== 'jd' && isJDDialogOpen.value) closeJDDialog()
+  if (activeDialog !== 'upload' && showUploadDialog.value) void closeUploadDialog()
 }
 
 // 初始化简历数据
@@ -2555,6 +2561,7 @@ function closeImagePreview() {
 
 // 打开岗位信息弹窗
 function openJDDialog() {
+  activateResumeSettingsDialog('jd')
   isJDDialogOpen.value = true
   // 如果已有岗位信息，直接显示编辑表单
   if (jdData.value && Object.keys(jdData.value).length > 0) {
@@ -2877,6 +2884,7 @@ function migrateEditableDefaultBold(data) {
 // 打开简历编辑弹窗
 function openResumeEditDialog() {
   activateResumeSettingsDialog('resume-edit')
+  resumeEditorPreviewData.value = null
   resumeEditorPreviousResumeData = cloneResumeData(resumeData.value)
   resumeEditorPreviousPreviewLayout = previewLayoutConfig.value
     ? JSON.parse(JSON.stringify(previewLayoutConfig.value))
@@ -2981,6 +2989,7 @@ function openResumeEditDialog() {
   selfEvalText.value = arrayToMultiline(resumeFormData.value.self_evaluation || [])
 
   isResumeEditDialogOpen.value = true
+  refreshResumeEditorPreview()
 }
 
 // 将日期范围转换为保存格式
@@ -2996,6 +3005,7 @@ function convertDateRangeToSave(item) {
 // 关闭简历编辑弹窗
 function closeResumeEditDialog() {
   isResumeEditDialogOpen.value = false
+  resumeEditorPreviewData.value = null
   photoError.value = ''
   if (resumeEditorPreviousResumeData) {
     resumeData.value = cloneResumeData(resumeEditorPreviousResumeData)
@@ -3285,6 +3295,65 @@ function removeBasicAdditionalField(index) {
   resumeFormData.value.basics.additional_fields.splice(index, 1)
 }
 
+// 将编辑器草稿转换为预览/保存使用的规范简历数据；此函数只处理副本，不写入正式数据。
+function buildResumeEditorData() {
+  const dataToSave = JSON.parse(JSON.stringify(resumeFormData.value))
+  dataToSave.formatting_version = 4
+
+  dataToSave.education?.forEach(edu => {
+    convertDateRangeToSave(edu)
+  })
+  dataToSave.work_experience?.forEach(work => {
+    convertDateRangeToSave(work)
+    if (work._detailsText !== undefined) {
+      work.content_blocks = editableExperienceToContentBlocks(work)
+      for (const key of ['_techStackLabel', '_techStackType', '_techStackText', '_introLabel', '_dutiesLabel', '_introLabelBold', '_dutiesLabelBold', '_introType', '_dutiesType', '_detailsType', '_introText', '_dutiesText', '_detailsText', '_extraDetailsText']) delete work[key]
+    }
+  })
+  dataToSave.project_experience?.forEach(proj => {
+    convertDateRangeToSave(proj)
+    proj.content_blocks = editableExperienceToContentBlocks(proj)
+    delete proj._techStackLabel
+    delete proj._techStackType
+    delete proj._techStackText
+    delete proj._introLabel
+    delete proj._dutiesLabel
+    delete proj._introLabelBold
+    delete proj._dutiesLabelBold
+    delete proj._introType
+    delete proj._dutiesType
+    delete proj._detailsType
+    delete proj._introText
+    delete proj._dutiesText
+    delete proj._extraDetailsText
+  })
+
+  dataToSave.research_interests = multilineToArray(researchInterestsText.value)
+  dataToSave.honors = multilineToArray(honorsText.value)
+  dataToSave.publications = multilineToArray(publicationsText.value)
+  dataToSave.education_supplement = multilineToArray(educationSupplementText.value)
+  dataToSave.custom_sections = (dataToSave.custom_sections || [])
+    .map(section => ({
+      title: String(section.title || '').trim(),
+      items: multilineToArray(section._itemsText !== undefined ? section._itemsText : arrayToMultiline(section.items || [])),
+      list_style: normalizeResumeListStyle(section._listStyle || section.list_style)
+    }))
+    .filter(section => section.title && section.items.length)
+  dataToSave.self_evaluation = multilineToArray(selfEvalText.value)
+
+  return dataToSave
+}
+
+function refreshResumeEditorPreview() {
+  resumeEditorPreviewData.value = isResumeEditDialogOpen.value ? buildResumeEditorData() : null
+}
+
+watch(
+  [resumeFormData, researchInterestsText, honorsText, publicationsText, educationSupplementText, selfEvalText, isResumeEditDialogOpen],
+  refreshResumeEditorPreview,
+  { deep: true }
+)
+
 // 保存简历
 async function saveResume() {
   isSaving.value = true
@@ -3292,53 +3361,7 @@ async function saveResume() {
     addResumeSkill()
     addResumeCert()
     addResumeLang()
-    // 复制数据进行处理
-    const dataToSave = JSON.parse(JSON.stringify(resumeFormData.value))
-    dataToSave.formatting_version = 4
-
-    // 处理日期格式：确保是 YYYY.MM 格式
-    dataToSave.education?.forEach(edu => {
-      convertDateRangeToSave(edu)
-    })
-    dataToSave.work_experience?.forEach(work => {
-      convertDateRangeToSave(work)
-      if (work._detailsText !== undefined) {
-        work.content_blocks = editableExperienceToContentBlocks(work)
-        for (const key of ['_techStackLabel', '_techStackType', '_techStackText', '_introLabel', '_dutiesLabel', '_introLabelBold', '_dutiesLabelBold', '_introType', '_dutiesType', '_detailsType', '_introText', '_dutiesText', '_detailsText', '_extraDetailsText']) delete work[key]
-      }
-    })
-    dataToSave.project_experience?.forEach(proj => {
-      convertDateRangeToSave(proj)
-      proj.content_blocks = editableExperienceToContentBlocks(proj)
-      delete proj._techStackLabel
-      delete proj._techStackType
-      delete proj._techStackText
-      delete proj._introLabel
-      delete proj._dutiesLabel
-      delete proj._introLabelBold
-      delete proj._dutiesLabelBold
-      delete proj._introType
-      delete proj._dutiesType
-      delete proj._detailsType
-      delete proj._introText
-      delete proj._dutiesText
-      delete proj._extraDetailsText
-    })
-
-    dataToSave.research_interests = multilineToArray(researchInterestsText.value)
-    dataToSave.honors = multilineToArray(honorsText.value)
-    dataToSave.publications = multilineToArray(publicationsText.value)
-    dataToSave.education_supplement = multilineToArray(educationSupplementText.value)
-    dataToSave.custom_sections = (dataToSave.custom_sections || [])
-      .map(section => ({
-        title: String(section.title || '').trim(),
-        items: multilineToArray(section._itemsText !== undefined ? section._itemsText : arrayToMultiline(section.items || [])),
-        list_style: normalizeResumeListStyle(section._listStyle || section.list_style)
-      }))
-      .filter(section => section.title && section.items.length)
-
-    // 将自我评价多行文本转换回数组
-    dataToSave.self_evaluation = multilineToArray(selfEvalText.value)
+    const dataToSave = buildResumeEditorData()
 
     const response = await fetch('/save_resume', {
       method: 'POST',
@@ -3784,6 +3807,7 @@ async function confirmIdentitySelection() {
 // 显示上传弹窗
 function showUploadResumeDialog() {
   closeStartDialog()
+  activateResumeSettingsDialog('upload')
   showUploadDialog.value = true
   resumeImagePreview.value = ''
   resumeImageFile.value = null
@@ -3808,8 +3832,7 @@ function selectResumeFileFromStart() {
 }
 
 // 关闭上传弹窗
-async function discardPendingResumeSource() {
-  const token = resumeImportDraft.value?.source_document_token
+async function discardPendingResumeSource(token = resumeImportDraft.value?.source_document_token) {
   if (!token) return
   try {
     await fetch(`/api/resume/import_drafts/${token}`, {
@@ -3822,13 +3845,14 @@ async function discardPendingResumeSource() {
 }
 
 async function closeUploadDialog() {
-  await discardPendingResumeSource()
+  const pendingToken = resumeImportDraft.value?.source_document_token
   showUploadDialog.value = false
   resumeImagePreview.value = ''
   resumeImageFile.value = null
   isResumePdf.value = false
   resumeImportDraft.value = null
   resumeImportError.value = ''
+  await discardPendingResumeSource(pendingToken)
 }
 
 // 重新选择文件
@@ -4467,16 +4491,9 @@ watch(
   <!-- 简历上传弹窗 -->
   <Teleport to="body">
     <Transition name="dialog-fade">
-      <div v-if="showUploadDialog" class="modal-mask">
+      <div v-if="showUploadDialog" class="modal-mask upload-modal-overlay">
         <div class="modal-container upload-modal" @click.stop>
           <div class="modal-header">
-            <div class="header-badge">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                <polyline points="17 8 12 3 7 8"></polyline>
-                <line x1="12" y1="3" x2="12" y2="15"></line>
-              </svg>
-            </div>
             <h2>导入简历</h2>
             <button type="button" class="modal-close-btn light" aria-label="关闭导入简历" @click="closeUploadDialog">×</button>
           </div>
@@ -7826,7 +7843,9 @@ watch(
 
 .resume-form-section {
   flex: 1;
+  min-width: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 1.5rem;
 }
 
