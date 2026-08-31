@@ -21,6 +21,7 @@
 - Python 3.11+
 - Node.js 20+
 - Chrome、Edge 或 Chromium，用于源码模式的 PDF 导出
+- Poppler，视觉快照 Skill 需要其中的 `pdfinfo` 和 `pdftoppm`；请将其可执行文件目录加入系统 `PATH`，或通过 `POPPLER_PATH` 指定 Poppler 的 `bin` 目录
 - 多用户源码测试还需要已安装的 MySQL 8.x
 
 本交付方式不要求 Docker、WSL 或 Hyper-V 虚拟网卡。
