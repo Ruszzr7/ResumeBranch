@@ -4,7 +4,7 @@
 
 ResumeBranch is an open-source AI resume assistant for maintaining resumes and preparing job applications. It uses a structured resume as its core data model and provides import, editing, version management, layout controls, PDF/DOCX export, job-description analysis, and conversational optimization. It is distributed through three paths: source development/testing, multi-user Docker deployment, and a Windows single-user installation package.
 
-The current version is **Release 1.1.1**. The feature set and architecture are frozen; this document describes the code, configuration, and launch scripts in the repository.
+The current version is **Release 1.1.2**. The feature set and architecture are frozen; this document describes the code, configuration, and launch scripts in the repository.
 
 ## Main capabilities
 
@@ -25,7 +25,7 @@ The three paths share the same Vue frontend, FastAPI backend, and business code,
 |---|---|---|---|
 | Source development/testing | Clone the GitHub repository, install dependencies, and use Windows scripts | Single-user or multi-user test configuration | Development, testing, and acceptance |
 | Multi-user Docker deployment | Obtain the source and Docker Compose configuration, then run Docker Compose | Multi-user only | Local deployment validation or server deployment |
-| Windows single-user installation | Download `ResumeBranch-Setup-x64.exe` from GitHub Releases and install it | Single-user only | Direct local use on Windows |
+| Windows single-user installation | Download `ResumeBranch-Setup-v1.1.2-x64.exe` from GitHub Releases and install it | Single-user only | Direct local use on Windows |
 
 The source path provides two configurations: single-user uses SQLite and `scripts\start_local.cmd`; multi-user testing uses MySQL and `scripts\start_multi_user.cmd`. The existing internal configuration value `APP_MODE=local` and script names remain unchanged; “single-user” is the user-facing description.
 
@@ -45,7 +45,7 @@ Reproducible dependency versions are defined by [`backend/requirements.lock.txt`
 
 ## Windows single-user installation package
 
-For a normal Windows user, download `ResumeBranch-Setup-x64.exe` from GitHub Releases and run the installer. It includes the frozen single-user application, the production frontend bundle, a private Python runtime and dependencies, Nginx, Poppler, and the PDF rendering browser. It does not require Python, Node.js, npm, Docker, MySQL, or Inno Setup on the target computer, and it does not modify the system `PATH`.
+For a normal Windows user, download `ResumeBranch-Setup-v1.1.2-x64.exe` from GitHub Releases and run the installer. It includes the frozen single-user application, the production frontend bundle, a private Python runtime and dependencies, Nginx, Poppler, and the PDF rendering browser. It does not require Python, Node.js, npm, Docker, MySQL, or Inno Setup on the target computer, and it does not modify the system `PATH`.
 
 The installer uses a per-user installation location by default. After installation, the optional desktop shortcut points to `ResumeBranch.exe`; the launcher starts the private single-user backend and frontend, then opens `http://127.0.0.1:5173` in the default browser. The SQLite database and exports are stored below the installed `app/` directory. Initial user data and API settings are empty and must be configured by the user when needed.
 
@@ -57,7 +57,7 @@ The installer is a generated release artifact. Maintainers can rebuild it on Win
 .\packaging\build-installer.ps1
 ~~~
 
-The generated file is written to `output/installer/ResumeBranch-Setup-x64.exe`. See [Windows single-user installation package](packaging/README.md) for packaging details.
+The generated file is written to `output/installer/ResumeBranch-Setup-v1.1.2-x64.exe`. See [Windows single-user installation package](packaging/README.md) for packaging details.
 
 ## Source development/testing on Windows
 

@@ -7,7 +7,7 @@
 - **源码单用户测试**：`APP_MODE=local` + SQLite，`http://127.0.0.1:5173`
 - **源码多用户测试**：`APP_MODE=multi_user` + Windows 原生 MySQL，`http://127.0.0.1:5173`
 - **Docker 多用户验收**：`APP_MODE=multi_user` + Compose MySQL，通常通过 `http://127.0.0.1:8080` 访问
-- **Windows 单用户安装包测试**：安装 `ResumeBranch-Setup-x64.exe`，使用安装包内的私有运行环境
+- **Windows 单用户安装包测试**：安装 `ResumeBranch-Setup-v1.1.2-x64.exe`，使用安装包内的私有运行环境
 - **测试账号**：多用户配置准备管理员与两个普通账号
 - **浏览器**：源码测试的页面交互使用当前稳定版 Chrome、Edge 或 Chromium；源码和安装包的 PDF/页面快照使用可用的 Chromium 内核，安装包优先使用内置 Headless Chromium
 - **测试日期**：
@@ -19,7 +19,7 @@
 | 序号 | 测试功能 | 测试步骤 | 预期结果 | 测试状态 |
 |------|----------|----------|----------|----------|
 | 0.1 | 源码单用户入口 | 使用 `scripts/start_local.cmd` 启动 | 无登录页；`/app/config` 返回 local + sqlite；仅监听回环地址 | ☐ |
-| 0.1a | Windows 单用户安装包入口 | 安装并运行 `ResumeBranch-Setup-x64.exe`，再启动 `ResumeBranch.exe` | 安装完成；私有后端和前端启动；页面可访问；初始数据与 API 配置为空 | ☐ |
+| 0.1a | Windows 单用户安装包入口 | 安装并运行 `ResumeBranch-Setup-v1.1.2-x64.exe`，再启动 `ResumeBranch.exe` | 安装完成；私有后端和前端启动；页面可访问；初始数据与 API 配置为空 | ☐ |
 | 0.1b | Windows 安装包卸载 | 启动安装包版本后执行卸载 | Python/Nginx 进程停止；运行时文件清理；`app/data` 等用户数据保留 | ☐ |
 | 0.2 | 单用户 SQLite 持久化 | 创建简历，停止项目并重启电脑/服务 | `data/resumebranch.db` 仍在，简历可继续读取 | ☐ |
 | 0.3 | 单用户认证接口关闭 | 请求登录、注册和邀请码接口 | 均返回 404，页面不出现账号入口 | ☐ |

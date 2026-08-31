@@ -1,5 +1,5 @@
 #define MyAppName "ResumeBranch"
-#define MyAppVersion "1.1.1"
+#define MyAppVersion "1.1.2"
 #define MyAppPublisher "ResumeBranch"
 #define MyAppExeName "ResumeBranch.exe"
 
@@ -27,7 +27,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir={#OutputDir}
-OutputBaseFilename=ResumeBranch-Setup-x64
+OutputBaseFilename=ResumeBranch-Setup-v1.1.2-x64
 SetupIconFile={#SetupIcon}
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2/ultra64
@@ -37,7 +37,7 @@ CloseApplications=yes
 RestartApplications=no
 UsePreviousAppDir=no
 UsePreviousTasks=no
-VersionInfoVersion=1.1.1.0
+VersionInfoVersion=1.1.2.0
 VersionInfoProductName={#MyAppName}
 VersionInfoDescription={#MyAppName} 本地版安装程序
 VersionInfoCompany={#MyAppPublisher}
