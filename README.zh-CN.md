@@ -4,7 +4,7 @@
 
 ResumeBranch 是一个面向个人简历维护与求职准备的开源 AI 简历助手。项目以结构化简历为核心，提供导入、编辑、版本管理、排版、PDF/DOCX 导出、JD 分析和对话式优化，并提供源码开发/测试、多用户 Docker 部署和 Windows 单用户安装三种交付方式。
 
-当前版本为 **Release 1.1.2**。功能与架构已冻结，本文档以仓库当前代码、配置和启动脚本为准。
+当前版本为 **Release 1.1.3**。功能与架构已冻结，本文档以仓库当前代码、配置和启动脚本为准。
 
 ## 主要能力
 
@@ -25,7 +25,7 @@ ResumeBranch 是一个面向个人简历维护与求职准备的开源 AI 简历
 |---|---|---|---|
 | 源码开发/测试 | 从 GitHub 拉取源码，安装依赖并运行 Windows 脚本 | 单用户或多用户测试配置 | 开发、测试和验收 |
 | 多用户 Docker 部署 | 获取源码和 Docker Compose 配置并启动容器 | 仅多用户 | 本地部署验收或服务器部署 |
-| Windows 单用户安装 | 从 GitHub Releases 下载 `ResumeBranch-Setup-v1.1.2-x64.exe` 并安装 | 仅单用户 | Windows 本地直接使用 |
+| Windows 单用户安装 | 从 GitHub Releases 下载 `ResumeBranch-Setup-v1.1.3-x64.exe` 并安装 | 仅单用户 | Windows 本地直接使用 |
 
 源码方式包含两种配置：单用户使用 SQLite 和 `scripts\start_local.cmd`；多用户测试使用 MySQL 和 `scripts\start_multi_user.cmd`。现有内部配置值 `APP_MODE=local` 和脚本名称保持不变；面向用户的说明统一使用“单用户”。
 
@@ -45,7 +45,7 @@ ResumeBranch 是一个面向个人简历维护与求职准备的开源 AI 简历
 
 ## Windows 单用户安装
 
-普通 Windows 用户应从 GitHub Releases 下载 `ResumeBranch-Setup-v1.1.2-x64.exe` 并运行安装程序。安装包已经包含冻结后的单用户版程序、前端生产文件、私有 Python 运行环境及依赖、Nginx、Poppler 和 PDF 渲染浏览器。目标电脑不需要另外安装 Python、Node.js、npm、Docker、MySQL 或 Inno Setup，也不会修改系统 `PATH`。
+普通 Windows 用户应从 GitHub Releases 下载 `ResumeBranch-Setup-v1.1.3-x64.exe` 并运行安装程序。安装包已经包含冻结后的单用户版程序、前端生产文件、私有 Python 运行环境及依赖、Nginx、Poppler 和 PDF 渲染浏览器。目标电脑不需要另外安装 Python、Node.js、npm、Docker、MySQL 或 Inno Setup，也不会修改系统 `PATH`。
 
 安装程序默认使用当前用户的安装位置。安装时可以选择创建桌面快捷方式，快捷方式直接指向 `ResumeBranch.exe`。启动器会启动安装包内的单用户后端和前端，并在默认浏览器打开 `http://127.0.0.1:5173`。SQLite 数据库和导出文件位于安装目录下的 `app/` 中。首次安装时用户数据和 API 配置为空，需要使用时再自行配置。
 
@@ -57,7 +57,7 @@ ResumeBranch 是一个面向个人简历维护与求职准备的开源 AI 简历
 .\packaging\build-installer.ps1
 ```
 
-生成的文件位于 `output/installer/ResumeBranch-Setup-v1.1.2-x64.exe`。具体打包说明见 [Windows 安装包构建说明](packaging/README.md)。
+生成的文件位于 `output/installer/ResumeBranch-Setup-v1.1.3-x64.exe`。具体打包说明见 [Windows 安装包构建说明](packaging/README.md)。
 
 ## 源码开发/测试：Windows
 

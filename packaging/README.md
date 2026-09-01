@@ -29,7 +29,7 @@ Use `-SkipTests` only when the maintainer has separately completed the required 
 The build runs the existing backend and frontend tests, creates the Vue production bundle, assembles a private Python runtime, Chromium, Poppler, and Nginx, then produces:
 
 ```text
-output/installer/ResumeBranch-Setup-v1.1.2-x64.exe
+output/installer/ResumeBranch-Setup-v1.1.3-x64.exe
 ```
 
 Downloaded build inputs are pinned by SHA-256 and cached under `%LOCALAPPDATA%\ResumeBranchPackager`. They are build-time inputs only; the final installer does not download or register system-wide dependencies. The installed launcher starts the existing single-user SQLite profile on `127.0.0.1`, serves the prebuilt frontend on port `5173`, and opens the default browser.
