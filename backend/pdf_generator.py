@@ -708,6 +708,11 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         font-variant-ligatures: none;
         font-synthesis: none;
         line-height: var(--line-height);
+        word-wrap: normal;
+        overflow-wrap: normal;
+        word-break: normal;
+        hyphens: none;
+        hanging-punctuation: none;
         color: #212529;
         margin: 0;
         padding: 0;
@@ -1061,6 +1066,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         margin-bottom: 0.25em;
         font-size: var(--body-font-size);
         line-height: var(--line-height);
+        white-space: pre-wrap;
         color: #212529;
     }}
 
@@ -1125,8 +1131,11 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         font-size: var(--body-font-size);
         line-height: var(--line-height);
         color: #212529;
-        word-wrap: break-word;
-        overflow-wrap: break-word;
+        word-wrap: normal;
+        overflow-wrap: normal;
+        word-break: normal;
+        hyphens: none;
+        white-space: pre-wrap;
         max-width: 100%;
     }}
 
@@ -1134,8 +1143,11 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         font-size: var(--body-font-size);
         line-height: var(--line-height);
         color: #212529;
-        word-wrap: break-word;
-        overflow-wrap: break-word;
+        word-wrap: normal;
+        overflow-wrap: normal;
+        word-break: normal;
+        hyphens: none;
+        white-space: pre-wrap;
         max-width: 100%;
     }}
 
@@ -1170,10 +1182,15 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         display: inline;
         font-size: var(--body-font-size);
         color: #212529;
+        white-space: pre-wrap;
     }}
 
     b, strong {{
         font-weight: var(--label-font-weight);
+    }}
+
+    .resume-no-break {{
+        white-space: nowrap;
     }}
 
     .self-evaluation {{
@@ -1184,6 +1201,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         font-size: var(--body-font-size);
         line-height: var(--line-height);
         color: #212529;
+        white-space: pre-wrap;
     }}
 
     /* 中文简历使用高对比度、紧凑的信息密度。显式指定颜色，避免主题继承。 */
@@ -1211,9 +1229,9 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
     .skill-list-item,
     .project-paragraph,
     .self-eval-item.list-style-paragraph {{
-        text-align: left;
-        text-justify: auto;
-        white-space: pre-line;
+        text-align: justify;
+        text-justify: inter-ideograph;
+        white-space: pre-wrap;
     }}
     .project-content-block {{ margin: 0 0 var(--content-block-spacing); font-size: var(--body-font-size); color: #111111; }}
     .project-paragraph {{ margin: 0; }}
@@ -1235,6 +1253,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         margin-bottom: var(--numbered-item-spacing);
         padding-left: var(--list-text-indent);
         counter-increment: project-duty;
+        white-space: pre-wrap;
     }}
     .project-numbered-list > li::before {{
         content: "(" counter(project-duty) ")";

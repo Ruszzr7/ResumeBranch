@@ -135,7 +135,7 @@ test('legacy default layout migrates to schema v10 and exposes every module in t
   assert.ok(result.global.sectionOrder.includes('publications'))
 })
 
-test('all renderers receive the recorded Microsoft and Arial typography contract', () => {
+test('all renderers receive the recorded Microsoft and Times New Roman typography contract', () => {
   const config = normalizeLayoutConfig({
     version: 2,
     typography: { preset: 'unknown', latinFont: 'Random', eastAsiaFont: 'Random CJK' }
@@ -143,9 +143,9 @@ test('all renderers receive the recorded Microsoft and Arial typography contract
   const tokens = resolveLayoutTokens(config, { fontSize: 9, moduleMargin: 0.55 })
 
   assert.equal(config.typography.preset, 'microsoft-office')
-  assert.equal(config.typography.latinFont, 'Arial')
+  assert.equal(config.typography.latinFont, 'Times New Roman')
   assert.equal(config.typography.eastAsiaFont, 'Microsoft YaHei')
-  assert.equal(tokens.fontFamilyCss, '"Arial", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif')
+  assert.equal(tokens.fontFamilyCss, '"Times New Roman", "Liberation Serif", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif')
   assert.equal(tokens.bodyFontSizePt, 9)
   assert.equal(tokens.metaFontSizePt, 9)
   assert.equal(tokens.entryTitleFontSizePt, 10)

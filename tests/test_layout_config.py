@@ -197,7 +197,7 @@ class LayoutConfigTests(unittest.TestCase):
         })
         self.assertEqual(config["version"], 10)
         self.assertEqual(config["typography"]["preset"], "microsoft-office")
-        self.assertEqual(config["typography"]["latinFont"], "Arial")
+        self.assertEqual(config["typography"]["latinFont"], "Times New Roman")
         self.assertEqual(config["typography"]["eastAsiaFont"], "Microsoft YaHei")
 
     def test_v3_default_visual_scale_migrates_to_v4_semantic_body_size(self):
@@ -284,7 +284,7 @@ class LayoutConfigTests(unittest.TestCase):
             "moduleMargin": 0.55,
             "marginTop": 7,
         })
-        self.assertEqual(tokens["fontFamilyCss"], '"Arial", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif')
+        self.assertEqual(tokens["fontFamilyCss"], '"Times New Roman", "Liberation Serif", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif')
         self.assertEqual(tokens["bodyFontSizePt"], 9)
         self.assertEqual(tokens["metaFontSizePt"], 9)
         self.assertEqual(tokens["entryTitleFontSizePt"], 10)
@@ -372,7 +372,7 @@ class LayoutConfigTests(unittest.TestCase):
             {"fontSize": 9, "moduleMargin": 0.55},
             layout_config=default_layout_config(),
         )
-        self.assertIn('font-family: "Arial", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;', html)
+        self.assertIn('font-family: "Times New Roman", "Liberation Serif", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;', html)
         self.assertIn("--module-margin: 4.95pt;", html)
         self.assertIn("--name-font-size: 14pt;", html)
         self.assertIn("--meta-font-weight: 400;", html)

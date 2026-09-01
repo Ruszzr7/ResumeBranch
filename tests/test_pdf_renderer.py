@@ -100,7 +100,7 @@ class PdfRendererTests(unittest.TestCase):
             "self_evaluation": [punctuation_sample],
         })
         self.assertIn(punctuation_sample, html)
-        self.assertIn('font-family: "Arial", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;', html)
+        self.assertIn('font-family: "Times New Roman", "Liberation Serif", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;', html)
 
 
 if __name__ == "__main__":

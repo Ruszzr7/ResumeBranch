@@ -37,6 +37,8 @@ mysql 容器：MySQL 8.4
 
 Docker 可以在本地运行，用于验证多用户部署；正式公网使用还需要域名、HTTPS 反向代理、防火墙、密钥管理和备份策略。
 
+Docker 部署生成的 PDF 在 Linux 容器中使用 Noto Sans CJK SC 和 Liberation Serif 分别作为 Microsoft YaHei 与 Times New Roman 的替代字体，Windows 本地运行和 Word 编辑仍使用原指定字体。
+
 ## 获取源码与配置
 
 从 GitHub 获取项目源码，进入项目根目录后复制 Docker 配置模板：

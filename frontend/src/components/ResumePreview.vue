@@ -1635,7 +1635,7 @@ const formatText = (text) => {
   return formatInlineHtml(text)
 }
 
-// Paragraph mode keeps authored line boundaries as left-aligned line breaks.
+// Paragraph mode keeps authored line boundaries as line breaks.
 // The source text remains unchanged so switching back to a list can split it
 // into the original items again.
 const paragraphText = value => String(value ?? '').replace(/\r\n?/g, '\n')
@@ -3269,6 +3269,11 @@ const getItemIndex = (type, dataIndex) => {
   display: flex;
   flex-direction: column;
   color: #111;
+  word-wrap: normal;
+  overflow-wrap: normal;
+  word-break: normal;
+  hyphens: none;
+  hanging-punctuation: none;
 }
 .pages-wrapper {
   display: flex;
@@ -3285,6 +3290,11 @@ const getItemIndex = (type, dataIndex) => {
 .print-container {
   display: none;
   color: #111;
+  word-wrap: normal;
+  overflow-wrap: normal;
+  word-break: normal;
+  hyphens: none;
+  hanging-punctuation: none;
 }
 .a4-page {
   background: white;
@@ -3312,8 +3322,11 @@ const getItemIndex = (type, dataIndex) => {
 .page-content {
   width: 100%;
   box-sizing: border-box;
-  word-wrap: break-word;
-  overflow-wrap: break-word;
+  word-wrap: normal;
+  overflow-wrap: normal;
+  word-break: normal;
+  hyphens: none;
+  hanging-punctuation: none;
   display: flex;
   flex-direction: column;
   color: #111;
@@ -3568,6 +3581,7 @@ const getItemIndex = (type, dataIndex) => {
   margin-bottom: 0.25em;
   font-size: var(--body-font-size);
   line-height: var(--line-height, 1.6);
+  white-space: pre-wrap;
 }
 .list-item::before {
   content: '•';
@@ -3584,6 +3598,7 @@ const getItemIndex = (type, dataIndex) => {
   margin-bottom: 0.25em;
   font-size: var(--body-font-size);
   line-height: var(--line-height, 1.6);
+  white-space: pre-wrap;
 }
 .generic-list-item::before {
   content: attr(data-marker);
@@ -3602,12 +3617,12 @@ const getItemIndex = (type, dataIndex) => {
 .generic-list-item.list-style-paragraph,
 .project-paragraph,
 .self-eval-item.list-style-paragraph {
-  text-align: left;
-  text-justify: auto;
-  white-space: pre-line;
+  text-align: justify;
+  text-justify: inter-ideograph;
+  white-space: pre-wrap;
 }
 .generic-list-item.skill-list-item {
-  white-space: pre-line;
+  white-space: pre-wrap;
 }
 .page-content .section-title,
 .content-source .section-title,
@@ -3661,9 +3676,7 @@ const getItemIndex = (type, dataIndex) => {
 }
 .project-paragraph,
 .self-eval-item.list-style-paragraph {
-  text-align: left;
-  text-justify: auto;
-  white-space: pre-line;
+  white-space: pre-wrap;
 }
 .project-numbered-list {
   list-style: none;
@@ -3682,6 +3695,7 @@ const getItemIndex = (type, dataIndex) => {
   margin-bottom: var(--numbered-item-spacing);
   padding-left: var(--list-text-indent);
   counter-increment: project-duty;
+  white-space: pre-wrap;
 }
 .project-numbered-list > li::before {
   content: '(' counter(project-duty) ')';
@@ -3717,6 +3731,7 @@ const getItemIndex = (type, dataIndex) => {
   font-size: var(--body-font-size);
   line-height: var(--line-height, 1.6);
   color: #212529;
+  white-space: pre-wrap;
 }
 .others-title {
   font-size: var(--body-font-size);
@@ -3739,8 +3754,11 @@ const getItemIndex = (type, dataIndex) => {
 .inline-item {
   font-size: var(--body-font-size);
   color: #212529;
-  word-wrap: break-word;
-  overflow-wrap: break-word;
+  word-wrap: normal;
+  overflow-wrap: normal;
+  word-break: normal;
+  hyphens: none;
+  white-space: pre-wrap;
   max-width: 100%;
 }
 .cert-lang-label {
@@ -3782,6 +3800,10 @@ const getItemIndex = (type, dataIndex) => {
 }
 :deep(b) {
   font-weight: var(--label-font-weight);
+}
+
+:deep(.resume-no-break) {
+  white-space: nowrap;
 }
 .page-footer {
   position: absolute;

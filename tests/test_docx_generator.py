@@ -75,8 +75,8 @@ class DocxGeneratorTests(unittest.TestCase):
         self.assertEqual(paragraph.text, punctuation_sample)
         for run in paragraph.runs:
             fonts = run._element.rPr.rFonts
-            self.assertEqual(fonts.get(qn("w:ascii")), "Arial")
-            self.assertEqual(fonts.get(qn("w:hAnsi")), "Arial")
+            self.assertEqual(fonts.get(qn("w:ascii")), "Times New Roman")
+            self.assertEqual(fonts.get(qn("w:hAnsi")), "Times New Roman")
             self.assertEqual(fonts.get(qn("w:eastAsia")), "Microsoft YaHei")
 
     def test_generates_editable_resume_with_academic_metrics(self):
@@ -107,8 +107,8 @@ class DocxGeneratorTests(unittest.TestCase):
         self.assertNotIn("GPA：3.72/4.0", combined)
         self.assertAlmostEqual(document.sections[0].page_width.mm, 210.0, places=1)
         normal_fonts = document.styles["Normal"]._element.rPr.rFonts
-        self.assertEqual(normal_fonts.get(qn("w:ascii")), "Arial")
-        self.assertEqual(normal_fonts.get(qn("w:hAnsi")), "Arial")
+        self.assertEqual(normal_fonts.get(qn("w:ascii")), "Times New Roman")
+        self.assertEqual(normal_fonts.get(qn("w:hAnsi")), "Times New Roman")
         self.assertEqual(normal_fonts.get(qn("w:eastAsia")), "Microsoft YaHei")
 
         name_run = next(
@@ -120,7 +120,7 @@ class DocxGeneratorTests(unittest.TestCase):
             for run in paragraph.runs
             if "测试用户" in run.text
         )
-        self.assertEqual(name_run._element.rPr.rFonts.get(qn("w:ascii")), "Arial")
+        self.assertEqual(name_run._element.rPr.rFonts.get(qn("w:ascii")), "Times New Roman")
         self.assertEqual(name_run._element.rPr.rFonts.get(qn("w:eastAsia")), "Microsoft YaHei")
         self.assertEqual(name_run._element.rPr.xpath("./w:spacing")[0].get(qn("w:val")), "0")
         self.assertEqual(name_run._element.rPr.xpath("./w:kern")[0].get(qn("w:val")), "0")

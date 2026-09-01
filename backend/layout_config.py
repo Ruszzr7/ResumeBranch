@@ -121,8 +121,9 @@ def _semantic_font_sizes(body_size: float) -> dict[str, float]:
 
 TYPOGRAPHY_PRESETS: dict[str, dict[str, Any]] = {
     "microsoft-office": {
-        "latinFont": "Arial",
+        "latinFont": "Times New Roman",
         "eastAsiaFont": "Microsoft YaHei",
+        "latinFallbackFonts": ["Liberation Serif"],
         "fallbackFonts": ["Noto Sans CJK SC", "sans-serif"],
     },
 }
@@ -844,9 +845,11 @@ def resolve_layout_tokens(config: dict | None = None, style: dict | None = None)
         "fontPreset": typography["preset"],
         "latinFont": typography["latinFont"],
         "eastAsiaFont": typography["eastAsiaFont"],
+        "latinFallbackFonts": deepcopy(typography["latinFallbackFonts"]),
         "fallbackFonts": deepcopy(typography["fallbackFonts"]),
         "fontFamilyCss": ", ".join([
             f'"{typography["latinFont"]}"',
+            *(f'"{font}"' for font in typography["latinFallbackFonts"]),
             f'"{typography["eastAsiaFont"]}"',
             *(f'"{font}"' if font != "sans-serif" else font for font in typography["fallbackFonts"]),
         ]),
@@ -909,7 +912,7 @@ def resolve_layout_tokens(config: dict | None = None, style: dict | None = None)
 
 
 def estimate_text_width_pt(value: object, font_size_pt: float) -> float:
-    """Estimate one unbroken label using the shared Arial/YaHei metrics.
+    """Estimate one unbroken label using shared Latin/East Asian metrics.
 
     The result is not used to lay out body prose.  It only chooses a stable
     physical width for the centered education metadata group before all three

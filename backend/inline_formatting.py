@@ -15,6 +15,12 @@ from typing import Any, Iterator
 
 _BOLD_PAIR_RE = re.compile(r"\*\*(.+?)\*\*", re.DOTALL)
 _QUOTED_TEXT_RE = re.compile(r"[“\"‘'](.+?)[”\"’']")
+_COMPOUND_LATIN_TOKEN_RE = re.compile(
+    r"(?<![A-Za-z0-9.])(?:"
+    r"[A-Za-z0-9]+(?:[-/][A-Za-z0-9]+)+"
+    r"|[A-Za-z0-9]+[+#]+(?:[./]+[A-Za-z0-9]+)*"
+    r")(?![A-Za-z0-9])"
+)
 
 
 @dataclass(frozen=True)
@@ -100,10 +106,38 @@ def join_inline_label_value(label: object, value: object, separator: str) -> str
 def format_inline_html(value: object) -> str:
     """Render the allowlisted bold protocol as escaped HTML."""
     rendered = []
-    for segment in parse_inline_bold(value):
-        content = escape(segment.text, quote=True)
+    text = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+    for segment in parse_inline_bold(text):
+        content = _format_inline_text_html(segment.text)
         rendered.append(f"<strong>{content}</strong>" if segment.bold else content)
     return "".join(rendered)
+
+
+def _format_inline_text_html(value: str) -> str:
+    """Escape text and protect compound Latin tokens from line breaking."""
+    rendered: list[str] = []
+    for text, no_break in iter_no_break_text(value):
+        escaped = escape(text, quote=True)
+        rendered.append(
+            f'<span class="resume-no-break">{escaped}</span>' if no_break else escaped
+        )
+    return "".join(rendered)
+
+
+def iter_no_break_text(value: str) -> Iterator[tuple[str, bool]]:
+    """Split text into normal and compound-Latin no-break segments.
+
+    The HTML/PDF renderer uses this generic boundary for protected segments;
+    the source resume text remains unchanged.
+    """
+    cursor = 0
+    for match in _COMPOUND_LATIN_TOKEN_RE.finditer(value):
+        if match.start() > cursor:
+            yield value[cursor:match.start()], False
+        yield match.group(0), True
+        cursor = match.end()
+    if cursor < len(value):
+        yield value[cursor:], False
 
 
 def set_inline_bold(value: object, quote: str, *, bold: bool) -> str:

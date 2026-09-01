@@ -54,10 +54,23 @@ class InlineFormattingTests(unittest.TestCase):
         for value in (
             "中文与 ASCII token 保留普通空格",
             "括号（全角）与(parentheses)保持原样",
-            "混排 A1/B2、C++ API，标点不被改写",
         ):
             self.assertEqual(plain_inline_text(value), value)
             self.assertEqual(format_inline_html(value), value)
+
+        value = "混排 A1/B2、C++ API，标点不被改写"
+        self.assertEqual(plain_inline_text(value), value)
+        self.assertIn('<span class="resume-no-break">A1/B2</span>', format_inline_html(value))
+        self.assertIn('<span class="resume-no-break">C++</span>', format_inline_html(value))
+
+    def test_compound_latin_tokens_use_one_generic_no_break_protocol(self):
+        for value in ("langchain-openai", "PDF/DOCX", "C#/.NET", "Precision/Recall"):
+            rendered = format_inline_html(value)
+            self.assertEqual(plain_inline_text(value), value)
+            self.assertEqual(
+                rendered,
+                f'<span class="resume-no-break">{value}</span>',
+            )
 
     def test_parser_preserves_unmatched_markers_as_literal_text(self):
         value = "负责 **核心模块"

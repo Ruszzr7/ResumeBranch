@@ -10,6 +10,8 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
     curl \
+    fontconfig \
+    fonts-liberation \
     fonts-noto-cjk \
     poppler-utils \
     && apt-get clean \

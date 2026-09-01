@@ -105,7 +105,7 @@ class LayoutRuleTests(unittest.TestCase):
         html = render_resume_to_html(data, layout_config=layout)
         self.assertIn("证书与语言", html)
         self.assertIn("证书：软件设计师", html)
-        self.assertIn("语言：英语 CET-6", html)
+        self.assertIn('语言：英语 <span class="resume-no-break">CET-6</span>', html)
 
         document = Document(BytesIO(generate_docx(data, layout_config=layout)))
         text = "\n".join(paragraph.text for paragraph in document.paragraphs)
@@ -125,7 +125,7 @@ class LayoutRuleTests(unittest.TestCase):
 
         html = render_resume_to_html(data, layout_config=default_layout_config())
         self.assertIn("资格证书：软件设计师", html)
-        self.assertIn("英语 CET-6", html)
+        self.assertIn('英语 <span class="resume-no-break">CET-6</span>', html)
         self.assertNotIn("语言：英语 CET-6", html)
         self.assertLess(html.index("证书与语言"), html.index("资格证书：软件设计师"))
 
@@ -741,7 +741,7 @@ class LayoutRuleTests(unittest.TestCase):
         self.assertNotIn("保留但隐藏的职责", combined)
         self.assertIn("仍然显示的普通内容", combined)
 
-    def test_semantic_label_weight_and_body_line_break_alignment_match_pdf_and_word(self):
+    def test_semantic_label_weight_and_body_justification_match_pdf_and_word(self):
         data = resume_with_two_jobs()
         data["project_experience"] = [{
             "project_name": "机器人控制",
@@ -755,13 +755,13 @@ class LayoutRuleTests(unittest.TestCase):
         html = render_resume_to_html(data)
         self.assertIn('<span class="project-inline-label">项目简介：</span>', html)
         self.assertNotIn('project-inline-label is-bold">项目简介', html)
-        self.assertIn("text-align: left", html)
+        self.assertIn("text-align: justify", html)
 
         document = Document(BytesIO(generate_docx(data)))
         paragraph = next(p for p in document.paragraphs if "项目简介" in p.text)
         label_run = next(run for run in paragraph.runs if "项目简介" in run.text)
         self.assertFalse(label_run.bold)
-        self.assertEqual(paragraph.alignment, WD_ALIGN_PARAGRAPH.LEFT)
+        self.assertEqual(paragraph.alignment, WD_ALIGN_PARAGRAPH.JUSTIFY)
 
     def test_skill_list_style_replaces_imported_markers_and_marker_weight_follows_content(self):
         data = resume_with_two_jobs()
@@ -845,8 +845,16 @@ class LayoutRuleTests(unittest.TestCase):
 
         with ZipFile(BytesIO(generate_docx(data))) as archive:
             document_xml = archive.read("word/document.xml").decode("utf-8")
+            settings_xml = archive.read("word/settings.xml").decode("utf-8")
+            word_xml = "\n".join(
+                archive.read(name).decode("utf-8")
+                for name in archive.namelist()
+                if name.startswith("word/") and name.endswith(".xml")
+            )
 
+        self.assertNotIn("<w:wordWrap", word_xml)
         self.assertIn('<w:overflowPunct w:val="0"', document_xml)
+        self.assertIn('<w:doNotExpandShiftReturn/>', settings_xml)
 
     def test_word_contact_details_use_dark_gray(self):
         data = resume_with_two_jobs()

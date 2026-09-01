@@ -266,7 +266,7 @@ test('custom section list style belongs to each section content editor', () => {
 test('paragraph content preserves authored line boundaries in the preview', () => {
   assert.ok(previewSource.includes("const paragraphText = value => String(value ?? '').replace(/\\r\\n?/g, '\\n')"))
   assert.ok(previewSource.includes('formatText(paragraphText(block.text))'))
-  assert.ok(previewSource.includes('white-space: pre-line'))
+  assert.ok(previewSource.includes('white-space: pre-wrap'))
 })
 
 test('closing live-preview settings restores saved values', () => {

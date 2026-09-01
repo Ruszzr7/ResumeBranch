@@ -75,8 +75,9 @@ export const DEFAULT_LAYOUT_CONFIG = Object.freeze({
   version: 10,
   typography: {
     preset: 'microsoft-office',
-    latinFont: 'Arial',
+    latinFont: 'Times New Roman',
     eastAsiaFont: 'Microsoft YaHei',
+    latinFallbackFonts: ['Liberation Serif'],
     fallbackFonts: ['Noto Sans CJK SC', 'sans-serif'],
     fontSizes: { name: 14, sectionTitle: 11, entryTitle: 10, meta: 9, body: 9, label: 9 }
   },
@@ -497,8 +498,14 @@ export function resolveLayoutTokens(value = {}, style = {}) {
     fontPreset: typography.preset,
     latinFont: typography.latinFont,
     eastAsiaFont: typography.eastAsiaFont,
+    latinFallbackFonts: [...typography.latinFallbackFonts],
     fallbackFonts: [...typography.fallbackFonts],
-    fontFamilyCss: [typography.latinFont, typography.eastAsiaFont, ...typography.fallbackFonts]
+    fontFamilyCss: [
+      typography.latinFont,
+      ...typography.latinFallbackFonts,
+      typography.eastAsiaFont,
+      ...typography.fallbackFonts
+    ]
       .map(quoteCssFont).join(', '),
     fontSizePt,
     bodyFontSizePt,

@@ -21,7 +21,7 @@ from .resume_data import normalize_resume_data
 from .render_contract import iter_experience_content_blocks
 
 DEFAULT_FONT_SPEC = {
-    "latinFont": "Arial",
+    "latinFont": "Times New Roman",
     "eastAsiaFont": "Microsoft YaHei",
 }
 
@@ -242,6 +242,15 @@ def _configure_chinese_document(document) -> None:
     theme_language.set(qn("w:val"), "en-US")
     theme_language.set(qn("w:eastAsia"), "zh-CN")
 
+    compatibility = settings.find(qn("w:compat"))
+    if compatibility is None:
+        compatibility = OxmlElement("w:compat")
+        settings.append(compatibility)
+    no_expand_shift_return = compatibility.find(qn("w:doNotExpandShiftReturn"))
+    if no_expand_shift_return is None:
+        no_expand_shift_return = OxmlElement("w:doNotExpandShiftReturn")
+        compatibility.append(no_expand_shift_return)
+
 def _set_language(run_properties) -> None:
     language = run_properties.find(qn("w:lang"))
     if language is None:
@@ -286,7 +295,8 @@ def _add_markdown_runs(
     *,
     base_bold: bool = False,
 ) -> None:
-    for segment in parse_inline_bold(str(text or "")):
+    normalized_text = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+    for segment in parse_inline_bold(normalized_text):
         _set_font(
             paragraph.add_run(segment.text),
             size,
@@ -469,7 +479,7 @@ def _bullet(
     marker_match = _NATIVE_LIST_MARKER_RE.match(value)
     if marker_match:
         paragraph = document.add_paragraph()
-        paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
         _paragraph_spacing(paragraph, after=after, line=line_spacing)
         if native_hanging:
             _set_numbered_indent(
@@ -1050,7 +1060,7 @@ def generate_docx(
         marker_bold = _is_fully_bold(value)
         if list_style == "paragraph":
             paragraph = document.add_paragraph()
-            paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
             paragraph.paragraph_format.left_indent = Mm(base_indent_mm)
             _paragraph_spacing(paragraph, after=after, line=Pt(body_line_height))
             _add_markdown_runs(paragraph, content, body_font_size, fonts=font_spec)
@@ -1070,7 +1080,7 @@ def generate_docx(
             )
             return
         paragraph = document.add_paragraph()
-        paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
         _paragraph_spacing(paragraph, after=after, line=Pt(body_line_height))
         _set_numbered_indent(
             paragraph,
@@ -1123,7 +1133,7 @@ def generate_docx(
             label = flow["label"]
             if block_type == "paragraph":
                 paragraph = document.add_paragraph(style="List Bullet") if flow["labelMarker"] == "bullet" else document.add_paragraph()
-                paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
                 _paragraph_spacing(paragraph, after=module_tokens["contentBlockSpacingPt"], line=Pt(body_line_height))
                 if flow["labelMarker"] == "bullet":
                     _set_hanging_indent(paragraph, left=semantic_indent_mm, hanging=min(3.0, list_text_indent_mm))
@@ -1144,7 +1154,7 @@ def generate_docx(
                 trailing_block_spacing = module_tokens["contentBlockSpacingPt"] if detail_index == len(details) else 0
                 if block_type == "numbered_list":
                     paragraph = document.add_paragraph()
-                    paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
                     _paragraph_spacing(
                         paragraph,
                         after=tokens["numberedItemSpacingPt"] + trailing_block_spacing,

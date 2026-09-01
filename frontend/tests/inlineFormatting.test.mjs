@@ -14,11 +14,24 @@ import {
 test('rendering preserves source whitespace and natural break points', () => {
   for (const value of [
     '中文与 ASCII token 保留普通空格',
-    '括号（全角）与(parentheses)保持原样',
-    '混排 A1/B2、C++ API，标点不被改写'
+    '括号（全角）与(parentheses)保持原样'
   ]) {
     assert.equal(plainInlineText(value), value)
     assert.equal(formatInlineHtml(value), value)
+  }
+
+  const value = '混排 A1/B2、C++ API，标点不被改写'
+  assert.equal(plainInlineText(value), value)
+  assert.ok(formatInlineHtml(value).includes('<span class="resume-no-break">A1/B2</span>'))
+  assert.ok(formatInlineHtml(value).includes('<span class="resume-no-break">C++</span>'))
+})
+
+test('compound Latin tokens use one generic no-break protocol', () => {
+  for (const value of ['langchain-openai', 'PDF/DOCX', 'C#/.NET', 'Precision/Recall']) {
+    assert.equal(
+      formatInlineHtml(value),
+      '<span class="resume-no-break">' + value + '</span>'
+    )
   }
 })
 

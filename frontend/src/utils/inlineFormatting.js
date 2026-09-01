@@ -1,4 +1,5 @@
 const BOLD_PAIR = /\*\*(.+?)\*\*/gs
+const COMPOUND_LATIN_TOKEN = /(^|[^A-Za-z0-9.])((?:[A-Za-z0-9]+(?:[-/][A-Za-z0-9]+)+|[A-Za-z0-9]+[+#]+(?:[./]+[A-Za-z0-9]+)*))(?![A-Za-z0-9])/g
 
 export function parseInlineBold(value = '') {
   const text = String(value ?? '')
@@ -123,8 +124,9 @@ export function joinInlineLabelValue(label = '', value = '', separator = '：') 
 }
 
 export function formatInlineHtml(value = '') {
-  return parseInlineBold(String(value ?? '').trim()).map(segment => {
-    const content = escapeHtml(segment.text)
+  const text = String(value ?? '').replace(/\r\n?/g, '\n')
+  return parseInlineBold(text).map(segment => {
+    const content = formatInlineTextHtml(segment.text)
     return segment.bold ? `<strong>${content}</strong>` : content
   }).join('')
 }
@@ -136,4 +138,21 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;')
+}
+
+function formatInlineTextHtml(value) {
+  const text = String(value ?? '')
+  const rendered = []
+  let cursor = 0
+  for (const match of text.matchAll(COMPOUND_LATIN_TOKEN)) {
+    const prefix = match[1] || ''
+    const token = match[2]
+    const tokenStart = match.index + prefix.length
+    if (tokenStart < cursor) continue
+    rendered.push(escapeHtml(text.slice(cursor, tokenStart)))
+    rendered.push('<span class="resume-no-break">' + escapeHtml(token) + '</span>')
+    cursor = tokenStart + token.length
+  }
+  rendered.push(escapeHtml(text.slice(cursor)))
+  return rendered.join('')
 }

@@ -78,7 +78,7 @@ test('multiline editors estimate resume visual lines from shared layout metrics'
   assert.ok(editorSource.includes('简历约 {{ displayLineCount }} 行'))
   assert.ok(editorSource.includes('measureResumeLineCount'))
   assert.ok(editorSource.includes('measurer.scrollHeight / computedLineHeight'))
-  assert.ok(editorSource.includes("fontFamily: metrics.fontFamilyCss || \"'Microsoft YaHei', Arial, sans-serif\""))
+  assert.ok(editorSource.includes("fontFamily: metrics.fontFamilyCss || \"'Microsoft YaHei', 'Times New Roman', sans-serif\""))
   assert.ok(editorSource.includes('props.resumeMetrics?.fontSizePt'))
   assert.ok(editorSource.includes('props.resumeMetrics?.labelFontSizePt'))
   assert.ok(editorSource.includes('props.resumeMetrics?.lineHeight'))

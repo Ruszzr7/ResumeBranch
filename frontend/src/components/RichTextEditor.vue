@@ -91,7 +91,7 @@ function measureResumeLineCount(text) {
     wordBreak: 'break-word',
     textAlign: 'justify',
     textJustify: 'inter-ideograph',
-    fontFamily: metrics.fontFamilyCss || "'Microsoft YaHei', Arial, sans-serif",
+    fontFamily: metrics.fontFamilyCss || "'Microsoft YaHei', 'Times New Roman', sans-serif",
     fontSize: `${Number(metrics.fontSizePt) || 9}pt`,
     fontWeight: '400',
     lineHeight: String(Number(metrics.lineHeight) || 1.28)
