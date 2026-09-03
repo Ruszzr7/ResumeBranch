@@ -35,7 +35,7 @@ ResumeBranch 是一个面向个人简历维护与求职准备的开源 AI 简历
 
 - 前端：Vue 3、Vite、Element Plus、Vue Router。
 - 后端：Python 3.11、FastAPI、SQLAlchemy、Uvicorn/Gunicorn。
-- Agent：LangGraph 负责状态图与路由；LangChain Core/OpenAI 兼容客户端负责消息、模型和工具抽象。
+- Agent：LangGraph 负责状态图与路由；仓库内标准 Agent Skill 包提供可发现的简历修改与页面快照能力；LangChain Core/OpenAI 兼容客户端负责消息、模型和工具抽象。
 - 数据：单用户版使用 SQLite，多用户版使用 MySQL；工作流检查点独立存放于 SQLite 文件。
 - 导出与渲染：Chromium 生成 PDF，`python-docx` 生成可继续编辑的 DOCX，Poppler 用于 AI 可读的 PDF 页面快照。
 - 通信：普通接口使用 HTTP，AI 回复使用 SSE 流式传输。
@@ -215,9 +215,10 @@ npm run build
 
 ```text
 ResumeBranch/
+├── .agents/skills/                 # 可发现的 Agent Skill 包及其 schema、脚本
 ├── backend/                       # FastAPI、Agent、数据模型、导出与导入
 │   ├── harness/                   # 上下文、记忆、工作流状态与可观测性
-│   ├── skills/                    # 简历修改、PDF 页面快照等技能
+│   ├── skill_runtime.py           # Skill 发现、激活、schema 加载与调用
 │   ├── Dockerfile
 │   ├── main.py
 │   ├── resume_agent.py

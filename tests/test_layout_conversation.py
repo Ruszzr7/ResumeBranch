@@ -18,8 +18,8 @@ from backend.resume_agent import (
     is_resume_coaching_request,
     make_pending_confirmation,
     proposal_generator_node,
-    request_resume_edit,
-    render_resume_pdf_images_tool,
+    resume_edit_tool,
+    resume_snapshot_tool,
     tool_node,
 )
 
@@ -64,26 +64,21 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("metricsPlacement", context)
         self.assertIn("当前可编辑排版状态（只读，不是操作路径）", context)
 
-    def test_edit_skill_description_defines_selection_boundary(self):
-        description = request_resume_edit.description
-        self.assertIn("经过多轮对话", description)
-        self.assertIn("目标、范围和期望结果足够明确", description)
-        self.assertIn("信息或指代仍不明确时先澄清", description)
-        self.assertIn("只提交本次明确要求的修改", description)
-        self.assertIn("只生成候选", description)
-        self.assertIn("确认后才保存", description)
-        answer_schema = request_resume_edit.args_schema.model_json_schema()["properties"]["answer_text"]
+    def test_skill_descriptions_define_distinct_selection_boundaries(self):
+        edit_description = resume_edit_tool.description
+        self.assertIn("validated preview candidate", edit_description)
+        self.assertIn("authorized", edit_description)
+        self.assertIn("do not use for read-only advice", edit_description)
+        answer_schema = resume_edit_tool.args_schema.model_json_schema()["properties"]["answer_text"]
         self.assertIn("纯修改请求留空", answer_schema["description"])
-        self.assertIn("执行状态由系统生成", answer_schema["description"])
         self.assertEqual(answer_schema["default"], "")
 
-    def test_visual_skill_description_defines_visual_only_selection(self):
-        description = render_resume_pdf_images_tool.description
-        self.assertIn("页面、排版或视觉效果", description)
-        self.assertIn("不能只根据排版配置或简历文字推断", description)
-        self.assertIn("无需传入简历数据", description)
-        self.assertIn("不会修改或保存简历", description)
-        self.assertIn("不要重复调用", description)
+        snapshot_description = resume_snapshot_tool.description
+        self.assertIn("real PDF pipeline", snapshot_description)
+        self.assertIn("visual inspection", snapshot_description)
+        self.assertIn("do not use for text-only questions", snapshot_description)
+        snapshot_schema = resume_snapshot_tool.args_schema.model_json_schema()
+        self.assertEqual(set(snapshot_schema["properties"]), {"reason"})
 
     async def test_edit_tool_adds_system_preview_status_when_answer_text_is_empty(self):
         before = resume_payload()
@@ -91,7 +86,7 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
             messages=[
                 HumanMessage(content="把姓名改为张伟。"),
                 AIMessage(content="", tool_calls=[{
-                    "name": "request_resume_edit",
+                    "name": "resume_edit",
                     "args": {
                         "answer_text": "",
                         "resume_operations": [{
@@ -122,7 +117,7 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
             messages=[
                 HumanMessage(content="为什么职位名称不准确？同时改成服务端研发实习生。"),
                 AIMessage(content="", tool_calls=[{
-                    "name": "request_resume_edit",
+                    "name": "resume_edit",
                     "args": {
                         "answer_text": answer,
                         "resume_operations": [{
@@ -210,7 +205,7 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
         exposed = fake_llm.bind_tools.call_args.args[0]
         self.assertEqual(
             {item.name for item in exposed},
-            {"render_resume_pdf_images", "request_resume_edit"},
+            {"activate_agent_skill"},
         )
         bound.ainvoke.assert_awaited_once()
         system_prompt = bound.ainvoke.await_args.args[0][0].content
@@ -235,7 +230,7 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
         with patch("backend.resume_agent.conversation_llm", fake_llm):
             await conversation_node(state)
         exposed = {item.name for item in fake_llm.bind_tools.call_args.args[0]}
-        self.assertEqual(exposed, {"render_resume_pdf_images", "request_resume_edit"})
+        self.assertEqual(exposed, {"activate_agent_skill"})
 
     async def test_common_layout_request_is_local_and_previews_without_llm(self):
         state = AgentState(
@@ -412,11 +407,11 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
         with patch("backend.resume_agent.conversation_llm", fake_llm):
             await conversation_node(state)
         exposed = {item.name for item in fake_llm.bind_tools.call_args.args[0]}
-        self.assertIn("request_resume_edit", exposed)
+        self.assertEqual(exposed, {"activate_agent_skill"})
         system_prompt = bound.ainvoke.await_args.args[0][0].content
-        self.assertIn("需要澄清的修改", system_prompt)
-        self.assertIn("独立且明确", system_prompt)
-        self.assertIn("不得提交完整简历或完整布局 JSON", system_prompt)
+        self.assertIn("可用 Agent Skills", system_prompt)
+        self.assertIn("resume-edit", system_prompt)
+        self.assertIn("activate_agent_skill", system_prompt)
         self.assertIn("custom_sections", system_prompt)
         self.assertIn("title", system_prompt)
         self.assertIn("items", system_prompt)

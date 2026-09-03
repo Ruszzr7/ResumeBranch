@@ -1,0 +1,14 @@
+{
+  "additionalProperties": false,
+  "description": "Arguments the model is allowed to supply to the Skill.",
+  "properties": {
+    "reason": {
+      "default": "",
+      "description": "需要读取当前简历 PDF 页面快照的视觉判断原因。",
+      "title": "Reason",
+      "type": "string"
+    }
+  },
+  "title": "ResumeSnapshotToolInput",
+  "type": "object"
+}

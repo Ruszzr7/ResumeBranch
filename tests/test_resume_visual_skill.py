@@ -13,18 +13,18 @@ from backend.resume_agent import (
     AgentState,
     _attach_visual_resume_parts,
     conversation_node,
-    render_resume_pdf_images_tool,
-    request_resume_edit,
+    resume_snapshot_tool,
     should_force_initial_visual_snapshot,
     tool_node,
     graph,
 )
-from backend.skills.render_resume_pdf_images import (
-    DEFAULT_DPI,
-    ResumeVisualSnapshot,
-    render_resume_pdf_images,
-    render_resume_pdf_snapshot,
-)
+from backend.skill_runtime import skill_runtime
+
+_resume_snapshot_module = skill_runtime.get("resume-snapshot").module
+DEFAULT_DPI = _resume_snapshot_module.DEFAULT_DPI
+ResumeVisualSnapshot = _resume_snapshot_module.ResumeVisualSnapshot
+render_resume_pdf_images = _resume_snapshot_module.render_resume_pdf_images
+render_resume_pdf_snapshot = _resume_snapshot_module.render_resume_pdf_snapshot
 
 
 def snapshot(*, revision="revision-1"):
@@ -127,14 +127,14 @@ class ResumeVisualSkillTests(unittest.IsolatedAsyncioTestCase):
         )
         with (
             patch("backend.resume_agent.conversation_llm", model),
-            patch("backend.resume_agent.render_resume_pdf_snapshot", return_value=snapshot()) as render,
+            patch("resumebranch_agent_skill_resume_snapshot.render_resume_pdf_snapshot", return_value=snapshot()) as render,
         ):
             result = await conversation_node(state)
         render.assert_called_once()
         exposed = {item.name for item in model.bind_tools.call_args.args[0]}
         self.assertEqual(
             exposed,
-            {render_resume_pdf_images_tool.name, request_resume_edit.name},
+            {"activate_agent_skill"},
         )
         sent = bound.ainvoke.await_args.args[0]
         self.assertTrue(any(
@@ -158,14 +158,14 @@ class ResumeVisualSkillTests(unittest.IsolatedAsyncioTestCase):
         )
         with (
             patch("backend.resume_agent.conversation_llm", model),
-            patch("backend.resume_agent.render_resume_pdf_snapshot") as render,
+            patch("resumebranch_agent_skill_resume_snapshot.render_resume_pdf_snapshot") as render,
         ):
             await conversation_node(state)
         render.assert_not_called()
         bound_tools = model.bind_tools.call_args.args[0]
         self.assertEqual(
             {value.name for value in bound_tools},
-            {render_resume_pdf_images_tool.name, request_resume_edit.name},
+            {"activate_agent_skill"},
         )
 
     async def test_model_visual_tool_renders_once_and_returns_ephemeral_parts(self):
@@ -173,7 +173,7 @@ class ResumeVisualSkillTests(unittest.IsolatedAsyncioTestCase):
             messages=[
                 HumanMessage(content="请查看页面后回答"),
                 AIMessage(content="", tool_calls=[{
-                    "name": "render_resume_pdf_images",
+                    "name": "resume_snapshot",
                     "args": {"reason": "需要判断分页"},
                     "id": "visual-1",
                 }]),
@@ -181,18 +181,18 @@ class ResumeVisualSkillTests(unittest.IsolatedAsyncioTestCase):
             resume_data={"basics": {"name": "张三"}},
             layout_data=default_layout_config(),
         )
-        with patch("backend.resume_agent.render_resume_pdf_snapshot", return_value=snapshot()) as render:
+        with patch("resumebranch_agent_skill_resume_snapshot.render_resume_pdf_snapshot", return_value=snapshot()) as render:
             result = await tool_node(state)
         render.assert_called_once()
         self.assertEqual(result["visual_snapshot_calls"], 1)
         self.assertEqual(len(result["visual_snapshot_parts"]), 1)
         self.assertIsInstance(result["messages"][-1], ToolMessage)
-        self.assertEqual(result["messages"][-1].name, "render_resume_pdf_images")
+        self.assertEqual(result["messages"][-1].name, "resume_snapshot")
 
     async def test_graph_returns_to_model_after_visual_tool(self):
         responses = [
             AIMessage(content="", tool_calls=[{
-                "name": "render_resume_pdf_images",
+                "name": "resume_snapshot",
                 "args": {"reason": "查看分页"},
                 "id": "visual-loop-1",
             }]),
@@ -207,7 +207,7 @@ class ResumeVisualSkillTests(unittest.IsolatedAsyncioTestCase):
         )
         with (
             patch("backend.resume_agent.conversation_llm", model),
-            patch("backend.resume_agent.render_resume_pdf_snapshot", return_value=snapshot()) as render,
+            patch("resumebranch_agent_skill_resume_snapshot.render_resume_pdf_snapshot", return_value=snapshot()) as render,
         ):
             result = await graph.ainvoke(state)
         render.assert_called_once()
@@ -217,7 +217,7 @@ class ResumeVisualSkillTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_layout_follow_up_can_call_edit_without_reuploading_snapshot(self):
         response = AIMessage(content="", tool_calls=[{
-            "name": "request_resume_edit",
+            "name": "resume_edit",
             "args": {
                 "resume_operations": [],
                 "layout_operations": [{
@@ -248,7 +248,7 @@ class ResumeVisualSkillTests(unittest.IsolatedAsyncioTestCase):
         )
         with (
             patch("backend.resume_agent.conversation_llm", model),
-            patch("backend.resume_agent.render_resume_pdf_snapshot") as render,
+            patch("resumebranch_agent_skill_resume_snapshot.render_resume_pdf_snapshot") as render,
         ):
             result = await graph.ainvoke(state)
         render.assert_not_called()
@@ -261,11 +261,11 @@ class ResumeVisualSkillTests(unittest.IsolatedAsyncioTestCase):
     async def test_model_cannot_render_twice_in_one_turn(self):
         state = AgentState(
             messages=[AIMessage(content="", tool_calls=[{
-                "name": "render_resume_pdf_images", "args": {}, "id": "visual-2",
+                "name": "resume_snapshot", "args": {}, "id": "visual-2",
             }])],
             visual_snapshot_calls=1,
         )
-        with patch("backend.resume_agent.render_resume_pdf_snapshot") as render:
+        with patch("resumebranch_agent_skill_resume_snapshot.render_resume_pdf_snapshot") as render:
             result = await tool_node(state)
         render.assert_not_called()
         self.assertIn("本轮已经提供过", result["messages"][-1].content)
@@ -274,7 +274,7 @@ class ResumeVisualSkillTests(unittest.IsolatedAsyncioTestCase):
         state = AgentState(
             messages=[AIMessage(content="", tool_calls=[
                 {
-                    "name": "request_resume_edit",
+                    "name": "resume_edit",
                     "args": {
                         "resume_operations": [{
                             "op": "set", "path": "basics.name", "value": "新姓名",
@@ -284,7 +284,7 @@ class ResumeVisualSkillTests(unittest.IsolatedAsyncioTestCase):
                     "id": "edit-visual-1",
                 },
                 {
-                    "name": "render_resume_pdf_images",
+                    "name": "resume_snapshot",
                     "args": {"reason": "先确认视觉效果"},
                     "id": "visual-edit-1",
                 },
@@ -292,14 +292,14 @@ class ResumeVisualSkillTests(unittest.IsolatedAsyncioTestCase):
             resume_data={"basics": {"name": "旧姓名"}},
             layout_data=default_layout_config(),
         )
-        with patch("backend.resume_agent.render_resume_pdf_snapshot", return_value=snapshot()):
+        with patch("resumebranch_agent_skill_resume_snapshot.render_resume_pdf_snapshot", return_value=snapshot()):
             result = await tool_node(state)
         self.assertIsNone(result["pending_confirmation"])
         self.assertEqual(result["resume_data"]["basics"]["name"], "旧姓名")
         self.assertTrue(result["visual_snapshot_parts"])
         deferred = [
             message.content for message in result["messages"]
-            if isinstance(message, ToolMessage) and message.name == "request_resume_edit"
+            if isinstance(message, ToolMessage) and message.name == "resume_edit"
         ]
         self.assertTrue(any("尚未生成修改预览" in value for value in deferred))
 
@@ -314,7 +314,7 @@ class ResumeVisualSkillTests(unittest.IsolatedAsyncioTestCase):
         )
         with (
             patch("backend.resume_agent.conversation_llm", model),
-            patch("backend.resume_agent.render_resume_pdf_snapshot", side_effect=FileNotFoundError("Poppler")),
+            patch("resumebranch_agent_skill_resume_snapshot.render_resume_pdf_snapshot", side_effect=FileNotFoundError("Poppler")),
         ):
             result = await conversation_node(state)
         model.ainvoke.assert_not_called()

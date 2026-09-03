@@ -14,26 +14,73 @@ from dataclasses import dataclass, field
 import re
 from typing import Any
 
-from ..layout_config import normalize_layout_config
-from ..layout_capabilities import (
+from pydantic import BaseModel, ConfigDict, Field
+
+from backend.layout_config import normalize_layout_config
+from backend.layout_capabilities import (
     EDITABLE_GLOBAL_FIELDS,
     EDITABLE_MODULE_FIELDS,
     validate_layout_operations,
 )
-from ..resume_contract import (
+from backend.resume_contract import (
     CONTENT_BLOCK_SEMANTIC_ROLES,
     RESUME_EDIT_ROOTS,
     validate_resume_operation_path,
     validate_resume_operation_item,
     validate_resume_operation_value,
 )
-from ..resume_changes import resume_digest
-from ..resume_data import normalize_resume_data
+from backend.resume_changes import resume_digest
+from backend.resume_data import normalize_resume_data
 
 
 MAX_OPERATIONS = 100
 MAX_OPERATION_VALUE_BYTES = 256 * 1024
 MAX_PATH_DEPTH = 32
+
+
+class ResumeEditToolInput(BaseModel):
+    """Arguments the model is allowed to supply to the Skill."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    answer_text: str = Field(
+        default="",
+        description="修改预览前需要展示的独立回答或澄清；纯修改请求留空。",
+    )
+    resume_operations: list[dict] = Field(
+        default_factory=list,
+        description="本次明确授权的简历内容结构化操作。",
+    )
+    layout_operations: list[dict] = Field(
+        default_factory=list,
+        description="本次明确授权且属于对话可编辑范围的排版结构化操作。",
+    )
+
+
+class ResumeEditRuntimeContext(BaseModel):
+    """Trusted graph-owned context that the model cannot provide."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    resume_data: dict = Field(default_factory=dict)
+    layout_config: dict = Field(default_factory=dict)
+    jd_data: dict = Field(default_factory=dict)
+    context_type: str = "main"
+    base_revision: str = ""
+    conversation_context: str = ""
+
+
+class ResumeEditOutput(BaseModel):
+    """Validated candidate returned to the existing confirmation flow."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    resume_data: dict
+    layout_config: dict
+    base_revision: str
+    resume_operations: tuple[dict, ...] = ()
+    layout_operations: tuple[dict, ...] = ()
+    already_satisfied: bool = False
 
 _PATH_SEGMENT_RE = re.compile(r"^(?P<key>[A-Za-z_][A-Za-z0-9_]*)(?P<indexes>(?:\[\d+\])*)$")
 _INDEX_RE = re.compile(r"\[(\d+)\]")
@@ -385,6 +432,46 @@ async def run_resume_edit(
             and normalized_candidate_layout == current_layout
         ),
     )
+
+
+async def run(
+    arguments: ResumeEditToolInput,
+    context: ResumeEditRuntimeContext,
+) -> ResumeEditOutput:
+    """Agent Skill entrypoint using model arguments plus trusted runtime context."""
+    result = await run_resume_edit(
+        ResumeEditRequest(
+            resume_data=context.resume_data,
+            layout_config=context.layout_config,
+            resume_operations=tuple(arguments.resume_operations),
+            layout_operations=tuple(arguments.layout_operations),
+            jd_data=context.jd_data,
+            context_type=context.context_type,
+            base_revision=context.base_revision,
+            conversation_context=context.conversation_context,
+        )
+    )
+    return ResumeEditOutput(
+        resume_data=result.resume_data,
+        layout_config=result.layout_config,
+        base_revision=result.base_revision,
+        resume_operations=result.resume_operations,
+        layout_operations=result.layout_operations,
+        already_satisfied=result.already_satisfied,
+    )
+
+
+TOOL_INPUT_MODEL = ResumeEditToolInput
+RUNTIME_CONTEXT_MODEL = ResumeEditRuntimeContext
+OUTPUT_MODEL = ResumeEditOutput
+
+
+def export_schemas() -> dict[str, dict]:
+    return {
+        "tool-input.schema.json": TOOL_INPUT_MODEL.model_json_schema(),
+        "runtime-context.schema.json": RUNTIME_CONTEXT_MODEL.model_json_schema(),
+        "output.schema.json": OUTPUT_MODEL.model_json_schema(),
+    }
 
 
 __all__ = [

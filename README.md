@@ -35,7 +35,7 @@ Single-user SQLite does not require a separate service. Shutting down the applic
 
 - Frontend: Vue 3, Vite, Element Plus, and Vue Router.
 - Backend: Python 3.11, FastAPI, SQLAlchemy, and Uvicorn/Gunicorn.
-- Agent: LangGraph handles graph state and routing; LangChain Core and an OpenAI-compatible client provide message, model, and tool abstractions.
+- Agent: LangGraph handles graph state and routing; repository-local Agent Skill packages provide discoverable resume-edit and resume-snapshot capabilities; LangChain Core and an OpenAI-compatible client provide message, model, and tool abstractions.
 - Data: the single-user profile uses SQLite, while the multi-user profile uses MySQL; workflow checkpoints are stored separately in a SQLite file.
 - Export and rendering: Chromium generates PDFs, `python-docx` generates editable DOCX files, and Poppler generates PDF page snapshots that can be consumed by the AI.
 - Communication: regular endpoints use HTTP, while AI responses are streamed over SSE.
@@ -215,9 +215,10 @@ These commands force the regular tests to use SQLite under `.local-run/`. They d
 
 ~~~text
 ResumeBranch/
+├── .agents/skills/                 # Discoverable Agent Skill packages and their schemas/scripts
 ├── backend/                       # FastAPI, Agent, data models, import and export
 │   ├── harness/                   # Context, memory, workflow state, and observability
-│   ├── skills/                    # Resume modification and PDF snapshot skills
+│   ├── skill_runtime.py           # Skill discovery, activation, schema loading, and invocation
 │   ├── Dockerfile
 │   ├── main.py
 │   ├── resume_agent.py

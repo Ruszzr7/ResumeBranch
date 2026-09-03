@@ -185,13 +185,13 @@ def filter_messages_for_llm(messages: list, *, just_saved: bool) -> list:
     for message in messages:
         if isinstance(message, ToolMessage):
             tool_result = str(getattr(message, "content", "") or "")
-            if getattr(message, "name", "") == "render_resume_pdf_images":
+            if getattr(message, "name", "") == "resume_snapshot":
                 filtered.append(HumanMessage(
                     content=f"[只读视觉工具结果]\n{tool_result}"
                 ))
                 continue
             if (
-                getattr(message, "name", "") == "request_resume_edit"
+                getattr(message, "name", "") == "resume_edit"
                 and tool_result.startswith("本轮同时请求了视觉检查和修改")
             ):
                 filtered.append(HumanMessage(content=f"[工具编排结果]\n{tool_result}"))

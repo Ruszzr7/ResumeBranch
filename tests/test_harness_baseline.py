@@ -99,7 +99,7 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
         messages = [
             HumanMessage(content="请查看当前简历"),
             AIMessage(content="", tool_calls=[{
-                "name": "render_resume_pdf_images",
+                "name": "resume_snapshot",
                 "args": {"reason": "查看分页"},
                 "id": "visual-empty-1",
                 "type": "tool_call",
@@ -107,7 +107,7 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
             ToolMessage(
                 content="已生成当前简历快照",
                 tool_call_id="visual-empty-1",
-                name="render_resume_pdf_images",
+                name="resume_snapshot",
             ),
             AIMessage(content=""),
             AIMessage(content=[]),

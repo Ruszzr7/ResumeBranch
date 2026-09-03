@@ -188,6 +188,8 @@ $licenseStage = Join-Path $stageRoot "licenses"
 New-Item -ItemType Directory -Force -Path $appStage, $runtimeStage, $resourceStage, $licenseStage | Out-Null
 
 Copy-Item -LiteralPath (Join-Path $projectRoot "backend") -Destination $appStage -Recurse -Force
+New-Item -ItemType Directory -Force -Path (Join-Path $appStage ".agents") | Out-Null
+Copy-Item -LiteralPath (Join-Path $projectRoot ".agents\skills") -Destination (Join-Path $appStage ".agents") -Recurse -Force
 New-Item -ItemType Directory -Force -Path (Join-Path $appStage "scripts"), (Join-Path $appStage "packaging") | Out-Null
 Copy-Item -LiteralPath (Join-Path $projectRoot "scripts\run_local_backend.py") -Destination (Join-Path $appStage "scripts\run_local_backend.py") -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot "packaging\run_installed_backend.py") -Destination (Join-Path $appStage "packaging\run_installed_backend.py") -Force

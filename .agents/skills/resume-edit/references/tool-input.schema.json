@@ -1,0 +1,32 @@
+{
+  "additionalProperties": false,
+  "description": "Arguments the model is allowed to supply to the Skill.",
+  "properties": {
+    "answer_text": {
+      "default": "",
+      "description": "修改预览前需要展示的独立回答或澄清；纯修改请求留空。",
+      "title": "Answer Text",
+      "type": "string"
+    },
+    "resume_operations": {
+      "description": "本次明确授权的简历内容结构化操作。",
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Resume Operations",
+      "type": "array"
+    },
+    "layout_operations": {
+      "description": "本次明确授权且属于对话可编辑范围的排版结构化操作。",
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Layout Operations",
+      "type": "array"
+    }
+  },
+  "title": "ResumeEditToolInput",
+  "type": "object"
+}

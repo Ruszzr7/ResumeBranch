@@ -103,14 +103,14 @@ class AgentCoreEvalMetricTests(unittest.TestCase):
         )
         edit_cases = [
             case for case in payload["skill"]
-            if case.get("expected_tools") == ["request_resume_edit"]
+            if case.get("expected_tools") == ["resume_edit"]
             and not case.get("optional_tools")
         ]
         self.assertEqual(len(edit_cases), 26)
         self.assertTrue(all(case["scenario_type"] == "complex_operation" for case in edit_cases))
         contact_case = next(case for case in payload["skill"] if case["id"] == "skill-v4-052")
-        self.assertEqual(contact_case["expected_tools"], ["render_resume_pdf_images"])
-        self.assertEqual(contact_case["forbidden_tools"], ["request_resume_edit"])
+        self.assertEqual(contact_case["expected_tools"], ["resume_snapshot"])
+        self.assertEqual(contact_case["forbidden_tools"], ["resume_edit"])
 
     def test_total_dataset_routes_mixed_unresolved_edits_to_conversation(self):
         payload = _load_cases(EVAL_ROOT / "total" / "cases.json")
@@ -158,28 +158,28 @@ class AgentCoreEvalMetricTests(unittest.TestCase):
         result = skill_metrics([
             {
                 "id": "s1",
-                "expected_tools": ["request_resume_edit"],
-                "forbidden_tools": ["render_resume_pdf_images"],
+                "expected_tools": ["resume_edit"],
+                "forbidden_tools": ["resume_snapshot"],
                 "predicted_calls": [{
-                    "name": "request_resume_edit", "schema_valid": True, "executable": True,
+                    "name": "resume_edit", "schema_valid": True, "executable": True,
                 }],
             },
             {
                 "id": "s2",
-                "expected_tools": ["render_resume_pdf_images"],
-                "forbidden_tools": ["request_resume_edit"],
+                "expected_tools": ["resume_snapshot"],
+                "forbidden_tools": ["resume_edit"],
                 "predicted_calls": [
-                    {"name": "render_resume_pdf_images", "schema_valid": True},
-                    {"name": "request_resume_edit", "schema_valid": False, "executable": False},
+                    {"name": "resume_snapshot", "schema_valid": True},
+                    {"name": "resume_edit", "schema_valid": False, "executable": False},
                 ],
             },
             {
                 "id": "s3", "expected_tools": [],
-                "forbidden_tools": ["request_resume_edit", "render_resume_pdf_images"],
+                "forbidden_tools": ["resume_edit", "resume_snapshot"],
                 "predicted_calls": [],
             },
         ])
-        edit = result["per_skill"]["request_resume_edit"]
+        edit = result["per_skill"]["resume_edit"]
         self.assertEqual((edit["tp"], edit["fp"], edit["fn"]), (1, 1, 0))
         self.assertEqual(result["forbidden_skill_call_count"], 1)
         self.assertAlmostEqual(result["schema"]["pass_rate"], 2 / 3)
@@ -188,28 +188,28 @@ class AgentCoreEvalMetricTests(unittest.TestCase):
     def test_skill_metrics_accept_optional_tools_without_false_positive(self):
         result = skill_metrics([{
             "id": "optional-1",
-            "required_tools": ["request_resume_edit"],
-            "optional_tools": ["render_resume_pdf_images"],
+            "required_tools": ["resume_edit"],
+            "optional_tools": ["resume_snapshot"],
             "predicted_calls": [
-                {"name": "render_resume_pdf_images", "schema_valid": True},
-                {"name": "request_resume_edit", "schema_valid": True, "executable": True},
+                {"name": "resume_snapshot", "schema_valid": True},
+                {"name": "resume_edit", "schema_valid": True, "executable": True},
             ],
         }])
         self.assertEqual(result["valid_tool_selection_accuracy"], 1.0)
         self.assertEqual(result["exact_tool_set_accuracy"], 0.0)
         self.assertEqual(
-            result["per_skill"]["render_resume_pdf_images"],
+            result["per_skill"]["resume_snapshot"],
             {"tp": 0, "fp": 0, "fn": 0, "precision": 0.0, "recall": 0.0, "f1": 0.0},
         )
 
     def test_skill_metrics_accept_explicit_multi_valid_outcomes(self):
         result = skill_metrics([{
             "id": "multi-1",
-            "required_tools": ["request_resume_edit"],
+            "required_tools": ["resume_edit"],
             "predicted_calls": [],
             "assistant_text": "当前技能顺序可以结合岗位要求再确认，你希望保留 Redis 吗？",
             "accepted_outcomes": [
-                {"tools": ["request_resume_edit"], "answer_expectation": "required"},
+                {"tools": ["resume_edit"], "answer_expectation": "required"},
                 {"tools": [], "answer_expectation": "clarification"},
             ],
         }])
@@ -217,7 +217,7 @@ class AgentCoreEvalMetricTests(unittest.TestCase):
         self.assertEqual(result["exact_tool_set_accuracy"], 1.0)
         self.assertEqual(result["multi_outcome_case_count"], 1)
         self.assertEqual(
-            result["per_skill"]["request_resume_edit"],
+            result["per_skill"]["resume_edit"],
             {"tp": 0, "fp": 0, "fn": 0, "precision": 0.0, "recall": 0.0, "f1": 0.0},
         )
 
@@ -261,7 +261,7 @@ class AgentCoreEvalMetricTests(unittest.TestCase):
     def test_operation_outcomes_compare_final_candidate_changes(self):
         rows = [{
             "id": "op-1",
-            "expected_tools": ["request_resume_edit"],
+            "expected_tools": ["resume_edit"],
             "expected_final_changes": {
                 "resume.basics.name": {"before": "林沐辰", "after": "宋知遥"},
             },
@@ -270,7 +270,7 @@ class AgentCoreEvalMetricTests(unittest.TestCase):
             },
         }, {
             "id": "op-2",
-            "expected_tools": ["request_resume_edit"],
+            "expected_tools": ["resume_edit"],
             "expected_final_changes": {
                 "resume.basics.name": {"before": "林沐辰", "after": "宋知遥"},
             },
@@ -285,7 +285,7 @@ class AgentCoreEvalMetricTests(unittest.TestCase):
     def test_operation_outcomes_ignore_extra_noop_operations(self):
         result = operation_semantic_metrics([{
             "id": "op-noop-1",
-            "required_tools": ["request_resume_edit"],
+            "required_tools": ["resume_edit"],
             "expected_final_changes": {
                 "resume.education[0].gpa": {"before": "3.6", "after": "3.8"},
             },
@@ -299,7 +299,7 @@ class AgentCoreEvalMetricTests(unittest.TestCase):
     def test_operation_outcomes_accept_multiple_final_states(self):
         result = operation_outcome_metrics([{
             "id": "op-multi",
-            "required_tools": ["request_resume_edit"],
+            "required_tools": ["resume_edit"],
             "accepted_final_changes": [
                 {"resume.others.skills": {"before": ["Python"], "after": ["Python", "Redis"]}},
                 {},
@@ -312,12 +312,12 @@ class AgentCoreEvalMetricTests(unittest.TestCase):
     def test_operation_protocol_remains_available_as_diagnostic(self):
         result = operation_protocol_metrics([{
             "id": "op-empty-equivalent",
-            "required_tools": ["request_resume_edit"],
+            "required_tools": ["resume_edit"],
             "expected_operations": [{
                 "op": "set", "path": "basics.name", "value": "   ",
             }],
             "predicted_calls": [{
-                "name": "request_resume_edit",
+                "name": "resume_edit",
                 "args": {
                     "resume_operations": [{
                         "op": "replace", "path": "basics.name", "value": "",
@@ -378,11 +378,11 @@ class AgentCoreEvalRunnerTests(unittest.IsolatedAsyncioTestCase):
         messages = [
             HumanMessage(content="问题加修改"),
             AIMessage(content="", tool_calls=[{
-                "name": "render_resume_pdf_images", "args": {}, "id": "render-1",
+                "name": "resume_snapshot", "args": {}, "id": "render-1",
             }]),
-            ToolMessage(content="已附加快照", tool_call_id="render-1", name="render_resume_pdf_images"),
+            ToolMessage(content="已附加快照", tool_call_id="render-1", name="resume_snapshot"),
             AIMessage(content="", tool_calls=[{
-                "name": "request_resume_edit",
+                "name": "resume_edit",
                 "args": {
                     "answer_text": "教育经历可以压缩次要信息。",
                     "resume_operations": [{
@@ -392,7 +392,7 @@ class AgentCoreEvalRunnerTests(unittest.IsolatedAsyncioTestCase):
                 },
                 "id": "edit-1",
             }]),
-            ToolMessage(content="已生成修改预览", tool_call_id="edit-1", name="request_resume_edit"),
+            ToolMessage(content="已生成修改预览", tool_call_id="edit-1", name="resume_edit"),
             AIMessage(content="教育经历可以压缩次要信息。\n\n已生成修改预览。"),
         ]
         with (
@@ -403,12 +403,12 @@ class AgentCoreEvalRunnerTests(unittest.IsolatedAsyncioTestCase):
             rows, metrics = await run_skill([{
                 "id": "skill-trace-1",
                 "prompt": "问题加修改",
-                "required_tools": ["request_resume_edit"],
-                "optional_tools": ["render_resume_pdf_images"],
+                "required_tools": ["resume_edit"],
+                "optional_tools": ["resume_snapshot"],
             }], mode="online")
         self.assertEqual(
             [call["name"] for call in rows[0]["predicted_calls"]],
-            ["render_resume_pdf_images", "request_resume_edit"],
+            ["resume_snapshot", "resume_edit"],
         )
         self.assertIn("教育经历可以压缩次要信息", rows[0]["assistant_text"])
         self.assertEqual(metrics["valid_tool_selection_accuracy"], 1.0)

@@ -1,6 +1,6 @@
 # Agent 架构与状态边界（Release 1）
 
-本文记录 ResumeBranch Release 1 已实现的 Agent 架构，不是待实施方案。实际行为以 `backend/resume_agent.py`、`backend/harness/`、`backend/skills/` 和自动化测试为准。
+本文记录 ResumeBranch Release 1 已实现的 Agent 架构，不是待实施方案。实际行为以 `backend/resume_agent.py`、`backend/harness/`、`.agents/skills/`、`backend/skill_runtime.py` 和自动化测试为准。
 
 ## 设计目标
 
@@ -27,14 +27,22 @@ LangGraph 的入口路由根据对话模式、确认协议和请求可解析程�
   └─ 普通咨询或复杂任务 ─────────────> conversation_llm
                                           │
                                           ├─ 直接回复或追问
-                                          ├─ render_resume_pdf_images
-                                          └─ request_resume_edit
+                                          └─ activate_agent_skill
                                                    │
+                                                   ▼
+                                               tool_node
+                                                   │ 激活并加载 SKILL.md
+                                                   ▼
+                                           conversation_llm
+                                              │         │
+                                      resume_snapshot  resume_edit
+                                              │         │
+                                              └────┬────┘
                                                    ▼
                                                tool_node
                                                    │
                                                    ▼
-                                              修改预览/结束
+                                          视觉继续分析/修改预览
 ```
 
 主要节点：
@@ -47,28 +55,25 @@ LangGraph 的入口路由根据对话模式、确认协议和请求可解析程�
 
 “面试”在这里指求职辅导对话模式，不是另一个登录或页面运行模式。
 
-## 两个按需技能
+## 两个标准 Agent Skills
 
-### 简历修改技能
+项目级 Skill 位于 `.agents/skills/`，每项能力都是符合 Agent Skills 开放格式的独立目录，包含带 YAML frontmatter 的 `SKILL.md`、实际入口脚本以及完整输入/输出 schema。
 
-实现位于 `backend/skills/resume_edit.py`。
+后端的 `SkillRuntime` 启动时扫描 `.agents/skills/*/SKILL.md`。模型初始只看到名称和描述；需要某项能力时先激活，随后才加载该 Skill 的完整说明并暴露其结构化 Tool。LangGraph Node 只负责编排和注入可信上下文，不实现 Skill 的业务算法。
 
-模型负责理解用户意图并提出结构化操作；技能本身不再次调用 LLM。它会：
+模型参数与运行时上下文严格分离：模型只填写 `tool-input.schema.json` 声明的参数；当前简历、排版、修订版本、照片和渲染样式由图按 `runtime-context.schema.json` 注入，不能由模型伪造。
 
-1. 校验目标字段、布局能力和基础修订版本。
-2. 在简历副本上应用结构化操作。
-3. 规范化候选数据并返回差异与预览信息。
-4. 等待用户确认，不直接写入正式简历。
+### `resume-edit`
 
-这种分工避免模型直接拼接整份简历，也能在修改姓名等字段时保留原有的结构和局部格式信息。
+实现位于 `.agents/skills/resume-edit/`，入口为 `scripts/run.py:run`，执行 Tool 为 `resume_edit`。
 
-### 简历页面快照技能
+模型负责理解用户意图并提出结构化操作；Skill 不再次调用 LLM。它校验目标字段、布局能力和基础修订版本，在副本上应用操作，规范化候选并返回给现有确认流程。它不直接写入正式简历。
 
-实现位于 `backend/skills/render_resume_pdf_images.py`。
+### `resume-snapshot`
 
-该技能只读、按需调用。它使用与正式 PDF 导出相同的渲染源生成 PDF，再把有限页数转换为模型可读取的图片。快照在内存中传递，不修改简历，也不作为业务数据保存。
+实现位于 `.agents/skills/resume-snapshot/`，入口为 `scripts/run.py:run`，执行 Tool 为 `resume_snapshot`。
 
-视觉快照用于回答分页、拥挤、留白和跨页等仅靠 JSON 难以可靠判断的问题；一般内容问答不会无条件渲染快照。
+该 Skill 使用与正式 PDF 导出相同的渲染源生成有限页数的彩色 PNG。快照只在内存中传递，不修改简历、不创建业务文件，也不持久化图片。它只用于分页、拥挤、留白、对齐、溢出和整体观感等需要真实视觉证据的问题。
 
 ## 上下文与记忆
 

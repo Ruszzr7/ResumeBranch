@@ -7,11 +7,12 @@ from backend.layout_config import default_layout_config
 from backend.resume_agent import AgentState, entry_router, is_mission_resume_edit_request, tool_node, tool_node_router
 from langgraph.graph import END
 from backend.resume_contract import build_resume_edit_contract, build_resume_edit_contract_text
-from backend.skills.resume_edit import (
-    ResumeEditOperationError,
-    ResumeEditRequest,
-    run_resume_edit,
-)
+from backend.skill_runtime import skill_runtime
+
+_resume_edit_module = skill_runtime.get("resume-edit").module
+ResumeEditOperationError = _resume_edit_module.ResumeEditOperationError
+ResumeEditRequest = _resume_edit_module.ResumeEditRequest
+run_resume_edit = _resume_edit_module.run_resume_edit
 
 
 def resume_payload():
@@ -540,7 +541,7 @@ class ResumeEditSkillTests(unittest.IsolatedAsyncioTestCase):
             messages=[
                 HumanMessage(content="把姓名改为新姓名"),
                 AIMessage(content="", tool_calls=[{
-                    "name": "request_resume_edit",
+                    "name": "resume_edit",
                     "args": {
                         "resume_operations": [{
                             "op": "set", "path": "basics.name", "value": "新姓名", "expected": "旧姓名",
@@ -573,7 +574,7 @@ class ResumeEditSkillTests(unittest.IsolatedAsyncioTestCase):
             messages=[
                 HumanMessage(content="把姓名改为新姓名，并告诉我还可以怎么优化。"),
                 AIMessage(content="", tool_calls=[{
-                    "name": "request_resume_edit",
+                    "name": "resume_edit",
                     "args": {
                         "answer_text": "还可以继续检查项目成果是否量化。",
                         "resume_operations": [{
@@ -601,7 +602,7 @@ class ResumeEditSkillTests(unittest.IsolatedAsyncioTestCase):
             messages=[
                 HumanMessage(content="姓名保持旧姓名"),
                 AIMessage(content="", tool_calls=[{
-                    "name": "request_resume_edit",
+                    "name": "resume_edit",
                     "args": {
                         "resume_operations": [{
                             "op": "set", "path": "basics.name", "value": "旧姓名",
@@ -622,7 +623,7 @@ class ResumeEditSkillTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_duplicate_structured_tool_calls_execute_once(self):
         tool_call = {
-            "name": "request_resume_edit",
+            "name": "resume_edit",
             "args": {
                 "resume_operations": [{
                     "op": "set", "path": "basics.name", "value": "新姓名",

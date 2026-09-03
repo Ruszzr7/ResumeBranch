@@ -58,11 +58,17 @@ from .harness.interview import (
     run_interview_turn,
 )
 from .harness.observability import harness_metrics
-from .skills.resume_edit import ResumeEditOperationError, ResumeEditRequest, run_resume_edit
-from .skills.render_resume_pdf_images import (
-    ResumeVisualSnapshot,
-    render_resume_pdf_snapshot,
-)
+from .skill_runtime import activate_agent_skill, skill_runtime
+
+
+EDIT_SKILL_NAME = "resume-edit"
+SNAPSHOT_SKILL_NAME = "resume-snapshot"
+EDIT_TOOL_NAME = skill_runtime.get(EDIT_SKILL_NAME).tool_name
+SNAPSHOT_TOOL_NAME = skill_runtime.get(SNAPSHOT_SKILL_NAME).tool_name
+ResumeEditOperationError = skill_runtime.get(EDIT_SKILL_NAME).module.ResumeEditOperationError
+ResumeVisualSnapshot = skill_runtime.get(SNAPSHOT_SKILL_NAME).module.ResumeSnapshotOutput
+resume_edit_tool = skill_runtime.get(EDIT_SKILL_NAME).model_tool()
+resume_snapshot_tool = skill_runtime.get(SNAPSHOT_SKILL_NAME).model_tool()
 
 LOGGER = logging.getLogger(__name__)
 
@@ -429,22 +435,11 @@ CONVERSATION_PROMPT = """
 2. **单点质询原则**：仅在分析、诊断或深度打磨时，每次聚焦一个核心问题；不得据此遗漏同一请求中可独立执行的明确修改。
 3. **引导式提问**：若描述简略且修改结果仍不明确，应通过提问启发细节，不得替用户编造事实。
 
-# Skill 协调规则
-- 根据当前请求、对话上下文和可用 Skill 的名称与描述自主选择能力。具体使用条件和确认边界以 Skill 描述为准，结构化参数以注入的操作契约为准。
-- **render_resume_pdf_images**：只读查看当前简历的 PDF 页面快照。当问题涉及页面、排版或视觉效果，或需要判断实际分页、留白、对齐、溢出、层级、一致性或整体观感时必须调用；不能只根据排版配置或简历文字推断。纯内容或字段问题不要调用；本轮已经实际附加同一快照时不要重复调用。无需传入简历数据，且不会修改或保存简历。
-- **request_resume_edit 参数**：
-  - `answer_text`：修改预览出现前需要向用户展示的问答或澄清内容。本轮同时包含需要回答的问题，或存在可与已明确修改独立处理的待澄清事项时，填写相应回答或追问；纯修改请求时留空。`answer_text` 只承载问答与澄清，执行状态由系统根据实际结果生成。
-  - `resume_operations`：对简历内容的操作列表；`layout_operations`：对排版配置的操作列表。没有对应修改时传空列表。
-  - 结构化操作字段、列表索引和并发保护字段以注入的操作契约为准。
-  - 操作的 `op`、`path`、`value` 和列表索引只能符合上方注入的简历编辑与排版能力契约；不符合契约时不得调用技能，技能不会替换或修正操作结构。
-  - 只发送本次明确要求的操作，不得提交完整简历或完整布局 JSON；不确定的目标先追问。
-  - 字号和字体仍由专用排版设置管理，不要生成相关操作；不得生成 CSS、坐标或任意新字段。
-  - 主模型负责解析“第 1 点”等上下文指代。若指代或目标仍不明确，先向用户澄清，不要调用工具；不要把原始短句、混合咨询内容或整段聊天传给技能。
-- 用户一次消息同时包含“执行某点”和新的咨询问题时，只把明确执行的部分整理进对应的操作列表，其余咨询保留在当前对话中，不要顺手修改。
-- 用户一次消息同时包含需要澄清的修改和独立且明确的修改时，在 `answer_text` 中追问需要澄清的修改，同时只把独立且明确的修改整理进操作列表并生成预览；不得猜测未明确的内容，也不得遗漏可独立执行的明确操作。若两部分互相依赖，则只追问，不调用修改技能。
-- **面向用户的表达边界**：回复正文只能使用排版契约 `user_facing_labels` 中的中文名称及与界面一致的中文栏目名、组件名和自然语言。字段路径、数据键、内部枚举值、工具名、协议标记、数据库字段、异常类型与堆栈只用于内部推理或结构化工具参数，绝不能出现在回复正文中；面向用户提出的可执行排版建议必须对应契约中存在的字段和值。简历原文中的英文、技术名词、公司名和岗位名不受此规则影响。调用修改技能只会生成候选预览，只有用户在确认框中接受后才会保存，不得提前声称已经生效。
-- **教育成绩字段约束**：用户提到“GPA”“绩点”“平均绩点”时写入 `gpa`，满分写入 `gpa_scale`；“专业排名/年级排名”写入 `ranking`。这些内容绝对不能写入 `theses`。
-  - 当前简历字段结构以注入的规范化简历和“当前排版与经历内容契约”为准；结构化修改只能提交 `resume_operations`/`layout_operations`，不得按旧版完整 JSON 重写。
+# Agent Skill 协调规则
+- 本轮可用 Agent Skills 的名称和描述由系统动态注入。需要使用某项能力时，必须先调用 activate_agent_skill；激活后遵循加载的 SKILL.md 说明和结构化 Tool schema。
+- Skill 的 Tool 参数只能包含模型可提供的业务参数。当前简历、排版、版本、照片和渲染样式由系统作为可信运行时上下文注入，不得自行提交或伪造。
+- 用户一次消息同时包含执行请求和咨询问题时，只把明确执行的部分交给修改 Skill，其余咨询保留在当前对话中。
+- 面向用户的回复不得展示 Skill 名、Tool 名、字段路径、内部枚举、协议标记或结构化载荷；修改 Skill 只生成候选，用户确认后才保存。
 
 # 重要规则
 - **重要** 当 just_saved=True（简历刚保存）时，说明简历已经修改完成了，不要调用任何工具。
@@ -632,7 +627,7 @@ def normalize_and_validate_resume(data: dict, *, include_defaults: bool = False)
 @tool
 def save_resume_tool(content: str = "", user_id: int = None, task_id: str = None) -> str:
     """
-    旧版兼容工具：不要在正常对话中主动调用，正常修改必须交给 request_resume_edit。
+    旧版兼容工具：不要在正常对话中主动调用，正常修改必须交给 resume_edit。
 
     将格式化后的简历数据保存到数据库。
 
@@ -685,43 +680,10 @@ def save_resume_tool(content: str = "", user_id: int = None, task_id: str = None
         return f"保存失败：{str(e)}"
 
 
-@tool
-def request_resume_edit(
-    answer_text: Annotated[
-        str,
-        "修改预览前需要展示的问答或独立澄清；纯修改请求留空，执行状态由系统生成。",
-    ] = "",
-    resume_operations: list[dict] | None = None,
-    layout_operations: list[dict] | None = None,
-) -> str:
-    """用于生成待用户确认的简历修改候选。
-
-    当用户明确要求修改简历内容或允许范围内的排版，或者经过多轮对话后已经确认执行
-    具体方案，并且目标、范围和期望结果足够明确时使用。信息或指代仍不明确时先澄清。
-    只提交本次明确要求的修改；技能只生成候选，确认后才保存。
-    """
-    # The graph intercepts this tool before invocation.  Returning a stable
-    # message keeps direct/unit invocations safe and makes accidental execution
-    # without an AgentState a no-op.
-    return "已收到结构化修改指令，系统将先生成确认预览。"
-
-
-@tool("render_resume_pdf_images")
-def render_resume_pdf_images_tool(reason: str = "") -> str:
-    """只读查看当前简历的 PDF 页面快照。
-
-    当问题涉及页面、排版或视觉效果，或需要判断实际分页、留白、对齐、溢出、
-    层级、一致性或整体观感时必须调用；不能只根据排版配置或简历文字推断。
-    纯内容或字段问题不要调用；本轮已经实际附加同一快照时不要重复调用。
-    无需传入简历数据，且不会修改或保存简历。
-    """
-    return "已请求当前简历视觉快照。"
-
-
-# The model decides whether it needs visual evidence and whether a resolved
-# request should become a preview.  Canonical data is injected by the graph;
-# neither tool accepts raw resume data from the model.
-conversation_tools = [render_resume_pdf_images_tool, request_resume_edit]
+def _conversation_tools_for_state(state) -> list:
+    """Expose only the activation Tool plus Tools for Skills active this turn."""
+    active_names = list(getattr(state, "active_skill_names", None) or [])
+    return [activate_agent_skill, *skill_runtime.tools_for(active_names)]
 
 
 # =============================================================================
@@ -770,6 +732,7 @@ class AgentState:
     visual_snapshot_revision: str = ""
     visual_snapshot_error: str = ""
     context_metadata_updates: dict = None  # 本回合产生的小型任务元数据
+    active_skill_names: list[str] = field(default_factory=list)  # 仅在当前图执行内激活
 
 
 # =============================================================================
@@ -903,13 +866,16 @@ def should_force_initial_visual_snapshot(state: AgentState) -> bool:
 
 
 async def _render_current_visual_snapshot(state: AgentState) -> ResumeVisualSnapshot:
-    snapshot = await asyncio.to_thread(
-        render_resume_pdf_snapshot,
-        state.resume_data or {},
-        state.layout_data,
-        photo=getattr(state, "photo", "") or None,
-        render_style=getattr(state, "render_style", None) or None,
-        max_pages=2,
+    snapshot = await skill_runtime.invoke(
+        SNAPSHOT_SKILL_NAME,
+        {"reason": "读取当前简历的真实 PDF 页面用于视觉判断"},
+        {
+            "resume_data": state.resume_data or {},
+            "layout_config": state.layout_data or {},
+            "photo": getattr(state, "photo", "") or None,
+            "render_style": getattr(state, "render_style", None) or None,
+            "max_pages": 2,
+        },
     )
     if not snapshot.parts:
         raise RuntimeError("当前简历没有生成可查看的 PDF 页面")
@@ -1308,7 +1274,7 @@ def _edit_intent_metadata_for_response(state: AgentState, response: object) -> d
 
     for call in list(getattr(response, "tool_calls", None) or []):
         name = call.get("name") if isinstance(call, dict) else getattr(call, "name", "")
-        if name == "request_resume_edit":
+        if name == "resume_edit":
             status = "tool_called"
             break
     return {"status": status}
@@ -1926,14 +1892,21 @@ async def _generate_resume_edit_preview(
     await acquire_current_edit_lock()
     current = normalize_resume_data(state.resume_data or {})
     current_layout = normalize_layout_config(state.layout_data)
-    edit_result = await run_resume_edit(
-        ResumeEditRequest(
-            resume_data=current,
-            layout_config=current_layout,
-            resume_operations=tuple(resume_operations or ()),
-            layout_operations=tuple(layout_operations or ()),
-            base_revision=resume_digest(current),
-        ),
+    edit_result = await skill_runtime.invoke(
+        EDIT_SKILL_NAME,
+        {
+            "answer_text": "",
+            "resume_operations": list(resume_operations or ()),
+            "layout_operations": list(layout_operations or ()),
+        },
+        {
+            "resume_data": current,
+            "layout_config": current_layout,
+            "jd_data": state.jd_data or {},
+            "context_type": getattr(state, "context_type", "main") or "main",
+            "base_revision": resume_digest(current),
+            "conversation_context": "",
+        },
     )
     candidate = edit_result.resume_data
     layout_candidate = edit_result.layout_config
@@ -2099,6 +2072,7 @@ async def conversation_node(state: AgentState) -> dict:
     visual_revision = str(getattr(state, "visual_snapshot_revision", "") or "")
     visual_error = str(getattr(state, "visual_snapshot_error", "") or "")
     metadata_updates = dict(getattr(state, "context_metadata_updates", None) or {})
+    active_skill_names = list(getattr(state, "active_skill_names", None) or [])
 
     # A layout-advice mission has one explicit first-turn guarantee.  Every
     # later visual read is a model tool decision rather than a keyword gate.
@@ -2158,6 +2132,12 @@ async def conversation_node(state: AgentState) -> dict:
         layout_context_mode=layout_context_mode,
         mission_initial_turn=mission_initial_turn,
     )
+    if messages and isinstance(messages[0], SystemMessage):
+        messages[0] = SystemMessage(content=(
+            str(messages[0].content)
+            + skill_runtime.catalog_context()
+            + skill_runtime.active_instructions_context(active_skill_names)
+        ))
     if visual_attached:
         messages = _attach_visual_resume_parts(messages, visual_parts)
         LOGGER.debug("已附加 %s 页临时视觉上下文", len(visual_parts))
@@ -2178,7 +2158,7 @@ async def conversation_node(state: AgentState) -> dict:
         # responsible for schema validation, preview-only edits, confirmation,
         # and the one-snapshot-per-turn guard.
         model = conversation_llm.bind_tools(
-            conversation_tools,
+            _conversation_tools_for_state(state),
             tool_choice="auto"
         )
         # 不要添加 stop 序列，否则可能导致工具名称被截断
@@ -2278,6 +2258,7 @@ async def conversation_node(state: AgentState) -> dict:
         "visual_snapshot_revision": visual_revision,
         "visual_snapshot_error": visual_error,
         "context_metadata_updates": metadata_updates,
+        "active_skill_names": active_skill_names,
     }
     
     # 创建临时状态对象用于调试
@@ -2307,6 +2288,7 @@ async def tool_node(state: AgentState) -> dict:
     last_message = state.messages[-1]
     user_content = getattr(last_message, 'content', '') or ''
     metadata_updates = dict(getattr(state, "context_metadata_updates", None) or {})
+    active_skill_names = list(getattr(state, "active_skill_names", None) or [])
     
     # 处理确认回复
     if '[CONFIRM_REPLY:' in user_content:
@@ -2567,8 +2549,8 @@ async def tool_node(state: AgentState) -> dict:
         if hasattr(tool_call, "name") or isinstance(tool_call, dict)
     }
     defer_edit_for_visual = (
-        "render_resume_pdf_images" in requested_tool_names
-        and "request_resume_edit" in requested_tool_names
+        "resume_snapshot" in requested_tool_names
+        and "resume_edit" in requested_tool_names
         and visual_calls == 0
     )
 
@@ -2622,12 +2604,13 @@ async def tool_node(state: AgentState) -> dict:
             continue
         seen_tool_call_fingerprints.add(call_fingerprint)
 
-        # 查找工具函数
-        tool_func = None
-        for t in conversation_tools:
-            if t.name == tool_name:
-                tool_func = t
-                break
+        # Tool 的发现、schema 与执行入口均由 Skill Runtime 统一解析。
+        tool_func = activate_agent_skill if tool_name == activate_agent_skill.name else None
+        if tool_func is None:
+            try:
+                tool_func = skill_runtime.get_by_tool_name(tool_name).model_tool()
+            except Exception:
+                tool_func = None
 
         if not tool_func:
             result = f"错误: 工具 {tool_name} 不存在"
@@ -2635,7 +2618,14 @@ async def tool_node(state: AgentState) -> dict:
         else:
             try:
                 # 如果是保存简历工具
-                if tool_name == 'save_resume_tool':
+                if tool_name == activate_agent_skill.name:
+                    requested_skill_name = str(tool_args.get("name") or "").strip()
+                    package = skill_runtime.get(requested_skill_name)
+                    if package.name not in active_skill_names:
+                        active_skill_names.append(package.name)
+                    result = activate_agent_skill.invoke({"name": package.name})
+                # 如果是 Skill 激活请求
+                elif tool_name == 'save_resume_tool':
                     content = tool_args.get('content', '')
                     try:
                         updated_resume_data = json.loads(content)
@@ -2658,7 +2648,7 @@ async def tool_node(state: AgentState) -> dict:
                         }
                         result = f"[CONFIRM_MARKER:{json.dumps(marker)}]"
                         LOGGER.debug("修改工具已生成确认标记")
-                elif tool_name == "render_resume_pdf_images":
+                elif tool_name == "resume_snapshot":
                     if visual_calls >= 1 or visual_parts:
                         result = "本轮已经提供过当前简历快照，请直接使用现有视觉证据继续判断。"
                     else:
@@ -2686,12 +2676,12 @@ async def tool_node(state: AgentState) -> dict:
                                 "已生成并附加当前简历 PDF 页面快照："
                                 f"{page_summary}；版本 {snapshot.revision[:12]}。"
                             )
-                elif tool_name == 'request_resume_edit':
+                elif tool_name == 'resume_edit':
                     edit_tool_called = True
                     if defer_edit_for_visual:
                         result = (
                             "本轮同时请求了视觉检查和修改。系统已先获取视觉证据，"
-                            "尚未生成修改预览；请查看快照后重新调用 request_resume_edit，"
+                            "尚未生成修改预览；请查看快照后重新调用 resume_edit，"
                             "并只提交最终确认的结构化操作。"
                         )
                         continue_edit = False
@@ -2788,6 +2778,7 @@ async def tool_node(state: AgentState) -> dict:
         "visual_snapshot_revision": visual_revision,
         "visual_snapshot_error": visual_error,
         "context_metadata_updates": metadata_updates,
+        "active_skill_names": active_skill_names,
     }
 
 

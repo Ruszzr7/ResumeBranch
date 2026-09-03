@@ -1,0 +1,38 @@
+{
+  "additionalProperties": false,
+  "description": "Trusted graph-owned context that the model cannot provide.",
+  "properties": {
+    "resume_data": {
+      "additionalProperties": true,
+      "title": "Resume Data",
+      "type": "object"
+    },
+    "layout_config": {
+      "additionalProperties": true,
+      "title": "Layout Config",
+      "type": "object"
+    },
+    "jd_data": {
+      "additionalProperties": true,
+      "title": "Jd Data",
+      "type": "object"
+    },
+    "context_type": {
+      "default": "main",
+      "title": "Context Type",
+      "type": "string"
+    },
+    "base_revision": {
+      "default": "",
+      "title": "Base Revision",
+      "type": "string"
+    },
+    "conversation_context": {
+      "default": "",
+      "title": "Conversation Context",
+      "type": "string"
+    }
+  },
+  "title": "ResumeEditRuntimeContext",
+  "type": "object"
+}

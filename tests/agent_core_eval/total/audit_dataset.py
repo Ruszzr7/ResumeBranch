@@ -18,7 +18,11 @@ if str(ROOT) not in sys.path:
 from backend.layout_config import default_layout_config
 from backend.resume_data import normalize_resume_data
 from backend.resume_changes import resume_digest
-from backend.skills.resume_edit import ResumeEditRequest, run_resume_edit
+from backend.skill_runtime import skill_runtime
+
+_resume_edit_module = skill_runtime.get("resume-edit").module
+ResumeEditRequest = _resume_edit_module.ResumeEditRequest
+run_resume_edit = _resume_edit_module.run_resume_edit
 from backend.resume_agent import entry_router
 from tests.agent_core_eval.total.metrics import operation_domain, routing_metrics
 from tests.agent_core_eval.total.run_eval import (
@@ -32,7 +36,7 @@ from tests.agent_core_eval.total.run_eval import (
 DATASET_PATH = Path(__file__).resolve().parent / "cases.json"
 REPORT_PATH = Path(__file__).resolve().parent / "audit.md"
 FORBIDDEN_MARKERS = ("虚构", "虚假", "伪造", "捏造", "测试信息")
-SUPPORTED_TOOLS = {"request_resume_edit", "render_resume_pdf_images"}
+SUPPORTED_TOOLS = {"resume_edit", "resume_snapshot"}
 VISUAL_TERMS = re.compile(
     r"页面|PDF|排版|布局|视觉|呈现|预览|换页|空白|间距|对齐|拥挤|舒服|好看|美观|留白|换行|下划线|一页|渲染|模块"
 )
@@ -98,11 +102,11 @@ def _audit_v4_content(payload: dict) -> dict:
     for case in payload.get("skill") or []:
         required = set(case.get("required_tools") or case.get("expected_tools") or [])
         operations = list(case.get("expected_operations") or [])
-        if required == {"request_resume_edit"}:
+        if required == {"resume_edit"}:
             group = "edit_only"
             if not operations:
                 issues.append({"scope": case.get("id", ""), "reason": "明确修改案例缺少操作金标"})
-        elif required == {"render_resume_pdf_images"}:
+        elif required == {"resume_snapshot"}:
             group = "snapshot_only"
             if operations or not VISUAL_TERMS.search(case.get("prompt", "")):
                 issues.append({"scope": case.get("id", ""), "reason": "快照案例不是纯页面/视觉观察请求"})
@@ -110,7 +114,7 @@ def _audit_v4_content(payload: dict) -> dict:
             group = "no_tool"
             if operations:
                 issues.append({"scope": case.get("id", ""), "reason": "No-tool 案例却包含修改操作金标"})
-        elif required == {"render_resume_pdf_images", "request_resume_edit"}:
+        elif required == {"resume_snapshot", "resume_edit"}:
             group = "mixed"
             if not operations or not VISUAL_TERMS.search(case.get("prompt", "")):
                 issues.append({"scope": case.get("id", ""), "reason": "混合案例缺少视觉前置请求或修改操作"})
@@ -152,7 +156,7 @@ async def _validate_skill_operations(cases: list[dict]) -> list[dict]:
     for case in cases:
         required = set(case.get("required_tools") or case.get("expected_tools") or [])
         operations = list(case.get("expected_operations") or [])
-        if "request_resume_edit" not in required or not operations:
+        if "resume_edit" not in required or not operations:
             continue
         resume_operations = [op for op in operations if operation_domain(op.get("path")) == "resume"]
         layout_operations = [op for op in operations if operation_domain(op.get("path")) == "layout"]
@@ -205,7 +209,7 @@ async def audit() -> dict:
         expected_route = case.get("expected_route", "conversation_llm")
         if expected_route != "conversation_llm":
             skill_metadata_issues.append({"id": case["id"], "reason": f"Skill 案例入口金标无效：{expected_route}"})
-        if "render_resume_pdf_images" in expected and not VISUAL_TERMS.search(case.get("prompt", "")):
+        if "resume_snapshot" in expected and not VISUAL_TERMS.search(case.get("prompt", "")):
             visual_without_snapshot.append(case["id"])
         if not expected and not optional and re.search(r"(?:修改|改为|改成|替换|更新|设置|删除|移除|新增|添加|补充|移动|放到|重写|改写)", case.get("prompt", "")):
             no_tool_with_concrete_edit.append(case["id"])
@@ -231,7 +235,7 @@ async def audit() -> dict:
         "safety_metrics": safety_result,
         "operation_gold_count": sum(
             bool((case.get("expected_operations") or []))
-            and "request_resume_edit" in set(case.get("required_tools") or case.get("expected_tools") or [])
+            and "resume_edit" in set(case.get("required_tools") or case.get("expected_tools") or [])
             for case in payload["skill"]
         ),
         "v4_hard_review": v4_review,

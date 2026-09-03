@@ -10,7 +10,7 @@ from collections import Counter
 from typing import Any, Iterable
 
 
-SUPPORTED_SKILLS = ("request_resume_edit", "render_resume_pdf_images")
+SUPPORTED_SKILLS = ("resume_edit", "resume_snapshot")
 _LAYOUT_FIELD_HINTS = {
     "density", "lineHeight", "moduleMargin", "marginVertical", "marginHorizontal",
     "titleStyle", "sectionOrder", "hiddenSections", "titleOverrides",
@@ -142,7 +142,7 @@ def operation_protocol_metrics(rows: Iterable[dict[str, Any]]) -> dict[str, Any]
             continue
         expected_tools = _required_tools(row)
         expected_operations = list(row.get("expected_operations") or [])
-        if "request_resume_edit" not in expected_tools or not expected_operations:
+        if "resume_edit" not in expected_tools or not expected_operations:
             continue
         eligible += 1
         expected_by_domain = {"resume": [], "layout": []}
@@ -153,7 +153,7 @@ def operation_protocol_metrics(rows: Iterable[dict[str, Any]]) -> dict[str, Any]
         actual_by_domain = {"resume": [], "layout": []}
         edit_calls = [
             call for call in (row.get("predicted_calls") or [])
-            if call.get("name") == "request_resume_edit" and isinstance(call.get("args"), dict)
+            if call.get("name") == "resume_edit" and isinstance(call.get("args"), dict)
         ]
         if len(edit_calls) == 1:
             args = edit_calls[0]["args"]
@@ -189,7 +189,7 @@ def operation_outcome_metrics(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
     for row in rows:
         if not _is_skill_decision_row(row):
             continue
-        if "request_resume_edit" not in _required_tools(row):
+        if "resume_edit" not in _required_tools(row):
             continue
         accepted_changes = row.get("accepted_final_changes")
         if isinstance(accepted_changes, list):
@@ -340,7 +340,7 @@ def skill_metrics(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
             schema_total += 1
             if call.get("schema_valid") is True:
                 schema_passed += 1
-            if call.get("name") == "request_resume_edit":
+            if call.get("name") == "resume_edit":
                 executable_total += 1
                 if call.get("executable") is True:
                     executable_passed += 1

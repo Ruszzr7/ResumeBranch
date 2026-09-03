@@ -1,0 +1,50 @@
+{
+  "additionalProperties": false,
+  "description": "Validated candidate returned to the existing confirmation flow.",
+  "properties": {
+    "resume_data": {
+      "additionalProperties": true,
+      "title": "Resume Data",
+      "type": "object"
+    },
+    "layout_config": {
+      "additionalProperties": true,
+      "title": "Layout Config",
+      "type": "object"
+    },
+    "base_revision": {
+      "title": "Base Revision",
+      "type": "string"
+    },
+    "resume_operations": {
+      "default": [],
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Resume Operations",
+      "type": "array"
+    },
+    "layout_operations": {
+      "default": [],
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Layout Operations",
+      "type": "array"
+    },
+    "already_satisfied": {
+      "default": false,
+      "title": "Already Satisfied",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "resume_data",
+    "layout_config",
+    "base_revision"
+  ],
+  "title": "ResumeEditOutput",
+  "type": "object"
+}

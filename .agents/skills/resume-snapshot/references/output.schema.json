@@ -1,0 +1,50 @@
+{
+  "additionalProperties": false,
+  "description": "Ephemeral image parts and non-sensitive snapshot diagnostics.",
+  "properties": {
+    "parts": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Parts",
+      "type": "array"
+    },
+    "revision": {
+      "title": "Revision",
+      "type": "string"
+    },
+    "page_sizes": {
+      "items": {
+        "maxItems": 2,
+        "minItems": 2,
+        "prefixItems": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "integer"
+          }
+        ],
+        "type": "array"
+      },
+      "title": "Page Sizes",
+      "type": "array"
+    },
+    "page_bytes": {
+      "items": {
+        "type": "integer"
+      },
+      "title": "Page Bytes",
+      "type": "array"
+    }
+  },
+  "required": [
+    "parts",
+    "revision",
+    "page_sizes",
+    "page_bytes"
+  ],
+  "title": "ResumeSnapshotOutput",
+  "type": "object"
+}

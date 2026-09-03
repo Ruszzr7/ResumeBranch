@@ -1,0 +1,63 @@
+{
+  "additionalProperties": false,
+  "description": "Trusted rendering inputs injected by the graph.",
+  "properties": {
+    "resume_data": {
+      "additionalProperties": true,
+      "title": "Resume Data",
+      "type": "object"
+    },
+    "layout_config": {
+      "additionalProperties": true,
+      "title": "Layout Config",
+      "type": "object"
+    },
+    "photo": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Photo"
+    },
+    "render_style": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Render Style"
+    },
+    "max_pages": {
+      "default": 2,
+      "title": "Max Pages",
+      "type": "integer"
+    },
+    "dpi": {
+      "default": 96,
+      "title": "Dpi",
+      "type": "integer"
+    },
+    "max_long_edge": {
+      "default": 1400,
+      "title": "Max Long Edge",
+      "type": "integer"
+    },
+    "max_total_bytes": {
+      "default": 819200,
+      "title": "Max Total Bytes",
+      "type": "integer"
+    }
+  },
+  "title": "ResumeSnapshotRuntimeContext",
+  "type": "object"
+}

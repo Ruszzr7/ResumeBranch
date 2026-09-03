@@ -6,9 +6,9 @@ from backend.main import _sanitize_streaming_user_visible_text, _sanitize_user_v
 class PublicErrorBoundaryTests(unittest.TestCase):
     def test_internal_protocol_identifiers_are_not_user_visible(self):
         rendered = _sanitize_user_visible_text(
-            "request_resume_edit 处理 layout_config 失败，ValueError: invalid session_id"
+            "resume_edit 处理 layout_config 失败，ValueError: invalid session_id"
         )
-        self.assertNotIn("request_resume_edit", rendered)
+        self.assertNotIn("resume_edit", rendered)
         self.assertNotIn("layout_config", rendered)
         self.assertNotIn("session_id", rendered)
         self.assertNotIn("ValueError", rendered)
@@ -48,7 +48,7 @@ class PublicErrorBoundaryTests(unittest.TestCase):
             "调用 ",
         )
         self.assertEqual(
-            _sanitize_streaming_user_visible_text("调用 request_resume_edit"),
+            _sanitize_streaming_user_visible_text("调用 resume_edit"),
             "调用 系统能力",
         )
 

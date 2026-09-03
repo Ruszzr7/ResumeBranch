@@ -1328,10 +1328,10 @@
       "id": "skill-001",
       "prompt": "请直接把工作经历第一条改为“负责订单查询接口开发，并为核心分支补充单元测试”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "smoke": true
     },
@@ -1339,20 +1339,20 @@
       "id": "skill-002",
       "prompt": "在工作经历的工作职责末尾新增一条“使用执行计划定位并优化慢查询”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-003",
       "prompt": "删除工作经历中“整理接口文档并协助定位慢查询”这一条。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -1368,50 +1368,50 @@
       "id": "skill-004",
       "prompt": "把工作经历里的慢查询内容移到接口开发内容前面。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-005",
       "prompt": "将实习职位改为 Python 后端开发实习生，请生成修改预览。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-006",
       "prompt": "把实习公司名称改成云岑软件有限公司。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-007",
       "prompt": "在专业技能最后加入 Redis，不要改其他技能。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-008",
       "prompt": "从专业技能中移除 Git，保留 Python 和 SQL。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
@@ -1419,7 +1419,7 @@
       "scenario_type": "mixed_request",
       "prompt": "SQL 和 PostgreSQL 放在专业技能中分别传达什么？简要说明后，把专业技能中的 SQL 替换为 PostgreSQL。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [
         {
@@ -1429,7 +1429,7 @@
         }
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "answer_expectation": "required"
     },
@@ -1437,120 +1437,120 @@
       "id": "skill-010",
       "prompt": "在主要荣誉中新增“2024 年开源实践奖”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-011",
       "prompt": "将自我评价改为“重视可维护性，习惯通过测试和复盘推动问题闭环”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-012",
       "prompt": "在云笺协作平台的技术栈末尾补充 Redis。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-013",
       "prompt": "把云笺协作平台中的角色改为后端负责人。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-014",
       "prompt": "将项目名称“云笺协作平台”改为“云笺权限协作平台”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-015",
       "prompt": "把云笺项目时间调整为 2023.01 至 2023.07。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-016",
       "prompt": "将本科专业修改为软件工程，其他教育字段保持不变。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-017",
       "prompt": "把教育经历中的排名改为前 10%。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-018",
       "prompt": "把主要荣誉现有条目替换为“2023 年工程实践奖”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-019",
       "prompt": "在证书列表中新增“数据库开发认证”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-020",
       "prompt": "我已通过日语 N2，请在语言能力中新增“日语 N2”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-021",
       "prompt": "我维护了权限校验示例项目。请新增自定义栏目“开源实践”，内容为“维护权限校验示例项目”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -1570,7 +1570,7 @@
       "scenario_type": "mixed_request",
       "prompt": "先说明“设计文档权限校验接口”为什么没有充分体现职责边界，再将这条项目职责改为“设计文档级权限校验与审计接口”；第二条职责保持不变。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [
         {
@@ -1580,7 +1580,7 @@
         }
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "answer_expectation": "required"
     },
@@ -1588,40 +1588,40 @@
       "id": "skill-023",
       "prompt": "把项目经历移动到工作经历前面，并保留所有内容。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-024",
       "prompt": "同时把项目角色改为核心开发，并将项目职责改成编号列表。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-025",
       "prompt": "将教育经历中的课程补充改为“主修操作系统、数据库系统、计算机网络”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-026",
       "prompt": "请查看当前 PDF 页面，判断是否有内容跨页或被截断。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "smoke": true
     },
@@ -1629,30 +1629,30 @@
       "id": "skill-027",
       "prompt": "我想知道第二页是否只有一两行内容，请先看真实页面。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-028",
       "prompt": "请检查当前简历页面底部有没有异常大块留白。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-029",
       "prompt": "请根据实际渲染结果判断基本信息是否对齐。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
@@ -1660,160 +1660,160 @@
       "prompt": "证件照和姓名区域在页面上是否协调？请查看页面后回答。",
       "fixture": "photo",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-031",
       "prompt": "现在的简历到底是一页还是两页？不要只根据 JSON 猜。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-032",
       "prompt": "请观察真实 PDF，判断模块标题的视觉层级是否明显。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-033",
       "prompt": "项目经历有没有被硬拆到两页？请先获取页面视觉证据。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-034",
       "prompt": "教育经历这一行在实际页面上是否过于拥挤？",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-035",
       "prompt": "请检查各模块之间的垂直间距在真实页面上是否均衡。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-036",
       "prompt": "技能列表在 PDF 中有没有换行得很难看？",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-037",
       "prompt": "请看一下页面，确认工作经历标题和内容是否分离到了不同页。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-038",
       "prompt": "当前页面左右留白看起来是否对称？需要基于渲染图判断。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-039",
       "prompt": "简历最后一页的内容密度是否太低？请查看快照。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-040",
       "prompt": "从实际页面判断项目技术栈是否挤压了项目标题。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-041",
       "prompt": "请查看 PDF 后告诉我是否存在孤立的模块标题。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-042",
       "prompt": "页面中的中英文混排有没有造成明显对齐问题？先看快照。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-043",
       "prompt": "请检查项目职责的圆点在实际渲染中是否整齐。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-044",
       "prompt": "我担心联系方式在页面顶部被压缩，请基于页面图片确认。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-045",
       "prompt": "请先观察当前真实排版，再判断整体视觉重心是否偏上。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
@@ -1821,8 +1821,8 @@
       "prompt": "你好，请用一句话说明你能提供哪些简历帮助。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "smoke": true
     },
@@ -1831,8 +1831,8 @@
       "prompt": "我的目标岗位是什么？请从当前简历内容回答。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -1840,8 +1840,8 @@
       "prompt": "当前简历里列出了哪些专业技能？",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -1849,8 +1849,8 @@
       "prompt": "请概括云笺协作平台使用的技术栈。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -1858,8 +1858,8 @@
       "prompt": "这份简历中有几段工作经历和几段项目经历？",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -1867,8 +1867,8 @@
       "prompt": "当前 JD 最重视哪些后端技能？",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -1876,8 +1876,8 @@
       "prompt": "简历里是否已经出现 PostgreSQL？只回答内容事实。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -1885,8 +1885,8 @@
       "prompt": "教育经历的起止时间是什么？",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -1894,8 +1894,8 @@
       "prompt": "工作经历里提到了哪些质量保障动作？",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -1903,8 +1903,8 @@
       "prompt": "请分析简历与 JD 的技能差距，但不要修改，也不需要看页面排版。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "smoke": true
     },
@@ -1913,8 +1913,8 @@
       "prompt": "给出三条内容优化建议，本轮只讨论，不生成候选修改。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -1922,8 +1922,8 @@
       "prompt": "分析项目经历是否体现了个人职责，先不要改写。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -1931,8 +1931,8 @@
       "prompt": "从招聘方视角指出工作经历内容上的不足，不讨论排版。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -1940,8 +1940,8 @@
       "prompt": "我还缺哪些信息才能证明慢查询优化成果？请向我追问。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -1949,8 +1949,8 @@
       "prompt": "请评价当前自我评价是否空泛，只给分析。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -1958,8 +1958,8 @@
       "prompt": "根据 JD，面试官最可能追问哪个项目事实？",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -1967,8 +1967,8 @@
       "prompt": "如果要补充 Redis 经验，哪些事实必须由我先确认？",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -1976,8 +1976,8 @@
       "prompt": "分析当前项目描述是否符合 STAR 思路，但不要评分或改写。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -1985,8 +1985,8 @@
       "prompt": "解释为什么简历不能凭空添加量化结果。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -1994,8 +1994,8 @@
       "prompt": "先比较 Python 与 Java 后端岗位对项目描述的不同要求。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2003,8 +2003,8 @@
       "prompt": "我说“优化一下项目”还不够明确，你需要我补充什么？",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2012,8 +2012,8 @@
       "prompt": "我可能想调整教育经历，但还没决定改学校还是改专业，先问我。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2021,8 +2021,8 @@
       "prompt": "先讨论是否应该删除自我评价，暂时不要执行。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2030,8 +2030,8 @@
       "prompt": "你建议把工作经历和项目经历谁放前面？只给理由。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2039,8 +2039,8 @@
       "prompt": "请告诉我怎样确认修改预览；不要替我点击确认。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "smoke": true
     },
@@ -2049,8 +2049,8 @@
       "prompt": "帮我写一封投递星桥科技的求职邮件，不要修改简历。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2058,8 +2058,8 @@
       "prompt": "解释 FastAPI 的依赖注入概念，不需要结合页面。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2067,8 +2067,8 @@
       "prompt": "给我列一个后端面试复习清单，不要改简历。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2076,8 +2076,8 @@
       "prompt": "模拟提出一个数据库索引问题，但先不要进入正式辅导模式。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2085,18 +2085,18 @@
       "prompt": "解释候选修改为什么要经过确认才能保存。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-v2-001",
       "prompt": "把工作职责第一条替换为“负责订单检索接口开发，并补充参数校验与单元测试”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "smoke": true
     },
@@ -2104,70 +2104,70 @@
       "id": "skill-v2-002",
       "prompt": "在工作职责末尾追加“根据慢查询日志完成索引优化”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-v2-003",
       "prompt": "删除工作职责里的“整理接口文档并协助定位慢查询”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-v2-004",
       "prompt": "把工作职责第二条移动到第一条前面。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-v2-005",
       "prompt": "将实习职位替换为服务端研发实习生。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-v2-006",
       "prompt": "把实习公司名称改为星桥数据技术有限公司。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-v2-007",
       "prompt": "在专业技能末尾新增 Docker。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-v2-008",
       "prompt": "从专业技能中删除 Git，其他技能保持不变。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
@@ -2175,7 +2175,7 @@
       "scenario_type": "multi_turn_summary",
       "prompt": "确认，按刚才确定的数据库技能方案执行，其他技能及顺序保持不变。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [
         {
@@ -2185,7 +2185,7 @@
         }
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "answer_expectation": "empty",
       "turns": [
@@ -2203,120 +2203,120 @@
       "id": "skill-v2-010",
       "prompt": "在主要荣誉末尾新增“2024 年校级技术实践奖”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-v2-011",
       "prompt": "把自我评价第一条改为“关注代码可维护性，能够通过复盘持续改进交付质量”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-v2-012",
       "prompt": "在云笺协作平台的技术栈中补充 pytest。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-v2-013",
       "prompt": "把云笺协作平台的项目角色改为服务端开发。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-v2-014",
       "prompt": "将项目名称改为云笺文档协作平台。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-v2-015",
       "prompt": "把云笺项目时间改为 2023.03 至 2023.08。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-v2-016",
       "prompt": "将本科专业改为计算机工程。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-v2-017",
       "prompt": "把教育经历中的排名改为前 8%。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-v2-018",
       "prompt": "将主要荣誉第一条替换为“2023 年软件设计实践奖”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-v2-019",
       "prompt": "在证书列表末尾新增“数据库系统工程认证”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-v2-020",
       "prompt": "我已通过英语专业四级，请在语言能力末尾新增“英语 TEM-4”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-v2-021",
       "prompt": "我参与维护开发者社区。请新增栏目“社区实践”，内容为“维护后端开发者社区”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -2333,7 +2333,7 @@
       "accepted_outcomes": [
         {
           "tools": [
-            "request_resume_edit"
+            "resume_edit"
           ],
           "expected_operations": [
             {
@@ -2350,7 +2350,7 @@
         },
         {
           "tools": [
-            "request_resume_edit"
+            "resume_edit"
           ],
           "expected_operations": [
             {
@@ -2374,7 +2374,7 @@
       "scenario_type": "mixed_request",
       "prompt": "先判断当前两条项目职责的顺序是否合理，然后把“为核心接口补充自动化测试”改为“为权限与审计接口补充自动化回归测试”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [
         {
@@ -2384,7 +2384,7 @@
         }
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "answer_expectation": "required"
     },
@@ -2392,10 +2392,10 @@
       "id": "skill-v2-023",
       "prompt": "将项目经历移动到教育经历后面。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
@@ -2403,10 +2403,10 @@
       "prompt": "把项目角色改为后端开发，并把项目职责显示为圆点列表。",
       "expected_tools": [],
       "optional_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "answer_expectation": "required",
       "outcome_note": "当前项目角色和职责列表形式已经满足请求；可直接说明，也可先查看当前页面后说明，但不应生成无变化修改候选"
@@ -2415,20 +2415,20 @@
       "id": "skill-v2-025",
       "prompt": "把教育经历补充第一条改为“主修算法设计、操作系统与数据库原理”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ]
     },
     {
       "id": "skill-v2-026",
       "prompt": "请读取当前 PDF 页面，检查正文有没有超出页面边界。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "smoke": true
     },
@@ -2436,30 +2436,30 @@
       "id": "skill-v2-027",
       "prompt": "先查看真实页面，告诉我最后一页是否内容过少。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-v2-028",
       "prompt": "检查 PDF 中模块之间的垂直间距是否一致。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-v2-029",
       "prompt": "请根据渲染页面判断联系方式有没有错位。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
@@ -2467,80 +2467,80 @@
       "prompt": "查看页面后判断照片是否挤压了姓名区域。",
       "fixture": "photo",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-v2-031",
       "prompt": "请确认实际 PDF 的总页数。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-v2-032",
       "prompt": "观察 PDF 页面，判断各模块标题是否容易区分。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-v2-033",
       "prompt": "项目职责有没有被分页截断？请查看实际页面。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-v2-034",
       "prompt": "请检查教育经历和工作经历之间是否留白过大。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-v2-035",
       "prompt": "查看当前页面，判断项目名称和日期是否对齐。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-v2-036",
       "prompt": "请用页面截图判断第二页顶部是否出现孤行。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-v2-037",
       "prompt": "根据真实 PDF 判断简历整体密度是否过高。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
@@ -2548,80 +2548,80 @@
       "prompt": "检查证件照在导出页面中的实际位置。",
       "fixture": "photo",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-v2-039",
       "prompt": "查看 PDF 后判断页脚附近是否有内容被裁切。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-v2-040",
       "prompt": "先获取页面视觉证据，再评价字体层级是否清晰。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-v2-041",
       "prompt": "请检查真实页面中圆点列表的缩进是否一致。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-v2-042",
       "prompt": "查看导出页面，判断长项目名称是否换行得当。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-v2-043",
       "prompt": "请确认当前页面有没有异常空白页。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-v2-044",
       "prompt": "根据 PDF 页面检查学校标签与学校名称是否贴得太近。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
       "id": "skill-v2-045",
       "prompt": "查看最终渲染效果，判断简历是否适合双页展示。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ]
     },
     {
@@ -2629,8 +2629,8 @@
       "prompt": "解释一下 STAR 方法，不要修改当前简历。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "smoke": true
     },
@@ -2639,8 +2639,8 @@
       "prompt": "先问我一个关于项目成果的问题，不要生成候选。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2648,8 +2648,8 @@
       "prompt": "分析当前技能与 JD 的差距，只给建议。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2657,8 +2657,8 @@
       "prompt": "告诉我后端简历通常应该突出哪些指标。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2666,8 +2666,8 @@
       "prompt": "比较工作经历和项目经历的表达差异，不做修改。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2675,8 +2675,8 @@
       "prompt": "给我三个改进自我评价的方向，暂时不应用。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2684,8 +2684,8 @@
       "prompt": "为什么量化结果对技术简历重要？",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2693,8 +2693,8 @@
       "prompt": "指出项目职责里最需要追问的信息。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2702,8 +2702,8 @@
       "prompt": "帮我判断目前的目标岗位是否清晰，不要改字段。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2711,8 +2711,8 @@
       "prompt": "先解释候选预览的作用，不执行修改。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "smoke": true
     },
@@ -2721,8 +2721,8 @@
       "prompt": "列出面试官可能追问的两个数据库问题。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2730,8 +2730,8 @@
       "prompt": "帮我分析为什么“参与开发”显得不够有力。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2739,8 +2739,8 @@
       "prompt": "我还没确定投递方向，你建议先梳理什么？",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2748,8 +2748,8 @@
       "prompt": "评价一下当前项目技术栈是否有后端深度。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2757,8 +2757,8 @@
       "prompt": "给出一份补充项目数据的提问清单。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2766,8 +2766,8 @@
       "prompt": "解释接口性能指标通常包括哪些内容。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2775,8 +2775,8 @@
       "prompt": "分析这份 JD 对数据库能力的要求。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2784,8 +2784,8 @@
       "prompt": "如果没有量化数字，项目经历还能怎样表达？",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2793,8 +2793,8 @@
       "prompt": "请先审阅教育经历的信息完整度。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2802,8 +2802,8 @@
       "prompt": "告诉我技能列表按什么逻辑排序更合理。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2811,8 +2811,8 @@
       "prompt": "分析当前简历有哪些内容重复。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2820,8 +2820,8 @@
       "prompt": "模拟面试官追问一次权限校验设计。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2829,8 +2829,8 @@
       "prompt": "给我一个准备后端面试的学习顺序。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2838,8 +2838,8 @@
       "prompt": "说明简历中的技术名词为什么需要项目证据。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2847,8 +2847,8 @@
       "prompt": "解释确认、取消和过期确认分别会发生什么。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "smoke": true
     },
@@ -2857,8 +2857,8 @@
       "prompt": "帮我起草一封投递远帆数据的求职邮件，不修改简历。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2866,8 +2866,8 @@
       "prompt": "总结我当前简历中已经出现的后端技能。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2875,8 +2875,8 @@
       "prompt": "列一份数据库面试前的复习提纲。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2884,8 +2884,8 @@
       "prompt": "提出一个关于缓存一致性的思考题。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2893,8 +2893,8 @@
       "prompt": "说明为什么未经确认的候选不能写入正式简历。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ]
     },
     {
@@ -2902,10 +2902,10 @@
       "scenario_type": "complex_operation",
       "prompt": "把云笺协作平台的角色改为‘服务端负责人’，并在技术栈末尾补充 Redis。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -2927,10 +2927,10 @@
       "scenario_type": "complex_operation",
       "prompt": "将项目职责的第二条移到第一条，第一条顺延到第二条，文字不要改写。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -2948,10 +2948,10 @@
       "scenario_type": "complex_operation",
       "prompt": "删除工作经历中的第二条职责，并在职责列表末尾新增‘为订单接口补充回归测试’。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -2973,10 +2973,10 @@
       "scenario_type": "complex_operation",
       "prompt": "把工作经历的职位改成‘Python 后端开发实习生’，同时将日期改为 2023.08 至 2024.01。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -3000,10 +3000,10 @@
       "scenario_type": "complex_operation",
       "prompt": "将项目经历放到工作经历前面，并把项目角色改为‘平台后端负责人’。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -3035,10 +3035,10 @@
       "scenario_type": "complex_operation",
       "prompt": "请查看当前 PDF，判断项目经历是否被分页拆开，以及职责编号是否仍然连续。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none",
@@ -3050,10 +3050,10 @@
       "prompt": "请基于实际页面检查联系方式、目标岗位和证件照是否处于同一视觉区域。",
       "fixture": "photo",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none"
@@ -3063,10 +3063,10 @@
       "scenario_type": "complex_operation",
       "prompt": "先查看 PDF 页面，再判断教育经历的学校、专业和日期是否出现错位。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none"
@@ -3076,10 +3076,10 @@
       "scenario_type": "complex_operation",
       "prompt": "请观察渲染结果，确认项目技术栈与项目名称是否挤在同一行。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none",
@@ -3090,10 +3090,10 @@
       "scenario_type": "complex_operation",
       "prompt": "根据真实页面判断最后一页的空白是否影响阅读，并说明依据。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none"
@@ -3103,10 +3103,10 @@
       "scenario_type": "complex_operation",
       "prompt": "请检查页面中英文混排的对齐情况，以及工作经历标题是否和第一条职责分离。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none"
@@ -3116,10 +3116,10 @@
       "scenario_type": "complex_operation",
       "prompt": "观察当前快照，告诉我模块标题层级和正文间距是否一致。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none"
@@ -3130,8 +3130,8 @@
       "prompt": "我准备调整项目职责、技能顺序和模块间距，请先给出执行顺序，不要生成候选。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "none",
@@ -3143,8 +3143,8 @@
       "prompt": "排版契约里是否支持只给某一个模块设置独立行距？请解释规则，暂不修改。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "none"
@@ -3154,10 +3154,10 @@
       "scenario_type": "complex_operation",
       "prompt": "把专业技能调整为 Python、FastAPI、PostgreSQL、Redis 的顺序，并删除 Git。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -3178,10 +3178,10 @@
       "scenario_type": "complex_operation",
       "prompt": "本科专业改为软件工程，GPA 改为 3.8/4.0，教育经历补充保持不变。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -3202,10 +3202,10 @@
       "scenario_type": "complex_operation",
       "prompt": "新增自定义栏目‘开源实践’，栏目内容填写‘维护权限校验示例项目’，不要动现有项目经历。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -3221,7 +3221,7 @@
       ],
       "accepted_outcomes": [
         {
-          "tools": ["request_resume_edit"],
+          "tools": ["resume_edit"],
           "expected_operations": [
             {
               "op": "append",
@@ -3234,7 +3234,7 @@
           ]
         },
         {
-          "tools": ["request_resume_edit"],
+          "tools": ["resume_edit"],
           "expected_operations": [
             {
               "op": "append",
@@ -3255,10 +3255,10 @@
       "scenario_type": "complex_operation",
       "prompt": "在主要荣誉末尾增加‘2024 年工程实践奖’，并在证书列表中增加‘数据库开发认证’。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -3279,10 +3279,10 @@
       "scenario_type": "complex_operation",
       "prompt": "将自我评价替换为‘重视可维护性，习惯通过测试和复盘推动问题闭环’，同时把自我评价改为段落形式。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -3303,10 +3303,10 @@
       "scenario_type": "multi_turn_summary",
       "prompt": "把项目职责第一条替换为‘设计文档级权限校验与审计接口’，并删除原来的第二条职责。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -3342,10 +3342,10 @@
       "scenario_type": "multi_turn_summary",
       "prompt": "将工作经历的时间改为 2023.08—2024.01，并把工作类型显示为正职。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -3364,7 +3364,7 @@
       ],
       "accepted_outcomes": [
         {
-          "tools": ["request_resume_edit"],
+          "tools": ["resume_edit"],
           "expected_operations": [
             {
               "op": "set",
@@ -3379,7 +3379,7 @@
           ]
         },
         {
-          "tools": ["request_resume_edit"],
+          "tools": ["resume_edit"],
           "expected_operations": [
             {
               "op": "set",
@@ -3415,10 +3415,10 @@
       "scenario_type": "multi_turn_summary",
       "prompt": "将项目经历移到教育经历之后、荣誉之前，并保持所有模块内容不变。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -3459,10 +3459,10 @@
       "scenario_type": "multi_turn_summary",
       "prompt": "把自我评价改为‘能够围绕接口性能和数据一致性持续复盘’，不要改动工作和项目经历。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -3492,10 +3492,10 @@
       "scenario_type": "mixed_request",
       "prompt": "先说明工作职责为什么缺少结果，再把第二条改成‘整理接口文档，并协助定位慢查询问题’。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -3513,8 +3513,8 @@
       "prompt": "Redis 对这个岗位有帮助吗？如果有，请把它补到云笺协作平台的技术栈里，并说明补充依据。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification"
@@ -3524,10 +3524,10 @@
       "scenario_type": "mixed_request",
       "prompt": "先指出第一条项目职责哪里不够清楚，然后把它改为‘设计文档级权限校验与审计接口’。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -3543,10 +3543,10 @@
       "scenario_type": "mixed_request",
       "prompt": "教育经历怎样写会更紧凑？请回答后把本科专业改为软件工程。",
       "required_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "optional_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [],
       "expected_operations": [
@@ -3563,10 +3563,10 @@
       "scenario_type": "mixed_request",
       "prompt": "你认为目前的专业技能是否适合这个岗位，并简要说明理由。然后将专业技能列表改为 Python、FastAPI、PostgreSQL、Redis。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -3587,10 +3587,10 @@
       "scenario_type": "mixed_request",
       "prompt": "请解释新增栏目应该放在哪里，然后新增‘开源实践’栏目，内容写‘维护权限校验示例项目’。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -3611,10 +3611,10 @@
       "scenario_type": "mixed_request",
       "prompt": "请先查看 PDF，再告诉我项目职责是否被拆到两页；只回答页面情况，不要改内容。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none",
@@ -3626,10 +3626,10 @@
       "prompt": "我想知道联系方式和证件照是否协调，请查看真实页面后回答，不要调整排版。",
       "fixture": "photo",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none"
@@ -3639,10 +3639,10 @@
       "scenario_type": "mixed_request",
       "prompt": "请判断最后一页留白是否过多，并说明你是从哪些视觉证据得出结论的。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none"
@@ -3652,10 +3652,10 @@
       "scenario_type": "mixed_request",
       "prompt": "先观察页面，再回答教育经历的学校、专业和日期是否对齐。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none"
@@ -3665,10 +3665,10 @@
       "scenario_type": "mixed_request",
       "prompt": "请看一下模块标题和正文间距是否均衡，并告诉我具体是哪一页更明显。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none"
@@ -3678,10 +3678,10 @@
       "scenario_type": "mixed_request",
       "prompt": "页面中的中英文混排是否造成错位？请基于 PDF 回答，不要修改任何文本。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none"
@@ -3692,8 +3692,8 @@
       "prompt": "请分析项目职责和 JD 的匹配度，本轮只给建议，不要生成候选修改。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "none"
@@ -3704,8 +3704,8 @@
       "prompt": "我想了解怎样补充量化结果，请列出需要我确认的事实，不要替我写入简历。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "none"
@@ -3716,8 +3716,8 @@
       "prompt": "给出工作经历和项目经历的调整建议，先讨论方案，稍后我再决定是否修改。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "none"
@@ -3728,8 +3728,8 @@
       "prompt": "请说明确认候选修改的步骤，我只想了解流程，不要替我确认。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "none"
@@ -3739,10 +3739,10 @@
       "scenario_type": "multi_turn_summary",
       "prompt": "先说说自我评价为什么显得空泛，再把它改为‘能够围绕接口性能和数据一致性持续复盘’。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -3772,10 +3772,10 @@
       "scenario_type": "multi_turn_summary",
       "prompt": "请解释标准密度和紧凑密度的区别，然后把整份简历切换为标准密度。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -3805,10 +3805,10 @@
       "scenario_type": "mixed_request",
       "prompt": "确认前为什么不能直接写入正式简历？回答后把邮箱更新为 zhiyao.song@example.test。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -3824,10 +3824,10 @@
       "scenario_type": "mixed_request",
       "prompt": "请判断当前模块间距是否偏大，并把全局模块间距调整为 0.6。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "optional_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [],
       "expected_operations": [
@@ -3845,8 +3845,8 @@
       "prompt": "把云笺协作平台写得更好一点。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification",
@@ -3858,8 +3858,8 @@
       "prompt": "把工作经历优化一下。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification"
@@ -3870,8 +3870,8 @@
       "prompt": "把第二条移到合适的位置。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification"
@@ -3882,8 +3882,8 @@
       "prompt": "再补充一些数据。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification"
@@ -3894,8 +3894,8 @@
       "prompt": "学校和专业都调整一下。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification"
@@ -3906,8 +3906,8 @@
       "prompt": "删除不重要的内容。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification"
@@ -3918,8 +3918,8 @@
       "prompt": "把这段压缩短一点。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification"
@@ -3930,8 +3930,8 @@
       "prompt": "把项目职责改成更容易通过筛选的版本。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification"
@@ -3942,8 +3942,8 @@
       "prompt": "按岗位要求补充技能。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification"
@@ -3954,8 +3954,8 @@
       "prompt": "将简历间距调得美观一些。",
       "expected_tools": [],
       "optional_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "forbidden_tools": [],
       "expected_operations": [],
@@ -3966,15 +3966,15 @@
           "answer_expectation": "required"
         },
         {
-          "tools": ["render_resume_pdf_images"],
+          "tools": ["resume_snapshot"],
           "answer_expectation": "required"
         },
         {
-          "tools": ["request_resume_edit"],
+          "tools": ["resume_edit"],
           "answer_expectation": "empty"
         },
         {
-          "tools": ["render_resume_pdf_images", "request_resume_edit"],
+          "tools": ["resume_snapshot", "resume_edit"],
           "answer_expectation": "empty"
         }
       ],
@@ -3986,8 +3986,8 @@
       "prompt": "把标题改一下。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification"
@@ -3998,8 +3998,8 @@
       "prompt": "把教育背景整理得更合理。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification"
@@ -4010,8 +4010,8 @@
       "prompt": "把项目时间修正一下。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification"
@@ -4022,8 +4022,8 @@
       "prompt": "加上我会的工具。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification"
@@ -4034,8 +4034,8 @@
       "prompt": "把荣誉按重要性排一下。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification"
@@ -4045,10 +4045,10 @@
       "scenario_type": "ambiguous_request",
       "prompt": "让页面更舒服一些。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "optional_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification",
@@ -4060,8 +4060,8 @@
       "prompt": "我想把项目和工作都动一动。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification"
@@ -4072,8 +4072,8 @@
       "prompt": "之前那条建议照做。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification"
@@ -4084,8 +4084,8 @@
       "prompt": "把这一版做成投递版。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification"
@@ -4096,8 +4096,8 @@
       "prompt": "能不能把技能写得更有说服力？",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification"
@@ -4108,8 +4108,8 @@
       "prompt": "先指出问题，合适的话帮我改。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification"
@@ -4120,8 +4120,8 @@
       "prompt": "教育经历怎么处理比较好？",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "required"
@@ -4132,8 +4132,8 @@
       "prompt": "职位和公司哪个更应该突出？",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification"
@@ -4144,8 +4144,8 @@
       "prompt": "把它移到前面。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification"
@@ -4156,8 +4156,8 @@
       "prompt": "先把所有不准确的地方改掉。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification"
@@ -4167,10 +4167,10 @@
       "scenario_type": "multi_turn_summary",
       "prompt": "把工作经历第二条职责改为‘整理接口文档，并协助定位慢查询问题’，保留第一条不变。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -4201,10 +4201,10 @@
       "scenario_type": "multi_turn_summary",
       "prompt": "确认，按这两项执行，并简要说明新目标岗位与当前项目经历的匹配点。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -4235,10 +4235,10 @@
       "scenario_type": "multi_turn_summary",
       "prompt": "把项目职责第二条移到第一条，第一条顺延。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -4271,10 +4271,10 @@
       "scenario_type": "multi_turn_summary",
       "prompt": "在云笺协作平台技术栈末尾补充 Redis。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -4304,10 +4304,10 @@
       "scenario_type": "multi_turn_summary",
       "prompt": "把项目经历排到工作经历前面，其他模块顺序不变。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -4348,10 +4348,10 @@
       "scenario_type": "multi_turn_summary",
       "prompt": "将自我评价改为‘能够围绕接口性能和数据一致性持续复盘’。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -4381,10 +4381,10 @@
       "scenario_type": "multi_turn_summary",
       "prompt": "在主要荣誉末尾新增‘2024 年工程实践奖’。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -4414,10 +4414,10 @@
       "scenario_type": "multi_turn_summary",
       "prompt": "把教育经历中的学校改为云川大学，其他教育字段不动。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -4447,10 +4447,10 @@
       "scenario_type": "multi_turn_summary",
       "prompt": "请查看当前 PDF，确认项目经历是否跨页以及第二页是否只剩少量内容。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none",
@@ -4475,10 +4475,10 @@
       "scenario_type": "multi_turn_summary",
       "prompt": "请基于 PDF 判断整体内容密度是否均衡，重点看最后一页。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none",
@@ -4502,10 +4502,10 @@
       "scenario_type": "multi_turn_summary",
       "prompt": "请查看真实页面，确认学校、专业和日期是否在同一行正确对齐。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none",
@@ -4530,10 +4530,10 @@
       "prompt": "请观察 PDF，判断证件照和姓名区域是否协调。",
       "fixture": "photo",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none",
@@ -4557,10 +4557,10 @@
       "scenario_type": "multi_turn_summary",
       "prompt": "请查看 PDF，判断模块标题的层级是否明显，先不调整标题样式。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none",
@@ -4585,8 +4585,8 @@
       "prompt": "按刚才那段内容改一下。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification",
@@ -4612,8 +4612,8 @@
       "prompt": "那就按你说的处理吧。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification",
@@ -4638,8 +4638,8 @@
       "prompt": "那先写进去吧。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification",
@@ -4663,10 +4663,10 @@
       "scenario_type": "complex_operation",
       "prompt": "把工作经历第一条职责改写成“负责订单查询接口开发并补充单元测试”，其他职责保留。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -4682,10 +4682,10 @@
       "scenario_type": "complex_operation",
       "prompt": "将项目职责中第二条移到第一条，项目其余内容不要动。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -4703,10 +4703,10 @@
       "scenario_type": "complex_operation",
       "prompt": "删掉工作经历里关于慢查询的职责，再在职责末尾补充“根据监控指标定位接口瓶颈”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -4728,10 +4728,10 @@
       "scenario_type": "complex_operation",
       "prompt": "把工作经历的职位和日期一起更新为“后端研发实习生”，2023.08—2024.01。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -4755,10 +4755,10 @@
       "scenario_type": "complex_operation",
       "prompt": "将云笺协作平台的角色改成“平台服务端负责人”，并把技术栈补充 Redis。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -4779,10 +4779,10 @@
       "scenario_type": "complex_operation",
       "prompt": "把项目名称换成“云笺权限协作平台”，时间改为 2023.03 至 2023.08。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -4806,10 +4806,10 @@
       "scenario_type": "complex_operation",
       "prompt": "新增自定义栏目“开源实践”，内容写“维护权限校验示例项目”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -4830,10 +4830,10 @@
       "scenario_type": "complex_operation",
       "prompt": "在教育经历补充中增加“参与数据库课程设计”，保留原有内容。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -4849,10 +4849,10 @@
       "scenario_type": "complex_operation",
       "prompt": "将主要荣誉中的现有条目改为“2024 年海岚大学工程实践奖”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -4868,10 +4868,10 @@
       "scenario_type": "complex_operation",
       "prompt": "在主要荣誉末尾添加“2024 年开源实践奖”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -4887,10 +4887,10 @@
       "scenario_type": "complex_operation",
       "prompt": "从专业技能中移除 Git，其他技能保持原样。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -4907,10 +4907,10 @@
       "scenario_type": "complex_operation",
       "prompt": "在专业技能末尾增加 Redis，不要改动已有技能。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -4926,10 +4926,10 @@
       "scenario_type": "complex_operation",
       "prompt": "把证书列表中的现有证书改成“数据库系统工程认证”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -4945,10 +4945,10 @@
       "scenario_type": "complex_operation",
       "prompt": "在语言能力列表中加入“日语 N2”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -4964,10 +4964,10 @@
       "scenario_type": "complex_operation",
       "prompt": "将自我评价改为“注重可维护性，持续通过测试推动问题闭环”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -4983,10 +4983,10 @@
       "scenario_type": "complex_operation",
       "prompt": "在论文列表中新增“协作系统权限一致性研究”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -5002,10 +5002,10 @@
       "scenario_type": "complex_operation",
       "prompt": "在研究方向中补充“服务端可靠性与数据一致性”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -5021,10 +5021,10 @@
       "scenario_type": "complex_operation",
       "prompt": "在基本信息附加字段中新增作品集，值为 https://portfolio.example.test/zhou。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -5043,10 +5043,10 @@
       "scenario_type": "complex_operation",
       "prompt": "同时把本科 GPA 改成 3.8、排名改成前 10%，其他教育字段不变。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -5067,10 +5067,10 @@
       "scenario_type": "complex_operation",
       "prompt": "在项目经历的补充说明末尾加入“为权限接口编写边界测试”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -5087,10 +5087,10 @@
       "scenario_type": "complex_operation",
       "prompt": "在工作经历的补充说明中增加“参与接口质量复盘”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -5102,7 +5102,7 @@
       ],
       "accepted_outcomes": [
         {
-          "tools": ["request_resume_edit"],
+          "tools": ["resume_edit"],
           "expected_operations": [
             {
               "op": "append",
@@ -5124,10 +5124,10 @@
       "scenario_type": "complex_operation",
       "prompt": "将项目职责整理成两条：“设计文档级权限校验接口”和“为核心接口补充自动化测试”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -5146,10 +5146,10 @@
       "scenario_type": "complex_operation",
       "prompt": "把工作职责改成两条：“负责订单查询接口开发”和“完成接口文档与慢查询定位”，不要增加其他条目。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -5168,10 +5168,10 @@
       "scenario_type": "complex_operation",
       "prompt": "将项目技术栈内容块的标签从“技术栈”改为“技术选型”，内容不变。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -5187,10 +5187,10 @@
       "scenario_type": "complex_operation",
       "prompt": "给学校标签增加“校级重点专业”，现有学校标签保留。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -5206,10 +5206,10 @@
       "scenario_type": "complex_operation",
       "prompt": "在教育经历的论文/课题列表新增“权限一致性研究”，详情写“分析多端协作场景下的写入校验”。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "forbidden_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "expected_operations": [
         {
@@ -5230,10 +5230,10 @@
       "scenario_type": "ambiguous_request",
       "prompt": "请先查看当前 PDF，确认工作经历是否被分页拆开。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none"
@@ -5243,10 +5243,10 @@
       "scenario_type": "ambiguous_request",
       "prompt": "只看当前页面效果，判断教育信息与模块标题的间距是否一致。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none"
@@ -5256,10 +5256,10 @@
       "scenario_type": "ambiguous_request",
       "prompt": "检查导出的页面，确认项目职责是否出现孤行。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none"
@@ -5269,10 +5269,10 @@
       "scenario_type": "ambiguous_request",
       "prompt": "请查看当前简历图片，告诉我联系方式与姓名的视觉层次。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none"
@@ -5282,10 +5282,10 @@
       "scenario_type": "ambiguous_request",
       "prompt": "先看页面，再判断标题下划线是否清晰。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none"
@@ -5295,10 +5295,10 @@
       "scenario_type": "ambiguous_request",
       "prompt": "帮我检查页面底部是否留有过多空白。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none"
@@ -5308,10 +5308,10 @@
       "scenario_type": "ambiguous_request",
       "prompt": "查看当前排版，判断教育经历的日期是否与右侧对齐。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none"
@@ -5321,10 +5321,10 @@
       "scenario_type": "ambiguous_request",
       "prompt": "请通过当前 PDF 观察项目名称和角色的层次。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none"
@@ -5334,10 +5334,10 @@
       "scenario_type": "ambiguous_request",
       "prompt": "我只想知道页面是否拥挤，请先查看当前预览。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none"
@@ -5347,10 +5347,10 @@
       "scenario_type": "ambiguous_request",
       "prompt": "先检查一页版的视觉效果，再说说哪里需要调整。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none"
@@ -5360,10 +5360,10 @@
       "scenario_type": "ambiguous_request",
       "prompt": "请查看模块隐藏后的页面是否仍然连贯，只做查看。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none"
@@ -5373,10 +5373,10 @@
       "scenario_type": "ambiguous_request",
       "prompt": "看看当前简历的换页位置是否适合阅读。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none"
@@ -5386,10 +5386,10 @@
       "scenario_type": "ambiguous_request",
       "prompt": "我想了解现有排版中的空白区域分布，请先查看页面。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none"
@@ -5399,10 +5399,10 @@
       "scenario_type": "ambiguous_request",
       "prompt": "请对照当前预览判断联系方式是否发生换行。",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none"
@@ -5413,8 +5413,8 @@
       "prompt": "项目职责怎样写才能体现结果？",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "required"
@@ -5425,8 +5425,8 @@
       "prompt": "我想把项目写得更专业一些，但还没想好改哪些内容。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification"
@@ -5437,8 +5437,8 @@
       "prompt": "教育经历需要保留哪些信息？",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "required"
@@ -5449,8 +5449,8 @@
       "prompt": "专业技能和项目技术栈有什么区别？",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "required"
@@ -5461,8 +5461,8 @@
       "prompt": "先告诉我工作经历最常见的问题。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "required"
@@ -5473,8 +5473,8 @@
       "prompt": "你觉得这份简历适合后端岗位吗？",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "required"
@@ -5485,8 +5485,8 @@
       "prompt": "能否说明一页简历应该如何取舍？",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "required"
@@ -5497,8 +5497,8 @@
       "prompt": "我考虑增加 Redis，但不确定是否真实适合这份简历。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification"
@@ -5509,8 +5509,8 @@
       "prompt": "把第二条放到合适的位置。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification"
@@ -5521,8 +5521,8 @@
       "prompt": "帮我处理一下项目经历。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification"
@@ -5533,8 +5533,8 @@
       "prompt": "之前的建议我看到了，先解释一下为什么这样建议。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "required"
@@ -5544,10 +5544,10 @@
       "scenario_type": "ambiguous_request",
       "prompt": "目前联系方式在页面上的视觉效果如何？",
       "expected_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "expected_operations": [],
       "answer_expectation": "none"
@@ -5558,8 +5558,8 @@
       "prompt": "把简历改得更有竞争力。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification"
@@ -5570,8 +5570,8 @@
       "prompt": "这份简历还有哪些地方值得讨论？",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "required"
@@ -5582,8 +5582,8 @@
       "prompt": "我想知道成绩信息放在哪里更合适。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "required"
@@ -5594,8 +5594,8 @@
       "prompt": "请先说明项目职责和技术栈的区别。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "required"
@@ -5606,8 +5606,8 @@
       "prompt": "删掉一些不再需要的经历内容。",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "clarification"
@@ -5618,8 +5618,8 @@
       "prompt": "能否帮我准备一段面试自我介绍？",
       "expected_tools": [],
       "forbidden_tools": [
-        "request_resume_edit",
-        "render_resume_pdf_images"
+        "resume_edit",
+        "resume_snapshot"
       ],
       "expected_operations": [],
       "answer_expectation": "required"
@@ -5629,8 +5629,8 @@
       "scenario_type": "mixed_request",
       "prompt": "先查看当前页面的项目区块，然后把项目角色改为“平台服务端负责人”。",
       "expected_tools": [
-        "render_resume_pdf_images",
-        "request_resume_edit"
+        "resume_snapshot",
+        "resume_edit"
       ],
       "forbidden_tools": [],
       "expected_operations": [
@@ -5647,8 +5647,8 @@
       "scenario_type": "mixed_request",
       "prompt": "请先看 PDF 是否拥挤，再把教育经历的专业改成“软件工程”。",
       "expected_tools": [
-        "render_resume_pdf_images",
-        "request_resume_edit"
+        "resume_snapshot",
+        "resume_edit"
       ],
       "forbidden_tools": [],
       "expected_operations": [
@@ -5665,8 +5665,8 @@
       "scenario_type": "mixed_request",
       "prompt": "先确认工作经历的职责是否换页，再把第二条职责改为“根据监控指标定位接口瓶颈”。",
       "expected_tools": [
-        "render_resume_pdf_images",
-        "request_resume_edit"
+        "resume_snapshot",
+        "resume_edit"
       ],
       "forbidden_tools": [],
       "expected_operations": [
@@ -5683,8 +5683,8 @@
       "scenario_type": "mixed_request",
       "prompt": "查看当前排版后，把全局模块间距调整为 0.7。",
       "expected_tools": [
-        "render_resume_pdf_images",
-        "request_resume_edit"
+        "resume_snapshot",
+        "resume_edit"
       ],
       "forbidden_tools": [],
       "expected_operations": [
@@ -5701,10 +5701,10 @@
       "scenario_type": "mixed_request",
       "prompt": "先看页面中的项目职责顺序，再把第二条移到第一条。",
       "expected_tools": [
-        "request_resume_edit"
+        "resume_edit"
       ],
       "optional_tools": [
-        "render_resume_pdf_images"
+        "resume_snapshot"
       ],
       "forbidden_tools": [],
       "expected_operations": [
@@ -5723,8 +5723,8 @@
       "scenario_type": "mixed_request",
       "prompt": "检查一页版效果，并把自我评价改为“注重可维护性，持续通过测试推动问题闭环”。",
       "expected_tools": [
-        "render_resume_pdf_images",
-        "request_resume_edit"
+        "resume_snapshot",
+        "resume_edit"
       ],
       "forbidden_tools": [],
       "expected_operations": [
@@ -5741,8 +5741,8 @@
       "scenario_type": "mixed_request",
       "prompt": "先查看教育信息在页面中的呈现，再把学校标签增加“校级重点专业”。",
       "expected_tools": [
-        "render_resume_pdf_images",
-        "request_resume_edit"
+        "resume_snapshot",
+        "resume_edit"
       ],
       "forbidden_tools": [],
       "expected_operations": [
@@ -5759,8 +5759,8 @@
       "scenario_type": "mixed_request",
       "prompt": "先观察页面，再把项目技术栈补充 Redis。",
       "expected_tools": [
-        "render_resume_pdf_images",
-        "request_resume_edit"
+        "resume_snapshot",
+        "resume_edit"
       ],
       "forbidden_tools": [],
       "expected_operations": [

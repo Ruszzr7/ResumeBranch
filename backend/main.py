@@ -73,7 +73,7 @@ def _sanitize_user_visible_text(value: object) -> str:
     text_value = localize_user_visible_layout_text(value)
     text_value = re.sub(r"\[CONFIRM_REPLY:[^\]]+\]", "确认操作", text_value)
     text_value = re.sub(
-        r"\b(?:request_resume_edit|render_resume_pdf_images)\b",
+        r"\b(?:activate_agent_skill|resume_edit|resume_snapshot|request_resume_edit|render_resume_pdf_images)\b",
         "系统能力",
         text_value,
     )
@@ -88,6 +88,7 @@ def _sanitize_user_visible_text(value: object) -> str:
 
 _STREAM_INTERNAL_IDENTIFIERS = frozenset({
     *user_visible_layout_internal_identifiers(),
+    "activate_agent_skill", "resume_edit", "resume_snapshot",
     "request_resume_edit", "render_resume_pdf_images",
     "layout_config", "resume_data", "jd_data", "session_id", "confirm_id", "request_id",
 })

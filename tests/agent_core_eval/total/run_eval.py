@@ -34,13 +34,17 @@ from backend.resume_agent import (
     entry_router,
     graph,
     make_pending_confirmation,
-    render_resume_pdf_images_tool,
-    request_resume_edit,
+    resume_snapshot_tool,
+    resume_edit_tool,
     tool_node,
 )
 from backend.resume_changes import resume_digest
 from backend.resume_data import normalize_resume_data
-from backend.skills.resume_edit import ResumeEditRequest, run_resume_edit
+from backend.skill_runtime import skill_runtime
+
+_resume_edit_module = skill_runtime.get("resume-edit").module
+ResumeEditRequest = _resume_edit_module.ResumeEditRequest
+run_resume_edit = _resume_edit_module.run_resume_edit
 from tests.agent_core_eval.total.metrics import (
     operation_domain,
     routing_metrics,
@@ -55,8 +59,8 @@ CASES_PATH = HERE / "cases.json"
 EXPECTED_COUNTS = {"routing": 200, "skill": 300, "safety": 100}
 FORBIDDEN_CASE_MARKERS = ("虚构", "虚假", "伪造", "捏造", "测试信息")
 TOOLS = {
-    request_resume_edit.name: request_resume_edit,
-    render_resume_pdf_images_tool.name: render_resume_pdf_images_tool,
+    resume_edit_tool.name: resume_edit_tool,
+    resume_snapshot_tool.name: resume_snapshot_tool,
 }
 
 
@@ -449,7 +453,7 @@ async def _validate_call(name: str, args: Any) -> tuple[bool, bool | None, str]:
         tool.args_schema.model_validate(args)
     except Exception as exc:
         return False, None, f"Schema: {type(exc).__name__}"
-    if name != "request_resume_edit":
+    if name != "resume_edit":
         return True, None, ""
     try:
         await run_resume_edit(ResumeEditRequest(
@@ -543,7 +547,7 @@ async def _reconstructed_operation_changes(
     last_successful: dict[str, Any] | None = None
     error = ""
     for call in predicted_calls:
-        if call.get("name") != "request_resume_edit" or call.get("executable") is not True:
+        if call.get("name") != "resume_edit" or call.get("executable") is not True:
             continue
         args = call.get("args")
         if not isinstance(args, dict):
@@ -647,6 +651,8 @@ async def run_skill(cases: list[dict[str, Any]], *, mode: str) -> tuple[list[dic
                 invalid_calls = list(getattr(response, "invalid_tool_calls", None) or [])
                 for call in calls + invalid_calls:
                     name = str(_tool_call_value(call, "name", "") or "")
+                    if name == "activate_agent_skill":
+                        continue
                     args = _tool_call_value(call, "args", {})
                     schema_valid, executable, validation_error = await _validate_call(name, args)
                     predicted_calls.append({
@@ -845,7 +851,7 @@ def _report(
         invalid_edits = []
         for case in online.get("cases", []):
             for call in case.get("predicted_calls", []):
-                if call.get("name") == "request_resume_edit" and call.get("executable") is False:
+                if call.get("name") == "resume_edit" and call.get("executable") is False:
                     invalid_edits.append({
                         "id": case.get("id"),
                         "validation_error": call.get("validation_error", ""),

@@ -46,7 +46,8 @@ frontend/coverage/
 *.swo
 
 # Local AI/editor assistant metadata
-.agents/
+.agents/*
+!.agents/skills/
 .claude/
 .kilocode/
 .trae/

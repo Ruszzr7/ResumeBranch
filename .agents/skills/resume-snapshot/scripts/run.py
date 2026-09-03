@@ -19,12 +19,55 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict, Field
+
 
 DEFAULT_MAX_PAGES = 2
 DEFAULT_DPI = 96
 DEFAULT_MAX_LONG_EDGE = 1400
 DEFAULT_MAX_TOTAL_BYTES = 800 * 1024
 MIN_SCALE = 84 / DEFAULT_DPI
+
+
+class ResumeSnapshotToolInput(BaseModel):
+    """Arguments the model is allowed to supply to the Skill."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(
+        default="",
+        description="需要读取当前简历 PDF 页面快照的视觉判断原因。",
+    )
+
+
+class ResumeSnapshotRuntimeContext(BaseModel):
+    """Trusted rendering inputs injected by the graph."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    resume_data: dict = Field(default_factory=dict)
+    layout_config: dict = Field(default_factory=dict)
+    photo: str | None = None
+    render_style: dict | None = None
+    max_pages: int = DEFAULT_MAX_PAGES
+    dpi: int = DEFAULT_DPI
+    max_long_edge: int = DEFAULT_MAX_LONG_EDGE
+    max_total_bytes: int = DEFAULT_MAX_TOTAL_BYTES
+
+
+class ResumeSnapshotOutput(BaseModel):
+    """Ephemeral image parts and non-sensitive snapshot diagnostics."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    parts: list[dict[str, Any]]
+    revision: str
+    page_sizes: tuple[tuple[int, int], ...]
+    page_bytes: tuple[int, ...]
+
+    @property
+    def total_bytes(self) -> int:
+        return sum(self.page_bytes)
 
 
 @dataclass(frozen=True)
@@ -215,7 +258,7 @@ def render_resume_pdf_snapshot(
     max_total_bytes: int = DEFAULT_MAX_TOTAL_BYTES,
 ) -> ResumeVisualSnapshot:
     """Render the canonical PDF into a bounded, color PNG snapshot."""
-    from ..pdf_generator import generate_pdf
+    from backend.pdf_generator import generate_pdf
 
     page_limit = max(1, min(int(max_pages or DEFAULT_MAX_PAGES), DEFAULT_MAX_PAGES))
     revision = _snapshot_revision(resume_data, layout_config, photo, render_style)
@@ -259,6 +302,43 @@ def render_resume_pdf_images(
         max_pages=max_pages,
         dpi=dpi,
     ).parts
+
+
+def run(
+    arguments: ResumeSnapshotToolInput,
+    context: ResumeSnapshotRuntimeContext,
+) -> ResumeSnapshotOutput:
+    """Agent Skill entrypoint for the existing bounded, read-only renderer."""
+    del arguments
+    snapshot = render_resume_pdf_snapshot(
+        context.resume_data,
+        context.layout_config,
+        photo=context.photo,
+        render_style=context.render_style,
+        max_pages=context.max_pages,
+        dpi=context.dpi,
+        max_long_edge=context.max_long_edge,
+        max_total_bytes=context.max_total_bytes,
+    )
+    return ResumeSnapshotOutput(
+        parts=snapshot.parts,
+        revision=snapshot.revision,
+        page_sizes=snapshot.page_sizes,
+        page_bytes=snapshot.page_bytes,
+    )
+
+
+TOOL_INPUT_MODEL = ResumeSnapshotToolInput
+RUNTIME_CONTEXT_MODEL = ResumeSnapshotRuntimeContext
+OUTPUT_MODEL = ResumeSnapshotOutput
+
+
+def export_schemas() -> dict[str, dict]:
+    return {
+        "tool-input.schema.json": TOOL_INPUT_MODEL.model_json_schema(),
+        "runtime-context.schema.json": RUNTIME_CONTEXT_MODEL.model_json_schema(),
+        "output.schema.json": OUTPUT_MODEL.model_json_schema(),
+    }
 
 
 __all__ = [
