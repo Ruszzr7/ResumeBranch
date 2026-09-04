@@ -148,7 +148,6 @@ class RuntimeProfileTests(unittest.TestCase):
                 JWT_SECRET_KEY="",
                 DATABASE_URL=f"sqlite:///{(root / 'local.db').as_posix()}",
                 LOCAL_EXPORT_DIR=str(root / "exports"),
-                AGENT_CHECKPOINTER_ENABLED="false",
                 LLM_API_KEY="",
                 LLM_PROFILE_PATH=str(root / "llm_profiles.json"),
             )
@@ -285,7 +284,6 @@ class RuntimeProfileTests(unittest.TestCase):
                 HOST="0.0.0.0",
                 JWT_SECRET_KEY="test-secret-that-is-longer-than-thirty-two-characters",
                 DATABASE_URL=f"sqlite:///{(root / 'multi.db').as_posix()}",
-                AGENT_CHECKPOINTER_ENABLED="false",
                 LLM_API_KEY="",
                 LLM_PROFILE_PATH=str(root / "llm_profiles.json"),
             )
@@ -333,7 +331,7 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertIn("docker compose", workflow)
         self.assertIn("/auth/login", workflow)
         self.assertIn("/auth/register", workflow)
-        self.assertIn("render_resume_pdf_snapshot", workflow)
+        self.assertIn('skill_runtime.invoke("resume-snapshot"', workflow)
         self.assertIn("pdftoppm -v", workflow)
         self.assertIn("location ^~ /tasks/", nginx)
         self.assertIn("settings/llm(?:/.*)?", nginx)

@@ -66,12 +66,6 @@ jobs:
           BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
           LLM_MODEL=gemini-3.6-flash
           SOURCE_DOCUMENT_DIR=/app/data/source_documents
-          AGENT_CHECKPOINTER_ENABLED=true
-          AGENT_CHECKPOINT_DB_PATH=/app/data/langgraph_checkpoints.sqlite
-          AGENT_CHECKPOINT_RETENTION_DAYS=30
-          INTERVIEW_HARNESS_ENABLED=true
-          INTERVIEW_HARNESS_ROLLOUT_PERCENT=100
-          INTERVIEW_HARNESS_SHADOW=false
           EOF
 
       - name: Validate Compose configuration
@@ -168,10 +162,6 @@ jobs:
             -H "Authorization: Bearer $user_token" \
             "$base_url/tasks/$user_task_id/layout" \
             | jq -e 'type == "object"' >/dev/null
-          curl --silent --fail \
-            -H "Authorization: Bearer $user_token" \
-            "$base_url/tasks/$user_task_id/workflow" \
-            | jq -e '.state | type == "object"' >/dev/null
           curl --silent --fail -X POST \
             -H "Authorization: Bearer $user_token" \
             -H "X-Task-ID: $user_task_id" \
@@ -179,7 +169,7 @@ jobs:
             -d '{}' "$base_url/export_pdf" > /tmp/resume.pdf
           test "$(head -c 4 /tmp/resume.pdf)" = '%PDF'
           "${compose[@]}" exec -T backend python -c \
-            'from backend.skills.render_resume_pdf_images import render_resume_pdf_snapshot; s=render_resume_pdf_snapshot({"basics":{"name":"容器快照"}}); assert s.parts and s.page_sizes'
+            'import asyncio; from backend.skill_runtime import skill_runtime; s=asyncio.run(skill_runtime.invoke("resume-snapshot", {"reason":"CI smoke test"}, {"resume_data":{"basics":{"name":"容器快照"}},"layout_config":{}})); assert s.parts and s.page_sizes'
 
           curl --silent --fail "$base_url/projects/$user_project_id/tasks/$user_task_id" \
             | grep -Eqi '<!doctype html|<html'

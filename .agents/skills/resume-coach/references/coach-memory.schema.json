@@ -1,0 +1,190 @@
+{
+  "$defs": {
+    "CoachIssue": {
+      "additionalProperties": false,
+      "properties": {
+        "problem": {
+          "default": "",
+          "title": "Problem",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/EvidenceRecord"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "conclusions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Conclusions",
+          "type": "array"
+        },
+        "open_questions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Open Questions",
+          "type": "array"
+        },
+        "pending_preview_offer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PreviewOffer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "result": {
+          "default": "",
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "title": "CoachIssue",
+      "type": "object"
+    },
+    "EvidenceRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "claim": {
+          "title": "Claim",
+          "type": "string"
+        },
+        "source_quote": {
+          "title": "Source Quote",
+          "type": "string"
+        },
+        "section": {
+          "default": "",
+          "title": "Section",
+          "type": "string"
+        },
+        "dimension": {
+          "default": "",
+          "title": "Dimension",
+          "type": "string"
+        },
+        "source_request_id": {
+          "title": "Source Request Id",
+          "type": "string"
+        },
+        "verified_at": {
+          "title": "Verified At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "claim",
+        "source_quote",
+        "source_request_id",
+        "verified_at"
+      ],
+      "title": "EvidenceRecord",
+      "type": "object"
+    },
+    "PreviewOffer": {
+      "additionalProperties": false,
+      "properties": {
+        "offer_id": {
+          "title": "Offer Id",
+          "type": "string"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        },
+        "resume_operations": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Resume Operations",
+          "type": "array"
+        },
+        "base_revision": {
+          "title": "Base Revision",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "offered",
+            "authorized"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "offer_id",
+        "summary",
+        "resume_operations",
+        "base_revision",
+        "status"
+      ],
+      "title": "PreviewOffer",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "active": {
+      "default": false,
+      "title": "Active",
+      "type": "boolean"
+    },
+    "entry": {
+      "default": "",
+      "enum": [
+        "",
+        "explicit_command",
+        "explicit_request",
+        "accepted_offer"
+      ],
+      "title": "Entry",
+      "type": "string"
+    },
+    "agenda": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Agenda",
+      "type": "array"
+    },
+    "current_issue_id": {
+      "default": "",
+      "title": "Current Issue Id",
+      "type": "string"
+    },
+    "issues": {
+      "additionalProperties": {
+        "$ref": "#/$defs/CoachIssue"
+      },
+      "title": "Issues",
+      "type": "object"
+    },
+    "updated_at": {
+      "default": "",
+      "title": "Updated At",
+      "type": "string"
+    }
+  },
+  "title": "CoachState",
+  "type": "object"
+}

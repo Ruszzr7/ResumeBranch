@@ -58,20 +58,18 @@ const assistantActions = [
   {
     label: '排版建议',
     contextType: 'layout',
+    command: 'layout',
     prompt: '根据当前简历数据与快照，检查当前简历存在的排版问题，按对简历影响程度从高到低编号列出可执行建议。每条自然说明问题、原因或证据、建议方向。如果没有需要处理的问题，直接说明没有可执行的排版问题。本轮只分析，不修改简历。'
   },
   {
     label: '深度打磨',
     contextType: 'coaching',
-    mode: 'coaching',
-    action: 'start',
+    command: 'coaching',
     prompt: '请以严格面试官视角深度打磨我的简历：从最薄弱、最影响求职结果的一项经历开始，每次只问一个问题，持续追问到能形成真实、具体、可量化的简历表述；先不要修改简历。'
   },
   {
     label: '对照 JD',
     contextType: 'jd_review',
-    mode: 'jd_review',
-    action: 'start',
     prompt: '请结合当前目标岗位 JD 分析简历匹配度：区分已经证明的匹配项、简历尚未证明的能力和确实缺失的条件，按优先级给建议；先不要修改简历，最后只问我一个最关键的问题。'
   }
 ]
@@ -361,10 +359,7 @@ function createContextUiState() {
     processingRequestId: '',
     processingPhase: '',
     processingText: '',
-    workflowState: null,
-    workflowCompletedVisible: false,
-    workflowCompletedTimer: null,
-    pendingAssistantAction: null,
+    pendingAssistantCommand: null,
     loaded: false
   }
 }
@@ -380,84 +375,7 @@ const contextField = key => computed({
   get: () => activeContextUiState.value[key],
   set: value => { activeContextUiState.value[key] = value }
 })
-const workflowState = contextField('workflowState')
-const workflowCompletedVisible = contextField('workflowCompletedVisible')
-const pendingAssistantAction = contextField('pendingAssistantAction')
-const WORKFLOW_FOCUS_LABELS = Object.freeze({
-  basics: '基本信息',
-  'basics.name': '姓名',
-  'basics.gender': '性别',
-  'basics.birth_date': '出生年月',
-  'basics.phone': '联系电话',
-  'basics.email': '邮箱',
-  'basics.target_position': '目标岗位',
-  education: '教育经历',
-  research_interests: '研究方向',
-  honors: '主要荣誉',
-  work_experience: '工作经历',
-  project_experience: '项目经历',
-  custom_sections: '自定义模块',
-  others: '专业技能',
-  'others.skills': '专业技能',
-  'others.certificates': '证书与语言',
-  'others.languages': '证书与语言',
-  self_evaluation: '自我评价'
-})
-
-function formatWorkflowFocus(value) {
-  const focus = String(value || '').trim()
-  if (!focus) return ''
-  const normalized = focus.replace(/\[(\d+)\]/g, '.$1')
-  if (WORKFLOW_FOCUS_LABELS[normalized]) return WORKFLOW_FOCUS_LABELS[normalized]
-
-  const parts = normalized.split('.').filter(part => part && !/^\d+$/.test(part))
-  for (let length = parts.length; length > 0; length -= 1) {
-    const candidate = parts.slice(0, length).join('.')
-    if (WORKFLOW_FOCUS_LABELS[candidate]) return WORKFLOW_FOCUS_LABELS[candidate]
-  }
-
-  return /^[A-Za-z_][A-Za-z0-9_.]*$/.test(normalized) ? '简历内容' : focus
-}
-
-function updateWorkflowState(nextState, { showCompletedBriefly = false } = {}, targetState = activeContextUiState.value) {
-  if (targetState.workflowCompletedTimer) {
-    clearTimeout(targetState.workflowCompletedTimer)
-    targetState.workflowCompletedTimer = null
-  }
-  targetState.workflowState = nextState || null
-  const completed = targetState.workflowState?.phase === 'completed'
-    || targetState.workflowState?.status === 'completed'
-  targetState.workflowCompletedVisible = Boolean(completed && showCompletedBriefly)
-  if (targetState.workflowCompletedVisible) {
-    targetState.workflowCompletedTimer = setTimeout(() => {
-      targetState.workflowCompletedVisible = false
-      targetState.workflowCompletedTimer = null
-    }, 2000)
-  }
-}
-
-const workflowVisible = computed(() => (
-  workflowState.value
-  && ['diagnosis', 'coaching', 'jd_review'].includes(workflowState.value.interaction_mode)
-  && workflowState.value.phase !== 'idle'
-  && (
-    (workflowState.value.phase !== 'completed' && workflowState.value.status !== 'completed')
-    || workflowCompletedVisible.value
-  )
-))
-const workflowFocusLabel = computed(() => formatWorkflowFocus(workflowState.value?.focus_section))
-const workflowModeLabel = computed(() => ({
-  diagnosis: '全面诊断',
-  coaching: '深度打磨',
-  jd_review: 'JD 对照'
-}[workflowState.value?.interaction_mode] || '简历分析'))
-const workflowStatusLabel = computed(() => ({
-  active: '进行中',
-  paused: '已暂停',
-  awaiting_confirmation: '待确认',
-  completed: '已结束',
-  error: '需重试'
-}[workflowState.value?.status] || '就绪'))
+const pendingAssistantCommand = contextField('pendingAssistantCommand')
 const previewLayoutConfig = contextField('previewLayoutConfig')
 // Ephemeral browser-rendered pagination/style shared with visual analysis.
 // It is request-scoped and never persisted as resume data.
@@ -988,7 +906,6 @@ onUnmounted(() => {
   stopParsingStatusPoll()
   if (uiNoticeTimer) clearTimeout(uiNoticeTimer)
   Object.values(contextUiStates).forEach(state => {
-    if (state.workflowCompletedTimer) clearTimeout(state.workflowCompletedTimer)
     if (state.loadingTimer) clearTimeout(state.loadingTimer)
   })
   if (resizeObserver) {
@@ -1093,7 +1010,6 @@ async function selectConversationContext(context) {
     if (!targetState.loaded) {
       await loadContextConversation(context, { welcome: context.context_type !== 'main' })
     }
-    await loadWorkflowState(context.context_type === 'main' ? '' : context.session_id)
   } catch (error) {
     showNotice(error.message || '切换任务会话失败，请重试')
   } finally {
@@ -1122,7 +1038,6 @@ async function startMissionContext(contextType, title = '') {
     sessionId.value = context.session_id
     const targetState = ensureContextUiState(context.session_id)
     if (!targetState.loaded) await loadContextConversation(context, { welcome: true })
-    await loadWorkflowState(context.session_id)
     if (!resumed) invalidateMainConversation()
     return { context, resumed }
   } catch (error) {
@@ -1179,7 +1094,6 @@ async function loadWorkspace() {
   conversationContexts.value = []
   activeContextId.value = ''
   Object.values(contextUiStates).forEach(state => {
-    if (state.workflowCompletedTimer) clearTimeout(state.workflowCompletedTimer)
     if (state.loadingTimer) clearTimeout(state.loadingTimer)
   })
   Object.keys(contextUiStates).forEach(key => delete contextUiStates[key])
@@ -1205,7 +1119,6 @@ async function loadWorkspace() {
   activeContextId.value = task.session_id
   await loadTaskContexts({ preserveActive: false })
   await loadInitialData()
-  await loadWorkflowState()
   restoreTranslationSession()
 }
 
@@ -1491,7 +1404,7 @@ async function runAssistantAction(action) {
     if (!mission) return
     if (mission.resumed) return
   }
-  pendingAssistantAction.value = action.mode ? { mode: action.mode, action: action.action } : null
+  pendingAssistantCommand.value = action.command || null
   userInput.value = action.prompt
   if (action.prefillOnly) {
     showNotice('修改需求模板已填入输入框，请补充具体内容后发送', 'success')
@@ -1499,43 +1412,6 @@ async function runAssistantAction(action) {
     return
   }
   nextTick(() => sendMessage())
-}
-
-function runWorkflowAction(action) {
-  if (isLoading.value || isResponding.value || !workflowState.value) return
-  const prompts = {
-    pause: '暂停本轮打磨',
-    resume: '继续本轮打磨',
-    end: '结束本轮打磨',
-    apply: '应用当前改写建议'
-  }
-  pendingAssistantAction.value = {
-    mode: workflowState.value.interaction_mode,
-    action
-  }
-  userInput.value = prompts[action]
-  nextTick(() => sendMessage())
-}
-
-async function loadWorkflowState(contextSessionId = '') {
-  const targetSessionId = contextSessionId || sessionId.value
-  const targetState = ensureContextUiState(targetSessionId)
-  if (!currentTaskId.value) {
-    updateWorkflowState(null, {}, targetState)
-    return
-  }
-  try {
-    const query = contextSessionId ? `?context_id=${encodeURIComponent(contextSessionId)}` : ''
-    const response = await fetch(`/tasks/${currentTaskId.value}/workflow${query}`, {
-      headers: getAuthorizationHeaders()
-    })
-    if (!response.ok) return
-    const data = await response.json()
-    // 已结束的历史工作流不在刷新后重新闪现；仅实时结束动作短暂展示。
-    updateWorkflowState(data.state || null, {}, targetState)
-  } catch (error) {
-    console.warn('恢复深度打磨状态失败:', error)
-  }
 }
 
 function handleLayoutUpdated(layoutConfig) {
@@ -1789,7 +1665,7 @@ async function sendMessage() {
   const isResponding = stateRef('isResponding')
   const hasConfirmArea = stateRef('hasConfirmArea')
   const loadingText = stateRef('loadingText')
-  const pendingAssistantAction = stateRef('pendingAssistantAction')
+  const pendingAssistantCommand = stateRef('pendingAssistantCommand')
   let loadingTextInterval = requestState.loadingTimer
   // 检查登录状态
   if (!isLoggedIn.value) {
@@ -1812,8 +1688,8 @@ async function sendMessage() {
   }
 
   const input = userInput.value.trim()
-  const structuredAction = pendingAssistantAction.value
-  pendingAssistantAction.value = null
+  const assistantCommand = pendingAssistantCommand.value
+  pendingAssistantCommand.value = null
   userInput.value = ''
 
   // 先保存附件
@@ -1875,8 +1751,7 @@ async function sendMessage() {
     formData.append('message', input)
     formData.append('session_id', requestSessionId)
     formData.append('request_id', requestId)
-    if (structuredAction?.mode) formData.append('interaction_mode', structuredAction.mode)
-    if (structuredAction?.action) formData.append('interaction_action', structuredAction.action)
+    if (assistantCommand) formData.append('assistant_command', assistantCommand)
     if (activeRenderStyle.value) {
       formData.append('render_style', JSON.stringify(activeRenderStyle.value))
     }
@@ -2063,10 +1938,6 @@ async function sendMessage() {
                 await loadTaskContexts({ preserveActive: true }).catch(() => {})
               } else if (data.type === 'persistence_error') {
                 showNotice(data.message || '对话状态未能安全保存，请重新发送上一条消息。')
-              } else if (data.type === 'workflow_error') {
-                showNotice(data.message || '工作流进度未能保存，本轮对话内容仍已处理。')
-              } else if (data.type === 'workflow_state') {
-                updateWorkflowState(data.state || null, { showCompletedBriefly: true }, requestState)
               } else if (data.type === 'end') {
                 // 结束信号，关闭连接
                 isResponding.value = false
@@ -2306,8 +2177,6 @@ async function handleOptionClick({ confirm_id, value, source = '', selected_chan
           await settleConfirmationUi()
         } else if (data.type === 'persistence_error') {
           showNotice(data.message || '对话状态未能安全保存，请重新发送上一条消息。')
-        } else if (data.type === 'workflow_error') {
-          showNotice(data.message || '工作流进度未能保存，本轮对话内容仍已处理。')
         } else if (data.type === 'end') {
           confirmationProcessed = confirmationProcessed || Boolean(data.confirmation_processed)
           confirmationSucceeded = confirmationSucceeded || Boolean(data.confirmation_success)
@@ -6465,52 +6334,6 @@ watch(
   background: linear-gradient(to top, #0c0c0e 72%, rgba(12, 12, 14, 0));
   border-top: 1px solid rgba(255, 255, 255, 0.025);
   flex-shrink: 0;
-}
-
-.workflow-status {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin: 0 2px 8px;
-  padding: 7px 9px;
-  color: #cbd6ed;
-  background: rgba(83, 125, 202, 0.1);
-  border: 1px solid rgba(126, 164, 234, 0.2);
-  border-radius: 9px;
-  font-size: 11px;
-}
-
-.workflow-status-main,
-.workflow-status-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  flex-wrap: wrap;
-}
-
-.workflow-status-main strong {
-  color: #f3f6ff;
-}
-
-.workflow-status-actions {
-  justify-content: flex-end;
-}
-
-.workflow-status-actions button {
-  padding: 3px 7px;
-  color: #dce6ff;
-  background: rgba(126, 164, 234, 0.13);
-  border: 1px solid rgba(126, 164, 234, 0.25);
-  border-radius: 6px;
-  font: inherit;
-  cursor: pointer;
-}
-
-.workflow-status-actions button:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
 }
 
 .assistant-actions {

@@ -110,8 +110,11 @@
 | 4.13 | 对话式局部加粗 | 1. 输入“把‘唯一原文’加粗”<br>2. 先取消预览，再重新操作并确认<br>3. 使用重复原文或不存在原文重试 | 唯一命中时只生成临时预览，确认后保存；取消不保存；零命中或多命中拒绝修改且不调用模型 | ☐ | 取消加粗遵循同一流程 |
 | 4.14 | 直接修改保留格式 | 1. 对原本加粗或含局部格式的字段执行明确文本替换<br>2. 比较修改前后预览与数据 | 只替换目标文本，原字段粗体及其他格式不丢失 | ☐ | 不经过 LLM 的确定性路径 |
 | 4.15 | 过期预览恢复正式版本 | 1. 生成修改预览<br>2. 在另一窗口修改同一简历<br>3. 回到预览弹窗确认 | 保存被拒绝并显示中文过期提示；弹窗关闭后右侧立即恢复数据库中的最新正式简历，无需刷新页面 | ☐ | |
-| 4.16 | Agent Skill 发现与激活 | 1. 发起普通咨询<br>2. 分别发起需要修改简历和需要视觉快照的请求<br>3. 检查 Agent 工具调用记录 | 初始只暴露 Skill 名称和描述及通用激活工具；激活后才加载相应 `SKILL.md` 与结构化 schema；未激活的 Skill 不暴露执行工具 | ☐ | |
+| 4.16 | Agent Skill 发现与激活 | 1. 发起普通咨询<br>2. 分别发起需要修改、视觉快照和多轮取证的请求<br>3. 检查 Agent 工具调用记录 | 初始只暴露三个 Skill 的名称、描述及通用激活工具；激活后才加载相应 `SKILL.md` 与结构化 schema；未激活的 Skill 不暴露执行工具 | ☐ | |
 | 4.17 | 简历修改 Skill 安全边界 | 1. 请求 Agent 修改简历<br>2. 查看生成的候选预览<br>3. 先取消，再重新生成并确认 | `resume-edit` Skill 只生成经验证的候选和确认状态；取消不写库；仅确认后保存，行为与迁移前一致 | ☐ | |
+| 4.18 | 深度打磨显式激活 | 点击“深度打磨”并完成多轮问答 | 首轮明确告知只分析不修改且可自然语言退出；每轮调用 `resume-coach`，完整证据持续累积 | ☐ | |
+| 4.19 | 教练建议双重确认 | 补充到 Agent 判断证据充分，先拒绝生成预览，再继续讨论并最终同意 | 拒绝时继续取证且不生成候选；同意后才交给 `resume-edit`，随后仍需在修改预览中确认保存 | ☐ | |
+| 4.20 | Command 强制 Skill | 分别新建“排版建议”和“深度打磨”任务并检查首轮调用 | 排版建议在分析前强制执行 `resume-snapshot`；深度打磨首轮强制执行 `resume-coach`；仅改前端 Prompt 无法绕过后端约束 | ☐ | |
 
 ---
 
@@ -203,8 +206,6 @@
 $env:APP_MODE = "local"
 $env:LOCAL_USER_EMAIL = "local@localhost"
 $env:DATABASE_URL = "sqlite:///./.local-run/test-suite.db"
-$env:AGENT_CHECKPOINTER_ENABLED = "true"
-$env:AGENT_CHECKPOINT_DB_PATH = ".local-run/test-checkpoints.sqlite"
 .\.venv-win\Scripts\python.exe -m unittest discover -s tests
 
 Set-Location frontend
@@ -212,10 +213,10 @@ npm test
 npm run build
 Set-Location ..
 
-Remove-Item Env:APP_MODE, Env:LOCAL_USER_EMAIL, Env:DATABASE_URL, Env:AGENT_CHECKPOINTER_ENABLED, Env:AGENT_CHECKPOINT_DB_PATH
+Remove-Item Env:APP_MODE, Env:LOCAL_USER_EMAIL, Env:DATABASE_URL
 ```
 
-显式设置测试 SQLite 是必要的：后端初始化会读取当前环境；如果 `.env` 正处于多用户配置，直接运行测试可能连接本机 MySQL。`.local-run/test-suite.db` 和测试检查点均为可再生、被 Git 忽略的测试文件。
+显式设置测试 SQLite 是必要的：后端初始化会读取当前环境；如果 `.env` 正处于多用户配置，直接运行测试可能连接本机 MySQL。`.local-run/test-suite.db` 是可再生、被 Git 忽略的测试文件。
 
 默认测试会跳过需要真实 MySQL 的破坏性集成测试。如需在专用测试数据库中执行，先确认 `DATABASE_URL` 不指向正式或个人数据，再运行：
 
@@ -223,12 +224,6 @@ Remove-Item Env:APP_MODE, Env:LOCAL_USER_EMAIL, Env:DATABASE_URL, Env:AGENT_CHEC
 $env:RUN_MYSQL_INTEGRATION = "1"
 .\.venv-win\Scripts\python.exe -m unittest tests.test_mysql_multi_user_integration
 Remove-Item Env:RUN_MYSQL_INTEGRATION
-```
-
-需要真实 LLM 的访谈链路冒烟测试不会进入默认 CI，配置测试专用 API 后可运行：
-
-```powershell
-.\.venv-win\Scripts\python.exe scripts\interview_llm_smoke.py
 ```
 
 单用户/多用户核心回归集中在 `tests/test_runtime_profiles.py`，覆盖单用户认证关闭、SQLite 持久化、导出碰撞、多用户管理员权限、邀请码事务和用户隔离。Docker 配置还应执行：

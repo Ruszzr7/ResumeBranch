@@ -236,83 +236,81 @@
     {
       "id": "route-042",
       "prompt": "开始全面诊断。",
-      "expected_route": "interview_coach",
-      "state": {
-        "interaction_mode": "diagnosis",
-        "interaction_action": "start"
-      }
+      "expected_route": "conversation_llm",
+      "state": {}
     },
     {
       "id": "route-043",
       "prompt": "请继续诊断最薄弱的经历。",
-      "expected_route": "interview_coach",
-      "state": {
-        "interaction_mode": "diagnosis",
-        "interaction_action": "answer"
-      }
+      "expected_route": "conversation_llm",
+      "state": {}
     },
     {
       "id": "route-044",
       "prompt": "开始深挖我的项目经历。",
-      "expected_route": "interview_coach",
+      "expected_route": "conversation_llm",
       "state": {
-        "interaction_mode": "coaching",
-        "interaction_action": "start"
+        "coach_required": true,
+        "coach_state": {
+          "active": true
+        }
       }
     },
     {
       "id": "route-045",
       "prompt": "我负责权限接口和自动化测试。",
-      "expected_route": "interview_coach",
+      "expected_route": "conversation_llm",
       "state": {
-        "interaction_mode": "coaching",
-        "interaction_action": "answer"
+        "coach_required": true,
+        "coach_state": {
+          "active": true
+        }
       }
     },
     {
       "id": "route-046",
       "prompt": "暂停这轮求职辅导。",
-      "expected_route": "interview_coach",
+      "expected_route": "conversation_llm",
       "state": {
-        "interaction_mode": "coaching",
-        "interaction_action": "pause"
+        "coach_required": true,
+        "coach_state": {
+          "active": true
+        }
       }
     },
     {
       "id": "route-047",
       "prompt": "继续刚才的问题。",
-      "expected_route": "interview_coach",
+      "expected_route": "conversation_llm",
       "state": {
-        "interaction_mode": "coaching",
-        "interaction_action": "resume"
+        "coach_required": true,
+        "coach_state": {
+          "active": true
+        }
       }
     },
     {
       "id": "route-048",
       "prompt": "应用当前已经核实的改写建议。",
-      "expected_route": "interview_coach",
+      "expected_route": "conversation_llm",
       "state": {
-        "interaction_mode": "coaching",
-        "interaction_action": "apply"
+        "coach_required": true,
+        "coach_state": {
+          "active": true
+        }
       }
     },
     {
       "id": "route-049",
       "prompt": "结合岗位要求开始复盘。",
-      "expected_route": "interview_coach",
-      "state": {
-        "interaction_mode": "jd_review",
-        "interaction_action": "start"
-      }
+      "expected_route": "conversation_llm",
+      "state": {}
     },
     {
       "id": "route-050",
       "prompt": "结束本轮 JD 复盘。",
-      "expected_route": "interview_coach",
-      "state": {
-        "interaction_mode": "jd_review",
-        "interaction_action": "end"
-      }
+      "expected_route": "conversation_llm",
+      "state": {}
     },
     {
       "id": "route-v2-001",
@@ -534,83 +532,81 @@
     {
       "id": "route-v2-042",
       "prompt": "开始检查整份简历。",
-      "expected_route": "interview_coach",
-      "state": {
-        "interaction_mode": "diagnosis",
-        "interaction_action": "start"
-      }
+      "expected_route": "conversation_llm",
+      "state": {}
     },
     {
       "id": "route-v2-043",
       "prompt": "继续回答诊断问题。",
-      "expected_route": "interview_coach",
-      "state": {
-        "interaction_mode": "diagnosis",
-        "interaction_action": "answer"
-      }
+      "expected_route": "conversation_llm",
+      "state": {}
     },
     {
       "id": "route-v2-044",
       "prompt": "开始深挖工作经历。",
-      "expected_route": "interview_coach",
+      "expected_route": "conversation_llm",
       "state": {
-        "interaction_mode": "coaching",
-        "interaction_action": "start"
+        "coach_required": true,
+        "coach_state": {
+          "active": true
+        }
       }
     },
     {
       "id": "route-v2-045",
       "prompt": "我用慢查询日志定位了索引问题。",
-      "expected_route": "interview_coach",
+      "expected_route": "conversation_llm",
       "state": {
-        "interaction_mode": "coaching",
-        "interaction_action": "answer"
+        "coach_required": true,
+        "coach_state": {
+          "active": true
+        }
       }
     },
     {
       "id": "route-v2-046",
       "prompt": "先暂停这轮深挖。",
-      "expected_route": "interview_coach",
+      "expected_route": "conversation_llm",
       "state": {
-        "interaction_mode": "coaching",
-        "interaction_action": "pause"
+        "coach_required": true,
+        "coach_state": {
+          "active": true
+        }
       }
     },
     {
       "id": "route-v2-047",
       "prompt": "恢复刚才的求职辅导。",
-      "expected_route": "interview_coach",
+      "expected_route": "conversation_llm",
       "state": {
-        "interaction_mode": "coaching",
-        "interaction_action": "resume"
+        "coach_required": true,
+        "coach_state": {
+          "active": true
+        }
       }
     },
     {
       "id": "route-v2-048",
       "prompt": "应用已经确认过的辅导结论。",
-      "expected_route": "interview_coach",
+      "expected_route": "conversation_llm",
       "state": {
-        "interaction_mode": "coaching",
-        "interaction_action": "apply"
+        "coach_required": true,
+        "coach_state": {
+          "active": true
+        }
       }
     },
     {
       "id": "route-v2-049",
       "prompt": "开始根据当前 JD 复盘项目。",
-      "expected_route": "interview_coach",
-      "state": {
-        "interaction_mode": "jd_review",
-        "interaction_action": "start"
-      }
+      "expected_route": "conversation_llm",
+      "state": {}
     },
     {
       "id": "route-v2-050",
       "prompt": "结束岗位复盘。",
-      "expected_route": "interview_coach",
-      "state": {
-        "interaction_mode": "jd_review",
-        "interaction_action": "end"
-      }
+      "expected_route": "conversation_llm",
+      "state": {}
     },
     {
       "id": "route-v3-001",
@@ -796,10 +792,12 @@
       "id": "route-v3-031",
       "scenario_type": "multi_turn_summary",
       "prompt": "我想继续上次的项目追问。",
-      "expected_route": "interview_coach",
+      "expected_route": "conversation_llm",
       "state": {
-        "interaction_mode": "coaching",
-        "interaction_action": "resume"
+        "coach_required": true,
+        "coach_state": {
+          "active": true
+        }
       },
       "turns": [
         {
@@ -820,10 +818,12 @@
       "id": "route-v3-032",
       "scenario_type": "multi_turn_summary",
       "prompt": "我补充完了，请继续追问结果数据。",
-      "expected_route": "interview_coach",
+      "expected_route": "conversation_llm",
       "state": {
-        "interaction_mode": "coaching",
-        "interaction_action": "answer"
+        "coach_required": true,
+        "coach_state": {
+          "active": true
+        }
       },
       "turns": [
         {
@@ -844,11 +844,8 @@
       "id": "route-v3-033",
       "scenario_type": "multi_turn_summary",
       "prompt": "根据刚才的 JD 对照继续复盘。",
-      "expected_route": "interview_coach",
-      "state": {
-        "interaction_mode": "jd_review",
-        "interaction_action": "answer"
-      },
+      "expected_route": "conversation_llm",
+      "state": {},
       "turns": [
         {
           "role": "user",
@@ -1166,91 +1163,101 @@
       "id": "route-v4-040",
       "scenario_type": "multi_turn_summary",
       "prompt": "开始一次简历诊断。",
-      "expected_route": "interview_coach",
-      "state": {
-        "interaction_mode": "diagnosis"
-      }
+      "expected_route": "conversation_llm",
+      "state": {}
     },
     {
       "id": "route-v4-041",
       "scenario_type": "multi_turn_summary",
       "prompt": "继续追问我的项目成果。",
-      "expected_route": "interview_coach",
+      "expected_route": "conversation_llm",
       "state": {
-        "interaction_mode": "coaching"
+        "coach_required": true,
+        "coach_state": {
+          "active": true
+        }
       }
     },
     {
       "id": "route-v4-042",
       "scenario_type": "multi_turn_summary",
       "prompt": "请根据当前简历模拟面试官提问。",
-      "expected_route": "interview_coach",
+      "expected_route": "conversation_llm",
       "state": {
-        "interaction_mode": "coaching"
+        "coach_required": true,
+        "coach_state": {
+          "active": true
+        }
       }
     },
     {
       "id": "route-v4-043",
       "scenario_type": "multi_turn_summary",
       "prompt": "先从岗位匹配度开始分析。",
-      "expected_route": "interview_coach",
-      "state": {
-        "interaction_mode": "jd_review"
-      }
+      "expected_route": "conversation_llm",
+      "state": {}
     },
     {
       "id": "route-v4-044",
       "scenario_type": "multi_turn_summary",
       "prompt": "我想回答刚才的问题：项目上线后接口响应时间下降了。",
-      "expected_route": "interview_coach",
+      "expected_route": "conversation_llm",
       "state": {
-        "interaction_mode": "coaching"
+        "coach_required": true,
+        "coach_state": {
+          "active": true
+        }
       }
     },
     {
       "id": "route-v4-045",
       "scenario_type": "multi_turn_summary",
       "prompt": "暂停这次辅导。",
-      "expected_route": "interview_coach",
+      "expected_route": "conversation_llm",
       "state": {
-        "interaction_mode": "coaching"
+        "coach_required": true,
+        "coach_state": {
+          "active": true
+        }
       }
     },
     {
       "id": "route-v4-046",
       "scenario_type": "multi_turn_summary",
       "prompt": "恢复上次的面试练习。",
-      "expected_route": "interview_coach",
+      "expected_route": "conversation_llm",
       "state": {
-        "interaction_mode": "coaching"
+        "coach_required": true,
+        "coach_state": {
+          "active": true
+        }
       }
     },
     {
       "id": "route-v4-047",
       "scenario_type": "multi_turn_summary",
       "prompt": "结束本轮辅导。",
-      "expected_route": "interview_coach",
+      "expected_route": "conversation_llm",
       "state": {
-        "interaction_mode": "coaching"
+        "coach_required": true,
+        "coach_state": {
+          "active": true
+        }
       }
     },
     {
       "id": "route-v4-048",
       "scenario_type": "multi_turn_summary",
       "prompt": "请针对 JD 给我下一道追问。",
-      "expected_route": "interview_coach",
-      "state": {
-        "interaction_mode": "jd_review"
-      }
+      "expected_route": "conversation_llm",
+      "state": {}
     },
     {
       "id": "route-v4-049",
       "scenario_type": "multi_turn_summary",
       "prompt": "诊断我的简历并列出待核实事项。",
-      "expected_route": "interview_coach",
-      "state": {
-        "interaction_mode": "diagnosis"
-      }
+      "expected_route": "conversation_llm",
+      "state": {}
     },
     {
       "id": "route-v4-050",
@@ -3221,27 +3228,35 @@
       ],
       "accepted_outcomes": [
         {
-          "tools": ["resume_edit"],
+          "tools": [
+            "resume_edit"
+          ],
           "expected_operations": [
             {
               "op": "append",
               "path": "custom_sections",
               "value": {
                 "title": "开源实践",
-                "items": ["维护权限校验示例项目"]
+                "items": [
+                  "维护权限校验示例项目"
+                ]
               }
             }
           ]
         },
         {
-          "tools": ["resume_edit"],
+          "tools": [
+            "resume_edit"
+          ],
           "expected_operations": [
             {
               "op": "append",
               "path": "custom_sections",
               "value": {
                 "title": "开源实践",
-                "items": ["维护权限校验示例项目"],
+                "items": [
+                  "维护权限校验示例项目"
+                ],
                 "list_style": "bullet"
               }
             }
@@ -3364,12 +3379,17 @@
       ],
       "accepted_outcomes": [
         {
-          "tools": ["resume_edit"],
+          "tools": [
+            "resume_edit"
+          ],
           "expected_operations": [
             {
               "op": "set",
               "path": "work_experience[0].date_range",
-              "value": ["2023.08", "2024.01"]
+              "value": [
+                "2023.08",
+                "2024.01"
+              ]
             },
             {
               "op": "set",
@@ -3379,12 +3399,17 @@
           ]
         },
         {
-          "tools": ["resume_edit"],
+          "tools": [
+            "resume_edit"
+          ],
           "expected_operations": [
             {
               "op": "set",
               "path": "work_experience[0].date_range",
-              "value": ["2023.08", "2024.01"]
+              "value": [
+                "2023.08",
+                "2024.01"
+              ]
             },
             {
               "op": "set",
@@ -3966,15 +3991,22 @@
           "answer_expectation": "required"
         },
         {
-          "tools": ["resume_snapshot"],
+          "tools": [
+            "resume_snapshot"
+          ],
           "answer_expectation": "required"
         },
         {
-          "tools": ["resume_edit"],
+          "tools": [
+            "resume_edit"
+          ],
           "answer_expectation": "empty"
         },
         {
-          "tools": ["resume_snapshot", "resume_edit"],
+          "tools": [
+            "resume_snapshot",
+            "resume_edit"
+          ],
           "answer_expectation": "empty"
         }
       ],
@@ -5102,7 +5134,9 @@
       ],
       "accepted_outcomes": [
         {
-          "tools": ["resume_edit"],
+          "tools": [
+            "resume_edit"
+          ],
           "expected_operations": [
             {
               "op": "append",

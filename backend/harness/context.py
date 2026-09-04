@@ -14,19 +14,6 @@ CURRENT_STATE_PRIORITY = (
 )
 
 
-COACHING_CONTEXT = """
-
-【本轮模式：只读诊断与简历教练】
-本轮用户是在请求分析、建议或面试官式追问，不是在授权修改简历。
-1. 本轮禁止调用 save_resume_tool，禁止生成确认框，不得声称已经修改简历。
-2. 所有判断必须引用当前简历中的具体模块或表述；事实不足时明确标注“需要补充”，严禁替用户编数字、经历或技能。
-3. 如果用户要求全面诊断，本轮可作为“单点质询原则”的例外：先给出简短总评，再按优先级列出不超过 5 个问题。每个问题包含“证据/影响/建议”，最后只追问一个最高优先级问题。
-4. 如果用户要求深度打磨或连续追问：定位当前最薄弱且最影响求职结果的一项经历，说明为什么薄弱，然后每轮只问一个问题；优先追问背景目标、个人动作、决策权衡、量化结果。用户回答后先判断信息是否足够，不足则继续追问，足够才给出忠于事实的改写建议。
-5. 如果用户要求 JD 匹配分析：有 JD 时区分“已证明匹配”“简历未证明”“确实缺失”；没有 JD 时先请用户上传或粘贴 JD，不得凭空假设岗位要求。
-6. 只有用户之后明确要求“应用/保存/直接改写”某个已讨论清楚的方案时，才进入修改与确认流程。
-"""
-
-
 JUST_SAVED_CONTEXT = "[系统提示：简历已成功保存到数据库，请不要调用任何工具，直接回复用户]"
 
 
@@ -57,7 +44,7 @@ MISSION_CONTEXT_GUIDANCE = {
 """,
     "coaching": """
 【当前任务：深度打磨】
-本任务只围绕一项经历的事实追问与改写展开。保留本任务已核实事实；不得把其他任务中的建议或未经确认的数字带入本任务。用户要求应用改写时，调用通用 resume_edit 生成预览。
+本任务通过已激活的 resume-coach Skill 逐个讨论问题。遵循该 Skill 的证据、授权和退出规则；不得绕过 Skill 直接修改简历。
 """,
 }
 
@@ -131,7 +118,6 @@ def build_system_content(
     jd_data: dict | None,
     *,
     layout_data: dict | None = None,
-    coaching_mode: bool,
     memory_summary: str = "",
     context_type: str = "main",
     context_metadata: dict | None = None,
@@ -164,8 +150,6 @@ def build_system_content(
     else:
         system_content += f"\n\n{layout_contract}"
     system_content += CURRENT_STATE_PRIORITY
-    if coaching_mode:
-        system_content += COACHING_CONTEXT
     system_content += MISSION_CONTEXT_GUIDANCE.get(str(context_type or "main"), "")
     if mission_initial_turn:
         system_content += MISSION_INITIAL_GUIDANCE.get(str(context_type or "main"), "")
@@ -185,6 +169,11 @@ def filter_messages_for_llm(messages: list, *, just_saved: bool) -> list:
     for message in messages:
         if isinstance(message, ToolMessage):
             tool_result = str(getattr(message, "content", "") or "")
+            if getattr(message, "name", "") == "resume_coach":
+                filtered.append(HumanMessage(
+                    content=f"[resume-coach 本轮状态更新]\n{tool_result}"
+                ))
+                continue
             if getattr(message, "name", "") == "resume_snapshot":
                 filtered.append(HumanMessage(
                     content=f"[只读视觉工具结果]\n{tool_result}"
@@ -233,7 +222,6 @@ def build_conversation_context(
     jd_data: dict | None,
     layout_data: dict | None = None,
     state_messages: list,
-    coaching_mode: bool,
     just_saved: bool,
     memory_summary: str = "",
     context_type: str = "main",
@@ -247,7 +235,6 @@ def build_conversation_context(
         resume_data,
         jd_data,
         layout_data=layout_data,
-        coaching_mode=coaching_mode,
         memory_summary=memory_summary,
         context_type=context_type,
         context_metadata=context_metadata,

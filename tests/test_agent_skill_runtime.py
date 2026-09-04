@@ -10,11 +10,12 @@ from backend.skill_runtime import activate_agent_skill, skill_runtime
 
 
 class AgentSkillRuntimeTests(unittest.IsolatedAsyncioTestCase):
-    def test_discovers_two_standard_skill_packages(self):
+    def test_discovers_three_standard_skill_packages(self):
         skills = skill_runtime.discover(refresh=True)
-        self.assertEqual(set(skills), {"resume-edit", "resume-snapshot"})
+        self.assertEqual(set(skills), {"resume-edit", "resume-snapshot", "resume-coach"})
         self.assertEqual(skills["resume-edit"].tool_name, "resume_edit")
         self.assertEqual(skills["resume-snapshot"].tool_name, "resume_snapshot")
+        self.assertEqual(skills["resume-coach"].tool_name, "resume_coach")
         for name, package in skills.items():
             self.assertEqual(package.root.name, name)
             self.assertEqual(package.skill_file.name, "SKILL.md")
@@ -52,6 +53,30 @@ class AgentSkillRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("已激活 Agent Skill：resume-edit", system_prompt)
         self.assertIn("This Skill never saves the resume", system_prompt)
         self.assertNotIn("已激活 Agent Skill：resume-snapshot", system_prompt)
+
+    async def test_deep_polish_command_forces_coach_tool(self):
+        bound = SimpleNamespace(ainvoke=AsyncMock(return_value=AIMessage(content="")))
+        model = SimpleNamespace(bind_tools=MagicMock(return_value=bound))
+        state = AgentState(
+            messages=[HumanMessage(content="开始深度打磨")],
+            resume_data={"basics": {"name": "测试"}},
+            context_type="coaching",
+            assistant_command="coaching",
+            coach_required=True,
+            coach_state={},
+            active_skill_names=["resume-coach"],
+        )
+        with patch("backend.resume_agent.conversation_llm", model):
+            await conversation_node(state)
+
+        self.assertEqual(model.bind_tools.call_args.kwargs["tool_choice"], "resume_coach")
+        self.assertEqual(
+            {item.name for item in model.bind_tools.call_args.args[0]},
+            {"activate_agent_skill", "resume_coach"},
+        )
+        system_prompt = bound.ainvoke.await_args.args[0][0].content
+        self.assertIn("已激活 Agent Skill：resume-coach", system_prompt)
+        self.assertIn("resume-coach 私有状态", system_prompt)
 
 
 if __name__ == "__main__":

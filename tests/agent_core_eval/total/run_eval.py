@@ -193,10 +193,9 @@ def _base_state(prompt: str, **overrides: Any) -> AgentState:
         "user_id": 9001,
         "task_id": "synthetic-agent-eval",
         "context_type": "main",
-        "interaction_mode": "",
-        "interaction_action": "",
-        "interview_memory": {},
-        "workflow_state": {},
+        "coach_state": {},
+        "coach_required": False,
+        "assistant_command": "",
         "context_metadata": {},
         "request_id": "synthetic-eval",
     }

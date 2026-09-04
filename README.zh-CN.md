@@ -35,8 +35,8 @@ ResumeBranch 是一个面向个人简历维护与求职准备的开源 AI 简历
 
 - 前端：Vue 3、Vite、Element Plus、Vue Router。
 - 后端：Python 3.11、FastAPI、SQLAlchemy、Uvicorn/Gunicorn。
-- Agent：LangGraph 负责状态图与路由；仓库内标准 Agent Skill 包提供可发现的简历修改与页面快照能力；LangChain Core/OpenAI 兼容客户端负责消息、模型和工具抽象。
-- 数据：单用户版使用 SQLite，多用户版使用 MySQL；工作流检查点独立存放于 SQLite 文件。
+- Agent：LangGraph 负责状态图与路由；仓库内标准 Agent Skill 包提供可发现的简历修改、页面快照与证据式教练能力；LangChain Core/OpenAI 兼容客户端负责消息、模型和工具抽象。
+- 数据：单用户版使用 SQLite，多用户版使用 MySQL；多轮 Skill 私有状态与普通对话记忆分离保存。
 - 导出与渲染：Chromium 生成 PDF，`python-docx` 生成可继续编辑的 DOCX，Poppler 用于 AI 可读的 PDF 页面快照。
 - 通信：普通接口使用 HTTP，AI 回复使用 SSE 流式传输。
 - 交付与部署：源码方式使用 Windows 启动脚本；多用户 Docker 方式提供 Compose、MySQL、Gunicorn 和 Nginx 配置。
@@ -150,11 +150,11 @@ ResumeBranch 不是把所有请求写死为固定流程。入口路由会结合�
 
 - 普通咨询或复杂简历任务：交给 Agent 判断是否回复、追问或调用技能。
 - 明确且可安全解析的字段、字号、排版或局部加粗请求：进入确定性的直接修改路径。
-- 面试诊断、深度挖掘和 JD 复盘：进入相应的求职辅导节点。
+- 全面诊断保留为一次性普通对话；深度打磨显式激活证据式教练 Skill，其他窗口也可按需进入。
 - 需要视觉排版信息时：按需渲染与正式 PDF 同源的简历页面快照。
 - 需要修改简历时：生成结构化候选结果，先展示预览，确认后才持久化。
 
-简历内容、排版规则、JD、对话摘要和必要记忆由上下文层按需组装。工作流检查点只保存控制状态，业务数据仍以 SQLAlchemy 数据库为准。
+简历内容、排版规则、JD、对话摘要和必要记忆由上下文层按需组装。教练证据保存为 Skill 私有状态，不受普通对话摘要压缩影响。
 
 确认修改时会校验简历修订版本和内容摘要。若等待确认期间简历已被其他窗口修改，旧建议会被拒绝，前端重新加载数据库中的正式版本。不同对话窗口、浏览器标签页和后端进程之间通过数据库锁做修改串行化；咨询类对话不受影响。
 
@@ -167,7 +167,6 @@ ResumeBranch 不是把所有请求写死为固定流程。入口路由会结合�
 ```text
 data/resumebranch.db                  # 简历、JD、对话与业务状态
 data/source_documents/                # 导入简历的原文件
-data/langgraph_checkpoints.sqlite     # Agent 控制状态检查点
 data/llm_profiles.json                # 本机 API 配置（如使用页面设置）
 output/resumes/                       # 单用户导出的 PDF/DOCX
 ```
@@ -199,8 +198,6 @@ Invoke-RestMethod http://127.0.0.1:8000/app/config
 $env:APP_MODE = "local"
 $env:LOCAL_USER_EMAIL = "local@localhost"
 $env:DATABASE_URL = "sqlite:///./.local-run/test-suite.db"
-$env:AGENT_CHECKPOINTER_ENABLED = "true"
-$env:AGENT_CHECKPOINT_DB_PATH = ".local-run/test-checkpoints.sqlite"
 .\.venv-win\Scripts\python.exe -m unittest discover -s tests
 
 # 前端

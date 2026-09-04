@@ -51,24 +51,21 @@ from .layout_config import (
 from .layout_capabilities import localize_user_visible_layout_text
 from .llm_providers import active_profile, role_temperature
 from .harness.context import build_conversation_context
-from .harness.interview import (
-    INTERVIEW_MODES,
-    apply_suggestion_candidate,
-    normalize_interview_memory,
-    run_interview_turn,
-)
 from .harness.observability import harness_metrics
 from .skill_runtime import activate_agent_skill, skill_runtime
 
 
 EDIT_SKILL_NAME = "resume-edit"
 SNAPSHOT_SKILL_NAME = "resume-snapshot"
+COACH_SKILL_NAME = "resume-coach"
 EDIT_TOOL_NAME = skill_runtime.get(EDIT_SKILL_NAME).tool_name
 SNAPSHOT_TOOL_NAME = skill_runtime.get(SNAPSHOT_SKILL_NAME).tool_name
+COACH_TOOL_NAME = skill_runtime.get(COACH_SKILL_NAME).tool_name
 ResumeEditOperationError = skill_runtime.get(EDIT_SKILL_NAME).module.ResumeEditOperationError
 ResumeVisualSnapshot = skill_runtime.get(SNAPSHOT_SKILL_NAME).module.ResumeSnapshotOutput
 resume_edit_tool = skill_runtime.get(EDIT_SKILL_NAME).model_tool()
 resume_snapshot_tool = skill_runtime.get(SNAPSHOT_SKILL_NAME).model_tool()
+resume_coach_tool = skill_runtime.get(COACH_SKILL_NAME).model_tool()
 
 LOGGER = logging.getLogger(__name__)
 
@@ -351,17 +348,17 @@ def reload_llm_config():
 
 CONVERSATION_PROMPT = """
 # Role
-你是拥有十年经验的顶级大厂资深的、极度严格苛刻的面试官。你的唯一目标是确保用户递交的简历能从数万份申请中脱颖而出。 * **核心思维**：怀疑论者。默认用户提供的描述是“平庸的琐事”，除非其符合 STAR 原则并具备量化价值。 * **沟通风格**：专业、简洁、极度高效。不废话，不吹捧，不提供廉价的心理按摩。你通过精准的提问，把用户从“执行者”思维拽向“价值创造者”思维。
+你是专业、严格、讲求证据的简历顾问。你根据用户当前目标回答问题、分析简历或调用合适的 Agent Skill，不擅自把普通对话切换成持续教练流程。
 
 # 核心原则
-- **深挖而非代笔**：不直接给模棱两可的建议，而是通过追问挖掘用户没写出来的细节。
+- **事实优先**：事实不足时说明缺口；需要持续取证时按需建议或进入教练 Skill。
 - **结果导向**：坚信任何经历都必须有量化指标或具体成果。
 - **学长风范**：专业、敏锐、直接，用自然流畅的对话消除用户的焦虑。
 - **绝对真实**：绝对禁止为用户虚构没有的经历、技能等，一个词都不允许，为了提高质量而虚构最终会害了用户。（例如用户本来没有提到photoshop，就算JD里要求了，也不能帮用户编一个技能出来，应该引导用户去学习这个技能，而不是通过虚构来达到JD要求，这样对用户才是真正的负责）
 
 # 简历全维度评判（需要以怀疑论者的角度去审视，分数不用输出给用户）
 
-## 标准优化顺序，你必须严格按照以下顺序逐步优化简历，**每次只聚焦一个模块**，不要跳跃：
+## 全面诊断参考顺序
 1. **目标岗位**：如果你没有任何关于用户目标岗位或意愿的信息，不要进行假设，优先引导用户**点击页面右上角的“目标岗位”按钮上传目标岗位JD（文本或图片）**，或者如果没有明确的目标岗位，至少引导用户输入一个明确的期望岗位名称（如"我想申请字节跳动的产品经理岗位"），以便后续优化有明确的方向。
 2. **基础信息**：姓名、手机、邮箱、期望岗位 （重要，绝对不能缺漏！）
 3. **教育经历**：学校、专业、学位、时间、亮点标签、GPA/绩点、排名
@@ -369,12 +366,6 @@ CONVERSATION_PROMPT = """
 5. **项目经历**：项目名、角色、技术栈、STAR 描述、量化成果
 6. **其他**：技能、证书、语言
 7. **自我评价**：总结性描述
-
-## 深度打磨规则
-以下规则仅用于用户明确进入深度打磨、连续追问或 JD 对照流程时，不得阻断主对话中的明确合法修改：
-- **禁止跳跃**：不能跳过当前模块去优化下一个模块
-- **精准打击**：每次只问/优化一个点，不要长篇大论
-- **当前模块不完善时**：不能进入下一模块
 
 ## 简历内容全维度评分
 
@@ -402,12 +393,6 @@ CONVERSATION_PROMPT = """
 - **基本完善**：60-80分，框架完整但有细节需要打磨
 - **完善**：80分以上，质量达标
 
-## 深度打磨流程中的完善度状态处理
-以下状态只用于诊断、连续追问和深度打磨流程；主对话中的明确合法修改仍按用户授权生成候选：
-- 如果简历不完善（低于60分），优先引导用户补充缺失模块、改进负面特征，**不要结束对话**
-- 每次对话后，判断当前分数，决定是否进入下一模块或继续当前模块
-- 只有当简历达到"完善"标准后，才能引导用户聊面试话题或结束对话
-
 # 简历精炼法则 (核心指南)
 当用户提供或询问经历时，请务必引导其符合以下标准：
 1. **STAR 结构化**：
@@ -432,7 +417,7 @@ CONVERSATION_PROMPT = """
 
 # 对话逻辑规则与输出风格
 1. **明确授权优先**：用户提供了事实、目标和期望结果的合法修改，不得被主动质量建议阻断；必要建议可以与修改候选同时提供。只有真实性、歧义、能力边界或相互冲突的问题才能阻止修改。
-2. **单点质询原则**：仅在分析、诊断或深度打磨时，每次聚焦一个核心问题；不得据此遗漏同一请求中可独立执行的明确修改。
+2. **边界清晰**：普通问答、一次性诊断和直接修改不建立持续教练状态；持续取证只由已激活的教练 Skill 管理。
 3. **引导式提问**：若描述简略且修改结果仍不明确，应通过提问启发细节，不得替用户编造事实。
 
 # Agent Skill 协调规则
@@ -449,13 +434,6 @@ CONVERSATION_PROMPT = """
 - 不得向用户展示结构化数据载荷或内部实现术语。
 - 年份信息： 当前现实世界的年份是 2026 年，需要谨记。
 
-# 面试引导逻辑
-当简历达到"完善"标准后，你可以：
-1. 主动引导用户例如："简历已经比较完善了，要开始准备面试了吗？我们来聊聊常见的面试问题或模拟面试吧。"
-2. 提供面试高频问题
-3. 进行模拟面试
-
-但注意：不要强制引导，如果用户还想继续优化简历，尊重用户意愿。
 请根据用户的具体问题和当前简历内容，给出专业、有针对性的回复。"""
 
 
@@ -716,11 +694,13 @@ class AgentState:
     edit_noop: bool = False  # 当前状态已满足修改请求，用于终止本轮工具循环
     memory_summary: str = ""  # 分层记忆摘要，仅作为不可执行的上下文数据
     memory_version: int = 0  # 乐观并发版本，由持久化层管理
-    interview_memory: dict = None  # 带来源的已核实事实与最近建议
-    workflow_state: dict = None  # Checkpointer 中的轻量控制状态
-    workflow_updates: dict = None  # 本节点产生的控制状态投影
-    interaction_mode: str = ""  # diagnosis/coaching/jd_review；空值沿用旧链路
-    interaction_action: str = ""  # start/answer/pause/resume/end/apply
+    coach_state: dict = None  # resume-coach 私有、完整的当前问题证据
+    coach_state_version: int = 0
+    coach_state_changed: bool = False
+    coach_turn_processed: bool = False
+    coach_required: bool = False  # 显式 Command 或已激活会话要求本轮经过 Skill
+    coach_edit_handoff: dict = None  # 用户批准后由 coach Skill 生成的一次性编辑授权
+    assistant_command: str = ""  # 可信 UI Command：layout/coaching
     request_id: str = ""
     context_id: str = ""
     context_type: str = "main"
@@ -786,7 +766,7 @@ _MISSION_POINT_RE = re.compile(
 _MISSION_ACTION_RE = re.compile(
     r"(?:执行|应用|采纳|落实|采用|按(?:照)?|根据|修改|调整|改写|重写|改成|更新|删除|移除|补充|新增|恢复|移动|放到|并入)"
 )
-_COACHING_INTENT_RE = re.compile(
+_ANALYSIS_INTENT_RE = re.compile(
     r"(?:诊断|点评|评估|审阅|审查|分析|拷打|追问|模拟面试官|修改建议|优化建议|"
     r"不足之处|不足|短板|问题在哪里|匹配度|怎么写|如何写|怎样写|怎么改|如何改|怎样改|如何修改|"
     r"怎么优化|如何优化|怎样优化|怎么完善|如何完善|怎样完善)"
@@ -856,10 +836,13 @@ def is_initial_mission_turn(state: AgentState) -> bool:
 
 
 def should_force_initial_visual_snapshot(state: AgentState) -> bool:
-    """The layout-advice command guarantees one current snapshot on entry."""
+    """The trusted layout Command guarantees snapshot Skill execution on entry."""
     return (
         str(getattr(state, "context_type", "main") or "main").strip().lower() == "layout"
-        and is_initial_mission_turn(state)
+        and (
+            getattr(state, "assistant_command", "") == "layout"
+            or is_initial_mission_turn(state)
+        )
         and int(getattr(state, "visual_snapshot_calls", 0) or 0) == 0
         and not (getattr(state, "visual_snapshot_parts", None) or [])
     )
@@ -959,12 +942,12 @@ def _all_non_question_clauses_are_explicitly_authorized(message: str) -> bool:
     return saw_authorized_clause
 
 
-def is_resume_coaching_request(message: str) -> bool:
-    """Return True for read-only review, coaching, and interview-style requests."""
+def is_resume_analysis_request(message: str) -> bool:
+    """Return True for read-only review/advice without edit authorization."""
     text = str(message or "").strip()
     if not text or "[CONFIRM_REPLY:" in text:
         return False
-    return bool(_COACHING_INTENT_RE.search(text) and not has_explicit_change_authorization(text))
+    return bool(_ANALYSIS_INTENT_RE.search(text) and not has_explicit_change_authorization(text))
 
 
 def latest_human_text(state: AgentState) -> str:
@@ -1008,7 +991,7 @@ def is_explicit_resume_change_request(message: str) -> bool:
         return False
     # "How should I improve this resume?" is consultation, not authorization
     # to generate or persist a mutation candidate.
-    if is_resume_coaching_request(text):
+    if is_resume_analysis_request(text):
         return False
     if not (
         _CHANGE_ACTION_RE.search(text)
@@ -1086,7 +1069,7 @@ def is_explicit_layout_change_request(message: str) -> bool:
     text = str(message or "").strip()
     if not text or "[CONFIRM_REPLY:" in text:
         return False
-    if is_resume_coaching_request(text):
+    if is_resume_analysis_request(text):
         return False
     return bool(_LAYOUT_ACTION_RE.search(text))
 
@@ -1505,7 +1488,7 @@ def _build_local_edit_candidate_for_text(state: AgentState, text: str) -> dict |
         or "引号" in text
         or "[CONFIRM_REPLY:" in text
         or _QUESTION_INTENT_RE.search(text)
-        or is_resume_coaching_request(text)
+        or is_resume_analysis_request(text)
     ):
         return None
 
@@ -1609,7 +1592,7 @@ def _resolve_local_edit_candidates(
     if (
         not text
         or _QUESTION_INTENT_RE.search(text)
-        or is_resume_coaching_request(text)
+        or is_resume_analysis_request(text)
     ):
         return None, None, False
     clauses = _split_local_edit_clauses(text)
@@ -1928,115 +1911,6 @@ async def _generate_resume_edit_preview(
     }
 
 
-async def interview_coach_node(state: AgentState) -> dict:
-    """Run the source-traceable interview path without mutating resume data."""
-    current = normalize_resume_data(state.resume_data or {})
-    current_layout = normalize_layout_config(state.layout_data)
-    memory = normalize_interview_memory(state.interview_memory or {}, state.interaction_mode)
-    action = str(state.interaction_action or "answer")
-    metadata_updates = dict(getattr(state, "context_metadata_updates", None) or {})
-
-    if action == "apply":
-        suggestion = memory.get("latest_suggestion")
-        try:
-            if (state.workflow_state or {}).get("status") == "completed":
-                raise ValueError("本轮深度打磨已结束，请重新开始后再应用建议")
-            if (state.workflow_state or {}).get("phase") not in {"awaiting_apply", "questioning"}:
-                raise ValueError("当前阶段没有可应用的改写建议")
-            if not suggestion:
-                raise ValueError("当前没有可应用的改写建议")
-            await acquire_current_edit_lock()
-            candidate = apply_suggestion_candidate(current, suggestion)
-            pending = make_pending_confirmation(state, candidate, current_layout)
-            assistant_message = AIMessage(content=_preview_summary(pending.get("changes", [])))
-            metadata_updates["edit_intent_state"] = {"status": "awaiting_confirmation"}
-            return {
-                "messages": list(state.messages) + [assistant_message],
-                "resume_data": state.resume_data or {},
-                "jd_data": state.jd_data or {},
-                "layout_data": current_layout,
-                "pending_confirmation": pending,
-                "proposal_error": None,
-                "interview_memory": memory,
-                "workflow_updates": {
-                    "interaction_mode": state.interaction_mode,
-                    "status": "awaiting_confirmation",
-                    "phase": "awaiting_apply",
-                    "focus_section": str((state.workflow_state or {}).get("focus_section", "")),
-                    "current_question": str((state.workflow_state or {}).get("current_question", "")),
-                    "last_node": "interview_coach",
-                },
-                "just_saved": False,
-                "user_id": state.user_id,
-                "task_id": state.task_id,
-                "context_metadata_updates": metadata_updates,
-            }
-        except Exception as exc:
-            metadata_updates["edit_intent_state"] = {"status": "none"}
-            return {
-                "messages": list(state.messages) + [AIMessage(content=str(exc))],
-                "resume_data": state.resume_data or {},
-                "jd_data": state.jd_data or {},
-                "layout_data": current_layout,
-                "pending_confirmation": None,
-                "proposal_error": None,
-                "interview_memory": memory,
-                "workflow_updates": {
-                    "interaction_mode": state.interaction_mode,
-                    "status": "active",
-                    "phase": "questioning",
-                    "last_node": "interview_coach",
-                },
-                "just_saved": False,
-                "user_id": state.user_id,
-                "task_id": state.task_id,
-                "context_metadata_updates": metadata_updates,
-            }
-
-    try:
-        result = await run_interview_turn(
-            llm=conversation_llm,
-            action=action,
-            mode=state.interaction_mode,
-            user_text=latest_human_text(state),
-            resume_data=current,
-            jd_data=state.jd_data or {},
-            memory=memory,
-            workflow=state.workflow_state or {},
-            request_id=state.request_id,
-            layout_data=current_layout,
-        )
-    except Exception as exc:
-        LOGGER.warning("访谈教练结构化输出失败，已安全回退: %s", exc)
-        harness_metrics.increment("interview_fallbacks_total")
-        fallback_question = "这段经历中，最能证明你个人贡献的一个具体结果是什么？"
-        result = {
-            "content": f"本轮结构化分析暂时不可用，简历未被修改。\n\n{fallback_question}",
-            "memory": memory,
-            "workflow_updates": {
-                "interaction_mode": state.interaction_mode,
-                "status": "active",
-                "phase": "questioning",
-                "focus_section": str((state.workflow_state or {}).get("focus_section", "")),
-                "current_question": fallback_question,
-                "last_node": "interview_fallback",
-            },
-        }
-    metadata_updates["edit_intent_state"] = {"status": "none"}
-    return {
-        "messages": list(state.messages) + [AIMessage(content=result["content"])],
-        "resume_data": state.resume_data or {},
-        "jd_data": state.jd_data or {},
-        "layout_data": current_layout,
-        "pending_confirmation": None,
-        "proposal_error": None,
-        "interview_memory": result["memory"],
-        "workflow_updates": result["workflow_updates"],
-        "just_saved": False,
-        "user_id": state.user_id,
-        "task_id": state.task_id,
-        "context_metadata_updates": metadata_updates,
-    }
 # =============================================================================
 # Nodes
 # =============================================================================
@@ -2064,7 +1938,8 @@ async def conversation_node(state: AgentState) -> dict:
     )
 
     latest_request = latest_human_text(state)
-    coaching_mode = is_resume_coaching_request(latest_request)
+    coach_state = deepcopy(getattr(state, "coach_state", None) or {})
+    coach_active = bool(coach_state.get("active"))
     context_type = getattr(state, "context_type", "main") or "main"
     mission_initial_turn = is_initial_mission_turn(state)
     visual_parts = list(getattr(state, "visual_snapshot_parts", None) or [])
@@ -2124,7 +1999,6 @@ async def conversation_node(state: AgentState) -> dict:
         jd_data=state.jd_data,
         layout_data=state.layout_data,
         state_messages=state.messages,
-        coaching_mode=coaching_mode,
         just_saved=getattr(state, "just_saved", False),
         memory_summary=getattr(state, "memory_summary", "") or "",
         context_type=context_type,
@@ -2138,6 +2012,14 @@ async def conversation_node(state: AgentState) -> dict:
             + skill_runtime.catalog_context()
             + skill_runtime.active_instructions_context(active_skill_names)
         ))
+        if COACH_SKILL_NAME in active_skill_names:
+            messages[0] = SystemMessage(content=(
+                str(messages[0].content)
+                + "\n\n【resume-coach 私有状态】\n"
+                + "以下状态仅供当前已激活 Skill 使用。每轮必须以完整证据为依据，"
+                  "不得把结论摘要当作用户事实。\n"
+                + json.dumps(coach_state, ensure_ascii=False, indent=2)
+            ))
     if visual_attached:
         messages = _attach_visual_resume_parts(messages, visual_parts)
         LOGGER.debug("已附加 %s 页临时视觉上下文", len(visual_parts))
@@ -2157,9 +2039,13 @@ async def conversation_node(state: AgentState) -> dict:
         # Skill selection belongs to the model. The execution layer remains
         # responsible for schema validation, preview-only edits, confirmation,
         # and the one-snapshot-per-turn guard.
+        forced_coach_turn = bool(
+            getattr(state, "coach_required", False)
+            and not getattr(state, "coach_turn_processed", False)
+        )
         model = conversation_llm.bind_tools(
             _conversation_tools_for_state(state),
-            tool_choice="auto"
+            tool_choice=COACH_TOOL_NAME if forced_coach_turn else "auto"
         )
         # 不要添加 stop 序列，否则可能导致工具名称被截断
         # 增加超时时间到120秒，因为上下文可能较大
@@ -2259,6 +2145,13 @@ async def conversation_node(state: AgentState) -> dict:
         "visual_snapshot_error": visual_error,
         "context_metadata_updates": metadata_updates,
         "active_skill_names": active_skill_names,
+        "coach_state": coach_state,
+        "coach_state_version": getattr(state, "coach_state_version", 0) or 0,
+        "coach_state_changed": getattr(state, "coach_state_changed", False),
+        "coach_turn_processed": getattr(state, "coach_turn_processed", False),
+        "coach_required": coach_active or getattr(state, "coach_required", False),
+        "coach_edit_handoff": getattr(state, "coach_edit_handoff", None),
+        "assistant_command": getattr(state, "assistant_command", "") or "",
     }
     
     # 创建临时状态对象用于调试
@@ -2289,6 +2182,10 @@ async def tool_node(state: AgentState) -> dict:
     user_content = getattr(last_message, 'content', '') or ''
     metadata_updates = dict(getattr(state, "context_metadata_updates", None) or {})
     active_skill_names = list(getattr(state, "active_skill_names", None) or [])
+    coach_state = deepcopy(getattr(state, "coach_state", None) or {})
+    coach_state_changed = bool(getattr(state, "coach_state_changed", False))
+    coach_turn_processed = bool(getattr(state, "coach_turn_processed", False))
+    coach_edit_handoff = deepcopy(getattr(state, "coach_edit_handoff", None))
     
     # 处理确认回复
     if '[CONFIRM_REPLY:' in user_content:
@@ -2624,6 +2521,38 @@ async def tool_node(state: AgentState) -> dict:
                     if package.name not in active_skill_names:
                         active_skill_names.append(package.name)
                     result = activate_agent_skill.invoke({"name": package.name})
+                elif tool_name == COACH_TOOL_NAME:
+                    coach_result = await skill_runtime.invoke(
+                        COACH_SKILL_NAME,
+                        tool_args,
+                        {
+                            "resume_data": normalize_resume_data(state.resume_data or {}),
+                            "base_revision": resume_digest(normalize_resume_data(state.resume_data or {})),
+                            "latest_user_message": latest_human_text(state),
+                            "request_id": state.request_id or str(uuid.uuid4()),
+                            "context_type": getattr(state, "context_type", "main") or "main",
+                            "explicit_command": getattr(state, "assistant_command", "") == "coaching",
+                            "coach_state": coach_state,
+                        },
+                    )
+                    harness_metrics.increment("resume_coach_turns_total")
+                    coach_state = coach_result.coach_state.model_dump()
+                    coach_state_changed = True
+                    coach_turn_processed = True
+                    coach_edit_handoff = (
+                        coach_result.edit_handoff.model_dump()
+                        if coach_result.edit_handoff else None
+                    )
+                    if coach_result.active:
+                        if COACH_SKILL_NAME not in active_skill_names:
+                            active_skill_names.append(COACH_SKILL_NAME)
+                    else:
+                        active_skill_names = [
+                            name for name in active_skill_names if name != COACH_SKILL_NAME
+                        ]
+                    if coach_edit_handoff and EDIT_SKILL_NAME not in active_skill_names:
+                        active_skill_names.append(EDIT_SKILL_NAME)
+                    result = coach_result.model_dump_json()
                 # 如果是 Skill 激活请求
                 elif tool_name == 'save_resume_tool':
                     content = tool_args.get('content', '')
@@ -2678,6 +2607,19 @@ async def tool_node(state: AgentState) -> dict:
                             )
                 elif tool_name == 'resume_edit':
                     edit_tool_called = True
+                    if coach_state.get("active") and not coach_edit_handoff:
+                        raise ValueError(
+                            "深度打磨仍处于分析阶段；必须先由用户明确同意生成预览，"
+                            "再通过 resume_coach 取得编辑授权"
+                        )
+                    if coach_edit_handoff:
+                        tool_args = {
+                            **tool_args,
+                            "resume_operations": deepcopy(
+                                coach_edit_handoff.get("resume_operations") or []
+                            ),
+                            "layout_operations": [],
+                        }
                     if defer_edit_for_visual:
                         result = (
                             "本轮同时请求了视觉检查和修改。系统已先获取视觉证据，"
@@ -2710,6 +2652,8 @@ async def tool_node(state: AgentState) -> dict:
                             result = proposal_error
                         else:
                             pending_confirmation = preview.get("pending_confirmation")
+                            if pending_confirmation and coach_edit_handoff:
+                                pending_confirmation["coach_offer_id"] = coach_edit_handoff.get("offer_id")
                             edit_noop = bool(preview.get("already_satisfied"))
                             assistant_reply = str(tool_args.get("answer_text", "") or "").strip()
                             edit_preview_reply = str(
@@ -2721,6 +2665,8 @@ async def tool_node(state: AgentState) -> dict:
                     result = tool_func.invoke(tool_args)
 
             except Exception as e:
+                if tool_name == COACH_TOOL_NAME:
+                    harness_metrics.increment("resume_coach_errors_total")
                 result = f"错误: {str(e)}"
 
         # 创建 ToolMessage
@@ -2779,6 +2725,13 @@ async def tool_node(state: AgentState) -> dict:
         "visual_snapshot_error": visual_error,
         "context_metadata_updates": metadata_updates,
         "active_skill_names": active_skill_names,
+        "coach_state": coach_state,
+        "coach_state_version": getattr(state, "coach_state_version", 0) or 0,
+        "coach_state_changed": coach_state_changed,
+        "coach_turn_processed": coach_turn_processed,
+        "coach_required": bool(coach_state.get("active")),
+        "coach_edit_handoff": coach_edit_handoff,
+        "assistant_command": getattr(state, "assistant_command", "") or "",
     }
 
 
@@ -2821,7 +2774,6 @@ graph_builder.add_node("conversation_llm", conversation_node)
 graph_builder.add_node("tool_node", tool_node)
 graph_builder.add_node("direct_edit", direct_edit_node)
 graph_builder.add_node("proposal_generator", proposal_generator_node)
-graph_builder.add_node("interview_coach", interview_coach_node)
 
 # conversation_llm → tool_node / END
 graph_builder.add_conditional_edges(
@@ -2835,7 +2787,6 @@ graph_builder.add_conditional_edges(
 
 graph_builder.add_edge("direct_edit", END)
 graph_builder.add_edge("proposal_generator", END)
-graph_builder.add_edge("interview_coach", END)
 
 
 # =============================================================================
@@ -2854,15 +2805,20 @@ def entry_router(state: AgentState) -> str:
     if not state.messages:
         return "conversation_llm"
 
-    if state.interaction_mode in INTERVIEW_MODES:
-        return "interview_coach"
-
     # 检查最后一条消息是否是确认按钮点击
     last_message = state.messages[-1]
     user_content = getattr(last_message, 'content', '') or ''
 
     if '[CONFIRM_REPLY:' in user_content:
         return "tool_node"
+
+    # An explicit deep-polish Command and every active coach session stay on
+    # the model/Skill path. Direct-edit heuristics cannot bypass evidence
+    # collection or its preview-authorization boundary.
+    if getattr(state, "coach_required", False) or bool(
+        (getattr(state, "coach_state", None) or {}).get("active")
+    ):
+        return "conversation_llm"
 
     user_request = latest_human_text(state)
     if is_mission_resume_edit_request(

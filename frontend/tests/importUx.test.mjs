@@ -117,9 +117,19 @@ test('assistant actions follow the resume improvement workflow', () => {
   assert.deepEqual([...positions].sort((a, b) => a - b), positions)
 })
 
+test('layout and deep-polish commands send explicit backend skill triggers', () => {
+  assert.ok(appSource.includes("label: '排版建议'"))
+  assert.ok(appSource.includes("command: 'layout'"))
+  assert.ok(appSource.includes("label: '深度打磨'"))
+  assert.ok(appSource.includes("command: 'coaching'"))
+  assert.ok(appSource.includes("formData.append('assistant_command', assistantCommand)"))
+  assert.equal(appSource.includes("formData.append('interaction_mode'"), false)
+  assert.equal(appSource.includes("formData.append('interaction_action'"), false)
+})
+
 test('mission commands only send their initial prompt when a context is newly created', () => {
   const start = appSource.indexOf('async function startMissionContext')
-  const end = appSource.indexOf('function runWorkflowAction', start)
+  const end = appSource.indexOf('function handleLayoutUpdated', start)
   const missionFlow = appSource.slice(start, end)
   assert.ok(missionFlow.includes('const resumed = Boolean(data.resumed)'))
   assert.ok(missionFlow.includes('if (!resumed) invalidateMainConversation()'))
@@ -191,7 +201,7 @@ test('resume translation uses a dedicated endpoint and reusable cache', () => {
 
 test('resume edit shortcut guides a concrete request without spending an LLM call', () => {
   const start = appSource.indexOf('function runAssistantAction(action)')
-  const end = appSource.indexOf('function runWorkflowAction(action)', start)
+  const end = appSource.indexOf('function handleLayoutUpdated', start)
   const actionFlow = appSource.slice(start, end)
   const prefillBranch = actionFlow.indexOf('if (action.prefillOnly)')
   const earlyReturn = actionFlow.indexOf('return', prefillBranch)

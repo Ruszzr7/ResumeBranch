@@ -138,7 +138,6 @@ async def persist_turn_state(
     compression_state,
     previous_summary="",
     expected_version=0,
-    interview_memory=None,
     context_metadata_updates=None,
     token_budget=MEMORY_TOKEN_BUDGET,
 ):
@@ -183,7 +182,6 @@ async def persist_turn_state(
         summary,
         serialized_recent,
         expected_version,
-        interview_memory=interview_memory or {},
     )
 
     # Keep the old field readable during migration. The summary is represented
@@ -221,6 +219,5 @@ async def persist_turn_state(
         "memory_version": new_version,
         "summary": summary,
         "recent_messages": serialized_recent,
-        "interview_memory": interview_memory or {},
         "compacted": compacted,
     }

@@ -15,7 +15,7 @@ from backend.resume_agent import (
     direct_edit_node,
     entry_router,
     has_explicit_change_authorization,
-    is_resume_coaching_request,
+    is_resume_analysis_request,
     make_pending_confirmation,
     proposal_generator_node,
     resume_edit_tool,
@@ -157,7 +157,7 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
                     messages=[HumanMessage(content=request)],
                     resume_data=resume_payload(), layout_data=default_layout_config(),
                 )
-                self.assertTrue(is_resume_coaching_request(request))
+                self.assertTrue(is_resume_analysis_request(request))
                 self.assertEqual(entry_router(state), "conversation_llm")
 
     def test_explicit_apply_request_still_uses_edit_pipeline(self):
@@ -166,7 +166,7 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
             messages=[HumanMessage(content=request)],
             resume_data=resume_payload(), layout_data=default_layout_config(),
         )
-        self.assertFalse(is_resume_coaching_request(request))
+        self.assertFalse(is_resume_analysis_request(request))
         self.assertEqual(entry_router(state), "conversation_llm")
 
     def test_mixed_question_and_concrete_edit_is_not_forced_read_only(self):
@@ -180,16 +180,16 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
                     resume_data=resume_payload(), layout_data=default_layout_config(),
                 )
                 self.assertTrue(has_explicit_change_authorization(request))
-                self.assertFalse(is_resume_coaching_request(request))
+                self.assertFalse(is_resume_analysis_request(request))
                 self.assertEqual(entry_router(state), "conversation_llm")
 
     def test_question_without_edit_authorization_stays_read_only(self):
         for request in ("教育经历怎样写会更紧凑？", "如何修改项目经历？"):
             with self.subTest(request=request):
                 self.assertFalse(has_explicit_change_authorization(request))
-                self.assertTrue(is_resume_coaching_request(request))
+                self.assertTrue(is_resume_analysis_request(request))
 
-    async def test_coaching_turn_still_exposes_both_skills_for_model_selection(self):
+    async def test_diagnosis_remains_one_shot_without_activating_coach(self):
         bound = SimpleNamespace(
             ainvoke=AsyncMock(return_value=AIMessage(content="诊断结果")),
         )
@@ -209,7 +209,7 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
         )
         bound.ainvoke.assert_awaited_once()
         system_prompt = bound.ainvoke.await_args.args[0][0].content
-        self.assertIn("本轮模式：只读诊断与简历教练", system_prompt)
+        self.assertNotIn("已激活 Agent Skill：resume-coach", system_prompt)
         self.assertEqual(result["messages"][-1].content, "诊断结果")
 
     async def test_mixed_mission_apply_and_consultation_still_exposes_edit_skill(self):

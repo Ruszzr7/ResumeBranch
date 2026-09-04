@@ -58,6 +58,14 @@ class ResumeVisualSkillTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertFalse(should_force_initial_visual_snapshot(legacy_follow_up))
 
+        explicit_command = AgentState(
+            messages=[HumanMessage(content="检查排版")],
+            context_type="layout",
+            context_metadata={"initial_analysis_completed": True},
+            assistant_command="layout",
+        )
+        self.assertTrue(should_force_initial_visual_snapshot(explicit_command))
+
     def test_image_parts_are_attached_only_to_latest_human_turn(self):
         parts = [{"type": "image_url", "image_url": {"url": "data:image/png;base64,PNG"}}]
         messages = [HumanMessage(content="之前"), HumanMessage(content="现在")]

@@ -5,6 +5,7 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.database import (
     AgentMemoryState,
+    AgentSkillState,
     Base,
     Conversation,
     ConversationContext,
@@ -15,14 +16,15 @@ from backend.database import (
     ensure_main_context,
     append_context_event,
     get_agent_memory_state,
+    get_agent_skill_state,
     get_conversation,
     delete_resume_project,
     list_conversation_contexts,
     save_agent_memory_state,
+    save_agent_skill_state,
     save_conversation,
     update_conversation_context_metadata,
 )
-from backend.harness.workflow import WorkflowCheckpointManager, build_workflow_thread_id
 
 
 class ConversationContextTests(unittest.TestCase):
@@ -96,34 +98,29 @@ class ConversationContextTests(unittest.TestCase):
         context = create_or_resume_conversation_context(self.db, 1, "task-1", "layout")
         self.db.add(Conversation(user_id=1, session_id=context.session_id, messages=[{"content": "排版"}]))
         save_agent_memory_state(self.db, 1, context.session_id, "摘要", [], 0)
+        save_agent_skill_state(
+            self.db, 1, context.session_id, "resume-coach",
+            {"active": True, "issues": {}}, 0,
+        )
         self.db.commit()
 
         self.assertTrue(delete_resume_project(self.db, 1, "project-1"))
         self.assertEqual(self.db.query(ConversationContext).count(), 0)
         self.assertEqual(self.db.query(Conversation).count(), 0)
         self.assertEqual(self.db.query(AgentMemoryState).count(), 0)
+        self.assertEqual(self.db.query(AgentSkillState).count(), 0)
 
-
-class MissionWorkflowIsolationTests(unittest.TestCase):
-    def test_context_thread_ids_do_not_collide(self):
-        main_id = build_workflow_thread_id(1, "task-1")
-        layout_id = build_workflow_thread_id(1, "task-1", "layout-session")
-        jd_id = build_workflow_thread_id(1, "task-1", "jd-session")
-        self.assertNotEqual(main_id, layout_id)
-        self.assertNotEqual(layout_id, jd_id)
-
-        manager = WorkflowCheckpointManager(":memory:")
-        manager.record_turn_sync(
-            1, "task-1", session_id="layout-session", request_id="r1",
-            interaction_mode="chat", context_id="layout-session",
+    def test_coach_state_is_private_and_versioned(self):
+        context = create_or_resume_conversation_context(self.db, 1, "task-1", "coaching")
+        version = save_agent_skill_state(
+            self.db, 1, context.session_id, "resume-coach",
+            {"active": True, "issues": {"issue-1": {"evidence": ["A"]}}}, 0,
         )
-        manager.record_turn_sync(
-            1, "task-1", session_id="jd-session", request_id="r2",
-            interaction_mode="chat", context_id="jd-session",
-        )
-        self.assertEqual(manager.load_state_sync(1, "task-1", "layout-session")["last_request_id"], "r1")
-        self.assertEqual(manager.load_state_sync(1, "task-1", "jd-session")["last_request_id"], "r2")
-        manager.close_sync()
+        stored = get_agent_skill_state(self.db, 1, context.session_id, "resume-coach")
+        self.assertEqual(version, 1)
+        self.assertEqual(stored["version"], 1)
+        self.assertTrue(stored["state"]["active"])
+        self.assertNotIn("coach_state", get_agent_memory_state(self.db, 1, context.session_id))
 
 
 if __name__ == "__main__":

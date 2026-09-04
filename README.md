@@ -35,8 +35,8 @@ Single-user SQLite does not require a separate service. Shutting down the applic
 
 - Frontend: Vue 3, Vite, Element Plus, and Vue Router.
 - Backend: Python 3.11, FastAPI, SQLAlchemy, and Uvicorn/Gunicorn.
-- Agent: LangGraph handles graph state and routing; repository-local Agent Skill packages provide discoverable resume-edit and resume-snapshot capabilities; LangChain Core and an OpenAI-compatible client provide message, model, and tool abstractions.
-- Data: the single-user profile uses SQLite, while the multi-user profile uses MySQL; workflow checkpoints are stored separately in a SQLite file.
+- Agent: LangGraph handles graph state and routing; repository-local Agent Skill packages provide discoverable resume-edit, resume-snapshot, and resume-coach capabilities; LangChain Core and an OpenAI-compatible client provide message, model, and tool abstractions.
+- Data: the single-user profile uses SQLite, while the multi-user profile uses MySQL; private multi-turn Skill state is stored separately from ordinary conversation memory.
 - Export and rendering: Chromium generates PDFs, `python-docx` generates editable DOCX files, and Poppler generates PDF page snapshots that can be consumed by the AI.
 - Communication: regular endpoints use HTTP, while AI responses are streamed over SSE.
 - Delivery and deployment: the source path includes Windows launch scripts; the multi-user Docker path includes Compose, MySQL, Gunicorn, and Nginx configuration.
@@ -146,15 +146,15 @@ Runtime logs are written to `.local-run/`, which is ignored by Git.
 
 ## Agent and modification safety
 
-ResumeBranch does not hard-code every request as a fixed workflow. The entry router combines the current conversation mode and request type to choose a path:
+ResumeBranch does not hard-code every request as a fixed workflow. The entry router combines the current request, active Skill state, and confirmation protocol to choose a path:
 
 - General questions and complex resume tasks are given to the Agent, which decides whether to answer, ask questions, or call a skill.
 - Explicit, safely parseable requests for fields, font sizes, layout, or local bold formatting use the deterministic direct-edit path.
-- Interview diagnosis, deep discovery, and JD review enter the corresponding job-coaching nodes.
+- Comprehensive diagnosis remains a one-shot conversation; deep polish explicitly activates the evidence-driven coaching Skill, which can also be activated on demand in other conversations.
 - When visual layout information is needed, the system renders resume page snapshots using the same source as the official PDF.
 - When a resume change is needed, the system generates a structured candidate, shows a preview, and persists it only after confirmation.
 
-Resume content, layout rules, the JD, conversation summaries, and necessary memory are assembled on demand by the context layer. Workflow checkpoints store control state only; business data remains governed by the SQLAlchemy database.
+Resume content, layout rules, the JD, conversation summaries, and necessary memory are assembled on demand by the context layer. Coaching evidence is kept in private Skill state, separate from the rolling conversation summary.
 
 When a change is confirmed, the resume revision and content digest are checked. If another window changes the resume while confirmation is pending, the stale suggestion is rejected and the frontend reloads the canonical version from the database. Database locks serialize changes across conversation windows, browser tabs, and backend processes; consultation-only conversations are unaffected.
 
@@ -167,7 +167,6 @@ Main persistent data in the single-user profile:
 ~~~text
 data/resumebranch.db                  # Resume, JD, conversation, and business state
 data/source_documents/                # Original imported resume files
-data/langgraph_checkpoints.sqlite     # Agent control-state checkpoints
 data/llm_profiles.json                # Local API settings, if configured in the UI
 output/resumes/                       # Locally exported PDF/DOCX files
 ~~~
@@ -199,8 +198,6 @@ The main endpoint groups cover runtime configuration, authentication and invite 
 $env:APP_MODE = "local"
 $env:LOCAL_USER_EMAIL = "local@localhost"
 $env:DATABASE_URL = "sqlite:///./.local-run/test-suite.db"
-$env:AGENT_CHECKPOINTER_ENABLED = "true"
-$env:AGENT_CHECKPOINT_DB_PATH = ".local-run/test-checkpoints.sqlite"
 .\.venv-win\Scripts\python.exe -m unittest discover -s tests
 
 # Frontend
@@ -217,7 +214,7 @@ These commands force the regular tests to use SQLite under `.local-run/`. They d
 ResumeBranch/
 ├── .agents/skills/                 # Discoverable Agent Skill packages and their schemas/scripts
 ├── backend/                       # FastAPI, Agent, data models, import and export
-│   ├── harness/                   # Context, memory, workflow state, and observability
+│   ├── harness/                   # Context, memory, persistence, and observability
 │   ├── skill_runtime.py           # Skill discovery, activation, schema loading, and invocation
 │   ├── Dockerfile
 │   ├── main.py

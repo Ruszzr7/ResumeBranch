@@ -90,23 +90,6 @@ class AgentMemoryStateTests(unittest.TestCase):
         )
         self.assertEqual(second_version, 2)
 
-    def test_interview_memory_is_persisted_with_the_same_optimistic_version(self):
-        facts = {
-            "schema_version": 1,
-            "verified_facts": [{
-                "claim": "转化率提升20%",
-                "source_quote": "转化率提升20%",
-                "source_type": "user_message",
-            }],
-        }
-        version = save_agent_memory_state(
-            self.db, 1, "task-1", "", [], 0, interview_memory=facts,
-        )
-
-        state = get_agent_memory_state(self.db, 1, "task-1")
-        self.assertEqual(version, 1)
-        self.assertEqual(state["interview_memory"]["verified_facts"][0]["claim"], "转化率提升20%")
-
     def test_deleting_context_removes_layered_and_legacy_memory(self):
         self.task.compressed_context = [{"type": "human", "content": "legacy"}]
         self.db.commit()

@@ -145,7 +145,7 @@ local_export_enabled: false
 5. 两个用户只能看到各自的简历、岗位版本和对话数据。
 6. 同一账号在另一设备登录后，旧会话失效。
 7. 完成一次 PDF/DOCX 导出和一次简历页面快照。
-8. 重启容器后，用户、简历、上传文件和检查点仍然存在。
+8. 重启容器后，用户、简历、上传文件和 Skill 私有状态仍然存在。
 
 ## 停止、重启与数据
 
@@ -175,7 +175,7 @@ down -v 会删除 Compose 管理的 MySQL 和应用数据卷。
 主要持久化内容：
 
 - `multi_user_mysql`：Compose 文件中的 MySQL 数据卷，保存用户、简历、岗位版本、JD 和对话。
-- `multi_user_app_data`：Compose 文件中的应用数据卷，保存上传原件、模型配置和 LangGraph 检查点。实际 Docker 卷名可能带有 Compose 项目前缀。
+- `multi_user_app_data`：Compose 文件中的应用数据卷，保存上传原件和模型配置。实际 Docker 卷名可能带有 Compose 项目前缀。
 
 多用户 Docker 数据与单用户 SQLite 数据相互独立，项目不会自动迁移或合并两边数据。
 
@@ -190,7 +190,7 @@ docker compose --env-file .env.docker \
   --single-transaction --routines --events "$MYSQL_DATABASE"' > resume_assistant.sql
 ~~~
 
-同时备份应用数据卷中的 `source_documents/`、`llm_profiles.json` 和 `langgraph_checkpoints.sqlite`。可先查看实际卷名：
+同时备份应用数据卷中的 `source_documents/` 和 `llm_profiles.json`；Skill 私有状态随 MySQL 业务数据库一并备份。可先查看实际卷名：
 
 ~~~bash
 docker volume ls --filter name=multi_user_app_data

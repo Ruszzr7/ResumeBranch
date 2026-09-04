@@ -220,7 +220,20 @@ class AgentMemoryState(Base):
     session_id = Column(String(36), nullable=False)
     summary = Column(large_text_type, default="")
     recent_messages = Column(JSON, default=list)
-    interview_memory = Column(JSON, default=dict)
+    version = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class AgentSkillState(Base):
+    """Private, versioned state owned by one Agent Skill and conversation."""
+    __tablename__ = "agent_skill_states"
+    scope_id = Column(String(180), primary_key=True)
+    task_id = Column(String(36), nullable=True, index=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    session_id = Column(String(36), nullable=False)
+    skill_name = Column(String(64), nullable=False, index=True)
+    state_json = Column(JSON, default=dict)
     version = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -296,7 +309,6 @@ def init_db():
     migrate_project_task_source_page_count()
     migrate_project_task_source_document()
     migrate_layout_config_fields()
-    migrate_agent_memory_interview_fields()
     migrate_user_admin_field()
     migrate_resume_academic_fields()
 
@@ -343,19 +355,6 @@ def migrate_layout_config_fields():
                 connection.execute(text("ALTER TABLE resume_revisions ADD COLUMN before_layout JSON"))
             if "after_layout" not in columns:
                 connection.execute(text("ALTER TABLE resume_revisions ADD COLUMN after_layout JSON"))
-
-
-def migrate_agent_memory_interview_fields():
-    """Add structured, source-traceable interview memory to existing databases."""
-    inspector = inspect(engine)
-    if "agent_memory_states" not in inspector.get_table_names():
-        return
-    columns = {column["name"] for column in inspector.get_columns("agent_memory_states")}
-    if "interview_memory" not in columns:
-        with engine.begin() as connection:
-            connection.execute(text(
-                "ALTER TABLE agent_memory_states ADD COLUMN interview_memory JSON"
-            ))
 
 
 def migrate_user_admin_field():
@@ -578,27 +577,6 @@ def list_conversation_contexts(db, user_id: int, task_id: str):
     ).all()
 
 
-def list_conversation_context_sessions(db, user_id: int, task_ids):
-    """Return mission session ids grouped by task for workflow cleanup.
-
-    The main context deliberately uses the legacy task workflow thread, so
-    callers only receive mission sessions here. Keeping this lookup in the
-    data layer makes project/task deletion independent from the HTTP routes.
-    """
-    normalized_task_ids = [str(task_id) for task_id in (task_ids or []) if task_id]
-    if not normalized_task_ids:
-        return {}
-    rows = db.query(ConversationContext).filter(
-        ConversationContext.user_id == user_id,
-        ConversationContext.task_id.in_(normalized_task_ids),
-        ConversationContext.context_type != "main",
-    ).all()
-    grouped = {task_id: [] for task_id in normalized_task_ids}
-    for row in rows:
-        grouped.setdefault(row.task_id, []).append(row.session_id)
-    return grouped
-
-
 def get_conversation_context_record(db, user_id: int, context_id: str):
     """Get a context record with ownership validation."""
     return db.query(ConversationContext).filter(
@@ -679,6 +657,11 @@ def close_conversation_context(db, user_id: int, context_id: str):
     db.query(AgentMemoryState).filter(
         AgentMemoryState.user_id == user_id,
         AgentMemoryState.scope_id == f"task:{context.task_id}:context:{context.session_id}",
+    ).delete(synchronize_session=False)
+    db.query(AgentSkillState).filter(
+        AgentSkillState.user_id == user_id,
+        AgentSkillState.task_id == context.task_id,
+        AgentSkillState.session_id == context.session_id,
     ).delete(synchronize_session=False)
     db.query(ResumeEditLock).filter(
         ResumeEditLock.task_id == context.task_id,
@@ -1232,6 +1215,10 @@ def delete_resume_project(db, user_id: int, project_id: str) -> bool:
             AgentMemoryState.user_id == user_id,
             AgentMemoryState.task_id.in_(task_ids),
         ).delete(synchronize_session=False)
+        db.query(AgentSkillState).filter(
+            AgentSkillState.user_id == user_id,
+            AgentSkillState.task_id.in_(task_ids),
+        ).delete(synchronize_session=False)
         context_rows = db.query(ConversationContext).filter(
             ConversationContext.user_id == user_id,
             ConversationContext.task_id.in_(task_ids),
@@ -1273,6 +1260,10 @@ def delete_resume_task(db, user_id: int, task_id: str) -> str:
     db.query(AgentMemoryState).filter(
         AgentMemoryState.user_id == user_id,
         AgentMemoryState.task_id == task_id,
+    ).delete(synchronize_session=False)
+    db.query(AgentSkillState).filter(
+        AgentSkillState.user_id == user_id,
+        AgentSkillState.task_id == task_id,
     ).delete(synchronize_session=False)
     context_rows = db.query(ConversationContext).filter(
         ConversationContext.user_id == user_id,
@@ -1667,7 +1658,6 @@ def get_agent_memory_state(db, user_id: int, session_id: str) -> dict:
             "task_id": task_id,
             "summary": memory.summary or "",
             "recent_messages": memory.recent_messages or [],
-            "interview_memory": memory.interview_memory or {},
             "version": memory.version or 0,
         }
 
@@ -1687,7 +1677,6 @@ def get_agent_memory_state(db, user_id: int, session_id: str) -> dict:
         "task_id": task_id,
         "summary": summary,
         "recent_messages": recent_messages,
-        "interview_memory": {},
         "version": 0,
     }
 
@@ -1699,7 +1688,6 @@ def save_agent_memory_state(
     summary: str,
     recent_messages: list,
     expected_version: int,
-    interview_memory: dict | None = None,
 ) -> int:
     """Persist layered memory with optimistic concurrency control."""
     scope_id, task_id = _agent_memory_scope(db, user_id, session_id)
@@ -1718,7 +1706,6 @@ def save_agent_memory_state(
             session_id=session_id,
             summary=summary or "",
             recent_messages=recent_messages or [],
-            interview_memory=interview_memory or {},
             version=1,
             updated_at=now,
         )
@@ -1737,7 +1724,6 @@ def save_agent_memory_state(
     ).update({
         AgentMemoryState.summary: summary or "",
         AgentMemoryState.recent_messages: recent_messages or [],
-        AgentMemoryState.interview_memory: interview_memory or {},
         AgentMemoryState.session_id: session_id,
         AgentMemoryState.version: int(expected_version or 0) + 1,
         AgentMemoryState.updated_at: now,
@@ -1745,6 +1731,68 @@ def save_agent_memory_state(
     if updated != 1:
         db.rollback()
         raise MemoryVersionConflict("记忆状态版本已变化，请重新加载后重试")
+    db.commit()
+    return int(expected_version or 0) + 1
+
+
+def get_agent_skill_state(db, user_id: int, session_id: str, skill_name: str) -> dict:
+    """Load private Skill state without exposing it through conversation memory."""
+    memory_scope, task_id = _agent_memory_scope(db, user_id, session_id)
+    scope_id = f"{memory_scope}:skill:{skill_name}"
+    row = db.query(AgentSkillState).filter(
+        AgentSkillState.scope_id == scope_id,
+        AgentSkillState.user_id == user_id,
+        AgentSkillState.skill_name == skill_name,
+    ).first()
+    return {
+        "scope_id": scope_id,
+        "task_id": task_id,
+        "state": deepcopy(row.state_json or {}) if row else {},
+        "version": int(row.version or 0) if row else 0,
+    }
+
+
+def save_agent_skill_state(
+    db, user_id: int, session_id: str, skill_name: str,
+    state: dict, expected_version: int,
+) -> int:
+    """Persist one Skill's private state with optimistic concurrency control."""
+    memory_scope, task_id = _agent_memory_scope(db, user_id, session_id)
+    scope_id = f"{memory_scope}:skill:{skill_name}"
+    now = datetime.utcnow()
+    row = db.query(AgentSkillState).filter(
+        AgentSkillState.scope_id == scope_id,
+        AgentSkillState.user_id == user_id,
+        AgentSkillState.skill_name == skill_name,
+    ).first()
+    if row is None:
+        if expected_version not in {None, 0}:
+            raise MemoryVersionConflict("Skill 状态版本已变化，请重新加载后重试")
+        db.add(AgentSkillState(
+            scope_id=scope_id, task_id=task_id, user_id=user_id,
+            session_id=session_id, skill_name=skill_name,
+            state_json=deepcopy(state or {}), version=1, updated_at=now,
+        ))
+        try:
+            db.commit()
+        except IntegrityError as exc:
+            db.rollback()
+            raise MemoryVersionConflict("Skill 状态已由另一请求创建，请重新加载后重试") from exc
+        return 1
+    updated = db.query(AgentSkillState).filter(
+        AgentSkillState.scope_id == scope_id,
+        AgentSkillState.user_id == user_id,
+        AgentSkillState.skill_name == skill_name,
+        AgentSkillState.version == int(expected_version or 0),
+    ).update({
+        AgentSkillState.state_json: deepcopy(state or {}),
+        AgentSkillState.session_id: session_id,
+        AgentSkillState.version: int(expected_version or 0) + 1,
+        AgentSkillState.updated_at: now,
+    }, synchronize_session=False)
+    if updated != 1:
+        db.rollback()
+        raise MemoryVersionConflict("Skill 状态版本已变化，请重新加载后重试")
     db.commit()
     return int(expected_version or 0) + 1
 
@@ -2021,6 +2069,10 @@ def cleanup_old_contexts(db, days: int = 7):
         AgentMemoryState.task_id.is_(None),
         AgentMemoryState.updated_at < cutoff,
     ).delete(synchronize_session=False)
+    db.query(AgentSkillState).filter(
+        AgentSkillState.task_id.is_(None),
+        AgentSkillState.updated_at < cutoff,
+    ).delete(synchronize_session=False)
     db.commit()
 
 
@@ -2034,6 +2086,11 @@ def delete_conversation_context(db, user_id: int, session_id: str):
         db.query(AgentMemoryState).filter(
             AgentMemoryState.scope_id == f"task:{task.id}",
             AgentMemoryState.user_id == user_id,
+        ).delete(synchronize_session=False)
+        db.query(AgentSkillState).filter(
+            AgentSkillState.task_id == task.id,
+            AgentSkillState.user_id == user_id,
+            AgentSkillState.session_id == session_id,
         ).delete(synchronize_session=False)
         db.commit()
         return
@@ -2050,6 +2107,11 @@ def delete_conversation_context(db, user_id: int, session_id: str):
             AgentMemoryState.scope_id == f"task:{context.task_id}:context:{context.session_id}",
             AgentMemoryState.user_id == user_id,
         ).delete(synchronize_session=False)
+        db.query(AgentSkillState).filter(
+            AgentSkillState.task_id == context.task_id,
+            AgentSkillState.user_id == user_id,
+            AgentSkillState.session_id == context.session_id,
+        ).delete(synchronize_session=False)
         db.commit()
         return
     db.query(Conversation).filter(
@@ -2059,5 +2121,9 @@ def delete_conversation_context(db, user_id: int, session_id: str):
     db.query(AgentMemoryState).filter(
         AgentMemoryState.scope_id == f"conversation:{user_id}:{session_id}",
         AgentMemoryState.user_id == user_id,
+    ).delete(synchronize_session=False)
+    db.query(AgentSkillState).filter(
+        AgentSkillState.user_id == user_id,
+        AgentSkillState.session_id == session_id,
     ).delete(synchronize_session=False)
     db.commit()

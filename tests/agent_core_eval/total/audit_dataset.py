@@ -85,13 +85,11 @@ def _audit_v4_content(payload: dict) -> dict:
     if declared_scenarios != configured_scenarios:
         issues.append({"scope": "scenario_type", "reason": "v4-hard 场景标签计数与元数据不一致"})
 
-    allowed_routes = {"conversation_llm", "direct_edit", "interview_coach", "tool_node"}
+    allowed_routes = {"conversation_llm", "direct_edit", "tool_node"}
     for case in payload.get("routing") or []:
         route = str(case.get("expected_route") or "")
         if route not in allowed_routes:
             issues.append({"scope": case.get("id", ""), "reason": f"未知路由金标：{route}"})
-        if route == "interview_coach" and not case.get("state", {}).get("interaction_mode"):
-            issues.append({"scope": case.get("id", ""), "reason": "求职辅导路由缺少 interaction_mode 上下文"})
         if route == "tool_node" and case.get("confirmation") not in {
             "confirm", "cancel", "confirm_all", "cancel_all",
             "confirm_selected:change-2",

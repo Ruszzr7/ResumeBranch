@@ -23,7 +23,6 @@ import re
 import secrets
 import tempfile
 from copy import deepcopy
-from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
@@ -73,7 +72,7 @@ def _sanitize_user_visible_text(value: object) -> str:
     text_value = localize_user_visible_layout_text(value)
     text_value = re.sub(r"\[CONFIRM_REPLY:[^\]]+\]", "确认操作", text_value)
     text_value = re.sub(
-        r"\b(?:activate_agent_skill|resume_edit|resume_snapshot|request_resume_edit|render_resume_pdf_images)\b",
+        r"\b(?:activate_agent_skill|resume_edit|resume_snapshot|resume_coach|request_resume_edit|render_resume_pdf_images)\b",
         "系统能力",
         text_value,
     )
@@ -88,7 +87,7 @@ def _sanitize_user_visible_text(value: object) -> str:
 
 _STREAM_INTERNAL_IDENTIFIERS = frozenset({
     *user_visible_layout_internal_identifiers(),
-    "activate_agent_skill", "resume_edit", "resume_snapshot",
+    "activate_agent_skill", "resume_edit", "resume_snapshot", "resume_coach",
     "request_resume_edit", "render_resume_pdf_images",
     "layout_config", "resume_data", "jd_data", "session_id", "confirm_id", "request_id",
 })
@@ -136,7 +135,7 @@ from .database import (
     list_project_tasks, list_user_resume_sources, create_resume_task, get_resume_task,
     rename_resume_project, rename_resume_task, switch_base_resume_task,
     CONTEXT_TYPES, create_or_resume_conversation_context,
-    list_conversation_contexts, list_conversation_context_sessions,
+    list_conversation_contexts,
     get_conversation_context_record,
     close_conversation_context, serialize_conversation_context,
     append_context_event, get_context_by_session,
@@ -148,6 +147,7 @@ from .database import (
     rotate_auth_session, revoke_auth_session,
     acquire_resume_edit_lock, mark_resume_edit_awaiting_confirmation,
     release_resume_edit_lock, get_resume_edit_state,
+    get_agent_skill_state, save_agent_skill_state,
 )
 from .auth import (
     verify_password, get_password_hash, create_access_token,
@@ -179,15 +179,6 @@ from .harness.memory import (
     wait_for_compression as _wait_for_compression,
 )
 from .harness.persistence import persist_turn_state
-from .harness.workflow import WorkflowCheckpointManager, build_workflow_thread_id
-from .harness.interview import (
-    INTERVIEW_ACTIONS,
-    INTERVIEW_MODES,
-    interview_feature_config,
-    is_active_interview_workflow,
-    resolve_interview_action,
-    workflow_public_state,
-)
 from .harness.observability import harness_metrics
 from .layout_config import LAYOUT_SCHEMA_VERSION, default_layout_config, resolve_layout_tokens
 from .inline_formatting import plain_inline_text
@@ -526,34 +517,8 @@ async def compress_context_with_llm(messages, max_summary_length=1000):
 # FastAPI 应用
 # =============================================================================
 
-@asynccontextmanager
-async def app_lifespan(app_instance: FastAPI):
-    """Own the durable workflow checkpointer for the server process."""
-    manager = WorkflowCheckpointManager()
-    try:
-        await manager.start()
-        removed = await manager.cleanup_stale()
-        if removed:
-            harness_metrics.increment("workflow_cleanup_threads_total", removed)
-            LOGGER.info("已清理 %s 个过期工作流控制线程", removed)
-    except Exception as exc:
-        # Checkpoint failure must not make existing resume operations unusable.
-        LOGGER.warning("工作流检查点启动失败，本进程保持无状态兼容运行: %s", exc)
-        manager.enabled = False
-    app_instance.state.workflow_checkpoints = manager
-    try:
-        yield
-    finally:
-        await manager.close()
-
-
-app = FastAPI(title="ResumeBranch API", version=APP_VERSION, lifespan=app_lifespan)
+app = FastAPI(title="ResumeBranch API", version=APP_VERSION)
 _edit_preview_guard = asyncio.Lock()
-
-
-def get_workflow_checkpoint_manager():
-    """Return the lifespan-owned manager; direct unit calls may not have one."""
-    return getattr(app.state, "workflow_checkpoints", None)
 
 
 def require_llm_configured():
@@ -962,21 +927,10 @@ async def delete_project(
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user),
 ):
-    task_ids = [task.id for task in list_project_tasks(db, current_user.id, project_id)]
-    mission_sessions = list_conversation_context_sessions(db, current_user.id, task_ids)
     if not delete_resume_project(db, current_user.id, project_id):
         raise HTTPException(status_code=404, detail="简历组不存在")
     for storage_key in delete_unreferenced_source_documents(db, current_user.id):
         remove_source_document_file(storage_key)
-    manager = get_workflow_checkpoint_manager()
-    if manager:
-        for task_id in task_ids:
-            try:
-                await manager.delete_thread(current_user.id, task_id)
-                for session_id in mission_sessions.get(task_id, []):
-                    await manager.delete_thread(current_user.id, task_id, context_id=session_id)
-            except Exception as exc:
-                LOGGER.warning("项目删除后的工作流检查点清理失败: %s", exc)
     return {"success": True}
 
 
@@ -1083,12 +1037,6 @@ async def close_task_context(
         closed = close_conversation_context(db, current_user.id, context_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="配置内容不完整或格式不正确") from exc
-    manager = get_workflow_checkpoint_manager()
-    if manager:
-        try:
-            await manager.delete_thread(current_user.id, task_id, context_id=context.session_id)
-        except Exception as exc:
-            LOGGER.warning("会话关闭后的工作流检查点清理失败: %s", exc)
     append_context_event(db, current_user.id, task_id, context, "closed")
     return {"success": True, "context": serialize_conversation_context(closed)}
 
@@ -1157,50 +1105,12 @@ async def get_task_source_document_endpoint(
     )
 
 
-@app.get("/tasks/{task_id}/workflow")
-async def get_task_workflow(
-    task_id: str,
-    context_id: str = "",
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user),
-):
-    """Restore only the public interview control projection after a refresh."""
-    task = get_resume_task(db, current_user.id, task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
-    manager = get_workflow_checkpoint_manager()
-    context = None
-    if context_id:
-        context = get_conversation_context_record(db, current_user.id, context_id)
-        if not context:
-            context = get_context_by_session(db, current_user.id, task_id, context_id)
-        if not context or context.task_id != task_id:
-            raise HTTPException(status_code=404, detail="任务会话不存在")
-    workflow_context_id = context.session_id if context and context.context_type != "main" else None
-    state = await manager.load_state(current_user.id, task_id, workflow_context_id) if manager else {}
-    from .database import AgentMemoryState
-    memory_scope = (
-        f"task:{task_id}:context:{workflow_context_id}"
-        if workflow_context_id else f"task:{task_id}"
-    )
-    memory_row = db.query(AgentMemoryState).filter(
-        AgentMemoryState.scope_id == memory_scope,
-        AgentMemoryState.user_id == current_user.id,
-    ).first()
-    interview_memory = memory_row.interview_memory if memory_row else {}
-    return {
-        "state": workflow_public_state(state, interview_memory),
-        "feature": interview_feature_config(current_user.id, task_id),
-    }
-
-
 @app.delete("/tasks/{task_id}")
 async def delete_task(
     task_id: str,
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user),
 ):
-    mission_sessions = list_conversation_context_sessions(db, current_user.id, [task_id])
     result = delete_resume_task(db, current_user.id, task_id)
     if result == "not_found":
         raise HTTPException(status_code=404, detail="岗位版本不存在")
@@ -1208,14 +1118,6 @@ async def delete_task(
         raise HTTPException(status_code=400, detail="主简历不能单独删除，请删除整份简历组")
     for storage_key in delete_unreferenced_source_documents(db, current_user.id):
         remove_source_document_file(storage_key)
-    manager = get_workflow_checkpoint_manager()
-    if manager:
-        try:
-            await manager.delete_thread(current_user.id, task_id)
-            for session_id in mission_sessions.get(task_id, []):
-                await manager.delete_thread(current_user.id, task_id, context_id=session_id)
-        except Exception as exc:
-            LOGGER.warning("任务删除后的工作流检查点清理失败: %s", exc)
     return {"success": True}
 
 
@@ -2077,8 +1979,7 @@ async def chat_endpoint(
     files: list[UploadFile] = File(default=[]),
     session_id: str = Form(""),
     request_id: str = Form(""),
-    interaction_mode: str = Form(""),
-    interaction_action: str = Form(""),
+    assistant_command: str = Form(""),
     render_style: str = Form(""),
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -2103,11 +2004,6 @@ async def chat_endpoint(
             task_record = get_resume_task(db, current_user.id, task_id)
             if task_record and session_id != task_record.session_id and context_record is None:
                 return JSONResponse(content={"error": "无效的任务会话"}, status_code=409)
-        workflow_context_id = (
-            context_record.session_id
-            if context_record and context_record.context_type != "main"
-            else None
-        )
         context_type = context_record.context_type if context_record else "main"
         context_metadata = dict(getattr(context_record, "metadata_json", {}) or {}) if context_record else {}
         # 生成会话 ID
@@ -2120,17 +2016,17 @@ async def chat_endpoint(
             )
         request_id = (request_id or str(uuid.uuid4())).strip()[:64]
         render_style_data = _parse_render_style(render_style)
-        requested_mode = interaction_mode.strip().lower() if isinstance(interaction_mode, str) else ""
-        requested_action = interaction_action.strip().lower() if isinstance(interaction_action, str) else ""
-        if requested_mode and requested_mode not in INTERVIEW_MODES:
-            return JSONResponse(content={"error": "不支持的助手模式"}, status_code=400)
-        if requested_action and requested_action not in INTERVIEW_ACTIONS:
-            return JSONResponse(content={"error": "不支持的助手动作"}, status_code=400)
+        requested_command = assistant_command.strip().lower() if isinstance(assistant_command, str) else ""
+        command_context = {"layout": "layout", "coaching": "coaching"}
+        if requested_command not in {"", *command_context}:
+            return JSONResponse(content={"error": "不支持的助手命令"}, status_code=400)
+        if requested_command and context_type != command_context[requested_command]:
+            return JSONResponse(content={"error": "助手命令与当前任务会话不匹配"}, status_code=409)
 
-        # 执行图本身不持久化业务载荷；配置与工作流检查点统一使用 user + task 隔离键。
+        # 图本身不持久化业务载荷；thread_id 仅用于本轮追踪。
         config = {
             "configurable": {
-                "thread_id": build_workflow_thread_id(current_user.id, task_id, workflow_context_id),
+                "thread_id": f"user:{current_user.id}:task:{task_id}:session:{session_id}",
             }
         }
 
@@ -2219,99 +2115,20 @@ async def chat_endpoint(
                 clear_pending_confirmation(db, current_user.id, session_id)
                 initial_pending_confirmation = None
 
-        # 只把模式、阶段等控制状态写入 Checkpointer。简历、JD、消息、
-        # 附件和确认候选仍只存在业务数据库/本次执行内存中。
-        workflow_manager = get_workflow_checkpoint_manager()
-        workflow_start_error = None
-        workflow_state = {}
-        selected_interview_mode = ""
-        selected_interview_action = ""
-        feature_config = interview_feature_config(current_user.id, task_id)
-        if workflow_manager:
-            try:
-                if hasattr(workflow_manager, "load_state"):
-                    if workflow_context_id:
-                        workflow_state = await workflow_manager.load_state(
-                            current_user.id, task_id, workflow_context_id,
-                        )
-                    else:
-                        workflow_state = await workflow_manager.load_state(current_user.id, task_id)
-                active_interview = is_active_interview_workflow(workflow_state)
-                explicit_legacy_change = (
-                    resume_agent.is_explicit_resume_change_request(message)
-                    or resume_agent.is_explicit_layout_change_request(message)
-                    or (
-                        not requested_action
-                        and resume_agent.is_mission_resume_edit_request(message, context_type)
-                    )
-                )
-                if feature_config["enabled"] and not is_confirm_click and not explicit_legacy_change:
-                    if requested_mode:
-                        selected_interview_mode = requested_mode
-                    elif active_interview:
-                        selected_interview_mode = str(workflow_state.get("interaction_mode", "coaching"))
-                    if selected_interview_mode:
-                        selected_interview_action = resolve_interview_action(
-                            requested_action, workflow_state, requested_mode or None,
-                        )
-
-                legacy_workflow_mode = None
-                if not selected_interview_mode:
-                    preserve_active_interview = active_interview and (
-                        is_confirm_click
-                        or explicit_legacy_change
-                    )
-                    if preserve_active_interview:
-                        legacy_workflow_mode = None
-                    elif is_confirm_click or explicit_legacy_change:
-                        legacy_workflow_mode = "chat"
-                    elif resume_agent.is_resume_coaching_request(message):
-                        legacy_workflow_mode = "jd_review" if "jd" in message.lower() else "coaching"
-
-                record_kwargs = {
-                    "session_id": session_id,
-                    "request_id": request_id,
-                }
-                interaction_mode_to_record = (
-                    selected_interview_mode
-                    if selected_interview_action == "start"
-                    else legacy_workflow_mode
-                )
-                if interaction_mode_to_record:
-                    record_kwargs["interaction_mode"] = interaction_mode_to_record
-                if workflow_context_id:
-                    record_kwargs["context_id"] = workflow_context_id
-                workflow_state = await workflow_manager.record_turn(
-                    current_user.id, task_id, **record_kwargs,
-                )
-                if selected_interview_action in {"start", "answer"}:
-                    workflow_updates = {
-                        "interaction_mode": selected_interview_mode,
-                        "status": "active",
-                        "phase": (
-                            "diagnosing" if selected_interview_action == "start"
-                            else "synthesizing"
-                        ),
-                        "last_node": "interview_coach_pending",
-                    }
-                    if workflow_context_id:
-                        workflow_updates["context_id"] = workflow_context_id
-                    workflow_state = await workflow_manager.update_state(
-                        current_user.id, task_id, **workflow_updates,
-                    )
-                if feature_config["shadow"]:
-                    LOGGER.debug(
-                        "访谈影子模式 enabled=%s mode=%s action=%s",
-                        feature_config["enabled"],
-                        selected_interview_mode or "legacy",
-                        selected_interview_action or "-",
-                    )
-                if selected_interview_mode:
-                    harness_metrics.increment("interview_turns_total")
-            except Exception as exc:
-                workflow_start_error = str(exc)
-                harness_metrics.increment("workflow_errors_total")
-                LOGGER.warning("工作流回合恢复或登记失败: %s", exc)
+        coach_record = (
+            get_agent_skill_state(
+                db, current_user.id, session_id, resume_agent.COACH_SKILL_NAME
+            )
+            if hasattr(db, "query")
+            else {"state": {}, "version": 0}
+        )
+        coach_state = resume_agent.skill_runtime.get(
+            resume_agent.COACH_SKILL_NAME
+        ).module.normalize_coach_state(coach_record.get("state"))
+        coach_required = requested_command == "coaching" or bool(coach_state.get("active"))
+        active_skill_names = []
+        if coach_required:
+            active_skill_names.append(resume_agent.COACH_SKILL_NAME)
 
         # 证件照单独存储在任务记录中；在真实数据库会话中一并带入快照渲染。
         # 轻量测试替身可能没有 query 接口，此时沿用无照片快照即可。
@@ -2334,13 +2151,15 @@ async def chat_endpoint(
             "proposal_error": None,
             "memory_summary": memory_summary,
             "memory_version": memory_version,
-            "interview_memory": memory_state.get("interview_memory", {}),
-            "workflow_state": workflow_state,
-            "workflow_updates": None,
-            "interaction_mode": selected_interview_mode,
-            "interaction_action": selected_interview_action,
+            "coach_state": coach_state,
+            "coach_state_version": int(coach_record.get("version", 0) or 0),
+            "coach_state_changed": False,
+            "coach_turn_processed": False,
+            "coach_required": coach_required,
+            "coach_edit_handoff": None,
+            "assistant_command": requested_command,
             "request_id": request_id,
-            "context_id": workflow_context_id or session_id,
+            "context_id": session_id,
             "context_type": context_type,
             "context_metadata": context_metadata,
             "photo": initial_photo,
@@ -2350,6 +2169,7 @@ async def chat_endpoint(
             "visual_snapshot_revision": "",
             "visual_snapshot_error": "",
             "context_metadata_updates": {},
+            "active_skill_names": active_skill_names,
         }
         LOGGER.debug(
             "Agent 初始状态已创建，消息数=%s，存在待确认=%s",
@@ -2359,7 +2179,7 @@ async def chat_endpoint(
 
         async def save_state_async(
             db, user_id, session_id, messages_list, resume_data_result,
-            initial_jd_data, pending_confirmation=None, interview_memory=None,
+            initial_jd_data, pending_confirmation=None,
             context_metadata_updates=None,
         ):
             """Compatibility wrapper around the extracted turn persistence service."""
@@ -2375,7 +2195,6 @@ async def chat_endpoint(
                 compression_state=compression_state,
                 previous_summary=memory_summary,
                 expected_version=memory_version,
-                interview_memory=interview_memory or memory_state.get("interview_memory", {}),
                 context_metadata_updates=context_metadata_updates or {},
             )
 
@@ -2403,8 +2222,8 @@ async def chat_endpoint(
             confirmation_sent = False
             edit_lock_acquired = False
             proposal_error_result = None
-            interview_memory_result = memory_state.get("interview_memory", {})
-            workflow_updates_result = None
+            coach_state_result = coach_state
+            coach_state_changed = False
             context_metadata_updates_result = {}
 
             def acquire_turn_edit_lock():
@@ -2444,14 +2263,10 @@ async def chat_endpoint(
                         current_node = node_name
                         node_start_time[node_name] = time.time()
                         LOGGER.debug("Agent 节点开始: %s", node_name)
-                        preview_node = node_name in {"tool_node", "direct_edit", "proposal_generator"} or (
-                            node_name == "interview_coach" and selected_interview_action == "apply"
-                        )
+                        preview_node = node_name in {"tool_node", "direct_edit", "proposal_generator"}
                         if preview_node and not is_confirm_click:
                             if "building_preview" not in sent_progress_phases:
                                 yield progress_event("building_preview", "正在生成修改预览…")
-                        elif node_name == "interview_coach" and "analyzing" not in sent_progress_phases:
-                            yield progress_event("analyzing", "正在分析简历证据与薄弱项…")
 
                     if event_type == "on_chat_model_stream" and current_node == "conversation_llm":
                         chunk = event.get("data", {}).get("chunk", {})
@@ -2491,9 +2306,9 @@ async def chat_endpoint(
 
                         if "messages" in output:
                             messages_list = list(output["messages"])
-                        if node_name == "interview_coach":
-                            interview_memory_result = output.get("interview_memory", interview_memory_result)
-                            workflow_updates_result = output.get("workflow_updates")
+                        if isinstance(output.get("coach_state"), dict):
+                            coach_state_result = output["coach_state"]
+                        coach_state_changed = coach_state_changed or bool(output.get("coach_state_changed"))
                         if isinstance(output.get("context_metadata_updates"), dict):
                             context_metadata_updates_result.update(output["context_metadata_updates"])
 
@@ -2523,7 +2338,7 @@ async def chat_endpoint(
 
                         confirm_data = (
                             output.get("pending_confirmation")
-                            if node_name in {"tool_node", "direct_edit", "proposal_generator", "interview_coach"}
+                            if node_name in {"tool_node", "direct_edit", "proposal_generator"}
                             else None
                         )
                         confirm_id = confirm_data.get("confirm_id") if isinstance(confirm_data, dict) else None
@@ -2607,15 +2422,15 @@ async def chat_endpoint(
                                     "session_id": session_id,
                                 }) + '\n\n'
                         elif (
-                            node_name in {"tool_node", "direct_edit", "proposal_generator", "interview_coach"}
+                            node_name in {"tool_node", "direct_edit", "proposal_generator"}
                             and "pending_confirmation" in output
                             and not confirm_data
                         ):
                             pending_confirmation_result = None
 
-                        if "resume_data" in output and not confirm_data and node_name != "interview_coach":
+                        if "resume_data" in output and not confirm_data:
                             resume_data_result = output["resume_data"]
-                        if "layout_data" in output and not confirm_data and node_name != "interview_coach":
+                        if "layout_data" in output and not confirm_data:
                             layout_data_result = output["layout_data"]
 
                 if proposal_error_result:
@@ -2669,9 +2484,17 @@ async def chat_endpoint(
                     resume_data_to_persist,
                     initial_jd_data,
                     pending_confirmation_result,
-                    interview_memory_result,
                     context_metadata_updates_result,
                 )
+                if coach_state_changed and hasattr(db, "query"):
+                    save_agent_skill_state(
+                        db,
+                        current_user.id,
+                        session_id,
+                        resume_agent.COACH_SKILL_NAME,
+                        coach_state_result,
+                        int(coach_record.get("version", 0) or 0),
+                    )
             except Exception as exc:
                 LOGGER.warning("回合状态保存失败: %s", exc)
                 harness_metrics.increment("persistence_errors_total")
@@ -2680,55 +2503,6 @@ async def chat_endpoint(
                     "request_id": request_id,
                     "message": "对话状态未能安全保存，请重新发送上一条消息。",
                     "retryable": True,
-                }) + '\n\n'
-
-            workflow_error = workflow_start_error
-            workflow_state_result = workflow_state
-            if workflow_manager and not workflow_error:
-                try:
-                    workflow_updates = dict(workflow_updates_result or {})
-                    workflow_updates.setdefault("last_node", current_node or "")
-                    if pending_confirmation_result:
-                        workflow_updates["status"] = "awaiting_confirmation"
-                    elif confirmation_processed:
-                        if workflow_state.get("interaction_mode") in INTERVIEW_MODES:
-                            workflow_updates.update({
-                                "interaction_mode": workflow_state.get("interaction_mode"),
-                                "status": "active",
-                                "phase": "questioning",
-                            })
-                        else:
-                            workflow_updates["status"] = "ready"
-                    elif proposal_error_result:
-                        workflow_updates["status"] = "error"
-                    if workflow_context_id:
-                        workflow_updates["context_id"] = workflow_context_id
-                    workflow_state_result = await workflow_manager.update_state(
-                        current_user.id,
-                        task_id,
-                        **workflow_updates,
-                    )
-                except Exception as exc:
-                    workflow_error = str(exc)
-                    harness_metrics.increment("workflow_errors_total")
-                    LOGGER.warning("工作流回合控制状态保存失败: %s", exc)
-            if workflow_error:
-                yield 'data: ' + json.dumps({
-                    "type": "workflow_error",
-                    "request_id": request_id,
-                    "message": "工作流进度未能保存，本轮对话内容仍已处理。",
-                    "retryable": False,
-                }) + '\n\n'
-            elif selected_interview_mode or workflow_updates_result or (
-                confirmation_processed and workflow_state.get("interaction_mode") in INTERVIEW_MODES
-            ):
-                yield 'data: ' + json.dumps({
-                    "type": "workflow_state",
-                    "request_id": request_id,
-                    "state": workflow_public_state(
-                        workflow_state_result,
-                        interview_memory_result,
-                    ),
                 }) + '\n\n'
 
             yield 'data: ' + json.dumps({

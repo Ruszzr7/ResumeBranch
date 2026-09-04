@@ -267,19 +267,11 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
     async def test_chat_sse_event_contract_for_normal_conversation(self):
         db = SimpleNamespace(info={"task_id": "task-1"})
         user = SimpleNamespace(id=7)
-        workflow_manager = SimpleNamespace(
-            record_turn=AsyncMock(return_value={"status": "ready"}),
-            update_state=AsyncMock(return_value={"status": "ready"}),
-        )
         fake_graph = FakeConversationGraph()
 
         with (
             patch("backend.main.require_llm_configured"),
             patch("backend.main.graph", fake_graph),
-            patch(
-                "backend.main.get_workflow_checkpoint_manager",
-                return_value=workflow_manager,
-            ),
             patch("backend.main.get_user_resume", return_value=resume_payload()),
             patch("backend.main.get_user_jd", return_value={}),
             patch("backend.main.get_task_layout_config", return_value=default_layout_config()),
@@ -323,20 +315,9 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
             "type", "session_id", "request_id",
             "confirmation_processed", "confirmation_success", "layout_config",
         })
-        workflow_manager.record_turn.assert_awaited_once_with(
-            7,
-            "task-1",
-            session_id="task-1",
-            request_id="request-1",
-        )
-        workflow_manager.update_state.assert_awaited_once_with(
-            7,
-            "task-1",
-            last_node="conversation_llm",
-        )
         self.assertEqual(
             fake_graph.last_config["configurable"]["thread_id"],
-            "user:7:task:task-1",
+            "user:7:task:task-1:session:task-1",
         )
 
     async def test_chat_sse_event_contract_for_confirmation_preview(self):

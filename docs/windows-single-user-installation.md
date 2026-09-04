@@ -64,7 +64,6 @@ http://127.0.0.1:5173
 ~~~text
 app/data/resumebranch.db
 app/data/source_documents/
-app/data/langgraph_checkpoints.sqlite
 app/data/llm_profiles.json
 app/output/resumes/
 ~~~

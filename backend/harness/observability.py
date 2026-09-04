@@ -5,11 +5,9 @@ from threading import RLock
 
 
 METRIC_NAMES = frozenset({
-    "interview_turns_total",
-    "interview_fallbacks_total",
+    "resume_coach_turns_total",
+    "resume_coach_errors_total",
     "persistence_errors_total",
-    "workflow_errors_total",
-    "workflow_cleanup_threads_total",
     "resume_visual_render_failures_total",
     "resume_visual_render_fallbacks_total",
     "resume_visual_model_fallbacks_total",

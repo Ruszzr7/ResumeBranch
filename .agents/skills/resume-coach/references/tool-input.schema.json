@@ -1,0 +1,133 @@
+{
+  "$defs": {
+    "CoachProposal": {
+      "additionalProperties": false,
+      "properties": {
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        },
+        "resume_operations": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Resume Operations",
+          "type": "array"
+        }
+      },
+      "required": [
+        "summary",
+        "resume_operations"
+      ],
+      "title": "CoachProposal",
+      "type": "object"
+    },
+    "EvidenceCandidate": {
+      "additionalProperties": false,
+      "properties": {
+        "claim": {
+          "title": "Claim",
+          "type": "string"
+        },
+        "source_quote": {
+          "title": "Source Quote",
+          "type": "string"
+        },
+        "section": {
+          "default": "",
+          "title": "Section",
+          "type": "string"
+        },
+        "dimension": {
+          "default": "",
+          "title": "Dimension",
+          "type": "string"
+        }
+      },
+      "required": [
+        "claim",
+        "source_quote"
+      ],
+      "title": "EvidenceCandidate",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "operation": {
+      "enum": [
+        "start",
+        "update",
+        "offer_preview",
+        "handoff_to_edit",
+        "complete_issue",
+        "exit"
+      ],
+      "title": "Operation",
+      "type": "string"
+    },
+    "issue_id": {
+      "default": "",
+      "title": "Issue Id",
+      "type": "string"
+    },
+    "problem": {
+      "default": "",
+      "title": "Problem",
+      "type": "string"
+    },
+    "evidence_candidates": {
+      "items": {
+        "$ref": "#/$defs/EvidenceCandidate"
+      },
+      "title": "Evidence Candidates",
+      "type": "array"
+    },
+    "conclusions": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Conclusions",
+      "type": "array"
+    },
+    "open_questions": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Open Questions",
+      "type": "array"
+    },
+    "proposal": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CoachProposal"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "approval_quote": {
+      "default": "",
+      "title": "Approval Quote",
+      "type": "string"
+    },
+    "result": {
+      "default": "",
+      "title": "Result",
+      "type": "string"
+    },
+    "reason": {
+      "default": "",
+      "title": "Reason",
+      "type": "string"
+    }
+  },
+  "required": [
+    "operation"
+  ],
+  "title": "ResumeCoachToolInput",
+  "type": "object"
+}
