@@ -14,7 +14,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from .database import TranslationMemory, get_translation_memory, save_translation_memory
 from .llm_gateway import parse_json_output
 from .llm_providers import active_profile
-from .resume_agent import create_llm_for_config, normalize_and_validate_resume
+from .resume_agent import create_llm_for_config
+from .resume_schema import validate_resume_data
 
 
 _CHINESE_RE = re.compile(r"[\u3400-\u9fff]")
@@ -156,7 +157,7 @@ async def translate_resume(
     if source_language != "zh" or target_language != "en":
         raise ValueError("当前仅支持将中文简历翻译为英文")
 
-    source = normalize_and_validate_resume(resume_data, include_defaults=True)
+    source = validate_resume_data(resume_data)
     translated = deepcopy(source)
     items = _collect_items(
         source,
@@ -211,7 +212,7 @@ async def translate_resume(
 
     db.commit()
     return {
-        "resume_data": normalize_and_validate_resume(translated, include_defaults=True),
+        "resume_data": validate_resume_data(translated),
         "cache_hits": len(cached),
         "new_translations": len(missing),
         "total_translatable": len(by_memory_id),
@@ -255,6 +256,6 @@ def restore_from_translation_memory(db, user_id: int, translated_data: dict) -> 
 
     walk(restored)
     return {
-        "resume_data": normalize_and_validate_resume(restored, include_defaults=True),
+        "resume_data": validate_resume_data(restored),
         "restored_fields": restored_count,
     }

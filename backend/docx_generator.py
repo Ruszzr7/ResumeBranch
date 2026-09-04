@@ -17,7 +17,7 @@ from docx.shared import Mm, Pt, RGBColor
 
 from .inline_formatting import join_inline_label_value, join_inline_with_inherited_separator, parse_inline_bold
 from .resume_labels import LABELS
-from .resume_data import normalize_resume_data
+from .resume_schema import validate_resume_data
 from .render_contract import iter_experience_content_blocks
 
 DEFAULT_FONT_SPEC = {
@@ -523,7 +523,7 @@ def generate_docx(
         resolve_photo_height_mm,
     )
 
-    data = normalize_resume_data(resume_data)
+    data = validate_resume_data(resume_data)
     labels = LABELS.get(lang, LABELS["zh"])
     colon = "：" if lang == "zh" else ": "
     layout = normalize_layout_config(layout_config)

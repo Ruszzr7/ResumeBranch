@@ -13,7 +13,7 @@ from backend.database import (
     switch_base_resume_task,
     save_user_resume,
 )
-from backend.resume_data import normalize_resume_data
+from backend.resume_schema import validate_resume_data
 
 
 class TaskCreationTests(unittest.TestCase):
@@ -77,7 +77,7 @@ class TaskCreationTests(unittest.TestCase):
             self.db, 1, "target", "空白", copy_base_resume=False,
             source_task_id=None, jd_data={},
         )
-        self.assertEqual(task.resume_data, {})
+        self.assertEqual(task.resume_data, validate_resume_data({}))
         self.assertEqual(task.photo, "")
         self.assertEqual(task.source_page_count, 1)
         self.assertIsNone(task.source_document_id)
@@ -116,7 +116,7 @@ class TaskCreationTests(unittest.TestCase):
             is_base=False, session_id="target-version",
             resume_data={
             "basics": {"name": "版本候选人"},
-            "project_experience": [{"name": "版本项目"}],
+            "project_experience": [{"project_name": "版本项目"}],
             },
             photo="photo-data", source_page_count=2, source_document_id="source-document",
             layout_config={"page": {"margin_top_mm": 18}},

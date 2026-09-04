@@ -1,10 +1,29 @@
 import unittest
 
 from backend.import_contract import assess_import_quality, finalize_import_resume
-from backend.resume_agent import normalize_and_validate_resume
 
 
 class ImportContractTests(unittest.TestCase):
+    def test_import_date_range_preserves_date_hyphens(self):
+        result, quality = finalize_import_resume({
+            "basics": {"name": "张三", "phone": "13800138000", "email": "a@example.com"},
+            "education": [{
+                "school_name": "测试大学",
+                "date_range": "2024-09 - 2025-06",
+            }],
+            "self_evaluation": ["具备完整的项目开发和交付经验"],
+        })
+
+        self.assertTrue(quality.accepted)
+        self.assertEqual(result["education"][0]["date_range"], ["2024-09", "2025-06"])
+
+        single, _ = finalize_import_resume({
+            "basics": {"name": "张三", "phone": "13800138000", "email": "a@example.com"},
+            "education": [{"school_name": "测试大学", "date_range": "2024-09"}],
+            "self_evaluation": ["具备完整的项目开发和交付经验"],
+        })
+        self.assertEqual(single["education"][0]["date_range"], ["2024-09"])
+
     def test_quality_requires_identity_and_minimum_content(self):
         weak = assess_import_quality({"basics": {"name": "张三"}})
         self.assertFalse(weak.accepted)
@@ -29,7 +48,7 @@ class ImportContractTests(unittest.TestCase):
             "custom_sections": [{
                 "title": "荣誉、论文与语言", "items": ["一等奖学金", "论文题目", "CET-6"],
             }],
-        }, normalize_and_validate_resume)
+        })
 
         self.assertTrue(quality.accepted)
         self.assertEqual(result["formatting_version"], 4)
@@ -77,7 +96,7 @@ class ImportContractTests(unittest.TestCase):
             "publications": ["论文标题"],
             "others": {"skills": ["**Python** 与 Vue"], "certificates": [], "languages": []},
             "self_evaluation": ["**沟通能力强**"],
-        }, normalize_and_validate_resume)
+        })
 
         self.assertTrue(quality.accepted)
         self.assertEqual(result["basics"]["target_position"], "**软件工程师**")
@@ -109,7 +128,7 @@ class ImportContractTests(unittest.TestCase):
                     "type": "bullet_list", "semantic_role": "responsibilities", "label": "", "items": ["完成设计"],
                 }],
             }],
-        }, normalize_and_validate_resume)
+        })
 
         self.assertTrue(quality.accepted)
         blocks = result["project_experience"][0]["content_blocks"]
@@ -128,7 +147,7 @@ class ImportContractTests(unittest.TestCase):
                     "type": "bullet_list", "semantic_role": "responsibilities", "label": "", "items": ["完成设计"],
                 }],
             }],
-        }, normalize_and_validate_resume)
+        })
 
         self.assertTrue(quality.accepted)
         blocks = result["work_experience"][0]["content_blocks"]
@@ -146,7 +165,7 @@ class ImportContractTests(unittest.TestCase):
                 ],
             }],
             "others": {"skills": ["Docker"]},
-        }, normalize_and_validate_resume)
+        })
 
         self.assertTrue(quality.accepted)
         blocks = result["project_experience"][0]["content_blocks"]
@@ -165,7 +184,7 @@ class ImportContractTests(unittest.TestCase):
                     "text": "完成设计与验证", "items": [],
                 }],
             }],
-        }, normalize_and_validate_resume)
+        })
 
         self.assertTrue(quality.accepted)
         block = result["project_experience"][0]["content_blocks"][0]

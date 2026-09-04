@@ -30,7 +30,7 @@ from backend.resume_contract import (
     validate_resume_operation_value,
 )
 from backend.resume_changes import resume_digest
-from backend.resume_data import normalize_resume_data
+from backend.resume_schema import validate_resume_data
 
 
 MAX_OPERATIONS = 100
@@ -391,7 +391,7 @@ async def run_resume_edit(
     if not resume_operations and not layout_operations:
         raise ResumeEditOperationError("未收到可执行的结构化修改操作")
 
-    current_resume = normalize_resume_data(request.resume_data or {})
+    current_resume = validate_resume_data(request.resume_data or {})
     current_layout = normalize_layout_config(request.layout_config or {})
     if request.base_revision and request.base_revision != resume_digest(current_resume):
         raise ResumeEditOperationError("简历在生成预览前已发生变化，请重新生成修改建议")
@@ -419,7 +419,7 @@ async def run_resume_edit(
         layout=True,
     )
 
-    normalized_candidate_resume = normalize_resume_data(candidate_resume)
+    normalized_candidate_resume = validate_resume_data(candidate_resume)
     normalized_candidate_layout = normalize_layout_config(candidate_layout)
     return ResumeEditResult(
         resume_data=normalized_candidate_resume,

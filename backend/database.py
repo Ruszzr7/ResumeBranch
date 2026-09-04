@@ -17,7 +17,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
-from .resume_data import normalize_resume_data
+from .resume_schema import validate_resume_data
 from .layout_config import default_layout_config, normalize_layout_config
 
 LOGGER = logging.getLogger(__name__)
@@ -310,7 +310,6 @@ def init_db():
     migrate_project_task_source_document()
     migrate_layout_config_fields()
     migrate_user_admin_field()
-    migrate_resume_academic_fields()
 
 
 def migrate_project_task_source_page_count():
@@ -374,52 +373,6 @@ def migrate_user_admin_field():
             connection.execute(text(
                 "ALTER TABLE users ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT 0"
             ))
-
-
-def migrate_resume_academic_fields():
-    """Migrate legacy GPA-in-thesis records into explicit education fields."""
-    db = SessionLocal()
-    changed = 0
-    try:
-        for resume in db.query(Resume).all():
-            try:
-                normalized = normalize_resume_data(resume.resume_data or {})
-            except (TypeError, ValueError) as exc:
-                LOGGER.warning("跳过旧版简历数据迁移 id=%s: %s", resume.id, exc)
-                continue
-            if normalized != (resume.resume_data or {}):
-                resume.resume_data = normalized
-                changed += 1
-
-        for project in db.query(ResumeProject).all():
-            try:
-                normalized = normalize_resume_data(project.base_resume_data or {})
-            except (TypeError, ValueError) as exc:
-                LOGGER.warning("跳过简历项目迁移 id=%s: %s", project.id, exc)
-                continue
-            if normalized != (project.base_resume_data or {}):
-                project.base_resume_data = normalized
-                changed += 1
-
-        for task in db.query(ProjectTask).all():
-            try:
-                normalized = normalize_resume_data(task.resume_data or {})
-            except (TypeError, ValueError) as exc:
-                LOGGER.warning("跳过简历任务迁移 id=%s: %s", task.id, exc)
-                continue
-            if normalized != (task.resume_data or {}):
-                task.resume_data = normalized
-                changed += 1
-
-        if changed:
-            db.commit()
-            LOGGER.info("已规范化 %s 份简历的教育成绩字段", changed)
-    except Exception as exc:
-        db.rollback()
-        # A normalization issue should not prevent the application from starting.
-        LOGGER.warning("教育成绩字段迁移已跳过: %s", exc)
-    finally:
-        db.close()
 
 
 # =============================================================================
@@ -951,7 +904,7 @@ def create_resume_task(
         title=(title or "新岗位版本").strip()[:120],
         is_base=False,
         session_id=task_id,
-        resume_data=normalize_resume_data(source_task.resume_data or {}) if source_task else {},
+        resume_data=validate_resume_data(source_task.resume_data or {}) if source_task else validate_resume_data({}),
         photo=(source_task.photo or "") if source_task else "",
         source_page_count=max(1, int(source_task.source_page_count or 1)) if source_task else 1,
         source_document_id=(source_task.source_document_id if source_task else None),
@@ -1019,7 +972,7 @@ def switch_base_resume_task(db, user_id: int, task_id: str):
 
     project = get_resume_project(db, user_id, selected_task.project_id)
     if project:
-        project.base_resume_data = normalize_resume_data(selected_task.resume_data or {})
+        project.base_resume_data = validate_resume_data(selected_task.resume_data or {})
         project.photo = selected_task.photo or ""
         project.updated_at = now
 
@@ -1103,8 +1056,8 @@ def record_resume_revision(
     revision = ResumeRevision(
         task_id=task_id,
         user_id=user_id,
-        before_data=normalize_resume_data(before_data or {}),
-        after_data=normalize_resume_data(after_data or {}),
+        before_data=validate_resume_data(before_data or {}),
+        after_data=validate_resume_data(after_data or {}),
         selected_change_ids=list(selected_change_ids or []),
         before_layout=(normalize_layout_config(before_layout) if before_layout is not None else None),
         after_layout=(normalize_layout_config(after_layout) if after_layout is not None else None),
@@ -1129,17 +1082,14 @@ def undo_latest_resume_revision(db, user_id: int, task_id: str) -> tuple[str, di
     ).order_by(ResumeRevision.created_at.desc()).first()
     if not revision:
         return "no_revision", None, None
-    current_data = normalize_resume_data(task.resume_data or {})
-    # Stored revisions may predate removal of empty experience-level ``details``.
-    # Normalize both sides before comparing so legacy test snapshots remain undoable
-    # without retaining the deprecated field in the active data contract.
-    if resume_digest(current_data) != resume_digest(normalize_resume_data(revision.after_data or {})):
+    current_data = validate_resume_data(task.resume_data or {})
+    if resume_digest(current_data) != resume_digest(validate_resume_data(revision.after_data or {})):
         return "conflict", None, None
     current_layout = normalize_layout_config(task.layout_config)
     if revision.after_layout is not None and current_layout != normalize_layout_config(revision.after_layout):
         return "conflict", None, None
 
-    restored = normalize_resume_data(revision.before_data or {})
+    restored = validate_resume_data(revision.before_data or {})
     task.resume_data = restored
     restored_layout = (
         normalize_layout_config(revision.before_layout)
@@ -1295,9 +1245,9 @@ def get_user_resume(db, user_id: int) -> dict:
     """获取用户简历"""
     task = _active_task(db, user_id)
     if task:
-        return normalize_resume_data(task.resume_data or {})
+        return validate_resume_data(task.resume_data or {})
     resume = db.query(Resume).filter(Resume.user_id == user_id).first()
-    return normalize_resume_data(resume.resume_data or {}) if resume else {}
+    return validate_resume_data(resume.resume_data or {}) if resume else validate_resume_data({})
 
 
 def get_translation_memory(db, user_id: int, memory_ids: list[str]) -> dict[str, str]:
@@ -1435,10 +1385,9 @@ def save_user_resume(db, user_id: int, data: dict, name: str = "默认简历", p
     raw_basics = data.get("basics") if isinstance(data, dict) else None
     photo_field_supplied = (
         (isinstance(raw_basics, dict) and "photo" in raw_basics)
-        or (isinstance(data, dict) and "photo" in data)
     )
     photo_argument_supplied = photo is not None
-    data = normalize_resume_data(data)
+    data = validate_resume_data(data)
     task = _active_task(db, user_id)
     if task:
         existing_photo = task.photo or ""

@@ -30,8 +30,7 @@ from dataclasses import dataclass
 from typing import Annotated, List
 from pydantic import BaseModel, Field
 
-from .resume_data import normalize_resume_data
-from .resume_contract import ProjectContentBlock
+from .resume_schema import Resume, validate_resume_data
 from .prompt_contract import CONTENT_STRUCTURE_GUIDANCE, build_layout_context
 from .inline_formatting import InlineFormatError, format_resume_text, plain_inline_text
 from .resume_changes import (
@@ -129,101 +128,6 @@ load_dotenv()
 # Preserve Windows/system proxy auto-detection for future LLM calls without
 # changing any machine-wide environment variable.
 os.environ.setdefault("LANGCHAIN_OPENAI_TCP_KEEPALIVE", "0")
-
-
-# =============================================================================
-# Pydantic 数据模型定义
-# =============================================================================
-
-class AdditionalBasicField(BaseModel):
-    """未预设的个人基本信息。"""
-    label: str = Field(default="", description="字段名称，例如籍贯、政治面貌")
-    value: str = Field(default="", description="字段原文")
-
-
-class BasicInfo(BaseModel):
-    """基本信息"""
-    name: str = Field(default="", description="姓名")
-    gender: str = Field(default="", description="性别")
-    birth_date: str = Field(default="", description="出生年月或出生日期，忠实保留原文")
-    phone: str = Field(default="", description="手机号")
-    email: str = Field(default="", description="邮箱")
-    target_position: str = Field(default="", description="期望岗位")
-    photo: str = Field(default="", description="证件照 data URL；文档解析时留空")
-    additional_fields: List[AdditionalBasicField] = Field(
-        default_factory=list,
-        description="其他基本信息，每项为 label、value 字符串，例如籍贯、政治面貌",
-    )
-
-
-class Thesis(BaseModel):
-    """论文信息"""
-    title: str = Field(default="", description="论文标题；原文没有时留空")
-    details: List[str] = Field(default_factory=list, description="论文详细内容")
-
-
-class Education(BaseModel):
-    """教育背景"""
-    school_name: str = Field(default="", description="学校名称；原文没有时留空")
-    major: str = Field(default="", description="专业；原文没有时留空")
-    degree: str = Field(default="", description="学历；原文没有时留空")
-    date_range: List[str] = Field(default_factory=list, description="就读时间；原文没有时留空")
-    school_tags: List[str] = Field(default_factory=list, description="学校性质标签")
-    gpa: str = Field(default="", description="平均绩点，例如 3.72")
-    gpa_scale: str = Field(default="", description="绩点满分，例如 4.0")
-    ranking: str = Field(default="", description="专业或年级排名，例如 前10%")
-    theses: List[Thesis] = Field(default_factory=list, description="论文列表")
-
-
-class WorkExperience(BaseModel):
-    """工作经历"""
-    company_name: str = Field(default="", description="公司名称；原文没有时留空")
-    job_title: str = Field(default="", description="职位名称；原文没有时留空")
-    date_range: List[str] = Field(default_factory=list, description="就职时间；原文没有时留空")
-    job_type: str = Field(default="", description="工作类型；原文没有明确标注时必须留空，不得推断")
-    content_blocks: List[ProjectContentBlock] = Field(default_factory=list, description="工作简介、工作职责、其他工作内容等语义内容块；每种内容均可按原文或用户要求使用段落、分点或编号形式；工作经历不使用项目技术栈角色")
-
-
-class ProjectExperience(BaseModel):
-    """项目经历"""
-    project_name: str = Field(default="", description="项目名称；原文没有时留空")
-    role: str = Field(default="", description="项目角色；原文未提供时必须留空")
-    date_range: List[str] = Field(default_factory=list, description="项目时间")
-    content_blocks: List[ProjectContentBlock] = Field(
-        default_factory=list, description="技术栈、项目简介、项目职责、其他项目内容语义块；语义角色与段落、分点、编号形式相互独立"
-    )
-
-
-class Others(BaseModel):
-    """其他信息"""
-    skills: List[str] = Field(default_factory=list, description="原简历顶层专业技能/技能特长/技术栈栏目中的全部条目，包括该栏目内出现的语言和证书；项目经历内部技术栈写入项目 content_blocks")
-    certificates: List[str] = Field(default_factory=list, description="仅提取原简历独立证书/资格栏目中的条目")
-    languages: List[str] = Field(default_factory=list, description="仅提取原简历独立语言/外语能力栏目中的条目")
-
-
-class CustomSection(BaseModel):
-    """无法安全映射到固定栏目、但必须保留的原简历栏目。"""
-    title: str = Field(default="", description="原栏目标题")
-    items: List[str] = Field(default_factory=list, description="按原阅读顺序保留的内容")
-
-
-class Resume(BaseModel):
-    """完整简历数据结构"""
-    formatting_version: int = Field(default=0, description="内联文字格式协议版本；4 表示固定字段字重与大输入框局部粗体协议")
-    basics: BasicInfo = Field(default_factory=BasicInfo, description="基本信息")
-    education: List[Education] = Field(default_factory=list, description="教育背景")
-    education_supplement: List[str] = Field(
-        default_factory=list,
-        description="教育经历补充；无独立标题的补充内容，按原顺序逐条保存，不包含序号",
-    )
-    research_interests: List[str] = Field(default_factory=list, description="研究方向或研究兴趣")
-    honors: List[str] = Field(default_factory=list, description="荣誉、奖项、奖学金")
-    publications: List[str] = Field(default_factory=list, description="论文，每个元素为一篇完整论文信息")
-    work_experience: List[WorkExperience] = Field(default_factory=list, description="工作经历")
-    project_experience: List[ProjectExperience] = Field(default_factory=list, description="项目经历")
-    custom_sections: List[CustomSection] = Field(default_factory=list, description="其他原始栏目，禁止丢弃")
-    others: Others = Field(default_factory=Others, description="其他信息")
-    self_evaluation: List[str] = Field(default_factory=list, description="自我评价")
 
 
 # =============================================================================
@@ -595,13 +499,6 @@ def fix_unquoted_json_strings(content: str) -> str:
         return content
 
 
-def normalize_and_validate_resume(data: dict, *, include_defaults: bool = False) -> dict:
-    """Normalize legacy fields and reject malformed model-generated resumes."""
-    normalized = normalize_resume_data(data)
-    validated = Resume.model_validate(normalized)
-    return validated.model_dump() if include_defaults else normalized
-
-
 @tool
 def save_resume_tool(content: str = "", user_id: int = None, task_id: str = None) -> str:
     """
@@ -645,7 +542,7 @@ def save_resume_tool(content: str = "", user_id: int = None, task_id: str = None
             return f"保存失败：JSON 解析错误 - {str(e)}"
 
     try:
-        resume_data = normalize_and_validate_resume(resume_data)
+        resume_data = validate_resume_data(resume_data)
     except Exception as exc:
         return f"保存失败：简历数据结构不合法 - {str(exc)}"
 
@@ -1041,14 +938,14 @@ def build_inline_format_candidate(state: AgentState) -> tuple[dict, str, bool]:
         raise InlineFormatError("请用引号标出需要加粗或取消加粗的原文，例如：把实习经历中的“性能提升 35%”加粗。")
     quote = plain_inline_text(quoted[-1]).strip()
     bold = not bool(_INLINE_FORMAT_UNBOLD_RE.search(request_text))
-    current = normalize_resume_data(state.resume_data or {})
+    current = validate_resume_data(state.resume_data or {})
     candidate, _reference = format_resume_text(
         current,
         quote,
         bold=bold,
         request_text=request_text,
     )
-    return normalize_and_validate_resume(candidate), quote, bold
+    return validate_resume_data(candidate), quote, bold
 
 
 _LAYOUT_ACTION_RE = re.compile(
@@ -1441,7 +1338,7 @@ def build_local_contextual_replace_candidate(current: dict, text: str) -> dict |
         if not _set_local_text_path(candidate, matches[0][0], new_value):
             return None
 
-    return normalize_and_validate_resume(candidate)
+    return validate_resume_data(candidate)
 
 
 def _inherit_whole_field_format(current_value: object, new_value: str) -> str:
@@ -1492,7 +1389,7 @@ def _build_local_edit_candidate_for_text(state: AgentState, text: str) -> dict |
     ):
         return None
 
-    current = normalize_resume_data(state.resume_data or {})
+    current = validate_resume_data(state.resume_data or {})
     contextual_candidate = build_local_contextual_replace_candidate(current, text)
     if contextual_candidate is not None:
         return contextual_candidate
@@ -1562,7 +1459,7 @@ def _build_local_edit_candidate_for_text(state: AgentState, text: str) -> dict |
 
     if not mentioned_fields or parsed_fields != mentioned_fields:
         return None
-    return normalize_and_validate_resume(candidate)
+    return validate_resume_data(candidate)
 
 
 _EDIT_CLAUSE_SPLIT_RE = re.compile(
@@ -1599,7 +1496,7 @@ def _resolve_local_edit_candidates(
     if not clauses:
         return None, None, False
 
-    resume_candidate = normalize_resume_data(state.resume_data or {})
+    resume_candidate = validate_resume_data(state.resume_data or {})
     layout_candidate = normalize_layout_config(state.layout_data)
     for clause in clauses:
         clause_state = replace(
@@ -1627,7 +1524,7 @@ def classify_local_edit_request(state: AgentState) -> str:
     deterministic route.  Anything that cannot be resolved completely stays
     in the conversation node, where the model can clarify it.
     """
-    current_resume = normalize_resume_data(state.resume_data or {})
+    current_resume = validate_resume_data(state.resume_data or {})
     current_layout = normalize_layout_config(state.layout_data)
     resume_candidate, layout_candidate, resolved = _resolve_local_edit_candidates(state)
     if not resolved:
@@ -1677,9 +1574,9 @@ def make_pending_confirmation(
     layout_candidate: dict | None = None,
 ) -> dict:
     """Build the same pending-confirmation contract for tool and fallback paths."""
-    current = normalize_resume_data(state.resume_data or {})
+    current = validate_resume_data(state.resume_data or {})
     current_layout = normalize_layout_config(state.layout_data)
-    candidate = normalize_resume_data(candidate if candidate is not None else current)
+    candidate = validate_resume_data(candidate if candidate is not None else current)
     layout_candidate = normalize_layout_config(
         layout_candidate if layout_candidate is not None else current_layout
     )
@@ -1715,7 +1612,7 @@ def make_pending_confirmation(
 
 async def direct_edit_node(state: AgentState) -> dict:
     """Build a preview for unambiguous field assignments without calling an LLM."""
-    current = normalize_resume_data(state.resume_data or {})
+    current = validate_resume_data(state.resume_data or {})
     current_layout = normalize_layout_config(state.layout_data)
     metadata_updates = dict(getattr(state, "context_metadata_updates", None) or {})
     if is_font_size_chat_change_request(latest_human_text(state)):
@@ -1802,7 +1699,7 @@ async def direct_edit_node(state: AgentState) -> dict:
 async def proposal_generator_node(state: AgentState) -> dict:
     """Legacy graph entry kept for compatibility; normal routing uses the tool path."""
     start_time = time.time()
-    current = normalize_resume_data(state.resume_data or {})
+    current = validate_resume_data(state.resume_data or {})
     current_layout = normalize_layout_config(state.layout_data)
     metadata_updates = dict(getattr(state, "context_metadata_updates", None) or {})
 
@@ -1873,7 +1770,7 @@ async def _generate_resume_edit_preview(
 ) -> dict:
     """Run the generic edit skill with model-resolved operations only."""
     await acquire_current_edit_lock()
-    current = normalize_resume_data(state.resume_data or {})
+    current = validate_resume_data(state.resume_data or {})
     current_layout = normalize_layout_config(state.layout_data)
     edit_result = await skill_runtime.invoke(
         EDIT_SKILL_NAME,
@@ -2232,7 +2129,7 @@ async def tool_node(state: AgentState) -> dict:
                                 fixed_content = fix_unquoted_json_strings(content)
                                 candidate_resume_data = json.loads(fixed_content)
 
-                            candidate_resume_data = normalize_and_validate_resume(candidate_resume_data)
+                            candidate_resume_data = validate_resume_data(candidate_resume_data)
                             candidate_layout_data = normalize_layout_config(
                                 json.loads(tool_args.get("layout_content", "{}"))
                                 if tool_args.get("layout_content") else state.layout_data
@@ -2251,7 +2148,7 @@ async def tool_node(state: AgentState) -> dict:
                             raw_resume_data = state.resume_data or {}
                             live_digests = {
                                 resume_digest(raw_resume_data),
-                                resume_digest(normalize_resume_data(raw_resume_data)),
+                                resume_digest(validate_resume_data(raw_resume_data)),
                             }
                             if base_hash and base_hash not in live_digests:
                                 result = "保存失败：简历已发生其他修改，请重新生成修改建议"
@@ -2266,7 +2163,7 @@ async def tool_node(state: AgentState) -> dict:
                             else:
                                 all_change_ids = [item.get("id") for item in changes if item.get("id")]
                                 if changes and not validate_resume_change_set(
-                                    normalize_resume_data(state.resume_data or {}),
+                                    validate_resume_data(state.resume_data or {}),
                                     candidate_resume_data,
                                     changes,
                                 ):
@@ -2297,8 +2194,8 @@ async def tool_node(state: AgentState) -> dict:
 
                                 if updated_resume_data is not None:
                                     from .tools import update_resume
-                                    updated_resume_data = normalize_and_validate_resume(updated_resume_data)
-                                    before_resume_data = normalize_and_validate_resume(state.resume_data or {})
+                                    updated_resume_data = validate_resume_data(updated_resume_data)
+                                    before_resume_data = validate_resume_data(state.resume_data or {})
                                     result = update_resume(
                                         updated_resume_data,
                                         user_id=state.user_id,
@@ -2526,8 +2423,8 @@ async def tool_node(state: AgentState) -> dict:
                         COACH_SKILL_NAME,
                         tool_args,
                         {
-                            "resume_data": normalize_resume_data(state.resume_data or {}),
-                            "base_revision": resume_digest(normalize_resume_data(state.resume_data or {})),
+                            "resume_data": validate_resume_data(state.resume_data or {}),
+                            "base_revision": resume_digest(validate_resume_data(state.resume_data or {})),
                             "latest_user_message": latest_human_text(state),
                             "request_id": state.request_id or str(uuid.uuid4()),
                             "context_type": getattr(state, "context_type", "main") or "main",
@@ -2558,7 +2455,7 @@ async def tool_node(state: AgentState) -> dict:
                     content = tool_args.get('content', '')
                     try:
                         updated_resume_data = json.loads(content)
-                        updated_resume_data = normalize_and_validate_resume(updated_resume_data)
+                        updated_resume_data = validate_resume_data(updated_resume_data)
                         tool_args['content'] = json.dumps(updated_resume_data, ensure_ascii=False)
                     except Exception as exc:
                         updated_resume_data = None

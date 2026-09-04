@@ -39,7 +39,7 @@ from backend.resume_agent import (
     tool_node,
 )
 from backend.resume_changes import resume_digest
-from backend.resume_data import normalize_resume_data
+from backend.resume_schema import validate_resume_data
 from backend.skill_runtime import skill_runtime
 
 _resume_edit_module = skill_runtime.get("resume-edit").module
@@ -100,7 +100,7 @@ SYNTHETIC_RESUME = {
         "project_name": "云笺协作平台", "role": "后端开发",
         "date_range": ["2023.02", "2023.06"],
         "content_blocks": [
-            {"type": "text", "semantic_role": "tech_stack", "label": "技术栈", "label_bold": True, "text": "Python、FastAPI、PostgreSQL", "items": []},
+            {"type": "paragraph", "semantic_role": "tech_stack", "label": "技术栈", "label_bold": True, "text": "Python、FastAPI、PostgreSQL", "items": []},
             {"type": "bullet_list", "semantic_role": "responsibilities", "label": "项目职责", "label_bold": True, "text": "", "items": ["设计文档权限校验接口", "为核心接口补充自动化测试"]},
             {"type": "bullet_list", "semantic_role": "generic", "label": "", "label_bold": False, "text": "", "items": ["参与项目复盘与文档整理"]},
         ],
@@ -297,7 +297,7 @@ def _flatten(root: Any, prefix: str = "") -> dict[str, Any]:
 
 
 def _combined(resume: dict, layout: dict) -> dict[str, Any]:
-    return {"resume": normalize_resume_data(resume), "layout": normalize_layout_config(layout)}
+    return {"resume": validate_resume_data(resume), "layout": normalize_layout_config(layout)}
 
 
 _MISSING_CHANGE_VALUE = {"__agent_eval_missing__": True}
@@ -338,7 +338,7 @@ def _collateral_counts(before: dict[str, Any], after: dict[str, Any], target_pat
 async def run_safety(cases: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     rows = []
     for case in cases:
-        before_resume = normalize_resume_data(deepcopy(SYNTHETIC_RESUME))
+        before_resume = validate_resume_data(deepcopy(SYNTHETIC_RESUME))
         before_layout = normalize_layout_config(default_layout_config())
         base_state = _base_state(case["prompt"], resume_data=before_resume, layout_data=before_layout)
         request = ResumeEditRequest(
@@ -389,7 +389,7 @@ async def run_safety(cases: list[dict[str, Any]]) -> tuple[list[dict[str, Any]],
                     target_observation = _combined(final_resume, final_layout)
                 elif phase == "cancel":
                     cancel_preserved = int(
-                        normalize_resume_data(final_resume) == before_resume
+                        validate_resume_data(final_resume) == before_resume
                         and normalize_layout_config(final_layout) == before_layout
                         and update.call_count == 0
                     )
@@ -460,7 +460,7 @@ async def _validate_call(name: str, args: Any) -> tuple[bool, bool | None, str]:
             layout_config=default_layout_config(),
             resume_operations=tuple(args.get("resume_operations") or ()),
             layout_operations=tuple(args.get("layout_operations") or ()),
-            base_revision=resume_digest(normalize_resume_data(SYNTHETIC_RESUME)),
+            base_revision=resume_digest(validate_resume_data(SYNTHETIC_RESUME)),
         ))
     except Exception as exc:
         return True, False, f"Executable: {type(exc).__name__}: {str(exc)}"
@@ -471,7 +471,7 @@ async def _operation_changes(
     resume_operations: list[dict[str, Any]] | tuple[dict[str, Any], ...],
     layout_operations: list[dict[str, Any]] | tuple[dict[str, Any], ...],
 ) -> dict[str, Any]:
-    before_resume = normalize_resume_data(deepcopy(SYNTHETIC_RESUME))
+    before_resume = validate_resume_data(deepcopy(SYNTHETIC_RESUME))
     before_layout = normalize_layout_config(default_layout_config())
     result = await run_resume_edit(ResumeEditRequest(
         resume_data=before_resume,

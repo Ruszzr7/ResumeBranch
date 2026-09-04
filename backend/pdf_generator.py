@@ -9,7 +9,7 @@ from html import escape
 
 from .inline_formatting import format_inline_html, join_inline_label_value, join_inline_with_inherited_separator, parse_inline_bold
 from .pdf_renderer import render_html_with_chromium
-from .resume_data import normalize_resume_data
+from .resume_schema import validate_resume_data
 from .render_contract import iter_experience_content_blocks
 from .resume_labels import LABELS
 
@@ -103,7 +103,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
         photo: 证件照base64编码（可选，如果为None则从resume_data中提取）
         lang: 语言，'zh' 或 'en'
     """
-    resume_data = normalize_resume_data(resume_data)
+    resume_data = validate_resume_data(resume_data)
     from .layout_config import (
         PHOTO_BOTTOM_GAP_MM,
         custom_section_index,

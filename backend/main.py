@@ -122,6 +122,7 @@ from sqlalchemy.exc import IntegrityError
 # 导入 resume_agent 中的 graph 和 conversation_llm
 from . import resume_agent
 from .resume_agent import LLM_ENABLED, conversation_llm, graph
+from .resume_schema import validate_resume_data
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, SystemMessage
 
 # 导入自定义模块
@@ -1747,7 +1748,7 @@ async def parse_and_save_resume_endpoint(
         from .source_documents import detect_source_page_count
         source_page_count = detect_source_page_count(file_content, content_type)
 
-        from .resume_agent import build_resume_extract_prompt, normalize_and_validate_resume
+        from .resume_agent import build_resume_extract_prompt
         from .import_contract import finalize_import_resume
 
         # 设置解析状态为进行中
@@ -1763,9 +1764,7 @@ async def parse_and_save_resume_endpoint(
             prompt=schema_prompt,
             timeout=150,
         )
-        resume_data, import_quality = finalize_import_resume(
-            parse_json_output(raw), normalize_and_validate_resume,
-        )
+        resume_data, import_quality = finalize_import_resume(parse_json_output(raw))
 
         for storage_key in delete_unreferenced_source_documents(db, current_user.id):
             remove_source_document_file(storage_key)
@@ -1830,10 +1829,9 @@ async def confirm_resume_import_endpoint(
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user),
 ):
-    from .resume_agent import normalize_and_validate_resume
     from .import_contract import finalize_import_resume
     try:
-        resume_data, _ = finalize_import_resume(request.resume_data, normalize_and_validate_resume)
+        resume_data, _ = finalize_import_resume(request.resume_data)
         if request.source_document_token:
             document = get_source_document(db, current_user.id, request.source_document_token)
             if not document or document.status != "pending":
@@ -2580,7 +2578,7 @@ async def confirm_endpoint(
             base_hash = pending_confirmation.get("base_hash")
             live_digests = {
                 resume_digest(before_resume_data),
-                resume_digest(resume_agent.normalize_and_validate_resume(before_resume_data)),
+                resume_digest(validate_resume_data(before_resume_data)),
             }
             if base_hash and base_hash not in live_digests:
                 clear_pending_confirmation(db, current_user.id, session_id)
@@ -2593,8 +2591,7 @@ async def confirm_endpoint(
             import json as json_module
             try:
                 updated_resume_data = json_module.loads(content)
-                from .resume_agent import normalize_and_validate_resume
-                updated_resume_data = normalize_and_validate_resume(updated_resume_data)
+                updated_resume_data = validate_resume_data(updated_resume_data)
             except (json_module.JSONDecodeError, TypeError, ValueError) as e:
                 return JSONResponse(content={"error": "简历数据格式不正确，请重新生成修改预览"}, status_code=400)
 

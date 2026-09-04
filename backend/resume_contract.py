@@ -12,7 +12,7 @@ import json
 import re
 from typing import Any, Literal, Mapping
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 CONTENT_BLOCK_TYPES = ("paragraph", "numbered_list", "bullet_list")
@@ -89,6 +89,8 @@ DEFAULT_CONTENT_BLOCK_TYPES = {
 class ProjectContentBlock(BaseModel):
     """A semantic block used by work and project experiences."""
 
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["paragraph", "numbered_list", "bullet_list"] = Field(
         default="paragraph", description="段落、编号列表或普通分点列表"
     )
@@ -104,14 +106,17 @@ class ProjectContentBlock(BaseModel):
     # way to describe where the source document's visual group changes.
     source_layout_group: str = Field(
         default="",
+        exclude=True,
         description="仅供解析阶段使用的连续视觉组标识；不要写入最终简历数据",
     )
     source_indent_level: int | None = Field(
         default=None,
+        exclude=True,
         description="仅供解析阶段使用的相对缩进层级；无法确认时留空",
     )
     source_marker_type: Literal["paragraph", "bullet", "numbered", ""] = Field(
         default="",
+        exclude=True,
         description="仅供解析阶段使用的原始段落/分点/编号形式；不要写入最终简历数据",
     )
 

@@ -8,13 +8,15 @@ same loss-prevention rules.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 import json
 import re
-from typing import Any, Callable
+from typing import Any
 
 from .inline_formatting import parse_inline_bold, plain_inline_text, serialize_inline_bold
-from .resume_data import normalize_resume_data
+from .resume_contract import normalize_content_blocks
+from .resume_schema import Resume, validate_resume_data
 
 
 IMPORT_CONTRACT_VERSION = 4
@@ -51,13 +53,124 @@ def _preserve_content_import_text(value: Any) -> str:
 
 
 def _normalize_free_list(value: Any) -> list[str]:
-    values = value if isinstance(value, list) else ([value] if value else [])
+    if value is None or value == "":
+        return []
+    if isinstance(value, str):
+        values = [value]
+    elif isinstance(value, list):
+        values = value
+    else:
+        raise ValueError("文本栏目必须是字符串或字符串数组")
     result: list[str] = []
     for item in values:
+        if not isinstance(item, str):
+            raise ValueError("文本栏目中的每一项都必须是字符串")
         text = _preserve_content_import_text(item)
         if text and text not in result:
             result.append(text)
     return result
+
+
+def _object_list(value: Any, *, path: str) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError(f"{path} 必须是数组")
+    if any(not isinstance(item, dict) for item in value):
+        raise ValueError(f"{path} 的每一项都必须是对象")
+    return value
+
+
+def _import_date_range(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        separator = r"\s+-\s+|\s*(?:—|–|~|至)\s*"
+        return [part.strip() for part in re.split(separator, value, maxsplit=1) if part.strip()]
+    if isinstance(value, list):
+        return [str(part).strip() for part in value[:2] if str(part).strip()]
+    raise ValueError("date_range 必须是字符串或数组")
+
+
+def _append_import_custom_section(sections: list[dict[str, Any]], title: str, value: Any) -> bool:
+    if not isinstance(value, (str, list)):
+        return False
+    items = _normalize_free_list(value)
+    if not items:
+        return True
+    sections.append({"title": title, "items": items})
+    return True
+
+
+def prepare_import_resume(raw_data: dict[str, Any]) -> dict[str, Any]:
+    """Adapt parser output without applying historical resume migrations."""
+
+    if not isinstance(raw_data, dict):
+        raise ValueError("解析结果不是有效的简历对象")
+
+    data = deepcopy(raw_data)
+    custom_sections = _object_list(data.get("custom_sections"), path="custom_sections")
+    data["custom_sections"] = custom_sections
+
+    for key in list(data):
+        if key in Resume.model_fields:
+            continue
+        value = data.pop(key)
+        if not _append_import_custom_section(custom_sections, str(key).strip(), value):
+            raise ValueError(f"解析结果包含无法识别的字段：{key}")
+
+    basics = data.get("basics")
+    if basics is None:
+        data["basics"] = {}
+    elif not isinstance(basics, dict):
+        raise ValueError("basics 必须是对象")
+
+    for key in ("education_supplement", "research_interests", "honors", "publications", "self_evaluation"):
+        if key in data:
+            data[key] = _normalize_free_list(data.get(key))
+
+    education_items = _object_list(data.get("education"), path="education")
+    data["education"] = education_items
+    for index, education in enumerate(education_items):
+        education["date_range"] = _import_date_range(education.get("date_range"))
+        school_tags = education.get("school_tags")
+        if isinstance(school_tags, str):
+            school_tags = re.split(r"[/·]", school_tags)
+        education["school_tags"] = _normalize_free_list(school_tags)
+        theses = _object_list(education.get("theses"), path=f"education[{index}].theses")
+        education["theses"] = theses
+        for thesis in theses:
+            thesis["details"] = _normalize_free_list(thesis.get("details"))
+
+    work_items = _object_list(data.get("work_experience"), path="work_experience")
+    data["work_experience"] = work_items
+    for item in work_items:
+        item["date_range"] = _import_date_range(item.get("date_range"))
+        item["content_blocks"] = normalize_content_blocks(
+            item.get("content_blocks"), experience_kind="work",
+        )
+
+    project_items = _object_list(data.get("project_experience"), path="project_experience")
+    data["project_experience"] = project_items
+    for item in project_items:
+        item["date_range"] = _import_date_range(item.get("date_range"))
+        item["content_blocks"] = normalize_content_blocks(
+            item.get("content_blocks"), experience_kind="project",
+        )
+
+    others = data.get("others")
+    if others is None:
+        others = {}
+    elif not isinstance(others, dict):
+        raise ValueError("others 必须是对象")
+    for key in ("skills", "certificates", "languages"):
+        others[key] = _normalize_free_list(others.get(key))
+    data["others"] = others
+
+    for section in custom_sections:
+        section["items"] = _normalize_free_list(section.get("items"))
+
+    return data
 
 
 def _strip_job_type_suffix(value: Any, job_type: Any) -> str:
@@ -197,21 +310,13 @@ def assess_import_quality(data: dict[str, Any]) -> ImportQuality:
 
 def finalize_import_resume(
     raw_data: dict[str, Any],
-    validator: Callable[..., dict[str, Any]],
 ) -> tuple[dict[str, Any], ImportQuality]:
-    """Normalize, validate, and apply only product-level import defaults.
+    """Prepare parser output, validate it once, and assess import quality."""
 
-    The validator is injected to keep this module independent from the agent's
-    Pydantic model and therefore safe for API, tests, and future parser adapters.
-    """
-    if not isinstance(raw_data, dict):
-        raise ValueError("解析结果不是有效的简历对象")
-    normalized = validator(normalize_resume_data(raw_data), include_defaults=True)
-    if not isinstance(normalized, dict):
-        raise ValueError("解析结果不是有效的简历对象")
-
-    _apply_import_formatting_contract(normalized)
-    normalized["formatting_version"] = 4
+    prepared = prepare_import_resume(raw_data)
+    _apply_import_formatting_contract(prepared)
+    prepared["formatting_version"] = 4
+    normalized = validate_resume_data(prepared)
 
     quality = assess_import_quality(normalized)
     if not quality.accepted:

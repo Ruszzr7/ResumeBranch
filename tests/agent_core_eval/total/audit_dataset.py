@@ -16,7 +16,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backend.layout_config import default_layout_config
-from backend.resume_data import normalize_resume_data
+from backend.resume_schema import validate_resume_data
 from backend.resume_changes import resume_digest
 from backend.skill_runtime import skill_runtime
 
@@ -149,7 +149,7 @@ def _audit_v4_content(payload: dict) -> dict:
 
 
 async def _validate_skill_operations(cases: list[dict]) -> list[dict]:
-    base = normalize_resume_data(deepcopy(SYNTHETIC_RESUME))
+    base = validate_resume_data(deepcopy(SYNTHETIC_RESUME))
     invalid = []
     for case in cases:
         required = set(case.get("required_tools") or case.get("expected_tools") or [])

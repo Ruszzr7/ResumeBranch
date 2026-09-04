@@ -1,19 +1,23 @@
 import unittest
 
-from backend.resume_data import normalize_resume_data
-from backend.resume_agent import normalize_and_validate_resume
+from backend.import_contract import prepare_import_resume
+from backend.resume_schema import validate_resume_data
 
 
-class ResumeDataNormalizationTests(unittest.TestCase):
+def prepare_resume(data):
+    return validate_resume_data(prepare_import_resume(data))
+
+
+class ResumeImportPreparationTests(unittest.TestCase):
     def test_education_supplement_is_a_flat_lossless_list(self):
-        result = normalize_resume_data({
-            "education_supplement": ["**论文标题**", {"text": "校级奖励"}, ""],
+        result = prepare_resume({
+            "education_supplement": ["**论文标题**", "校级奖励", ""],
             "education": [],
         })
         self.assertEqual(result["education_supplement"], ["**论文标题**", "校级奖励"])
 
     def test_project_tech_stack_is_a_fixed_block_and_top_level_tech_stack_stays_skills(self):
-        result = normalize_resume_data({
+        result = prepare_resume({
             "basics": {"name": "张三"},
             "others": {"skills": ["Python"]},
             "project_experience": [{
@@ -36,115 +40,27 @@ class ResumeDataNormalizationTests(unittest.TestCase):
         self.assertEqual(result["others"]["skills"], ["Python"])
 
     def test_publications_are_a_standalone_editable_string_list(self):
-        result = normalize_resume_data({
-            "publications": ["论文 A，已接收", {"text": "论文 B，返修"}],
+        result = prepare_resume({
+            "publications": ["论文 A，已接收", "论文 B，返修"],
             "education": [{"school_name": "示例大学", "theses": []}],
         })
         self.assertEqual(result["publications"], ["论文 A，已接收", "论文 B，返修"])
         self.assertEqual(result["education"][0]["theses"], [])
 
-    def test_migrates_gpa_from_legacy_thesis(self):
+    def test_preserves_unknown_import_sections(self):
         source = {
-            "education": [
-                {
-                    "school_name": "示例大学",
-                    "theses": [
-                        {"title": "GPA", "details": ["3.72/4.0"]},
-                        {"title": "真实论文", "details": ["研究内容"]},
-                    ],
-                }
-            ]
-        }
-
-        result = normalize_resume_data(source)
-        education = result["education"][0]
-
-        self.assertEqual(education["gpa"], "3.72")
-        self.assertEqual(education["gpa_scale"], "4.0")
-        self.assertEqual(education["theses"], [{"title": "真实论文", "details": ["研究内容"]}])
-        self.assertNotIn("gpa", source["education"][0])
-
-    def test_preserves_real_thesis_mentioning_gpa(self):
-        source = {
-            "education": [
-                {
-                    "theses": [
-                        {"title": "基于 GPA 数据的学生表现研究", "details": []},
-                    ]
-                }
-            ]
-        }
-
-        result = normalize_resume_data(source)
-
-        self.assertEqual(result["education"][0]["gpa"], "")
-        self.assertEqual(len(result["education"][0]["theses"]), 1)
-
-    def test_normalizes_alias_and_combined_scale(self):
-        source = {"education": [{"GPA": "3.8/4.0", "专业排名": "前 10%"}]}
-
-        result = normalize_resume_data(source)["education"][0]
-
-        self.assertEqual(result["gpa"], "3.8")
-        self.assertEqual(result["gpa_scale"], "4.0")
-        self.assertEqual(result["ranking"], "前 10%")
-        self.assertNotIn("GPA", result)
-
-    def test_removes_retired_average_score_and_keeps_single_sided_basic_fields(self):
-        result = normalize_resume_data({
-            "basics": {
-                "additional_fields": [
-                    {"label": "籍贯", "value": ""},
-                    {"label": "", "value": "广州"},
-                    {"label": "", "value": ""},
-                ],
-            },
-            "education": [{
-                "average_score": "88/100", "平均分": "90", "gpa": "3.8",
-                "school_tags": "211/985/双一流",
-            }],
-        })
-
-        self.assertEqual(result["basics"]["additional_fields"], [
-            {"label": "籍贯", "value": ""},
-            {"label": "", "value": "广州"},
-        ])
-        self.assertNotIn("average_score", result["education"][0])
-        self.assertNotIn("平均分", result["education"][0])
-        self.assertEqual(result["education"][0]["school_tags"], ["211", "985", "双一流"])
-
-    def test_migrates_chinese_gpa_with_full_score_phrase(self):
-        source = {
-            "education": [
-                {"theses": [{"title": "平均绩点", "details": ["3.7（满分4.0）"]}]}
-            ]
-        }
-
-        result = normalize_resume_data(source)["education"][0]
-
-        self.assertEqual(result["gpa"], "3.7")
-        self.assertEqual(result["gpa_scale"], "4.0")
-        self.assertEqual(result["theses"], [])
-
-
-    def test_preserves_new_and_unknown_sections(self):
-        source = {
-            "basics": {"name": "李靖华", "date_of_birth": "2002.06"},
-            "research_directions": ["机器人控制", "强化学习"],
-            "awards": ["研究生二等奖学金"],
+            "basics": {"name": "李靖华", "birth_date": "2002.06"},
             "志愿服务": ["校级志愿服务队成员"],
         }
 
-        result = normalize_and_validate_resume(source)
+        result = prepare_resume(source)
 
         self.assertEqual(result["basics"]["birth_date"], "2002.06")
-        self.assertEqual(result["research_interests"], ["机器人控制", "强化学习"])
-        self.assertEqual(result["honors"], ["研究生二等奖学金"])
         self.assertEqual(result["custom_sections"], [{"title": "志愿服务", "items": ["校级志愿服务队成员"]}])
 
     def test_rejects_retired_work_content_field(self):
-        with self.assertRaisesRegex(ValueError, "工作经历不再支持旧字段：content"):
-            normalize_and_validate_resume({
+        with self.assertRaises(ValueError):
+            prepare_resume({
                 "basics": {"name": "测试"},
                 "work_experience": [{
                     "company": "示例公司", "position": "实习生",
@@ -154,8 +70,8 @@ class ResumeDataNormalizationTests(unittest.TestCase):
             })
 
     def test_rejects_retired_project_details_field(self):
-        with self.assertRaisesRegex(ValueError, "项目经历不再支持旧字段：details"):
-            normalize_resume_data({
+        with self.assertRaises(ValueError):
+            prepare_resume({
                 "basics": {"name": "测试"},
                 "project_experience": [{
                     "project_name": "机器人项目", "details": ["项目简介：面向展厅导航场景"],
@@ -181,7 +97,7 @@ class ResumeDataNormalizationTests(unittest.TestCase):
             }],
         }
 
-        result = normalize_resume_data(source)
+        result = prepare_resume(source)
         for item, intro_label, duties_label in (
             (result["work_experience"][0], "工作简介", "工作职责"),
             (result["project_experience"][0], "项目简介", "项目职责"),
@@ -195,7 +111,7 @@ class ResumeDataNormalizationTests(unittest.TestCase):
             self.assertEqual(len(blocks[1]["items"]), 2)
 
     def test_explicit_content_block_aliases_and_boolean_strings_are_normalized(self):
-        result = normalize_resume_data({
+        result = prepare_resume({
             "basics": {"name": "测试"},
             "project_experience": [{
                 "project_name": "项目",
@@ -216,7 +132,7 @@ class ResumeDataNormalizationTests(unittest.TestCase):
         self.assertEqual(block["items"], ["设计模块", "验证模块"])
 
     def test_explicit_bold_content_blocks_keep_project_responsibility_semantics(self):
-        result = normalize_resume_data({
+        result = prepare_resume({
             "basics": {"name": "测试"},
             "work_experience": [{
                 "company_name": "示例公司",
@@ -248,7 +164,7 @@ class ResumeDataNormalizationTests(unittest.TestCase):
         self.assertEqual(project_blocks[1]["items"], ["补充说明"])
 
     def test_visual_group_is_required_for_generic_content_after_intro(self):
-        result = normalize_resume_data({
+        result = prepare_resume({
             "basics": {"name": "测试"},
             "project_experience": [{
                 "project_name": "项目",
@@ -268,7 +184,7 @@ class ResumeDataNormalizationTests(unittest.TestCase):
         self.assertEqual([block["items"] for block in blocks[1:]], [["完成设计"], ["补充说明"]])
 
     def test_unlabelled_content_after_explicit_intro_defaults_to_responsibilities(self):
-        result = normalize_resume_data({
+        result = prepare_resume({
             "basics": {"name": "测试"},
             "project_experience": [{
                 "project_name": "项目",
@@ -286,7 +202,7 @@ class ResumeDataNormalizationTests(unittest.TestCase):
         self.assertEqual(blocks[1]["items"], ["职责条目一"])
 
     def test_unlabelled_paragraph_after_explicit_intro_becomes_one_responsibility_item(self):
-        result = normalize_resume_data({
+        result = prepare_resume({
             "basics": {"name": "测试"},
             "project_experience": [{
                 "project_name": "项目",
@@ -304,7 +220,7 @@ class ResumeDataNormalizationTests(unittest.TestCase):
         self.assertEqual(blocks[1]["items"], ["职责段落"])
 
     def test_intro_following_visual_groups_split_responsibilities_and_generic_content(self):
-        result = normalize_resume_data({
+        result = prepare_resume({
             "basics": {"name": "测试"},
             "project_experience": [{
                 "project_name": "项目",
@@ -330,7 +246,7 @@ class ResumeDataNormalizationTests(unittest.TestCase):
         self.assertFalse(any(key.startswith("source_") for key in blocks[1]))
 
     def test_experience_without_semantic_headings_stays_generic(self):
-        result = normalize_resume_data({
+        result = prepare_resume({
             "basics": {"name": "测试"},
             "project_experience": [{
                 "project_name": "项目",
@@ -346,7 +262,7 @@ class ResumeDataNormalizationTests(unittest.TestCase):
         self.assertEqual([block["type"] for block in blocks], ["bullet_list", "paragraph"])
 
     def test_explicit_generic_multi_item_block_after_intro_is_not_reclassified(self):
-        result = normalize_resume_data({
+        result = prepare_resume({
             "basics": {"name": "测试"},
             "project_experience": [{
                 "project_name": "项目",
@@ -363,7 +279,7 @@ class ResumeDataNormalizationTests(unittest.TestCase):
         self.assertEqual(block["items"], ["补充说明一", "补充说明二"])
 
     def test_unknown_generic_labels_stay_inline_and_role_defaults_are_stable(self):
-        result = normalize_resume_data({
+        result = prepare_resume({
             "basics": {"name": "测试"},
             "project_experience": [{
                 "project_name": "项目",
@@ -389,7 +305,7 @@ class ResumeDataNormalizationTests(unittest.TestCase):
         self.assertEqual(len(blocks), 3)
 
     def test_content_block_type_defaults_follow_semantic_role(self):
-        result = normalize_resume_data({
+        result = prepare_resume({
             "basics": {"name": "测试"},
             "project_experience": [{
                 "project_name": "项目",
@@ -420,7 +336,7 @@ class ResumeDataNormalizationTests(unittest.TestCase):
             }],
         }
 
-        blocks = normalize_resume_data(source)["work_experience"][0]["content_blocks"]
+        blocks = prepare_resume(source)["work_experience"][0]["content_blocks"]
         self.assertEqual(len(blocks), 1)
         self.assertEqual(blocks[0]["semantic_role"], "generic")
         self.assertEqual(blocks[0]["label"], "")
@@ -449,13 +365,13 @@ class ResumeDataNormalizationTests(unittest.TestCase):
             }],
         }
 
-        blocks = normalize_resume_data(source)["work_experience"][0]["content_blocks"]
+        blocks = prepare_resume(source)["work_experience"][0]["content_blocks"]
         self.assertEqual(blocks[0]["semantic_role"], "introduction")
         self.assertEqual(blocks[0]["label"], "")
         self.assertEqual(blocks[1]["semantic_role"], "generic")
 
-    def test_promotes_common_skill_custom_section(self):
-        result = normalize_resume_data({
+    def test_import_keeps_explicit_custom_section_boundary(self):
+        result = prepare_resume({
             "basics": {"name": "测试"},
             "others": {"skills": ["Python"]},
             "custom_sections": [
@@ -464,25 +380,26 @@ class ResumeDataNormalizationTests(unittest.TestCase):
             ],
         })
 
-        self.assertEqual(result["others"]["skills"], ["Python", "ROS2"])
-        self.assertEqual(result["custom_sections"], [{"title": "校园经历", "items": ["学生干部"]}])
+        self.assertEqual(result["others"]["skills"], ["Python"])
+        self.assertEqual(result["custom_sections"], [
+            {"title": "专业技能", "items": ["ROS2", "Python"]},
+            {"title": "校园经历", "items": ["学生干部"]},
+        ])
 
     def test_preserves_custom_section_list_style_when_explicit(self):
-        result = normalize_resume_data({
+        result = prepare_resume({
             "basics": {"name": "测试"},
             "custom_sections": [
                 {"title": "段落栏目", "items": ["第一句", "第二句"], "list_style": "paragraph"},
-                {"title": "编号栏目", "items": ["第一项"], "listStyle": "numbered"},
-                {"title": "非法栏目", "items": ["普通内容"], "list_style": "unknown"},
+                {"title": "编号栏目", "items": ["第一项"], "list_style": "numbered"},
             ],
         })
 
         self.assertEqual(result["custom_sections"][0]["list_style"], "paragraph")
         self.assertEqual(result["custom_sections"][1]["list_style"], "numbered")
-        self.assertNotIn("list_style", result["custom_sections"][2])
 
-    def test_keeps_language_inside_original_skills_module(self):
-        result = normalize_resume_data({
+    def test_import_does_not_reclassify_language_and_skills(self):
+        result = prepare_resume({
             "basics": {"name": "测试"},
             "others": {
                 "skills": ["5. 仿真、强化学习与英语：Isaac Sim、PyTorch"],
@@ -491,14 +408,11 @@ class ResumeDataNormalizationTests(unittest.TestCase):
             },
         })
 
-        self.assertEqual(result["others"]["languages"], [])
-        self.assertEqual(result["others"]["skills"], [
-            "5. 仿真、强化学习与英语：Isaac Sim、PyTorch",
-            "英语 CET-4",
-        ])
+        self.assertEqual(result["others"]["languages"], ["英语 CET-4"])
+        self.assertEqual(result["others"]["skills"], ["5. 仿真、强化学习与英语：Isaac Sim、PyTorch"])
 
     def test_user_added_language_stays_in_language_module(self):
-        result = normalize_resume_data({
+        result = prepare_resume({
             "formatting_version": 3,
             "basics": {"name": "**测试**"},
             "others": {
@@ -510,20 +424,6 @@ class ResumeDataNormalizationTests(unittest.TestCase):
 
         self.assertEqual(result["others"]["skills"], ["英语相关 NLP 技术"])
         self.assertEqual(result["others"]["languages"], ["英语 CET-6"])
-
-    def test_parser_metadata_never_becomes_a_resume_module(self):
-        result = normalize_resume_data({
-            "basics": {"name": "测试"},
-            "parsing_status": "completed",
-            "custom_sections": [
-                {"title": "parsing_status", "items": ["completed"]},
-                {"title": "校园经历", "items": ["学生会"]},
-            ],
-        })
-
-        self.assertNotIn("parsing_status", result)
-        self.assertEqual(result["custom_sections"], [{"title": "校园经历", "items": ["学生会"]}])
-
 
 if __name__ == "__main__":
     unittest.main()
