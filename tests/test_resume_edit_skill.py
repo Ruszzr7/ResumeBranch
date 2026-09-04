@@ -709,7 +709,7 @@ class ResumeEditSkillTests(unittest.IsolatedAsyncioTestCase):
             user_id=1,
             task_id="task-1",
         )
-        with patch("backend.resume_agent._generate_resume_edit_preview", wraps=None) as generate:
+        with patch("backend.resume_agent.generate_resume_edit_preview", wraps=None) as generate:
             generate.side_effect = None
             generate.return_value = {
                 "pending_confirmation": {

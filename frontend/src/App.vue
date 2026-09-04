@@ -1371,7 +1371,6 @@ async function buildDirectEditPreview() {
       options: data.options,
       changes: data.changes || [],
       confirm_id: data.confirm_id,
-      source: 'direct_replace',
       handled: false,
       streaming: false,
       localOnly: true
@@ -1849,7 +1848,6 @@ async function sendMessage() {
                 // 收到第一个流式输出后，隐藏加载指示器
                 isLoading.value = false
                 finishProcessing(data.request_id, requestState)
-                if (data.confirmation_processed) taskEditState.value = null
                 // 更新会话ID并保存到localStorage
                 if (data.session_id) {
                   localStorage.setItem('resumeAssistantSessionId', data.session_id)
@@ -1994,7 +1992,7 @@ async function sendMessage() {
 }
 
 // 处理确认按钮点击
-async function handleOptionClick({ confirm_id, value, source = '', selected_change_ids = [] }) {
+async function handleOptionClick({ confirm_id, value, selected_change_ids = [] }) {
   const targetSessionId = sessionId.value
   const targetState = ensureContextUiState(targetSessionId)
   const stateRef = key => ({
@@ -2020,211 +2018,59 @@ async function handleOptionClick({ confirm_id, value, source = '', selected_chan
     previewLayoutConfig.value = null
   }
 
-  if (source === 'direct_replace') {
-    try {
-      targetState.isLoading = true
-      const formData = new FormData()
-      formData.append('confirm_id', confirm_id)
-      formData.append('action', value === 'cancel' ? 'cancel' : 'confirm')
-      formData.append('session_id', targetSessionId)
-      const response = await fetch('/confirm', {
-        method: 'POST',
-        headers: getAuthorizationHeaders(),
-        body: formData
-      })
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok) {
-        const error = new Error(userFacingApiError(data, '处理确认请求失败'))
-        error.stalePreview = response.status === 409
-          && String(data.error || data.detail || '').includes('简历已发生其他修改')
-        throw error
-      }
-      targetState.previewResumeData = null
-      targetState.previewLayoutConfig = null
-      taskEditState.value = null
-      if (value !== 'cancel') {
-        await updateResumeData()
-        targetState.messages.push({
-          id: Date.now() * 1000 + 9,
-          role: 'assistant',
-          type: 'undo',
-          content: '本次修改已应用。',
-          handled: false,
-          localOnly: true
-        })
-      }
-    } catch (error) {
-      if (error.stalePreview) {
-        targetState.previewResumeData = null
-        targetState.previewLayoutConfig = null
-        targetState.hasConfirmArea = false
-        taskEditState.value = null
-        await updateResumeData().catch(() => {})
-      } else {
-        if (confirmMsgIndex !== -1) {
-          targetState.messages[confirmMsgIndex] = {
-            ...targetState.messages[confirmMsgIndex],
-            handled: false
-          }
-        }
-        targetState.hasConfirmArea = true
-      }
-      showNotice(error.message || '处理确认请求失败')
-    } finally {
-      targetState.isLoading = false
-    }
-    return
-  }
-
-  const selectedSuffix = selected_change_ids.length ? `:${selected_change_ids.join(',')}` : ''
-  const confirmMessage = `[CONFIRM_REPLY:${confirm_id}:${value}${selectedSuffix}]`
   const isAccepting = value !== 'cancel'
-  const baseId = Date.now() * 1000 + Math.floor(Math.random() * 1000)
-  const streamMessageId = baseId + 1
-  const requestId = globalThis.crypto?.randomUUID?.() || `confirm-${baseId}`
-
-  messages.value.push({
-    id: baseId,
-    role: 'user',
-    content: value === 'cancel'
-      ? '全部拒绝'
-      : (value === 'confirm_selected' ? `应用已选 ${selected_change_ids.length} 项修改` : '全部接受')
-  })
-  messages.value.push({
-    id: streamMessageId,
-    role: 'assistant',
-    content: '',
-    streaming: true
-  })
 
   try {
     isLoading.value = true
-    isResponding.value = true
-
     const formData = new FormData()
-    formData.append('message', confirmMessage)
+    formData.append('confirm_id', confirm_id)
+    formData.append('action', value)
     formData.append('session_id', targetSessionId)
-    formData.append('request_id', requestId)
-
-    // 恢复原版确认链路：确认回复进入 /chat，由 LangGraph tool_node 处理。
-    const response = await fetch('/chat', {
+    formData.append('selected_change_ids', selected_change_ids.join(','))
+    const response = await fetch('/confirm', {
       method: 'POST',
       headers: getAuthorizationHeaders(),
       body: formData
     })
-
+    const data = await response.json().catch(() => ({}))
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}))
-      throw new Error(errorData.error || errorData.detail || `HTTP错误! 状态: ${response.status}`)
+      const error = new Error(userFacingApiError(data, '处理确认请求失败'))
+      error.stalePreview = response.status === 409
+      throw error
     }
-
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder('utf-8')
-    let buffer = ''
-    let resumeRefreshed = false
-    let confirmationProcessed = false
-    let confirmationSucceeded = false
-    let confirmationUiSettled = false
-
-    const settleConfirmationUi = async () => {
-      if (!confirmationProcessed || confirmationUiSettled) return
-      taskEditState.value = null
-      previewResumeData.value = null
-      previewLayoutConfig.value = null
-      hasConfirmArea.value = false
-      confirmationUiSettled = true
-      if (isAccepting && !resumeRefreshed) {
-        try {
-          await updateResumeData()
-          resumeRefreshed = true
-        } catch (refreshError) {
-          console.error('刷新当前简历失败:', refreshError)
-          showNotice('修改预览已关闭，但当前简历刷新失败，请稍后重试。')
-        }
-      }
-    }
-
-    while (true) {
-      const { done, value: chunk } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(chunk, { stream: true })
-
-      let newlineIndex
-      while ((newlineIndex = buffer.indexOf('\n\n')) !== -1) {
-        const eventText = buffer.substring(0, newlineIndex)
-        buffer = buffer.substring(newlineIndex + 2)
-        if (!eventText.startsWith('data: ')) continue
-
-        const jsonData = eventText.substring(6).trim()
-        if (!jsonData) continue
-
-        const data = JSON.parse(jsonData)
-        if (data.type === 'stream') {
-          isLoading.value = false
-          const index = messages.value.findIndex(m => m.id === streamMessageId)
-          if (index !== -1) {
-            messages.value[index] = { ...messages.value[index], content: data.content, streaming: true }
-          }
-        } else if (data.type === 'final') {
-          isLoading.value = false
-          confirmationProcessed = Boolean(data.confirmation_processed)
-          confirmationSucceeded = Boolean(data.confirmation_success)
-          const index = messages.value.findIndex(m => m.id === streamMessageId)
-          if (index !== -1) {
-            messages.value[index] = { ...messages.value[index], content: data.content, streaming: false }
-          }
-          if (data.session_id) localStorage.setItem('resumeAssistantSessionId', data.session_id)
-          await settleConfirmationUi()
-        } else if (data.type === 'persistence_error') {
-          showNotice(data.message || '对话状态未能安全保存，请重新发送上一条消息。')
-        } else if (data.type === 'end') {
-          confirmationProcessed = confirmationProcessed || Boolean(data.confirmation_processed)
-          confirmationSucceeded = confirmationSucceeded || Boolean(data.confirmation_success)
-          if (data.session_id) localStorage.setItem('resumeAssistantSessionId', data.session_id)
-          await settleConfirmationUi()
-        }
-      }
-    }
-    await settleConfirmationUi()
-    if (isAccepting && confirmationProcessed && confirmationSucceeded && resumeRefreshed) {
+    taskEditState.value = null
+    previewResumeData.value = null
+    previewLayoutConfig.value = null
+    if (isAccepting) {
+      await updateResumeData()
       messages.value.push({
         id: Date.now() * 1000 + 9,
         role: 'assistant',
         type: 'undo',
         content: '本次修改已应用。',
-        handled: false
+        handled: false,
+        localOnly: true
       })
     }
   } catch (error) {
-    console.error('确认操作失败:', error)
-    if (confirmMsgIndex !== -1) {
-      messages.value[confirmMsgIndex] = {
-        ...messages.value[confirmMsgIndex],
-        handled: false
+    if (error.stalePreview) {
+      previewResumeData.value = null
+      previewLayoutConfig.value = null
+      taskEditState.value = null
+      await updateResumeData().catch(() => {})
+    } else {
+      if (confirmMsgIndex !== -1) {
+        messages.value[confirmMsgIndex] = {
+          ...messages.value[confirmMsgIndex],
+          handled: false
+        }
       }
+      hasConfirmArea.value = true
     }
-    hasConfirmArea.value = true
-    const index = messages.value.findIndex(m => m.id === streamMessageId)
-    if (index !== -1) {
-      messages.value[index] = {
-        ...messages.value[index],
-        content: `处理确认请求失败：${error.message || '请重试。'}`,
-        streaming: false
-      }
-    }
+    showNotice(error.message || '处理确认请求失败')
   } finally {
     isLoading.value = false
     isResponding.value = false
-    finishProcessing(requestId)
-    try {
-      await fetch('/save_conversation', {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        body: JSON.stringify({ session_id: sessionId.value, messages: conversationMessagesForSave() })
-      })
-    } catch (saveError) {
-      console.error('保存确认消息失败:', saveError)
-    }
   }
 }
 

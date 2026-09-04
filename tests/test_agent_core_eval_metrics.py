@@ -120,7 +120,10 @@ class AgentCoreEvalMetricTests(unittest.TestCase):
         mismatches = {
             case["id"]
             for case in payload["routing"]
-            if entry_router(_route_state(case)) != case["expected_route"]
+            if (
+                "confirm_endpoint" if case.get("confirmation")
+                else entry_router(_route_state(case))
+            ) != case["expected_route"]
         }
         self.assertEqual(mismatches, set())
 

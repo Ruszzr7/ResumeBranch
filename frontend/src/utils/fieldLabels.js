@@ -114,7 +114,6 @@ const INTERNAL_VALUE_REFERENCES = Object.keys(INTERNAL_VALUE_LABELS)
 export function localizeInternalFieldReferences(value) {
   let text = String(value || '')
   text = text
-    .replace(/\[CONFIRM_REPLY:[^\]]+\]/g, '确认操作')
     .replace(/\b(?:request_resume_edit|render_resume_pdf_images)\b/g, '系统能力')
     .replace(/\b(?:layout_config|resume_data|jd_data|session_id|confirm_id|request_id)\b/g, '内部信息')
     .replace(/(?:Traceback[\s\S]*|[A-Za-z_]+Error:\s*[^\n]+)/g, '系统处理异常')

@@ -17,7 +17,6 @@ from backend.resume_agent import (
     has_explicit_change_authorization,
     is_resume_analysis_request,
     make_pending_confirmation,
-    proposal_generator_node,
     resume_edit_tool,
     resume_snapshot_tool,
     tool_node,
@@ -541,105 +540,6 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
             result["pending_confirmation"]["layout_candidate"]["education"]["schoolTagStyle"],
             "text",
         )
-
-    async def test_complex_combined_request_uses_exactly_one_model_call(self):
-        layout = default_layout_config()
-        project_index = layout["global"]["sectionOrder"].index("project_experience")
-        state = AgentState(
-            messages=[HumanMessage(content="重新组织项目经历描述，并将它放到教育经历前面")],
-            resume_data=resume_payload(), layout_data=layout,
-            user_id=7, task_id="task-1",
-            context_metadata={
-                "resume_operations": [{
-                    "op": "append", "path": "project_experience",
-                    "value": {"project_name": "项目A", "role": "开发", "date_range": [], "content_blocks": [{"type": "bullet_list", "semantic_role": "generic", "items": ["完成接口优化"]}]},
-                }],
-                "layout_operations": [{
-                    "op": "move", "path": "global.sectionOrder",
-                    "from_index": project_index, "to_index": 0,
-                }],
-            },
-        )
-        with patch("backend.resume_agent.conversation_llm") as fake_llm:
-            result = await proposal_generator_node(state)
-        fake_llm.ainvoke.assert_not_called()
-        ids = [item["id"] for item in result["pending_confirmation"]["changes"]]
-        self.assertIn("layout-global", ids)
-        self.assertTrue(any(not value.startswith("layout-") for value in ids))
-
-    async def test_structured_model_cannot_bypass_modal_only_font_sizes(self):
-        before_layout = default_layout_config()
-        state = AgentState(
-            messages=[HumanMessage(content="重新组织项目经历描述并应用")],
-            resume_data=resume_payload(), layout_data=before_layout,
-            user_id=7, task_id="task-1",
-            context_metadata={
-                "resume_operations": [{
-                    "op": "append", "path": "project_experience",
-                    "value": {"project_name": "项目A", "role": "开发", "date_range": [], "content_blocks": [{"type": "bullet_list", "semantic_role": "generic", "items": ["完成接口优化"]}]},
-                }],
-                "layout_operations": [{"op": "set", "path": "global.fontSize", "value": 11.5}],
-            },
-        )
-        with patch("backend.resume_agent.conversation_llm") as fake_llm:
-            result = await proposal_generator_node(state)
-        fake_llm.ainvoke.assert_not_called()
-        self.assertIsNone(result["pending_confirmation"])
-        self.assertIn("无法安全生成", result["proposal_error"])
-
-    async def test_layout_confirmation_survives_unrelated_content_change(self):
-        before_layout = default_layout_config()
-        before_layout["education"]["schoolTagStyle"] = "outline"
-        after_layout = default_layout_config()
-        after_layout["education"]["schoolTagStyle"] = "text"
-        before_resume = resume_payload()
-        proposal_state = AgentState(
-            resume_data=before_resume, layout_data=before_layout, user_id=7, task_id="task-1"
-        )
-        pending = make_pending_confirmation(proposal_state, before_resume, after_layout)
-        confirm_state = AgentState(
-            messages=[HumanMessage(content=f'[CONFIRM_REPLY:{pending["confirm_id"]}:confirm_selected:layout-education]')],
-            resume_data=before_resume, layout_data=before_layout, pending_confirmation=pending,
-            user_id=7, task_id="task-1",
-        )
-        confirm_state.resume_data["basics"]["name"] = "外部更新"
-        fake_db = SimpleNamespace(close=lambda: None)
-        with (
-            patch("backend.tools.update_resume", return_value="简历已成功保存"),
-            patch("backend.database.SessionLocal", return_value=fake_db),
-            patch("backend.database.save_task_layout_config", return_value=after_layout) as save_layout,
-            patch("backend.resume_agent.record_assistant_revision") as record_revision,
-        ):
-            result = await tool_node(confirm_state)
-        save_layout.assert_called_once()
-        record_revision.assert_called_once()
-        self.assertEqual(result["layout_data"]["education"]["schoolTagStyle"], "text")
-        self.assertEqual(result["resume_data"]["basics"]["name"], "外部更新")
-        self.assertTrue(result["just_saved"])
-
-    async def test_layout_confirmation_rejects_layout_change(self):
-        before_layout = default_layout_config()
-        before_layout["education"]["schoolTagStyle"] = "outline"
-        after_layout = default_layout_config()
-        after_layout["education"]["schoolTagStyle"] = "text"
-        before_resume = resume_payload()
-        proposal_state = AgentState(
-            resume_data=before_resume, layout_data=before_layout, user_id=7, task_id="task-1"
-        )
-        pending = make_pending_confirmation(proposal_state, before_resume, after_layout)
-        changed_layout = default_layout_config()
-        changed_layout["education"]["schoolTagStyle"] = "hidden"
-        confirm_state = AgentState(
-            messages=[HumanMessage(content=f'[CONFIRM_REPLY:{pending["confirm_id"]}:confirm]')],
-            resume_data=before_resume, layout_data=changed_layout, pending_confirmation=pending,
-            user_id=7, task_id="task-1",
-        )
-        with patch("backend.tools.update_resume") as update:
-            result = await tool_node(confirm_state)
-        update.assert_not_called()
-        self.assertFalse(result["just_saved"])
-        self.assertIn("内容或排版已发生其他修改", result["messages"][-1].content)
-
 
 if __name__ == "__main__":
     unittest.main()

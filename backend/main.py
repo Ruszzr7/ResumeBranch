@@ -70,7 +70,6 @@ def _public_error_response(code: str, message: str, status_code: int = 500):
 def _sanitize_user_visible_text(value: object) -> str:
     """Last-line guard for protocol markers and known internal identifiers."""
     text_value = localize_user_visible_layout_text(value)
-    text_value = re.sub(r"\[CONFIRM_REPLY:[^\]]+\]", "确认操作", text_value)
     text_value = re.sub(
         r"\b(?:activate_agent_skill|resume_edit|resume_snapshot|resume_coach|request_resume_edit|render_resume_pdf_images)\b",
         "系统能力",
@@ -98,9 +97,6 @@ def _stable_user_visible_stream_prefix(value: object) -> str:
     text_value = str(value or "")
     if text_value.count("`") % 2:
         text_value = text_value[:text_value.rfind("`")]
-    marker_match = re.search(r"\[[A-Z_]*(?::[^\]]*)?$", text_value)
-    if marker_match and "[CONFIRM_REPLY:".startswith(marker_match.group(0)):
-        text_value = text_value[:marker_match.start()]
     token_match = re.search(r"[A-Za-z_][A-Za-z0-9_.-]*$", text_value)
     if token_match:
         token = token_match.group(0)
@@ -1288,7 +1284,9 @@ async def direct_replace_preview(
     target = request.target_text.strip()
     if not original:
         raise HTTPException(status_code=400, detail="原内容不能为空")
-    current = deepcopy(task.resume_data or {})
+    # Compile deterministic operations from the same canonical data that the
+    # Skill receives, so their ``expected`` values remain stable.
+    current = validate_resume_data(deepcopy(task.resume_data or {}))
     scope_paths = _direct_replace_scope_paths(request.scope, current)
     available_paths = [
         path for path in scope_paths
@@ -1328,8 +1326,21 @@ async def direct_replace_preview(
             context_id=request.session_id,
         )
         try:
-            pending = resume_agent.make_pending_confirmation(state, candidate, task.layout_config or {})
-        except ValueError as exc:
+            resume_operations, layout_operations = resume_agent.build_deterministic_edit_operations(
+                current,
+                candidate,
+                task.layout_config or {},
+                task.layout_config or {},
+            )
+            preview = await resume_agent.generate_resume_edit_preview(
+                state,
+                resume_operations,
+                layout_operations,
+            )
+            pending = preview.get("pending_confirmation")
+            if not pending:
+                raise ValueError("当前简历已经符合这项要求，没有需要应用的修改")
+        except (ValueError, resume_agent.ResumeEditOperationError) as exc:
             release_resume_edit_lock(
                 db, current_user.id, task_id,
                 owner_session_id=request.session_id, request_id=request_id,
@@ -1337,7 +1348,6 @@ async def direct_replace_preview(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         pending["owner_session_id"] = request.session_id
         pending["request_id"] = state.request_id
-        pending["source"] = "direct_replace"
         try:
             compressed_context = get_conversation_context(db, current_user.id, request.session_id)
             save_conversation_context(
@@ -1364,7 +1374,6 @@ async def direct_replace_preview(
         "resume_candidate": pending["resume_candidate"],
         "layout_candidate": pending["layout_candidate"],
         "confirm_id": pending["confirm_id"],
-        "source": "direct_replace",
     }
 
 
@@ -2028,14 +2037,10 @@ async def chat_endpoint(
             }
         }
 
-        # 检测用户是否点击了确认按钮（必须在使用 message 之前）
-        is_confirm_click = '[CONFIRM_REPLY:' in message.strip()
-
-        # A normal user message supersedes any older preview.  Clear it before
-        # loading graph state so stale confirmations cannot be re-emitted.
-        if not is_confirm_click:
-            from .database import clear_pending_confirmation
-            clear_pending_confirmation(db, current_user.id, session_id)
+        # A new chat request supersedes any older preview. Confirmations use
+        # the dedicated /confirm endpoint and never enter the Agent graph.
+        from .database import clear_pending_confirmation
+        clear_pending_confirmation(db, current_user.id, session_id)
 
 
         # 构建消息内容
@@ -2104,14 +2109,9 @@ async def chat_endpoint(
         initial_jd_data = jd_data if jd_data else (get_user_jd(db, current_user.id) or {})
         initial_layout_data = get_task_layout_config(db, current_user.id, task_id)
 
-        # 从数据库获取待确认状态
-        from .database import get_pending_confirmation
-        initial_pending_confirmation = get_pending_confirmation(db, current_user.id, session_id)
-        if initial_pending_confirmation:
-            if not is_confirm_click:
-                from .database import clear_pending_confirmation
-                clear_pending_confirmation(db, current_user.id, session_id)
-                initial_pending_confirmation = None
+        # A /chat request always replaces any old preview; confirmation is
+        # handled separately by /confirm before the graph is entered.
+        initial_pending_confirmation = None
 
         coach_record = (
             get_agent_skill_state(
@@ -2136,8 +2136,8 @@ async def chat_endpoint(
             else ""
         )
 
-        # 创建初始状态。确认点击仍保留完整消息历史；结构化深度打磨仅通过显式
-        # 模式或已恢复的活动状态进入，不改变普通聊天/修改请求的入口。
+        # 结构化深度打磨仅通过显式模式或已恢复的活动状态进入，
+        # 不改变普通聊天/修改请求的入口。
         initial_state = {
             "messages": all_messages,
             "resume_data": initial_resume_data,
@@ -2208,8 +2208,6 @@ async def chat_endpoint(
             resume_data_result = {}
             layout_data_result = initial_layout_data
             pending_confirmation_result = None  # 保存待确认状态
-            confirmation_processed = False
-            confirmation_success = False
             final_content = None
             accumulated_content = ""
             last_streamed_content = ""
@@ -2261,8 +2259,8 @@ async def chat_endpoint(
                         current_node = node_name
                         node_start_time[node_name] = time.time()
                         LOGGER.debug("Agent 节点开始: %s", node_name)
-                        preview_node = node_name in {"tool_node", "direct_edit", "proposal_generator"}
-                        if preview_node and not is_confirm_click:
+                        preview_node = node_name in {"tool_node", "direct_edit"}
+                        if preview_node:
                             if "building_preview" not in sent_progress_phases:
                                 yield progress_event("building_preview", "正在生成修改预览…")
 
@@ -2310,18 +2308,9 @@ async def chat_endpoint(
                         if isinstance(output.get("context_metadata_updates"), dict):
                             context_metadata_updates_result.update(output["context_metadata_updates"])
 
-                        output_messages = output.get("messages", [])
-                        if node_name == "tool_node" and is_confirm_click and any(
-                            isinstance(item, ToolMessage)
-                            and getattr(item, "name", "") == "confirmation_handler"
-                            for item in output_messages
-                        ):
-                            confirmation_processed = True
-                            confirmation_success = bool(output.get("just_saved"))
-
                         proposal_error = (
                             output.get("proposal_error")
-                            if node_name in {"proposal_generator", "tool_node"}
+                            if node_name == "tool_node"
                             else None
                         )
                         if proposal_error and proposal_error != proposal_error_result:
@@ -2336,7 +2325,7 @@ async def chat_endpoint(
 
                         confirm_data = (
                             output.get("pending_confirmation")
-                            if node_name in {"tool_node", "direct_edit", "proposal_generator"}
+                            if node_name in {"tool_node", "direct_edit"}
                             else None
                         )
                         confirm_id = confirm_data.get("confirm_id") if isinstance(confirm_data, dict) else None
@@ -2347,7 +2336,7 @@ async def chat_endpoint(
                             # "answer + edit" turn never opens the modal first
                             # and silently drops the answer.
                             if not accumulated_content:
-                                for item in reversed(output_messages):
+                                for item in reversed(messages_list):
                                     if not isinstance(item, AIMessage):
                                         continue
                                     reply = str(getattr(item, "content", "") or "").strip()
@@ -2420,7 +2409,7 @@ async def chat_endpoint(
                                     "session_id": session_id,
                                 }) + '\n\n'
                         elif (
-                            node_name in {"tool_node", "direct_edit", "proposal_generator"}
+                            node_name in {"tool_node", "direct_edit"}
                             and "pending_confirmation" in output
                             and not confirm_data
                         ):
@@ -2438,7 +2427,7 @@ async def chat_endpoint(
                         if isinstance(msg, AIMessage) and msg.content and msg.content != "简历已成功保存到数据库":
                             final_content = str(msg.content)
                             break
-                        # 也检查 ToolMessage（如 save_resume_tool 的返回）
+                        # 工具结果也可能包含需要面向用户展示的执行状态。
                         if isinstance(msg, ToolMessage) and msg.content:
                             final_content = str(msg.content)
                             break
@@ -2465,21 +2454,16 @@ async def chat_endpoint(
                 final_content = "抱歉，我无法理解您的请求。"
             final_content = _sanitize_user_visible_text(final_content)
 
-            if confirmation_processed:
-                from .database import clear_pending_confirmation
-                clear_pending_confirmation(db, current_user.id, session_id)
-
             # Persist before final/end so a following request cannot observe a
             # stale context. Optimistic version conflicts fail closed instead
             # of overwriting newer memory.
-            resume_data_to_persist = {} if confirmation_processed else resume_data_result
             try:
                 await save_state_async(
                     db,
                     current_user.id,
                     session_id,
                     messages_list,
-                    resume_data_to_persist,
+                    resume_data_result,
                     initial_jd_data,
                     pending_confirmation_result,
                     context_metadata_updates_result,
@@ -2508,8 +2492,6 @@ async def chat_endpoint(
                 "content": final_content,
                 "session_id": session_id,
                 "request_id": request_id,
-                "confirmation_processed": confirmation_processed,
-                "confirmation_success": confirmation_success,
                 "layout_config": layout_data_result,
             }) + '\n\n'
 
@@ -2517,8 +2499,6 @@ async def chat_endpoint(
                 "type": "end",
                 "session_id": session_id,
                 "request_id": request_id,
-                "confirmation_processed": confirmation_processed,
-                "confirmation_success": confirmation_success,
                 "layout_config": layout_data_result,
             }) + '\n\n'
 
@@ -2532,119 +2512,157 @@ async def chat_endpoint(
 @app.post("/confirm")
 async def confirm_endpoint(
     confirm_id: str = Form(""),
-    action: str = Form(""),  # "confirm" or "cancel"
+    action: str = Form(""),
     session_id: str = Form(""),
+    selected_change_ids: str = Form(""),
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    确认按钮点击接口
-
-    直接处理确认/取消操作，不经过 LLM
-    """
+    """Apply or cancel every pending preview without entering the Agent graph."""
     try:
+        # Direct unit callers do not receive FastAPI's Form coercion. HTTP
+        # requests always provide strings, and an omitted selected list means
+        # no selective ids.
+        selected_change_ids = selected_change_ids if isinstance(selected_change_ids, str) else ""
         task_id = db.info.get("task_id")
         if not task_id:
             return JSONResponse(content={"error": "请先选择一个简历任务"}, status_code=400)
 
-        # 从数据库获取 pending_confirmation
-        from .database import clear_pending_confirmation, get_pending_confirmation, get_user_resume
-        pending_confirmation = get_pending_confirmation(db, current_user.id, session_id)
+        from .database import (
+            clear_pending_confirmation,
+            get_pending_confirmation,
+            record_resume_revision,
+            update_conversation_context_metadata,
+        )
+        from .layout_config import apply_layout_change_groups, normalize_layout_config
+        from .resume_changes import (
+            apply_resume_changes,
+            resume_state_version_matches,
+            validate_resume_change_set,
+        )
+        from .tools import update_resume
 
+        pending_confirmation = get_pending_confirmation(db, current_user.id, session_id)
         if not pending_confirmation:
             return JSONResponse(content={"error": "没有待确认的操作"}, status_code=400)
-
         if pending_confirmation.get("confirm_id") != confirm_id:
             return JSONResponse(content={"error": "确认ID不匹配"}, status_code=400)
-
-        if action not in {"confirm", "cancel"}:
+        if pending_confirmation.get("task_id") != task_id:
+            return JSONResponse(content={"error": "待确认操作不属于当前简历任务"}, status_code=409)
+        if action not in {"confirm", "confirm_all", "confirm_selected", "cancel"}:
             return JSONResponse(content={"error": "无效的确认操作"}, status_code=400)
 
-        # 根据操作处理
-        if action == "confirm":
-            # 从 pending_confirmation 获取修改后的简历数据
-            tool_args = pending_confirmation.get("tool_args", {})
-            pending_task_id = tool_args.get("task_id")
-            if pending_task_id and pending_task_id != task_id:
-                return JSONResponse(content={"error": "待确认操作不属于当前简历任务"}, status_code=409)
-            content = tool_args.get("content", "")
-
-            if not content:
-                return JSONResponse(content={"error": "没有找到修改后的简历数据"}, status_code=400)
-
-            from .resume_changes import resume_state_version_matches
-            live_task = get_resume_task(db, current_user.id, task_id)
-            before_resume_data = deepcopy((live_task.resume_data if live_task else {}) or {})
-            before_layout_data = deepcopy((live_task.layout_config if live_task else {}) or {})
-            if not resume_state_version_matches(
-                pending_confirmation.get("base_version"),
-                before_resume_data,
-                before_layout_data,
-                check_content=True,
-                check_layout=False,
-            ):
-                clear_pending_confirmation(db, current_user.id, session_id)
-                return JSONResponse(
-                    content={"error": "简历已发生其他修改，请重新生成修改预览"},
-                    status_code=409,
-                )
-
-            # 解析 JSON
-            import json as json_module
-            try:
-                updated_resume_data = json_module.loads(content)
-                updated_resume_data = validate_resume_data(updated_resume_data)
-            except (json_module.JSONDecodeError, TypeError, ValueError) as e:
-                return JSONResponse(content={"error": "简历数据格式不正确，请重新生成修改预览"}, status_code=400)
-
-            # 保存修改后的简历数据
-            from .tools import update_resume
-            result = update_resume(
-                updated_resume_data,
-                user_id=current_user.id,
-                task_id=task_id,
-                db=db,
+        if action == "cancel":
+            clear_pending_confirmation(db, current_user.id, session_id)
+            release_resume_edit_lock(
+                db, current_user.id, task_id,
+                owner_session_id=session_id,
+                request_id=pending_confirmation.get("request_id"),
             )
-            if result.startswith("保存失败") or result.startswith("错误"):
-                return JSONResponse(content={"error": result}, status_code=400)
-
-            if pending_confirmation.get("source") == "direct_replace":
-                from .database import record_resume_revision
-                record_resume_revision(
-                    db,
-                    current_user.id,
-                    task_id,
-                    before_resume_data,
-                    updated_resume_data,
-                    [item.get("id") for item in pending_confirmation.get("changes", []) if item.get("id")],
-                    before_layout=(live_task.layout_config if live_task else None),
-                    after_layout=(live_task.layout_config if live_task else None),
-                )
-
-            # 清除 pending_confirmation 状态
-            clear_pending_confirmation(db, current_user.id, session_id)
-
-            return JSONResponse(content={
-                "success": True,
-                "message": result,
-                "action": "saved",
-                "resume_data": updated_resume_data,
-            })
-
-        else:
-            # 取消 - 清除 pending_confirmation 状态
-            clear_pending_confirmation(db, current_user.id, session_id)
-
+            update_conversation_context_metadata(
+                db, current_user.id, session_id, {"edit_intent_state": {"status": "none"}},
+            )
             return JSONResponse(content={
                 "success": True,
                 "message": "已取消保存操作",
-                "action": "cancelled"
+                "action": "cancelled",
             })
+
+        live_task = get_resume_task(db, current_user.id, task_id)
+        if not live_task:
+            return JSONResponse(content={"error": "当前简历任务不存在"}, status_code=404)
+        before_resume_data = validate_resume_data(deepcopy(live_task.resume_data or {}))
+        before_layout_data = normalize_layout_config(deepcopy(live_task.layout_config or {}))
+        candidate_resume_data = validate_resume_data(
+            deepcopy(pending_confirmation.get("resume_candidate") or {})
+        )
+        candidate_layout_data = normalize_layout_config(
+            deepcopy(pending_confirmation.get("layout_candidate") or {})
+        )
+        changes = list(pending_confirmation.get("changes") or [])
+        has_layout_changes = any(item.get("kind") == "layout" for item in changes)
+        has_content_changes = any(item.get("kind") != "layout" for item in changes)
+        if not resume_state_version_matches(
+            pending_confirmation.get("base_version"),
+            before_resume_data,
+            before_layout_data,
+            check_content=has_content_changes,
+            check_layout=has_layout_changes,
+        ):
+            clear_pending_confirmation(db, current_user.id, session_id)
+            release_resume_edit_lock(
+                db, current_user.id, task_id,
+                owner_session_id=session_id,
+                request_id=pending_confirmation.get("request_id"),
+            )
+            return JSONResponse(content={
+                "error": "简历内容或排版已发生其他修改，请重新生成修改预览"
+            }, status_code=409)
+
+        if not validate_resume_change_set(before_resume_data, candidate_resume_data, changes):
+            return JSONResponse(content={"error": "修改预览已失效，请重新生成修改建议"}, status_code=409)
+        all_change_ids = [item.get("id") for item in changes if item.get("id")]
+        requested_ids = [item for item in selected_change_ids.split(",") if item]
+        ids_to_apply = (
+            all_change_ids
+            if action in {"confirm", "confirm_all"}
+            else [item for item in requested_ids if item in all_change_ids]
+        )
+        if not ids_to_apply:
+            return JSONResponse(content={"error": "请至少选择一项修改"}, status_code=400)
+        resume_changes = [item for item in changes if item.get("kind") != "layout"]
+        updated_resume_data = validate_resume_data(
+            apply_resume_changes(before_resume_data, resume_changes, ids_to_apply)
+        )
+        updated_layout_data = apply_layout_change_groups(
+            before_layout_data, candidate_layout_data, ids_to_apply,
+        )
+        result = update_resume(
+            updated_resume_data,
+            user_id=current_user.id,
+            task_id=task_id,
+            db=db,
+        )
+        if result.startswith("保存失败") or result.startswith("错误"):
+            return JSONResponse(content={"error": result}, status_code=400)
+        if any(str(change_id).startswith("layout-") for change_id in ids_to_apply):
+            saved_layout = save_task_layout_config(
+                db, current_user.id, task_id, updated_layout_data,
+            )
+            if saved_layout is None:
+                return JSONResponse(content={"error": "保存失败：当前简历任务不存在"}, status_code=404)
+            updated_layout_data = saved_layout
+        record_resume_revision(
+            db,
+            current_user.id,
+            task_id,
+            before_resume_data,
+            updated_resume_data,
+            ids_to_apply,
+            before_layout=before_layout_data,
+            after_layout=updated_layout_data,
+        )
+        clear_pending_confirmation(db, current_user.id, session_id)
+        release_resume_edit_lock(
+            db, current_user.id, task_id,
+            owner_session_id=session_id,
+            request_id=pending_confirmation.get("request_id"),
+        )
+        update_conversation_context_metadata(
+            db, current_user.id, session_id, {"edit_intent_state": {"status": "none"}},
+        )
+        selected_changes = [item for item in changes if item.get("id") in ids_to_apply]
+        return JSONResponse(content={
+            "success": True,
+            "message": f"已应用 {len(selected_changes)} 项修改",
+            "action": "saved",
+            "resume_data": updated_resume_data,
+            "layout_config": updated_layout_data,
+            "selected_change_ids": ids_to_apply,
+        })
 
     except Exception as e:
         LOGGER.exception("确认接口失败")
-        import traceback
-        traceback.print_exc()
         return _public_error_response("CONFIRM_FAILED", "确认操作处理失败，请重新加载后重试。")
 
 

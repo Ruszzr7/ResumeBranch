@@ -164,7 +164,7 @@ def build_system_content(
 
 
 def filter_messages_for_llm(messages: list, *, just_saved: bool) -> list:
-    """Preserve the existing tool/confirmation filtering contract."""
+    """Keep user-visible dialogue while excluding internal tool traffic."""
     filtered = []
     for message in messages:
         if isinstance(message, ToolMessage):
@@ -191,9 +191,6 @@ def filter_messages_for_llm(messages: list, *, just_saved: bool) -> list:
                 ))
             continue
         if isinstance(message, HumanMessage):
-            message_content = getattr(message, "content", "") or ""
-            if "[CONFIRM_REPLY:" in message_content:
-                continue
             filtered.append(message)
             continue
         if isinstance(message, AIMessage):

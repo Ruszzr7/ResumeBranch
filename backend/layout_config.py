@@ -1030,7 +1030,7 @@ def resolve_photo_height_mm(
         if section == "work_experience":
             return bool(data.get("work_experience"))
         if section == "project_experience":
-            return bool(data.get("project_experience") or data.get("projects"))
+            return bool(data.get("project_experience"))
         if section == "custom_sections":
             return any(
                 isinstance(item, dict)

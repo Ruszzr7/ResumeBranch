@@ -156,7 +156,7 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
                 AIMessage(
                     content="历史工具建议",
                     tool_calls=[{
-                        "name": "save_resume_tool",
+                        "name": "resume_edit",
                         "args": {"content": "{}"},
                         "id": "call-1",
                         "type": "tool_call",
@@ -165,9 +165,8 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
                 ToolMessage(
                     content="内部工具结果",
                     tool_call_id="call-1",
-                    name="save_resume_tool",
+                    name="resume_edit",
                 ),
-                HumanMessage(content="[CONFIRM_REPLY:confirm-1:confirm]"),
                 HumanMessage(content="当前问题"),
             ],
             resume_data=current_resume,
@@ -194,7 +193,6 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertFalse(sent_messages[3].tool_calls)
         self.assertFalse(any(isinstance(message, ToolMessage) for message in sent_messages))
-        self.assertFalse(any("CONFIRM_REPLY" in str(message.content) for message in sent_messages))
 
     async def test_explicit_edit_without_tool_call_is_not_retried(self):
         bound_model = SimpleNamespace(
@@ -246,21 +244,16 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
         pending = make_pending_confirmation(state, after, default_layout_config())
 
         self.assertEqual(set(pending), {
-            "confirm_id", "content", "options", "tool_name", "tool_args",
+            "confirm_id", "content", "options", "task_id",
             "base_version", "resume_candidate", "layout_candidate",
             "changes", "status",
         })
-        self.assertEqual(pending["tool_name"], "save_resume_tool")
+        self.assertEqual(pending["task_id"], "task-1")
         self.assertEqual(pending["status"], "pending")
         self.assertEqual(
             [option["value"] for option in pending["options"]],
             ["confirm", "cancel"],
         )
-        self.assertEqual(set(pending["tool_args"]), {
-            "content", "layout_content", "user_id", "task_id",
-        })
-        self.assertEqual(pending["tool_args"]["user_id"], 7)
-        self.assertEqual(pending["tool_args"]["task_id"], "task-1")
         self.assertEqual(pending["resume_candidate"]["basics"]["name"], "新姓名")
         self.assertTrue(pending["changes"])
 
@@ -304,16 +297,14 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([events[0]["content"], events[1]["content"]], ["你", "你好"])
         self.assertEqual(set(events[2]), {
             "type", "content", "session_id", "request_id",
-            "confirmation_processed", "confirmation_success", "layout_config",
+            "layout_config",
         })
         self.assertEqual(events[2]["content"], "你好")
         self.assertEqual(events[2]["session_id"], "task-1")
         self.assertEqual(events[2]["request_id"], "request-1")
-        self.assertFalse(events[2]["confirmation_processed"])
-        self.assertFalse(events[2]["confirmation_success"])
         self.assertEqual(set(events[3]), {
             "type", "session_id", "request_id",
-            "confirmation_processed", "confirmation_success", "layout_config",
+            "layout_config",
         })
         self.assertEqual(
             fake_graph.last_config["configurable"]["thread_id"],
@@ -380,7 +371,6 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[4]["confirm_id"], pending["confirm_id"])
         self.assertEqual(events[4]["resume_candidate"]["basics"]["name"], "新姓名")
         self.assertEqual(events[5]["content"], "修改预览已生成")
-        self.assertFalse(events[5]["confirmation_processed"])
 
     async def test_chat_reports_persistence_conflict_before_final_and_end(self):
         db = SimpleNamespace(info={"task_id": "task-1"})
@@ -442,7 +432,10 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch("backend.database.get_pending_confirmation", return_value=pending),
             patch("backend.database.clear_pending_confirmation") as clear_pending,
+            patch("backend.database.record_resume_revision") as record_revision,
+            patch("backend.database.update_conversation_context_metadata"),
             patch("backend.tools.update_resume", return_value="简历已成功保存"),
+            patch("backend.main.release_resume_edit_lock"),
             patch("backend.main.get_resume_task", return_value=SimpleNamespace(
                 resume_data=before,
                 layout_config=default_layout_config(),
@@ -458,12 +451,13 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
 
         confirm_payload = json.loads(response.body)
         self.assertEqual(set(confirm_payload), {
-            "success", "message", "action", "resume_data",
+            "success", "message", "action", "resume_data", "layout_config", "selected_change_ids",
         })
         self.assertTrue(confirm_payload["success"])
         self.assertEqual(confirm_payload["action"], "saved")
         self.assertEqual(confirm_payload["resume_data"]["basics"]["name"], "新姓名")
         clear_pending.assert_called_once_with(db, 7, "task-1")
+        record_revision.assert_called_once()
 
         layout = default_layout_config()
         with patch(
@@ -480,6 +474,57 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(undo_payload["message"], "已撤回本次修改")
         self.assertEqual(undo_payload["resume_data"], before)
         self.assertEqual(undo_payload["layout_config"], layout)
+
+    async def test_confirm_endpoint_applies_only_selected_content_change(self):
+        before = resume_payload("原姓名")
+        before["basics"]["target_position"] = "开发"
+        after = resume_payload("新姓名")
+        after["basics"]["target_position"] = "后端开发"
+        pending = make_pending_confirmation(
+            AgentState(
+                resume_data=before,
+                layout_data=default_layout_config(),
+                user_id=7,
+                task_id="task-1",
+            ),
+            after,
+            default_layout_config(),
+        )
+        selected_id = next(
+            change["id"]
+            for change in pending["changes"]
+            if change.get("path") == ["basics", "name"]
+        )
+        db = SimpleNamespace(info={"task_id": "task-1"})
+        user = SimpleNamespace(id=7)
+
+        with (
+            patch("backend.database.get_pending_confirmation", return_value=pending),
+            patch("backend.database.clear_pending_confirmation"),
+            patch("backend.database.record_resume_revision"),
+            patch("backend.database.update_conversation_context_metadata"),
+            patch("backend.tools.update_resume", return_value="简历已成功保存") as update,
+            patch("backend.main.release_resume_edit_lock"),
+            patch("backend.main.get_resume_task", return_value=SimpleNamespace(
+                resume_data=before,
+                layout_config=default_layout_config(),
+            )),
+        ):
+            response = await main.confirm_endpoint(
+                confirm_id=pending["confirm_id"],
+                action="confirm_selected",
+                session_id="task-1",
+                selected_change_ids=selected_id,
+                current_user=user,
+                db=db,
+            )
+
+        payload = json.loads(response.body)
+        saved_resume = update.call_args.args[0]
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["selected_change_ids"], [selected_id])
+        self.assertEqual(saved_resume["basics"]["name"], "新姓名")
+        self.assertEqual(saved_resume["basics"]["target_position"], "开发")
 
     async def test_direct_replace_builds_one_literal_preview_without_llm(self):
         before = resume_payload("广东工业大学")
@@ -508,7 +553,6 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertTrue(payload["success"])
-        self.assertEqual(payload["source"], "direct_replace")
         self.assertEqual(payload["resume_candidate"]["basics"]["name"], "暨南大学")
         self.assertEqual(len(payload["changes"]), 1)
         save_pending.assert_called_once()

@@ -200,37 +200,37 @@
     {
       "id": "route-036",
       "prompt": "确认全部修改。",
-      "expected_route": "tool_node",
+      "expected_route": "confirm_endpoint",
       "confirmation": "confirm"
     },
     {
       "id": "route-037",
       "prompt": "全部接受候选修改。",
-      "expected_route": "tool_node",
+      "expected_route": "confirm_endpoint",
       "confirmation": "confirm_all"
     },
     {
       "id": "route-038",
       "prompt": "只应用选中的修改。",
-      "expected_route": "tool_node",
+      "expected_route": "confirm_endpoint",
       "confirmation": "confirm_selected:change-1"
     },
     {
       "id": "route-039",
       "prompt": "取消这次修改。",
-      "expected_route": "tool_node",
+      "expected_route": "confirm_endpoint",
       "confirmation": "cancel"
     },
     {
       "id": "route-040",
       "prompt": "拒绝当前预览。",
-      "expected_route": "tool_node",
+      "expected_route": "confirm_endpoint",
       "confirmation": "cancel"
     },
     {
       "id": "route-041",
       "prompt": "放弃候选版本并保留原简历。",
-      "expected_route": "tool_node",
+      "expected_route": "confirm_endpoint",
       "confirmation": "cancel"
     },
     {
@@ -496,37 +496,37 @@
     {
       "id": "route-v2-036",
       "prompt": "接受当前全部候选。",
-      "expected_route": "tool_node",
+      "expected_route": "confirm_endpoint",
       "confirmation": "confirm"
     },
     {
       "id": "route-v2-037",
       "prompt": "确认应用所有修改。",
-      "expected_route": "tool_node",
+      "expected_route": "confirm_endpoint",
       "confirmation": "confirm_all"
     },
     {
       "id": "route-v2-038",
       "prompt": "仅确认我勾选的变更。",
-      "expected_route": "tool_node",
+      "expected_route": "confirm_endpoint",
       "confirmation": "confirm_selected:change-2"
     },
     {
       "id": "route-v2-039",
       "prompt": "取消当前候选。",
-      "expected_route": "tool_node",
+      "expected_route": "confirm_endpoint",
       "confirmation": "cancel"
     },
     {
       "id": "route-v2-040",
       "prompt": "不要保存这次预览。",
-      "expected_route": "tool_node",
+      "expected_route": "confirm_endpoint",
       "confirmation": "cancel"
     },
     {
       "id": "route-v2-041",
       "prompt": "拒绝所有候选并保留现状。",
-      "expected_route": "tool_node",
+      "expected_route": "confirm_endpoint",
       "confirmation": "cancel"
     },
     {
@@ -881,42 +881,42 @@
       "id": "route-v3-035",
       "scenario_type": "multi_turn_summary",
       "prompt": "确认全部接受。",
-      "expected_route": "tool_node",
+      "expected_route": "confirm_endpoint",
       "confirmation": "confirm"
     },
     {
       "id": "route-v3-036",
       "scenario_type": "multi_turn_summary",
       "prompt": "这次先不采用，保留原简历。",
-      "expected_route": "tool_node",
+      "expected_route": "confirm_endpoint",
       "confirmation": "cancel"
     },
     {
       "id": "route-v3-037",
       "scenario_type": "multi_turn_summary",
       "prompt": "只接受第 2 项修改。",
-      "expected_route": "tool_node",
+      "expected_route": "confirm_endpoint",
       "confirmation": "confirm_selected:change-2"
     },
     {
       "id": "route-v3-038",
       "scenario_type": "multi_turn_summary",
       "prompt": "全部采用刚才的候选版本。",
-      "expected_route": "tool_node",
+      "expected_route": "confirm_endpoint",
       "confirmation": "confirm_all"
     },
     {
       "id": "route-v3-039",
       "scenario_type": "multi_turn_summary",
       "prompt": "取消本次预览。",
-      "expected_route": "tool_node",
+      "expected_route": "confirm_endpoint",
       "confirmation": "cancel"
     },
     {
       "id": "route-v3-040",
       "scenario_type": "multi_turn_summary",
       "prompt": "确认当前这组修改。",
-      "expected_route": "tool_node",
+      "expected_route": "confirm_endpoint",
       "confirmation": "confirm"
     },
     {
@@ -1264,70 +1264,70 @@
       "scenario_type": "mixed_request",
       "prompt": "确认刚才的修改",
       "confirmation": "confirm",
-      "expected_route": "tool_node"
+      "expected_route": "confirm_endpoint"
     },
     {
       "id": "route-v4-051",
       "scenario_type": "mixed_request",
       "prompt": "先取消这次修改",
       "confirmation": "cancel",
-      "expected_route": "tool_node"
+      "expected_route": "confirm_endpoint"
     },
     {
       "id": "route-v4-052",
       "scenario_type": "mixed_request",
       "prompt": "接受当前候选",
       "confirmation": "confirm",
-      "expected_route": "tool_node"
+      "expected_route": "confirm_endpoint"
     },
     {
       "id": "route-v4-053",
       "scenario_type": "mixed_request",
       "prompt": "拒绝当前候选",
       "confirmation": "cancel",
-      "expected_route": "tool_node"
+      "expected_route": "confirm_endpoint"
     },
     {
       "id": "route-v4-054",
       "scenario_type": "mixed_request",
       "prompt": "确认全部修改",
       "confirmation": "confirm",
-      "expected_route": "tool_node"
+      "expected_route": "confirm_endpoint"
     },
     {
       "id": "route-v4-055",
       "scenario_type": "mixed_request",
       "prompt": "全部取消",
       "confirmation": "cancel",
-      "expected_route": "tool_node"
+      "expected_route": "confirm_endpoint"
     },
     {
       "id": "route-v4-056",
       "scenario_type": "mixed_request",
       "prompt": "应用刚才的候选",
       "confirmation": "confirm",
-      "expected_route": "tool_node"
+      "expected_route": "confirm_endpoint"
     },
     {
       "id": "route-v4-057",
       "scenario_type": "mixed_request",
       "prompt": "不要应用这次候选",
       "confirmation": "cancel",
-      "expected_route": "tool_node"
+      "expected_route": "confirm_endpoint"
     },
     {
       "id": "route-v4-058",
       "scenario_type": "mixed_request",
       "prompt": "我确认保存",
       "confirmation": "confirm",
-      "expected_route": "tool_node"
+      "expected_route": "confirm_endpoint"
     },
     {
       "id": "route-v4-059",
       "scenario_type": "mixed_request",
       "prompt": "我不接受这次修改",
       "confirmation": "cancel",
-      "expected_route": "tool_node"
+      "expected_route": "confirm_endpoint"
     }
   ],
   "skill": [
@@ -7084,8 +7084,8 @@
         ]
       },
       "stale_mutation": {
-        "path": "basics.email",
-        "value": "newer.song@example.test"
+        "path": "global.moduleMargin",
+        "value": 0.7
       },
       "turns": [
         {
@@ -7750,8 +7750,8 @@
         "layout.global.moduleMargin": 0.7
       },
       "stale_mutation": {
-        "path": "basics.phone",
-        "value": "13700008888"
+        "path": "global.marginVertical",
+        "value": 14
       }
     },
     {

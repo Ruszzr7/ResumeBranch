@@ -89,7 +89,6 @@ const handleOptionClick = (option) => {
   emit('optionClick', {
     confirm_id: props.message.confirm_id,
     value: option.value,
-    source: props.message.source || '',
     selected_change_ids: option.value === 'confirm_selected' ? [...selectedChangeIds.value] : []
   })
 }

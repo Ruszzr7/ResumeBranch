@@ -85,12 +85,12 @@ def _audit_v4_content(payload: dict) -> dict:
     if declared_scenarios != configured_scenarios:
         issues.append({"scope": "scenario_type", "reason": "v4-hard 场景标签计数与元数据不一致"})
 
-    allowed_routes = {"conversation_llm", "direct_edit", "tool_node"}
+    allowed_routes = {"conversation_llm", "direct_edit", "confirm_endpoint"}
     for case in payload.get("routing") or []:
         route = str(case.get("expected_route") or "")
         if route not in allowed_routes:
             issues.append({"scope": case.get("id", ""), "reason": f"未知路由金标：{route}"})
-        if route == "tool_node" and case.get("confirmation") not in {
+        if route == "confirm_endpoint" and case.get("confirmation") not in {
             "confirm", "cancel", "confirm_all", "cancel_all",
             "confirm_selected:change-2",
         }:
@@ -134,7 +134,11 @@ def _audit_v4_content(payload: dict) -> dict:
             issues.append({"scope": case.get("id", ""), "reason": "安全案例缺少候选操作"})
 
     route_rows = [
-        {"id": case["id"], "expected": case["expected_route"], "actual": entry_router(_route_state(case))}
+        {
+            "id": case["id"],
+            "expected": case["expected_route"],
+            "actual": "confirm_endpoint" if case.get("confirmation") else entry_router(_route_state(case)),
+        }
         for case in payload.get("routing") or []
     ]
     return {
@@ -187,7 +191,7 @@ async def audit() -> dict:
 
     route_rows = []
     for case in payload["routing"]:
-        actual = entry_router(_route_state(case))
+        actual = "confirm_endpoint" if case.get("confirmation") else entry_router(_route_state(case))
         route_rows.append({
             "id": case["id"], "expected": case["expected_route"], "actual": actual,
         })

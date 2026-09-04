@@ -25,7 +25,7 @@ if str(ROOT) not in sys.path:
 
 from langchain_core.messages import AIMessage, HumanMessage
 
-from backend.layout_config import default_layout_config, normalize_layout_config
+from backend.layout_config import apply_layout_change_groups, default_layout_config, normalize_layout_config
 from backend.resume_agent import (
     AgentState,
     LLM_ENABLED,
@@ -36,9 +36,12 @@ from backend.resume_agent import (
     make_pending_confirmation,
     resume_snapshot_tool,
     resume_edit_tool,
-    tool_node,
 )
-from backend.resume_changes import build_resume_state_version
+from backend.resume_changes import (
+    apply_resume_changes,
+    build_resume_state_version,
+    resume_state_version_matches,
+)
 from backend.resume_schema import validate_resume_data
 from backend.skill_runtime import skill_runtime
 
@@ -233,17 +236,15 @@ def _case_messages(case: dict[str, Any], *, prompt: str | None = None) -> list[A
 
 
 def _route_state(case: dict[str, Any]) -> AgentState:
-    prompt = str(case["prompt"])
-    if case.get("confirmation"):
-        prompt = f"[CONFIRM_REPLY:eval-confirm:{case['confirmation']}]"
     overrides = _case_state_overrides(case)
+    prompt = str(case["prompt"])
     return _base_state(prompt, messages=_case_messages(case, prompt=prompt), **overrides)
 
 
 def run_routing(cases: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     rows = []
     for case in cases:
-        actual = entry_router(_route_state(case))
+        actual = "confirm_endpoint" if case.get("confirmation") else entry_router(_route_state(case))
         rows.append({
             "id": case["id"], "prompt": case["prompt"],
             "expected": case["expected_route"], "actual": actual,
@@ -371,36 +372,45 @@ async def run_safety(cases: list[dict[str, Any]]) -> tuple[list[dict[str, Any]],
             cancel_preserved = stale_blocked = 0
             if phase in {"confirm", "cancel", "stale"}:
                 live_resume = deepcopy(before_resume)
+                live_layout = deepcopy(before_layout)
                 if phase == "stale":
                     mutation = case["stale_mutation"]
-                    _set_path(live_resume, mutation["path"], mutation["value"])
-                action = "cancel" if phase == "cancel" else "confirm_all"
-                confirmation_state = _base_state(
-                    f"[CONFIRM_REPLY:{pending['confirm_id']}:{action}]",
-                    resume_data=live_resume,
-                    layout_data=before_layout,
-                    pending_confirmation=pending,
+                    mutation_target = (
+                        live_layout
+                        if operation_domain(mutation["path"]) == "layout"
+                        else live_resume
+                    )
+                    _set_path(mutation_target, mutation["path"], mutation["value"])
+                changes = list(pending["changes"])
+                has_layout = any(item.get("kind") == "layout" for item in changes)
+                has_content = any(item.get("kind") != "layout" for item in changes)
+                version_matches = resume_state_version_matches(
+                    pending["base_version"], live_resume, live_layout,
+                    check_content=has_content, check_layout=has_layout,
                 )
-                with patch("backend.resume_agent.record_assistant_revision"):
-                    result = await tool_node(confirmation_state)
-                final_resume = result["resume_data"]
-                final_layout = result["layout_data"]
                 if phase == "confirm":
+                    change_ids = [item["id"] for item in changes]
+                    final_resume = validate_resume_data(apply_resume_changes(
+                        live_resume,
+                        [item for item in changes if item.get("kind") != "layout"],
+                        change_ids,
+                    ))
+                    final_layout = apply_layout_change_groups(
+                        live_layout, candidate_layout, change_ids,
+                    )
                     target_observation = _combined(final_resume, final_layout)
                 elif phase == "cancel":
                     cancel_preserved = int(
-                        validate_resume_data(final_resume) == before_resume
-                        and normalize_layout_config(final_layout) == before_layout
+                        validate_resume_data(live_resume) == before_resume
+                        and normalize_layout_config(live_layout) == before_layout
                         and update.call_count == 0
                     )
                     if not cancel_preserved:
                         failure_reasons.append("取消后正式数据或持久化调用发生变化")
                 else:
-                    message = str(result["messages"][-1].content)
                     stale_blocked = int(
                         update.call_count == 0
-                        and not result.get("just_saved")
-                        and any(word in message for word in ("其他修改", "失效", "过期"))
+                        and not version_matches
                     )
                     if not stale_blocked:
                         failure_reasons.append("过期确认未被确定性拦截")
