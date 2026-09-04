@@ -76,14 +76,28 @@ const closePreview = () => {
 }
 
 // 确认按钮事件
-const emit = defineEmits(['optionClick', 'undoClick', 'contextClick'])
+const emit = defineEmits(['optionClick', 'selectionChange', 'undoClick', 'contextClick'])
 
 const changes = computed(() => props.message.changes || [])
 const selectedChangeIds = ref([])
 
-watch(changes, (items) => {
-  selectedChangeIds.value = items.map(item => item.id)
-}, { immediate: true })
+watch(
+  [changes, () => props.message.selected_change_ids],
+  ([items, selected]) => {
+    const available = new Set(items.map(item => item.id))
+    selectedChangeIds.value = Array.isArray(selected)
+      ? selected.filter(id => available.has(id))
+      : items.map(item => item.id)
+  },
+  { immediate: true }
+)
+
+const handleSelectionChange = () => {
+  emit('selectionChange', {
+    confirm_id: props.message.confirm_id,
+    selected_change_ids: [...selectedChangeIds.value]
+  })
+}
 
 const handleOptionClick = (option) => {
   emit('optionClick', {
@@ -136,10 +150,13 @@ const handleContextClick = () => {
     <!-- 只有当消息未被处理过时才显示 -->
     <div v-if="props.message.type === 'confirm' && props.message.confirm_id && !props.message.handled" class="confirm-area">
       <p class="confirm-content">{{ props.message.content }}</p>
-      <p class="preview-status">右侧已显示本次修改的临时预览，接受前不会保存。</p>
+      <p class="preview-status">
+        右侧实时显示当前选择，接受前不会保存。
+        <span v-if="changes.length > 1">已选择 {{ selectedChangeIds.length }} / {{ changes.length }} 项。</span>
+      </p>
       <div v-if="changes.length" class="change-preview-list">
         <label v-for="change in changes" :key="change.id" class="change-preview-item">
-          <input v-if="changes.length > 1" v-model="selectedChangeIds" type="checkbox" :value="change.id" />
+          <input v-if="changes.length > 1" v-model="selectedChangeIds" type="checkbox" :value="change.id" @change="handleSelectionChange" />
           <span class="change-preview-copy">
             <strong>{{ userFacingFieldLabel(change.label) }}</strong>
             <span v-if="change.kind !== 'layout'" class="change-values">

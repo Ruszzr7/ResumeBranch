@@ -1303,8 +1303,6 @@ async def direct_replace_preview(
         candidate = _set_direct_replace_path(candidate, path, replaced)
     if count == 0:
         raise HTTPException(status_code=400, detail="所选区域中未找到完全一致的原内容")
-    if count > 1:
-        raise HTTPException(status_code=409, detail="所选区域中找到多处相同内容，请缩小作用区域或补充更完整的原文")
 
     from .database import (
         find_task_pending_confirmation,
@@ -1366,6 +1364,17 @@ async def direct_replace_preview(
                 owner_session_id=request.session_id, request_id=request_id,
             )
             raise
+    if count > 1:
+        if len(pending.get("changes") or []) > 1:
+            pending["content"] = (
+                f"找到 {count} 处相同内容，请勾选需要修改的位置；"
+                "未勾选的内容不会发生变化。"
+            )
+        else:
+            pending["content"] = (
+                f"找到 {count} 处相同内容，均位于同一字段；"
+                "接受该项后会一并替换。"
+            )
     return {
         "success": True,
         "content": pending["content"],

@@ -19,6 +19,7 @@ import {
 import { hasMeaningfulResumeContent } from './utils/resumePresence.js'
 import { formatInlineHtml, isFullyBoldInlineText, plainInlineText } from './utils/inlineFormatting.js'
 import { userFacingApiError } from './utils/userFacingError.js'
+import { buildConfirmationPreview } from './utils/confirmationPreview.js'
 
 // 响应式布局状态
 const isMobileView = ref(false)
@@ -351,6 +352,7 @@ function createContextUiState() {
     uploadedFiles: [],
     previewResumeData: null,
     previewLayoutConfig: null,
+    confirmationPreview: null,
     isLoading: false,
     isResponding: false,
     hasConfirmArea: false,
@@ -383,6 +385,57 @@ const activeRenderStyle = ref(null)
 const activeLayoutConfig = computed(() => normalizeLayoutConfig(
   previewLayoutConfig.value || currentTask.value?.layout_config || {}
 ))
+
+function clearConfirmationPreview(state) {
+  state.confirmationPreview = null
+  state.previewResumeData = null
+  state.previewLayoutConfig = null
+}
+
+function refreshConfirmationPreview(state, selectedChangeIds) {
+  const source = state.confirmationPreview
+  if (!source) return
+  const selected = Array.isArray(selectedChangeIds) ? selectedChangeIds : []
+  const preview = buildConfirmationPreview({
+    baseResumeData: source.baseResumeData,
+    baseLayoutConfig: source.baseLayoutConfig,
+    candidateLayoutConfig: source.candidateLayoutConfig,
+    changes: source.changes,
+    selectedChangeIds: selected,
+  })
+  state.previewResumeData = preview.resumeData
+  state.previewLayoutConfig = preview.layoutConfig
+}
+
+function initializeConfirmationPreview(state, data) {
+  const changes = Array.isArray(data.changes) ? data.changes : []
+  const selectedChangeIds = changes.map(change => change.id).filter(Boolean)
+  state.confirmationPreview = {
+    confirmId: data.confirm_id,
+    baseResumeData: cloneResumeData(resumeData.value),
+    baseLayoutConfig: normalizeLayoutConfig(currentTask.value?.layout_config || {}),
+    candidateLayoutConfig: normalizeLayoutConfig(data.layout_candidate || {}),
+    changes: cloneResumeData(changes) || [],
+  }
+  refreshConfirmationPreview(state, selectedChangeIds)
+  return selectedChangeIds
+}
+
+function handleConfirmationSelectionChange({ confirm_id, selected_change_ids = [] }) {
+  const targetState = activeContextUiState.value
+  const source = targetState.confirmationPreview
+  if (!source || source.confirmId !== confirm_id) return
+  const messageIndex = targetState.messages.findIndex(
+    message => message.type === 'confirm' && message.confirm_id === confirm_id && !message.handled
+  )
+  if (messageIndex !== -1) {
+    targetState.messages[messageIndex] = {
+      ...targetState.messages[messageIndex],
+      selected_change_ids: [...selected_change_ids],
+    }
+  }
+  refreshConfirmationPreview(targetState, selected_change_ids)
+}
 const resumeEditorMetrics = computed(() => {
   const tokens = resolveLayoutTokens(activeLayoutConfig.value)
   return {
@@ -1363,6 +1416,7 @@ async function buildDirectEditPreview() {
     targetState.messages = targetState.messages.map(message => (
       message.type === 'confirm' && !message.handled ? { ...message, handled: true } : message
     ))
+    const selectedChangeIds = initializeConfirmationPreview(targetState, data)
     targetState.messages.push({
       id: Date.now() * 1000 + 4,
       role: 'assistant',
@@ -1371,14 +1425,11 @@ async function buildDirectEditPreview() {
       options: data.options,
       changes: data.changes || [],
       confirm_id: data.confirm_id,
+      selected_change_ids: selectedChangeIds,
       handled: false,
       streaming: false,
       localOnly: true
     })
-    targetState.previewResumeData = data.resume_candidate || null
-    targetState.previewLayoutConfig = data.layout_candidate
-      ? normalizeLayoutConfig(data.layout_candidate)
-      : null
     targetState.hasConfirmArea = true
     taskEditState.value = { status: 'awaiting_confirmation', owner_session_id: targetSessionId }
     showDirectEditDialog.value = false
@@ -1658,8 +1709,6 @@ async function sendMessage() {
   const messages = stateRef('messages')
   const userInput = stateRef('userInput')
   const uploadedFiles = stateRef('uploadedFiles')
-  const previewResumeData = stateRef('previewResumeData')
-  const previewLayoutConfig = stateRef('previewLayoutConfig')
   const isLoading = stateRef('isLoading')
   const isResponding = stateRef('isResponding')
   const hasConfirmArea = stateRef('hasConfirmArea')
@@ -1682,8 +1731,7 @@ async function sendMessage() {
         : message
     ))
     hasConfirmArea.value = false
-    previewResumeData.value = null
-    previewLayoutConfig.value = null
+    clearConfirmationPreview(requestState)
   }
 
   const input = userInput.value.trim()
@@ -1885,6 +1933,7 @@ async function sendMessage() {
                     ? { ...message, handled: true }
                     : message
                 ))
+                const selectedChangeIds = initializeConfirmationPreview(requestState, data)
                 const confirmationMessage = {
                   id: data.id || Date.now(),
                   role: 'assistant',
@@ -1893,13 +1942,10 @@ async function sendMessage() {
                   options: data.options,
                   changes: data.changes || [],
                   confirm_id: data.confirm_id,
+                  selected_change_ids: selectedChangeIds,
                   handled: false,
                   streaming: false
                 }
-                previewResumeData.value = data.resume_candidate || null
-                previewLayoutConfig.value = data.layout_candidate
-                  ? normalizeLayoutConfig(data.layout_candidate)
-                  : null
                 const existingConfirmIndex = messages.value.findIndex(
                   message => message.type === 'confirm' && message.confirm_id === data.confirm_id
                 )
@@ -1915,8 +1961,7 @@ async function sendMessage() {
                   owner_session_id: requestSessionId
                 }
               } else if (data.type === 'proposal_error') {
-                previewResumeData.value = null
-                previewLayoutConfig.value = null
+                clearConfirmationPreview(requestState)
                 if (loadingTextInterval) {
                   clearTimeout(loadingTextInterval)
                   loadingTextInterval = null
@@ -2001,8 +2046,6 @@ async function handleOptionClick({ confirm_id, value, selected_change_ids = [] }
   })
   const messages = stateRef('messages')
   const hasConfirmArea = stateRef('hasConfirmArea')
-  const previewResumeData = stateRef('previewResumeData')
-  const previewLayoutConfig = stateRef('previewLayoutConfig')
   const isLoading = stateRef('isLoading')
   const isResponding = stateRef('isResponding')
   const confirmMsgIndex = messages.value.findIndex(m => m.type === 'confirm' && m.confirm_id === confirm_id)
@@ -2013,10 +2056,6 @@ async function handleOptionClick({ confirm_id, value, selected_change_ids = [] }
     }
   }
   hasConfirmArea.value = false
-  if (value === 'cancel') {
-    previewResumeData.value = null
-    previewLayoutConfig.value = null
-  }
 
   const isAccepting = value !== 'cancel'
 
@@ -2039,8 +2078,7 @@ async function handleOptionClick({ confirm_id, value, selected_change_ids = [] }
       throw error
     }
     taskEditState.value = null
-    previewResumeData.value = null
-    previewLayoutConfig.value = null
+    clearConfirmationPreview(targetState)
     if (isAccepting) {
       await updateResumeData()
       messages.value.push({
@@ -2054,8 +2092,7 @@ async function handleOptionClick({ confirm_id, value, selected_change_ids = [] }
     }
   } catch (error) {
     if (error.stalePreview) {
-      previewResumeData.value = null
-      previewLayoutConfig.value = null
+      clearConfirmationPreview(targetState)
       taskEditState.value = null
       await updateResumeData().catch(() => {})
     } else {
@@ -2094,8 +2131,7 @@ async function handleUndoClick({ message_id }) {
         : message
     ))
     targetState.hasConfirmArea = false
-    targetState.previewResumeData = null
-    targetState.previewLayoutConfig = null
+    clearConfirmationPreview(targetState)
     await updateResumeData()
     showNotice('已撤回本次修改', 'success')
     await fetch('/save_conversation', {
@@ -4395,6 +4431,7 @@ watch(
               :key="(message.id || message.created_at || index) + '_' + (message.content?.length || 0)"
               :message="message"
               @optionClick="handleOptionClick"
+              @selectionChange="handleConfirmationSelectionChange"
               @undoClick="handleUndoClick"
               @contextClick="openContextFromEvent"
             />
@@ -4586,6 +4623,7 @@ watch(
                   :key="(message.id || message.created_at || index) + '_' + (message.content?.length || 0)"
                   :message="message"
                   @optionClick="handleOptionClick"
+                  @selectionChange="handleConfirmationSelectionChange"
                   @undoClick="handleUndoClick"
                   @contextClick="openContextFromEvent"
                 />

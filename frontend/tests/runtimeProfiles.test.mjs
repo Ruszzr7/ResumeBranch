@@ -85,9 +85,9 @@ test('confirmations use the dedicated endpoint and discard stale previews', () =
   assert.match(app, /formData\.append\('confirm_id', confirm_id\)/)
   assert.match(app, /formData\.append\('selected_change_ids', selected_change_ids\.join\(','\)\)/)
   assert.doesNotMatch(app, /CONFIRM_REPLY/)
-  assert.match(app, /previewResumeData\.value = null[\s\S]*previewLayoutConfig\.value = null[\s\S]*await updateResumeData\(\)/)
+  assert.match(app, /clearConfirmationPreview\(targetState\)[\s\S]*await updateResumeData\(\)/)
   assert.match(app, /error\.stalePreview = response\.status === 409/)
-  assert.match(app, /if \(error\.stalePreview\)[\s\S]*previewResumeData\.value = null[\s\S]*await updateResumeData\(\)/)
+  assert.match(app, /if \(error\.stalePreview\)[\s\S]*clearConfirmationPreview\(targetState\)[\s\S]*await updateResumeData\(\)/)
 })
 
 test('login, registration and invite-code management retain the dark visual theme', () => {

@@ -557,6 +557,101 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(payload["changes"]), 1)
         save_pending.assert_called_once()
 
+    async def test_direct_replace_duplicate_matches_are_selectable(self):
+        before = resume_payload()
+        before["education"] = [
+            {"school_name": "广东工业大学", "degree": "本科"},
+            {"school_name": "广东工业大学", "degree": "硕士"},
+        ]
+        task = SimpleNamespace(
+            session_id="task-1",
+            resume_data=before,
+            layout_config=default_layout_config(),
+        )
+        db = SimpleNamespace(info={"task_id": "task-1"})
+        user = SimpleNamespace(id=7)
+        request = main.DirectReplaceRequest(
+            session_id="task-1",
+            scope="education",
+            original_text="广东工业大学",
+            target_text="暨南大学",
+        )
+
+        with (
+            patch("backend.main.get_resume_task", return_value=task),
+            patch("backend.database.find_task_pending_confirmation", return_value=None),
+            patch("backend.database.get_conversation_context", return_value=[]),
+            patch("backend.database.save_conversation_context") as save_pending,
+        ):
+            payload = await main.direct_replace_preview(
+                "task-1", request, db=db, current_user=user
+            )
+
+        self.assertTrue(payload["success"])
+        self.assertEqual(len(payload["changes"]), 2)
+        self.assertIn("找到 2 处相同内容", payload["content"])
+        pending = save_pending.call_args.args[4]
+        selected_id = next(
+            change["id"]
+            for change in pending["changes"]
+            if change["path"] == ["education", 0, "school_name"]
+        )
+
+        with (
+            patch("backend.database.get_pending_confirmation", return_value=pending),
+            patch("backend.database.clear_pending_confirmation"),
+            patch("backend.database.record_resume_revision"),
+            patch("backend.database.update_conversation_context_metadata"),
+            patch("backend.tools.update_resume", return_value="简历已成功保存") as update,
+            patch("backend.main.release_resume_edit_lock"),
+            patch("backend.main.get_resume_task", return_value=task),
+        ):
+            response = await main.confirm_endpoint(
+                confirm_id=pending["confirm_id"],
+                action="confirm_selected",
+                session_id="task-1",
+                selected_change_ids=selected_id,
+                current_user=user,
+                db=db,
+            )
+
+        self.assertTrue(json.loads(response.body)["success"])
+        saved_resume = update.call_args.args[0]
+        self.assertEqual(saved_resume["education"][0]["school_name"], "暨南大学")
+        self.assertEqual(saved_resume["education"][1]["school_name"], "广东工业大学")
+
+    async def test_direct_replace_repeated_text_in_one_field_stays_grouped(self):
+        before = resume_payload()
+        before["self_evaluation"] = ["持续学习、持续复盘"]
+        task = SimpleNamespace(
+            session_id="task-1",
+            resume_data=before,
+            layout_config=default_layout_config(),
+        )
+        db = SimpleNamespace(info={"task_id": "task-1"})
+        user = SimpleNamespace(id=7)
+        request = main.DirectReplaceRequest(
+            session_id="task-1",
+            scope="self_evaluation",
+            original_text="持续",
+            target_text="主动",
+        )
+
+        with (
+            patch("backend.main.get_resume_task", return_value=task),
+            patch("backend.database.find_task_pending_confirmation", return_value=None),
+            patch("backend.database.get_conversation_context", return_value=[]),
+            patch("backend.database.save_conversation_context"),
+        ):
+            payload = await main.direct_replace_preview(
+                "task-1", request, db=db, current_user=user
+            )
+
+        self.assertTrue(payload["success"])
+        self.assertEqual(len(payload["changes"]), 1)
+        self.assertIn("均位于同一字段", payload["content"])
+        self.assertEqual(payload["resume_candidate"]["self_evaluation"], ["主动学习、主动复盘"])
+
     def test_direct_replace_scopes_are_precise_and_include_contextual_sections(self):
         current = {
             "education": [],
