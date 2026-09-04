@@ -12,9 +12,12 @@
       "title": "Layout Config",
       "type": "object"
     },
-    "base_revision": {
-      "title": "Base Revision",
-      "type": "string"
+    "base_version": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Base Version",
+      "type": "object"
     },
     "resume_operations": {
       "default": [],
@@ -43,7 +46,7 @@
   "required": [
     "resume_data",
     "layout_config",
-    "base_revision"
+    "base_version"
   ],
   "title": "ResumeEditOutput",
   "type": "object"

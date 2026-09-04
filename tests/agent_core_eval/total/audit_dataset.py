@@ -17,7 +17,7 @@ if str(ROOT) not in sys.path:
 
 from backend.layout_config import default_layout_config
 from backend.resume_schema import validate_resume_data
-from backend.resume_changes import resume_digest
+from backend.resume_changes import build_resume_state_version
 from backend.skill_runtime import skill_runtime
 
 _resume_edit_module = skill_runtime.get("resume-edit").module
@@ -164,7 +164,7 @@ async def _validate_skill_operations(cases: list[dict]) -> list[dict]:
                 layout_config=default_layout_config(),
                 resume_operations=tuple(resume_operations),
                 layout_operations=tuple(layout_operations),
-                base_revision=resume_digest(base),
+                base_version=build_resume_state_version(base, default_layout_config()),
             ))
         except Exception as exc:  # pragma: no cover - report data defects, don't mask them
             invalid.append({"id": case.get("id", ""), "error": f"{type(exc).__name__}: {exc}"})

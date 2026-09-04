@@ -17,7 +17,7 @@ from backend.resume_agent import (
     tool_node,
     tool_node_router,
 )
-from backend.resume_changes import build_resume_changes, resume_digest
+from backend.resume_changes import build_resume_changes, build_resume_state_version
 from backend.layout_config import default_layout_config
 
 
@@ -86,7 +86,7 @@ def selective_confirmation_state(selected_id="change-1"):
             "tool_name": "save_resume_tool",
             "tool_args": {"content": json.dumps(after, ensure_ascii=False), "task_id": "task-1"},
             "changes": changes,
-            "base_hash": resume_digest(before),
+            "base_version": build_resume_state_version(before, default_layout_config()),
             "status": "pending",
         },
         user_id=7,
@@ -393,9 +393,6 @@ class ConfirmationFlowTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_content_only_confirmation_survives_unrelated_layout_autosave(self):
         state = selective_confirmation_state("change-1")
-        base_layout = default_layout_config()
-        state.pending_confirmation["base_layout"] = base_layout
-        state.pending_confirmation["tool_args"]["layout_content"] = json.dumps(base_layout, ensure_ascii=False)
         state.layout_data = default_layout_config()
         state.layout_data["global"]["moduleMargin"] = 0.8
 

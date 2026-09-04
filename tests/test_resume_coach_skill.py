@@ -9,7 +9,7 @@ class ResumeCoachSkillTests(unittest.IsolatedAsyncioTestCase):
         self.package = skill_runtime.get("resume-coach")
         self.context = {
             "resume_data": {"basics": {"name": "测试用户"}},
-            "base_revision": "revision-1",
+            "source_content_digest": "content-digest-1",
             "latest_user_message": "我负责重构结算流程，把耗时从 20 分钟降到 5 分钟。",
             "request_id": "request-1",
             "context_type": "coaching",

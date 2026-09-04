@@ -1,6 +1,16 @@
+from copy import deepcopy
 import unittest
 
-from backend.resume_changes import apply_resume_changes, build_resume_changes, resume_digest, validate_resume_change_set
+from backend.layout_config import default_layout_config
+from backend.resume_changes import (
+    apply_resume_changes,
+    build_resume_changes,
+    build_resume_state_version,
+    resume_digest,
+    resume_state_version_matches,
+    validate_resume_change_set,
+)
+from backend.resume_schema import validate_resume_data
 
 
 class ResumeChangeTests(unittest.TestCase):
@@ -38,6 +48,35 @@ class ResumeChangeTests(unittest.TestCase):
 
     def test_digest_is_stable_for_key_order(self):
         self.assertEqual(resume_digest({"a": 1, "b": 2}), resume_digest({"b": 2, "a": 1}))
+
+    def test_state_version_hashes_content_and_layout_independently(self):
+        content = validate_resume_data({"basics": {"name": "张三"}})
+        layout = default_layout_config()
+        base = build_resume_state_version(content, layout)
+
+        changed_content = deepcopy(content)
+        changed_content["basics"]["name"] = "李四"
+        self.assertFalse(resume_state_version_matches(
+            base, changed_content, layout, check_content=True, check_layout=False,
+        ))
+        self.assertTrue(resume_state_version_matches(
+            base, changed_content, layout, check_content=False, check_layout=True,
+        ))
+        self.assertFalse(resume_state_version_matches(
+            base, changed_content, layout, check_content=True, check_layout=True,
+        ))
+
+        changed_layout = deepcopy(layout)
+        changed_layout["global"]["moduleMargin"] = 0.8
+        self.assertTrue(resume_state_version_matches(
+            base, content, changed_layout, check_content=True, check_layout=False,
+        ))
+        self.assertFalse(resume_state_version_matches(
+            base, content, changed_layout, check_content=False, check_layout=True,
+        ))
+        self.assertFalse(resume_state_version_matches(
+            base, content, changed_layout, check_content=True, check_layout=True,
+        ))
 
     def test_missing_and_empty_fields_are_not_presented_as_changes(self):
         changes = build_resume_changes({"basics": {}}, {"basics": {"age": "", "location": None}})

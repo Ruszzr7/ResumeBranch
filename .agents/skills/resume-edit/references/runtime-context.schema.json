@@ -22,10 +22,12 @@
       "title": "Context Type",
       "type": "string"
     },
-    "base_revision": {
-      "default": "",
-      "title": "Base Revision",
-      "type": "string"
+    "base_version": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Base Version",
+      "type": "object"
     },
     "conversation_context": {
       "default": "",

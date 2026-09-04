@@ -36,7 +36,9 @@ from .inline_formatting import InlineFormatError, format_resume_text, plain_inli
 from .resume_changes import (
     apply_resume_changes,
     build_resume_changes,
-    resume_digest,
+    build_resume_state_version,
+    resume_content_digest,
+    resume_state_version_matches,
     validate_resume_change_set,
 )
 from .layout_config import (
@@ -1601,8 +1603,7 @@ def make_pending_confirmation(
         ],
         "tool_name": "save_resume_tool",
         "tool_args": tool_args,
-        "base_hash": resume_digest(current),
-        "base_layout": current_layout,
+        "base_version": build_resume_state_version(current, current_layout),
         "resume_candidate": candidate,
         "layout_candidate": layout_candidate,
         "changes": changes,
@@ -1784,7 +1785,7 @@ async def _generate_resume_edit_preview(
             "layout_config": current_layout,
             "jd_data": state.jd_data or {},
             "context_type": getattr(state, "context_type", "main") or "main",
-            "base_revision": resume_digest(current),
+            "base_version": build_resume_state_version(current, current_layout),
             "conversation_context": "",
         },
     )
@@ -2135,30 +2136,21 @@ async def tool_node(state: AgentState) -> dict:
                                 if tool_args.get("layout_content") else state.layout_data
                             )
                             changes = state.pending_confirmation.get("changes") or []
-                            base_hash = state.pending_confirmation.get("base_hash")
                             before_layout_data = normalize_layout_config(state.layout_data)
-                            base_layout = normalize_layout_config(
-                                state.pending_confirmation.get("base_layout")
+                            has_layout_changes = any(
+                                item.get("kind") == "layout" for item in changes
                             )
-                            # Pending confirmations created before a schema
-                            # migration may contain a digest of the raw resume,
-                            # while newer confirmations use normalized data.
-                            # Accept either representation; any other digest
-                            # still indicates a real concurrent edit.
-                            raw_resume_data = state.resume_data or {}
-                            live_digests = {
-                                resume_digest(raw_resume_data),
-                                resume_digest(validate_resume_data(raw_resume_data)),
-                            }
-                            if base_hash and base_hash not in live_digests:
-                                result = "保存失败：简历已发生其他修改，请重新生成修改建议"
-                                saved_resume = False
-                            elif (
-                                any(item.get("kind") == "layout" for item in changes)
-                                and state.pending_confirmation.get("base_layout") is not None
-                                and before_layout_data != base_layout
+                            has_content_changes = any(
+                                item.get("kind") != "layout" for item in changes
+                            )
+                            if not resume_state_version_matches(
+                                state.pending_confirmation.get("base_version"),
+                                state.resume_data or {},
+                                before_layout_data,
+                                check_content=has_content_changes,
+                                check_layout=has_layout_changes,
                             ):
-                                result = "保存失败：简历布局已发生其他修改，请重新生成修改建议"
+                                result = "保存失败：简历内容或排版已发生其他修改，请重新生成修改建议"
                                 saved_resume = False
                             else:
                                 all_change_ids = [item.get("id") for item in changes if item.get("id")]
@@ -2424,7 +2416,7 @@ async def tool_node(state: AgentState) -> dict:
                         tool_args,
                         {
                             "resume_data": validate_resume_data(state.resume_data or {}),
-                            "base_revision": resume_digest(validate_resume_data(state.resume_data or {})),
+                            "source_content_digest": resume_content_digest(state.resume_data or {}),
                             "latest_user_message": latest_human_text(state),
                             "request_id": state.request_id or str(uuid.uuid4()),
                             "context_type": getattr(state, "context_type", "main") or "main",

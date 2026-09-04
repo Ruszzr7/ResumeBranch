@@ -2572,15 +2572,17 @@ async def confirm_endpoint(
             if not content:
                 return JSONResponse(content={"error": "没有找到修改后的简历数据"}, status_code=400)
 
-            from .resume_changes import resume_digest
+            from .resume_changes import resume_state_version_matches
             live_task = get_resume_task(db, current_user.id, task_id)
             before_resume_data = deepcopy((live_task.resume_data if live_task else {}) or {})
-            base_hash = pending_confirmation.get("base_hash")
-            live_digests = {
-                resume_digest(before_resume_data),
-                resume_digest(validate_resume_data(before_resume_data)),
-            }
-            if base_hash and base_hash not in live_digests:
+            before_layout_data = deepcopy((live_task.layout_config if live_task else {}) or {})
+            if not resume_state_version_matches(
+                pending_confirmation.get("base_version"),
+                before_resume_data,
+                before_layout_data,
+                check_content=True,
+                check_layout=False,
+            ):
                 clear_pending_confirmation(db, current_user.id, session_id)
                 return JSONResponse(
                     content={"error": "简历已发生其他修改，请重新生成修改预览"},

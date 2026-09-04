@@ -247,7 +247,7 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(set(pending), {
             "confirm_id", "content", "options", "tool_name", "tool_args",
-            "base_hash", "base_layout", "resume_candidate", "layout_candidate",
+            "base_version", "resume_candidate", "layout_candidate",
             "changes", "status",
         })
         self.assertEqual(pending["tool_name"], "save_resume_tool")

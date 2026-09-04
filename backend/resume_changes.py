@@ -74,6 +74,48 @@ def resume_digest(data: dict) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def resume_content_digest(data: dict) -> str:
+    """Hash canonical persisted resume content for optimistic edit checks."""
+    from .resume_schema import validate_resume_data
+
+    return resume_digest(validate_resume_data(data or {}))
+
+
+def layout_digest(data: dict) -> str:
+    """Hash canonical persisted layout configuration for optimistic edit checks."""
+    from .layout_config import normalize_layout_config
+
+    return resume_digest(normalize_layout_config(data or {}))
+
+
+def build_resume_state_version(resume_data: dict, layout_data: dict) -> dict[str, str]:
+    """Return the shared version payload recorded with every edit preview."""
+    return {
+        "content_digest": resume_content_digest(resume_data),
+        "layout_digest": layout_digest(layout_data),
+    }
+
+
+def resume_state_version_matches(
+    base_version: dict | None,
+    resume_data: dict,
+    layout_data: dict,
+    *,
+    check_content: bool,
+    check_layout: bool,
+) -> bool:
+    """Compare only the persisted state scopes touched by a candidate."""
+    if not check_content and not check_layout:
+        return True
+    if not isinstance(base_version, dict):
+        return False
+    if check_content and base_version.get("content_digest") != resume_content_digest(resume_data):
+        return False
+    if check_layout and base_version.get("layout_digest") != layout_digest(layout_data):
+        return False
+    return True
+
+
 def _display_value(value: Any, field_key: str = "", path: list[Any] | None = None) -> str:
     if value in (None, "", []):
         return "未填写"

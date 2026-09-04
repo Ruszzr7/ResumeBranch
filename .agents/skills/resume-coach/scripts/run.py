@@ -49,7 +49,7 @@ class PreviewOffer(BaseModel):
     offer_id: str
     summary: str
     resume_operations: list[dict[str, Any]]
-    base_revision: str
+    source_content_digest: str
     status: Literal["offered", "authorized"]
 
 
@@ -97,7 +97,7 @@ class ResumeCoachRuntimeContext(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     resume_data: dict[str, Any]
-    base_revision: str
+    source_content_digest: str
     latest_user_message: str
     request_id: str
     context_type: str = "main"
@@ -274,13 +274,13 @@ def run(arguments: ResumeCoachToolInput, context: ResumeCoachRuntimeContext) -> 
         if operation == "offer_preview":
             if arguments.proposal is None or not arguments.proposal.resume_operations:
                 raise ValueError("请求生成预览授权前必须提供具体修改建议")
-            offer_seed = f"{context.request_id}:{issue_id}:{arguments.proposal.model_dump_json()}:{context.base_revision}"
+            offer_seed = f"{context.request_id}:{issue_id}:{arguments.proposal.model_dump_json()}:{context.source_content_digest}"
             offer_id = hashlib.sha256(offer_seed.encode("utf-8")).hexdigest()[:20]
             issue["pending_preview_offer"] = {
                 "offer_id": offer_id,
                 "summary": _clean(arguments.proposal.summary, 1000),
                 "resume_operations": deepcopy(arguments.proposal.resume_operations),
-                "base_revision": context.base_revision,
+                "source_content_digest": context.source_content_digest,
                 "status": "offered",
             }
         elif operation == "handoff_to_edit":
@@ -290,7 +290,7 @@ def run(arguments: ResumeCoachToolInput, context: ResumeCoachRuntimeContext) -> 
                 raise ValueError("当前没有等待用户批准的修改预览提议")
             if not approval or re.sub(r"\s+", "", approval) not in re.sub(r"\s+", "", context.latest_user_message):
                 raise ValueError("预览授权必须引用本轮用户的明确回复")
-            if offer.get("base_revision") != context.base_revision:
+            if offer.get("source_content_digest") != context.source_content_digest:
                 raise ValueError("简历已经变化，请根据当前版本重新提出修改预览")
             offer["status"] = "authorized"
             handoff = EditHandoff(

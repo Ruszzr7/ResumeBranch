@@ -4,6 +4,7 @@ from unittest.mock import patch
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from backend.layout_config import default_layout_config
+from backend.resume_changes import build_resume_state_version
 from backend.resume_agent import AgentState, entry_router, is_mission_resume_edit_request, tool_node, tool_node_router
 from langgraph.graph import END
 from backend.resume_contract import build_resume_edit_contract, build_resume_edit_contract_text
@@ -100,6 +101,70 @@ class ResumeEditSkillTests(unittest.IsolatedAsyncioTestCase):
             )
         )
         self.assertEqual(result.resume_data["basics"]["name"], "新姓名")
+
+    async def test_content_operation_checks_only_content_digest(self):
+        resume = resume_payload()
+        layout = default_layout_config()
+        base_version = build_resume_state_version(resume, layout)
+        changed_layout = default_layout_config()
+        changed_layout["global"]["moduleMargin"] = 0.8
+        result = await run_resume_edit(
+            ResumeEditRequest(
+                resume_data=resume,
+                layout_config=changed_layout,
+                base_version=base_version,
+                resume_operations=({
+                    "op": "set", "path": "basics.name", "value": "新姓名", "expected": "旧姓名",
+                },),
+            )
+        )
+        self.assertEqual(result.resume_data["basics"]["name"], "新姓名")
+
+        changed_resume = resume_payload()
+        changed_resume["basics"]["name"] = "其他姓名"
+        with self.assertRaises(ResumeEditOperationError):
+            await run_resume_edit(
+                ResumeEditRequest(
+                    resume_data=changed_resume,
+                    layout_config=layout,
+                    base_version=base_version,
+                    resume_operations=({
+                        "op": "set", "path": "basics.name", "value": "新姓名",
+                    },),
+                )
+            )
+
+    async def test_layout_operation_checks_only_layout_digest(self):
+        resume = resume_payload()
+        layout = default_layout_config()
+        base_version = build_resume_state_version(resume, layout)
+        changed_resume = resume_payload()
+        changed_resume["basics"]["name"] = "其他姓名"
+        result = await run_resume_edit(
+            ResumeEditRequest(
+                resume_data=changed_resume,
+                layout_config=layout,
+                base_version=base_version,
+                layout_operations=({
+                    "op": "set", "path": "global.moduleMargin", "value": 0.8,
+                },),
+            )
+        )
+        self.assertEqual(result.layout_config["global"]["moduleMargin"], 0.8)
+
+        changed_layout = default_layout_config()
+        changed_layout["global"]["moduleMargin"] = 0.7
+        with self.assertRaises(ResumeEditOperationError):
+            await run_resume_edit(
+                ResumeEditRequest(
+                    resume_data=resume,
+                    layout_config=changed_layout,
+                    base_version=base_version,
+                    layout_operations=({
+                        "op": "set", "path": "global.moduleMargin", "value": 0.8,
+                    },),
+                )
+            )
 
     async def test_project_tech_stack_can_be_edited_without_becoming_top_level_skill(self):
         payload = resume_payload()

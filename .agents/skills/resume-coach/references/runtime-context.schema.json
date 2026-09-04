@@ -165,8 +165,8 @@
           "title": "Resume Operations",
           "type": "array"
         },
-        "base_revision": {
-          "title": "Base Revision",
+        "source_content_digest": {
+          "title": "Source Content Digest",
           "type": "string"
         },
         "status": {
@@ -182,7 +182,7 @@
         "offer_id",
         "summary",
         "resume_operations",
-        "base_revision",
+        "source_content_digest",
         "status"
       ],
       "title": "PreviewOffer",
@@ -196,8 +196,8 @@
       "title": "Resume Data",
       "type": "object"
     },
-    "base_revision": {
-      "title": "Base Revision",
+    "source_content_digest": {
+      "title": "Source Content Digest",
       "type": "string"
     },
     "latest_user_message": {
@@ -224,7 +224,7 @@
   },
   "required": [
     "resume_data",
-    "base_revision",
+    "source_content_digest",
     "latest_user_message",
     "request_id"
   ],

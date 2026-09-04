@@ -38,7 +38,7 @@ from backend.resume_agent import (
     resume_edit_tool,
     tool_node,
 )
-from backend.resume_changes import resume_digest
+from backend.resume_changes import build_resume_state_version
 from backend.resume_schema import validate_resume_data
 from backend.skill_runtime import skill_runtime
 
@@ -346,7 +346,7 @@ async def run_safety(cases: list[dict[str, Any]]) -> tuple[list[dict[str, Any]],
             layout_config=before_layout,
             resume_operations=tuple(case.get("resume_operations") or ()),
             layout_operations=tuple(case.get("layout_operations") or ()),
-            base_revision=resume_digest(before_resume),
+            base_version=build_resume_state_version(before_resume, before_layout),
         )
         failure_reasons: list[str] = []
         with patch("backend.tools.update_resume", return_value="简历已成功保存") as update:
@@ -460,7 +460,9 @@ async def _validate_call(name: str, args: Any) -> tuple[bool, bool | None, str]:
             layout_config=default_layout_config(),
             resume_operations=tuple(args.get("resume_operations") or ()),
             layout_operations=tuple(args.get("layout_operations") or ()),
-            base_revision=resume_digest(validate_resume_data(SYNTHETIC_RESUME)),
+            base_version=build_resume_state_version(
+                validate_resume_data(SYNTHETIC_RESUME), default_layout_config()
+            ),
         ))
     except Exception as exc:
         return True, False, f"Executable: {type(exc).__name__}: {str(exc)}"
@@ -478,7 +480,7 @@ async def _operation_changes(
         layout_config=before_layout,
         resume_operations=tuple(resume_operations or ()),
         layout_operations=tuple(layout_operations or ()),
-        base_revision=resume_digest(before_resume),
+        base_version=build_resume_state_version(before_resume, before_layout),
     ))
     return _final_change_map(
         _combined(before_resume, before_layout),

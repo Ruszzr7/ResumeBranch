@@ -587,7 +587,7 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result["pending_confirmation"])
         self.assertIn("无法安全生成", result["proposal_error"])
 
-    async def test_selecting_layout_group_persists_only_that_group(self):
+    async def test_layout_confirmation_survives_unrelated_content_change(self):
         before_layout = default_layout_config()
         before_layout["education"]["schoolTagStyle"] = "outline"
         after_layout = default_layout_config()
@@ -602,6 +602,7 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
             resume_data=before_resume, layout_data=before_layout, pending_confirmation=pending,
             user_id=7, task_id="task-1",
         )
+        confirm_state.resume_data["basics"]["name"] = "外部更新"
         fake_db = SimpleNamespace(close=lambda: None)
         with (
             patch("backend.tools.update_resume", return_value="简历已成功保存"),
@@ -613,7 +614,31 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
         save_layout.assert_called_once()
         record_revision.assert_called_once()
         self.assertEqual(result["layout_data"]["education"]["schoolTagStyle"], "text")
+        self.assertEqual(result["resume_data"]["basics"]["name"], "外部更新")
         self.assertTrue(result["just_saved"])
+
+    async def test_layout_confirmation_rejects_layout_change(self):
+        before_layout = default_layout_config()
+        before_layout["education"]["schoolTagStyle"] = "outline"
+        after_layout = default_layout_config()
+        after_layout["education"]["schoolTagStyle"] = "text"
+        before_resume = resume_payload()
+        proposal_state = AgentState(
+            resume_data=before_resume, layout_data=before_layout, user_id=7, task_id="task-1"
+        )
+        pending = make_pending_confirmation(proposal_state, before_resume, after_layout)
+        changed_layout = default_layout_config()
+        changed_layout["education"]["schoolTagStyle"] = "hidden"
+        confirm_state = AgentState(
+            messages=[HumanMessage(content=f'[CONFIRM_REPLY:{pending["confirm_id"]}:confirm]')],
+            resume_data=before_resume, layout_data=changed_layout, pending_confirmation=pending,
+            user_id=7, task_id="task-1",
+        )
+        with patch("backend.tools.update_resume") as update:
+            result = await tool_node(confirm_state)
+        update.assert_not_called()
+        self.assertFalse(result["just_saved"])
+        self.assertIn("内容或排版已发生其他修改", result["messages"][-1].content)
 
 
 if __name__ == "__main__":

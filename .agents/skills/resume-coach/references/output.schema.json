@@ -193,8 +193,8 @@
           "title": "Resume Operations",
           "type": "array"
         },
-        "base_revision": {
-          "title": "Base Revision",
+        "source_content_digest": {
+          "title": "Source Content Digest",
           "type": "string"
         },
         "status": {
@@ -210,7 +210,7 @@
         "offer_id",
         "summary",
         "resume_operations",
-        "base_revision",
+        "source_content_digest",
         "status"
       ],
       "title": "PreviewOffer",

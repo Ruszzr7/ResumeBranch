@@ -29,7 +29,10 @@ from backend.resume_contract import (
     validate_resume_operation_item,
     validate_resume_operation_value,
 )
-from backend.resume_changes import resume_digest
+from backend.resume_changes import (
+    build_resume_state_version,
+    resume_state_version_matches,
+)
 from backend.resume_schema import validate_resume_data
 
 
@@ -66,7 +69,7 @@ class ResumeEditRuntimeContext(BaseModel):
     layout_config: dict = Field(default_factory=dict)
     jd_data: dict = Field(default_factory=dict)
     context_type: str = "main"
-    base_revision: str = ""
+    base_version: dict[str, str] = Field(default_factory=dict)
     conversation_context: str = ""
 
 
@@ -77,7 +80,7 @@ class ResumeEditOutput(BaseModel):
 
     resume_data: dict
     layout_config: dict
-    base_revision: str
+    base_version: dict[str, str]
     resume_operations: tuple[dict, ...] = ()
     layout_operations: tuple[dict, ...] = ()
     already_satisfied: bool = False
@@ -110,7 +113,7 @@ class ResumeEditRequest:
     layout_operations: tuple[dict, ...] = ()
     jd_data: dict = field(default_factory=dict)
     context_type: str = "main"
-    base_revision: str = ""
+    base_version: dict[str, str] = field(default_factory=dict)
     conversation_context: str = ""
 
 
@@ -118,7 +121,7 @@ class ResumeEditRequest:
 class ResumeEditResult:
     resume_data: dict
     layout_config: dict
-    base_revision: str
+    base_version: dict[str, str]
     resume_operations: tuple[dict, ...] = ()
     layout_operations: tuple[dict, ...] = ()
     already_satisfied: bool = False
@@ -393,7 +396,13 @@ async def run_resume_edit(
 
     current_resume = validate_resume_data(request.resume_data or {})
     current_layout = normalize_layout_config(request.layout_config or {})
-    if request.base_revision and request.base_revision != resume_digest(current_resume):
+    if request.base_version and not resume_state_version_matches(
+        request.base_version,
+        current_resume,
+        current_layout,
+        check_content=bool(resume_operations),
+        check_layout=bool(layout_operations),
+    ):
         raise ResumeEditOperationError("简历在生成预览前已发生变化，请重新生成修改建议")
 
     # The generic path applicator only knows whether a key exists.  Validate
@@ -424,7 +433,7 @@ async def run_resume_edit(
     return ResumeEditResult(
         resume_data=normalized_candidate_resume,
         layout_config=normalized_candidate_layout,
-        base_revision=request.base_revision,
+        base_version=request.base_version or build_resume_state_version(current_resume, current_layout),
         resume_operations=resume_operations,
         layout_operations=layout_operations,
         already_satisfied=(
@@ -447,14 +456,14 @@ async def run(
             layout_operations=tuple(arguments.layout_operations),
             jd_data=context.jd_data,
             context_type=context.context_type,
-            base_revision=context.base_revision,
+            base_version=context.base_version,
             conversation_context=context.conversation_context,
         )
     )
     return ResumeEditOutput(
         resume_data=result.resume_data,
         layout_config=result.layout_config,
-        base_revision=result.base_revision,
+        base_version=result.base_version,
         resume_operations=result.resume_operations,
         layout_operations=result.layout_operations,
         already_satisfied=result.already_satisfied,
