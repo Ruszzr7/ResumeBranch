@@ -50,9 +50,13 @@ from .layout_capabilities import (
     localize_user_visible_layout_text,
 )
 from .llm_providers import active_profile, role_temperature
-from .harness.context import build_conversation_context
+from .harness.context import (
+    EPHEMERAL_MEMORY_FLAG,
+    UNVERIFIED_EXECUTION_STATUS,
+    build_conversation_context,
+)
 from .harness.observability import harness_metrics
-from .skill_runtime import activate_agent_skill, skill_runtime
+from .skill_runtime import load_agent_skill, skill_runtime
 
 
 EDIT_SKILL_NAME = "resume-edit"
@@ -243,7 +247,7 @@ CONVERSATION_PROMPT = """
 - **事实优先**：事实不足时说明缺口；需要持续取证时按需建议或进入教练 Skill。
 - **结果导向**：坚信任何经历都必须有量化指标或具体成果。
 - **学长风范**：专业、敏锐、直接，用自然流畅的对话消除用户的焦虑。
-- **绝对真实**：绝对禁止为用户虚构没有的经历、技能等，一个词都不允许，为了提高质量而虚构最终会害了用户。（例如用户本来没有提到photoshop，就算JD里要求了，也不能帮用户编一个技能出来，应该引导用户去学习这个技能，而不是通过虚构来达到JD要求，这样对用户才是真正的负责）
+- **绝对真实**：绝对禁止为用户虚构其未提供或未确认的经历、技能、成果、教育背景等信息；不得为了提高匹配度自行补写任何事实。例如，用户未提及 Photoshop 时，即使 JD 要求，也不得主动把它写入简历。但用户明确提出对其简历字段进行新增、更正、替换或删除时，应将该请求视为用户提供的事实，生成待确认预览，不得臆测其动机、要求额外举证或进行说教。仅当用户明确表示该内容不真实、要求虚构，或目标字段无法唯一定位时，才拒绝相应虚构内容或提出一个简洁澄清问题。
 
 # 简历全维度评判（需要以怀疑论者的角度去审视，分数不用输出给用户）
 
@@ -310,7 +314,7 @@ CONVERSATION_PROMPT = """
 3. **引导式提问**：若描述简略且修改结果仍不明确，应通过提问启发细节，不得替用户编造事实。
 
 # Agent Skill 协调规则
-- 本轮可用 Agent Skills 的名称和描述由系统动态注入。需要使用某项能力时，必须先调用 activate_agent_skill；激活后遵循加载的 SKILL.md 说明和结构化 Tool schema。
+- 本轮可用 Agent Skills 的名称和描述由系统动态注入。需要使用某项能力时，必须先调用 load_agent_skill 读取完整 SKILL.md，再按说明使用加载后可用的结构化 Tool。
 - Skill 的 Tool 参数只能包含模型可提供的业务参数。当前简历、排版、版本、照片和渲染样式由系统作为可信运行时上下文注入，不得自行提交或伪造。
 - 用户一次消息同时包含执行请求和咨询问题时，只把明确执行的部分交给修改 Skill，其余咨询保留在当前对话中。
 - 面向用户的回复不得展示 Skill 名、Tool 名、字段路径、内部枚举、协议标记或结构化载荷；修改 Skill 只生成候选，用户确认后才保存。
@@ -318,7 +322,7 @@ CONVERSATION_PROMPT = """
 # 重要规则
 - **重要** 当 just_saved=True（简历刚保存）时，说明简历已经修改完成了，不要调用任何工具。
 - **重要** 面向用户的回复遵守上述统一表达边界；结构化参数可使用内部标识，但不得把它们复制到回复正文。
-- **重要** 禁止构造虚假的修改建议，必须基于用户实际提供的内容，为了提高质量而虚构任何东西（哪怕是一个词）最终会害了用户。
+- **重要** 不得绕过上述真实性边界：模型不得自行构造或补写用户未提供、未确认的事实；用户明确提出的字段修改则应进入待确认预览。
 - 绝对禁止说："已保存"、"已修改"、"正在为你更新"。
 - 不得向用户展示结构化数据载荷或内部实现术语。
 - 年份信息： 当前现实世界的年份是 2026 年，需要谨记。
@@ -415,9 +419,25 @@ def build_resume_extract_prompt() -> str:
 
 
 def _conversation_tools_for_state(state) -> list:
-    """Expose only the activation Tool plus Tools for Skills active this turn."""
+    """Expose the Skill loader plus execution Tools for Skills loaded this turn."""
     active_names = list(getattr(state, "active_skill_names", None) or [])
-    return [activate_agent_skill, *skill_runtime.tools_for(active_names)]
+    return [load_agent_skill, *skill_runtime.tools_for(active_names)]
+
+
+def _skill_names_loaded_in_live_protocol(messages: list) -> set[str]:
+    """Return Skills whose loader call is already present in this live turn."""
+    loaded = set()
+    for message in messages or []:
+        if not isinstance(message, AIMessage):
+            continue
+        for call in list(getattr(message, "tool_calls", None) or []):
+            name = call.get("name") if isinstance(call, dict) else getattr(call, "name", "")
+            if name != load_agent_skill.name:
+                continue
+            args = call.get("args") if isinstance(call, dict) else getattr(call, "args", {})
+            if isinstance(args, dict) and str(args.get("name") or "").strip():
+                loaded.add(str(args["name"]).strip())
+    return loaded
 
 
 # =============================================================================
@@ -448,6 +468,7 @@ class AgentState:
     task_id: str = None  # 当前任务ID
     proposal_error: str = None  # 候选修改生成失败时返回给前端的可恢复错误
     edit_noop: bool = False  # 当前状态已满足修改请求，用于终止本轮工具循环
+    edit_tool_called: bool = False  # 本轮是否真正执行过修改 Skill Tool
     memory_summary: str = ""  # 分层记忆摘要，仅作为不可执行的上下文数据
     memory_version: int = 0  # 乐观并发版本，由持久化层管理
     coach_state: dict = None  # resume-coach 私有、完整的当前问题证据
@@ -469,6 +490,8 @@ class AgentState:
     visual_snapshot_error: str = ""
     context_metadata_updates: dict = None  # 本回合产生的小型任务元数据
     active_skill_names: list[str] = field(default_factory=list)  # 仅在当前图执行内激活
+    assistant_reply: str = ""  # 当前工具回合中可持久化的普通回答
+    edit_preview_reply: str = ""  # 当前工具回合中由后端生成的临时预览状态
 
 
 # =============================================================================
@@ -575,11 +598,6 @@ def is_initial_mission_turn(state: AgentState) -> bool:
         metadata = getattr(state, "context_metadata", None) or {}
         if "initial_analysis_completed" in metadata:
             return not bool(metadata.get("initial_analysis_completed"))
-        # Existing layout missions created before the marker was introduced
-        # have already completed their initial command when they contain a
-        # recommendation or any assistant reply. Do not restart them.
-        if metadata.get("latest_recommendations"):
-            return False
         return not any(
             isinstance(message, AIMessage)
             and str(getattr(message, "content", "") or "").strip()
@@ -784,9 +802,19 @@ def is_inline_format_request(message: str) -> bool:
 
 
 def is_font_size_chat_change_request(message: str) -> bool:
-    """Identify chat attempts that must be redirected to the bounded modal."""
+    """Identify an explicitly authorized font-size mutation for the Skill path.
+
+    A visual question such as "字号是否需要修改" must remain ordinary Agent
+    conversation: the model may discover and call resume-snapshot when page
+    evidence is needed. A concrete instruction remains in the Agent path so
+    resume-edit can validate the supported semantic font-size operation.
+    """
     text = str(message or "").strip()
-    return bool(text and _FONT_SIZE_CHANGE_RE.search(text))
+    return bool(
+        text
+        and _FONT_SIZE_CHANGE_RE.search(text)
+        and has_explicit_change_authorization(text)
+    )
 
 
 def build_inline_format_candidate(state: AgentState) -> tuple[dict, str, bool]:
@@ -991,32 +1019,7 @@ def _sanitize_unverified_execution_reply(content: object) -> str:
     text = _plain_response_text(content).strip()
     if not _contains_unverified_execution_claim(text):
         return text
-    return (
-        "当前尚未生成修改候选。若需要执行修改，请明确修改目标；"
-        "系统会在真实生成候选后再提供确认。"
-    )
-
-
-def _edit_intent_metadata_for_response(state: AgentState, response: object) -> dict:
-    """Project the current edit-decision lifecycle without storing user text.
-
-    This metadata is only a compact cross-turn hint for the harness.  It does
-    not choose a Skill or alter canonical resume data; the model still makes
-    the tool decision from the full request and the injected contract.
-    """
-    request = latest_human_text(state)
-    status = "none"
-    if _all_non_question_clauses_are_explicitly_authorized(request):
-        status = "awaiting_tool"
-    elif has_explicit_change_authorization(request):
-        status = "needs_clarification"
-
-    for call in list(getattr(response, "tool_calls", None) or []):
-        name = call.get("name") if isinstance(call, dict) else getattr(call, "name", "")
-        if name == "resume_edit":
-            status = "tool_called"
-            break
-    return {"status": status}
+    return UNVERIFIED_EXECUTION_STATUS
 
 
 _LOCAL_CONTEXTUAL_SECTION_ALIASES = {
@@ -1397,6 +1400,24 @@ def is_fully_resolved_local_edit_request(state: AgentState) -> bool:
 
 
 def _preview_summary(changes: list[dict]) -> str:
+    def transition(before: object, after: object) -> str:
+        before_text = str(before or "")
+        after_text = str(after or "")
+        if any(len(value) > 96 or "\n" in value for value in (before_text, after_text)):
+            return "\n".join((
+                "修改前：",
+                before_text,
+                "",
+                "→",
+                "",
+                "修改后：",
+                after_text,
+            ))
+        return f"{before_text} → {after_text}"
+
+    def indented_transition(before: object, after: object) -> str:
+        return transition(before, after).replace("\n", "\n  ")
+
     has_layout_change = any(change.get("kind") == "layout" for change in changes)
     lines = [
         "已根据你的要求生成排版修改预览："
@@ -1408,11 +1429,11 @@ def _preview_summary(changes: list[dict]) -> str:
             f"- {change['label']}："
             + (
                 "；".join(
-                    f"{detail.get('field_label', detail['field'])}：{detail['before_display']} → {detail['after_display']}"
+                    f"{detail.get('field_label', detail['field'])}：{transition(detail['before_display'], detail['after_display'])}"
                     for detail in change.get("details", [])
                 )
                 if change.get("kind") == "layout"
-                else f"{change['before_display']} → {change['after_display']}"
+                else indented_transition(change['before_display'], change['after_display'])
             )
         )
         for change in changes
@@ -1424,21 +1445,6 @@ def _preview_summary(changes: list[dict]) -> str:
     )
     lines.extend(["", f"右侧已显示临时预览；接受前不会保存。{action_hint}"])
     return "\n".join(lines)
-
-
-_RESUME_OPERATION_ROOTS = (
-    "basics",
-    "education",
-    "education_supplement",
-    "research_interests",
-    "honors",
-    "publications",
-    "work_experience",
-    "project_experience",
-    "custom_sections",
-    "others",
-    "self_evaluation",
-)
 
 
 def build_deterministic_edit_operations(
@@ -1453,16 +1459,58 @@ def build_deterministic_edit_operations(
     never hand that copy directly to preview or persistence.  The Skill remains
     the only component that validates and applies the resulting operations.
     """
-    resume_operations = tuple(
-        {
+    def operation_path(parts: list[object]) -> str:
+        result = ""
+        for part in parts:
+            if isinstance(part, int):
+                result += f"[{part}]"
+            else:
+                result += ("." if result else "") + str(part)
+        return result
+
+    def parent_value(data: object, parts: list[object]) -> object | None:
+        current: object = data
+        for part in parts:
+            if isinstance(part, int):
+                if not isinstance(current, list) or part < 0 or part >= len(current):
+                    return None
+                current = current[part]
+            else:
+                if not isinstance(current, dict) or part not in current:
+                    return None
+                current = current[part]
+        return current
+
+    resume_operations: list[dict] = []
+    for change in build_resume_changes(current_resume, resume_candidate):
+        path = list(change.get("path") or [])
+        if not path:
+            raise ValueError("确定性修改不能整体覆盖简历对象")
+        change_kind = str(change.get("operation") or "replace")
+        if change_kind == "add" and isinstance(path[-1], int):
+            list_path = path[:-1]
+            index = path[-1]
+            target = parent_value(current_resume, list_path)
+            operation = {
+                "op": "append" if isinstance(target, list) and index == len(target) else "insert",
+                "path": operation_path(list_path),
+                "value": deepcopy(change.get("after")),
+            }
+            if operation["op"] == "insert":
+                operation["index"] = index
+            resume_operations.append(operation)
+            continue
+        if change_kind == "remove":
+            resume_operations.append({
+                "op": "remove",
+                "path": operation_path(path),
+            })
+            continue
+        resume_operations.append({
             "op": "set",
-            "path": root,
-            "expected": deepcopy(current_resume.get(root)),
-            "value": deepcopy(resume_candidate.get(root)),
-        }
-        for root in _RESUME_OPERATION_ROOTS
-        if current_resume.get(root) != resume_candidate.get(root)
-    )
+            "path": operation_path(path),
+            "value": deepcopy(change.get("after")),
+        })
     layout_operations: list[dict] = []
     editable_fields = {
         "global": EDITABLE_GLOBAL_FIELDS,
@@ -1476,10 +1524,9 @@ def build_deterministic_edit_operations(
                 layout_operations.append({
                     "op": "set",
                     "path": f"{section}.{field_name}",
-                    "expected": deepcopy(before_section.get(field_name)),
                     "value": deepcopy(after_section.get(field_name)),
                 })
-    return resume_operations, tuple(layout_operations)
+    return tuple(resume_operations), tuple(layout_operations)
 
 
 def make_pending_confirmation(
@@ -1521,23 +1568,6 @@ async def direct_edit_node(state: AgentState) -> dict:
     current = validate_resume_data(state.resume_data or {})
     current_layout = normalize_layout_config(state.layout_data)
     metadata_updates = dict(getattr(state, "context_metadata_updates", None) or {})
-    if is_font_size_chat_change_request(latest_human_text(state)):
-        metadata_updates["edit_intent_state"] = {"status": "none"}
-        return {
-            "messages": list(state.messages) + [AIMessage(content=(
-                "字号不会通过对话命令直接修改。请打开简历预览上方的“排版”，进入“设置各部分字号”，"
-                "按半磅选择姓名、用户信息、模块标题、条目标题、字段标签和正文字号；弹窗会先实时预览，点击“应用”后才保存。"
-            ))],
-            "resume_data": current,
-            "jd_data": state.jd_data or {},
-            "layout_data": current_layout,
-            "pending_confirmation": None,
-            "proposal_error": None,
-            "just_saved": False,
-            "user_id": state.user_id,
-            "task_id": state.task_id,
-            "context_metadata_updates": metadata_updates,
-        }
     inline_request = is_inline_format_request(latest_human_text(state))
     inline_quote = ""
     inline_bold = True
@@ -1546,7 +1576,6 @@ async def direct_edit_node(state: AgentState) -> dict:
         try:
             resume_candidate, inline_quote, inline_bold = build_inline_format_candidate(state)
         except InlineFormatError as exc:
-            metadata_updates["edit_intent_state"] = {"status": "none"}
             return {
                 "messages": list(state.messages) + [AIMessage(content=str(exc))],
                 "resume_data": current,
@@ -1593,16 +1622,16 @@ async def direct_edit_node(state: AgentState) -> dict:
         assistant_message = AIMessage(content=(
             f"已生成格式预览：将“{inline_quote}”{action_label}。\n\n"
             "右侧已显示临时预览；接受前不会保存。"
-        ))
+        ), additional_kwargs={EPHEMERAL_MEMORY_FLAG: True})
     else:
-        assistant_message = AIMessage(content=str(preview.get("message") or ""))
+        assistant_message = AIMessage(
+            content=str(preview.get("message") or ""),
+            additional_kwargs={EPHEMERAL_MEMORY_FLAG: True} if pending else {},
+        )
     LOGGER.debug(
         "本地修改已通过 resume-edit 生成预览，内容操作=%s 排版操作=%s",
         len(resume_operations), len(layout_operations),
     )
-    metadata_updates["edit_intent_state"] = {
-        "status": "awaiting_confirmation" if pending else "none",
-    }
     return {
         "messages": list(state.messages) + [assistant_message],
         "resume_data": current,
@@ -1610,6 +1639,7 @@ async def direct_edit_node(state: AgentState) -> dict:
         "layout_data": current_layout,
         "pending_confirmation": pending,
         "proposal_error": None,
+        "edit_noop": bool(preview.get("already_satisfied")),
         "just_saved": False,
         "user_id": state.user_id,
         "task_id": state.task_id,
@@ -1715,6 +1745,7 @@ async def conversation_node(state: AgentState) -> dict:
     visual_error = str(getattr(state, "visual_snapshot_error", "") or "")
     metadata_updates = dict(getattr(state, "context_metadata_updates", None) or {})
     active_skill_names = list(getattr(state, "active_skill_names", None) or [])
+    tool_loaded_skill_names = _skill_names_loaded_in_live_protocol(state.messages)
 
     # A layout-advice mission has one explicit first-turn guarantee.  Every
     # later visual read is a model tool decision rather than a keyword gate.
@@ -1769,15 +1800,19 @@ async def conversation_node(state: AgentState) -> dict:
         just_saved=getattr(state, "just_saved", False),
         memory_summary=getattr(state, "memory_summary", "") or "",
         context_type=context_type,
-        context_metadata=getattr(state, "context_metadata", None) or {},
         layout_context_mode=layout_context_mode,
         mission_initial_turn=mission_initial_turn,
+        preserve_tool_protocol=True,
     )
     if messages and isinstance(messages[0], SystemMessage):
+        preloaded_skill_names = [
+            name for name in active_skill_names
+            if name not in tool_loaded_skill_names
+        ]
         messages[0] = SystemMessage(content=(
             str(messages[0].content)
             + skill_runtime.catalog_context()
-            + skill_runtime.active_instructions_context(active_skill_names)
+            + skill_runtime.active_instructions_context(preloaded_skill_names)
         ))
         if COACH_SKILL_NAME in active_skill_names:
             messages[0] = SystemMessage(content=(
@@ -1810,9 +1845,15 @@ async def conversation_node(state: AgentState) -> dict:
             getattr(state, "coach_required", False)
             and not getattr(state, "coach_turn_processed", False)
         )
+        conversation_tools = _conversation_tools_for_state(state)
+        if forced_coach_turn:
+            conversation_tools = [
+                tool for tool in conversation_tools
+                if getattr(tool, "name", "") == COACH_TOOL_NAME
+            ]
         model = conversation_llm.bind_tools(
-            _conversation_tools_for_state(state),
-            tool_choice=COACH_TOOL_NAME if forced_coach_turn else "auto"
+            conversation_tools,
+            tool_choice="required" if forced_coach_turn else "auto"
         )
         # 不要添加 stop 序列，否则可能导致工具名称被截断
         # 增加超时时间到120秒，因为上下文可能较大
@@ -1832,15 +1873,22 @@ async def conversation_node(state: AgentState) -> dict:
     response_updates = {}
     if isinstance(getattr(response, "content", None), str):
         response_content = response.content
-        if not (getattr(response, "tool_calls", None) or []):
+        unverified_execution_claim = bool(
+            not (getattr(response, "tool_calls", None) or [])
+            and _contains_unverified_execution_claim(response_content)
+        )
+        if unverified_execution_claim:
             response_content = _sanitize_unverified_execution_reply(response_content)
+            response_updates["additional_kwargs"] = {
+                **dict(getattr(response, "additional_kwargs", None) or {}),
+                EPHEMERAL_MEMORY_FLAG: True,
+            }
         response_updates["content"] = localize_user_visible_layout_text(response_content)
     tool_calls = deepcopy(getattr(response, "tool_calls", None) or [])
     for call in tool_calls:
         args = call.get("args") if isinstance(call, dict) else None
         if isinstance(args, dict) and isinstance(args.get("answer_text"), str):
             args["answer_text"] = localize_user_visible_layout_text(args["answer_text"])
-    metadata_updates["edit_intent_state"] = _edit_intent_metadata_for_response(state, response)
     if tool_calls:
         response_updates["tool_calls"] = tool_calls
     if response_updates:
@@ -2040,7 +2088,7 @@ async def tool_node(state: AgentState) -> dict:
         seen_tool_call_fingerprints.add(call_fingerprint)
 
         # Tool 的发现、schema 与执行入口均由 Skill Runtime 统一解析。
-        tool_func = activate_agent_skill if tool_name == activate_agent_skill.name else None
+        tool_func = load_agent_skill if tool_name == load_agent_skill.name else None
         if tool_func is None:
             try:
                 tool_func = skill_runtime.get_by_tool_name(tool_name).model_tool()
@@ -2052,12 +2100,12 @@ async def tool_node(state: AgentState) -> dict:
             LOGGER.warning("模型请求了不存在的工具: %s", tool_name)
         else:
             try:
-                if tool_name == activate_agent_skill.name:
+                if tool_name == load_agent_skill.name:
                     requested_skill_name = str(tool_args.get("name") or "").strip()
                     package = skill_runtime.get(requested_skill_name)
                     if package.name not in active_skill_names:
                         active_skill_names.append(package.name)
-                    result = activate_agent_skill.invoke({"name": package.name})
+                    result = load_agent_skill.invoke({"name": package.name})
                 elif tool_name == COACH_TOOL_NAME:
                     coach_result = await skill_runtime.invoke(
                         COACH_SKILL_NAME,
@@ -2199,9 +2247,15 @@ async def tool_node(state: AgentState) -> dict:
     # Tool-only model responses commonly have empty assistant content.  After
     # the candidate really exists, expose any pre-preview answer followed by
     # the system-generated execution status before the confirmation card.
-    if (pending_confirmation or edit_noop) and edit_preview_reply:
-        reply_parts = [value for value in (assistant_reply, edit_preview_reply) if value]
-        new_messages.append(AIMessage(content="\n\n".join(reply_parts)))
+    if assistant_reply:
+        new_messages.append(AIMessage(content=assistant_reply))
+    if pending_confirmation and edit_preview_reply:
+        new_messages.append(AIMessage(
+            content=edit_preview_reply,
+            additional_kwargs={EPHEMERAL_MEMORY_FLAG: True},
+        ))
+    elif edit_noop and edit_preview_reply:
+        new_messages.append(AIMessage(content=edit_preview_reply))
 
     elapsed_time = time.time() - start_time
     LOGGER.debug("工具节点结束，耗时=%.2fs，结果数=%s", elapsed_time, len(new_messages))
@@ -2209,19 +2263,17 @@ async def tool_node(state: AgentState) -> dict:
     # 返回所有消息
     all_messages = list(state.messages) + new_messages
     
-    if pending_confirmation:
-        metadata_updates["edit_intent_state"] = {"status": "awaiting_confirmation"}
-    elif edit_tool_called:
-        metadata_updates["edit_intent_state"] = {"status": "none"}
-    
     return {
         "messages": all_messages,
         "resume_data": state.resume_data or {},
         "jd_data": state.jd_data or {},
         "layout_data": normalize_layout_config(state.layout_data),
         "pending_confirmation": pending_confirmation,
+        "assistant_reply": assistant_reply,
+        "edit_preview_reply": edit_preview_reply,
         "proposal_error": proposal_error,
         "edit_noop": edit_noop,
+        "edit_tool_called": edit_tool_called,
         "just_saved": False,
         "user_id": state.user_id,
         "task_id": state.task_id,
@@ -2325,7 +2377,7 @@ def entry_router(state: AgentState) -> str:
     ):
         return "conversation_llm"
     if is_font_size_chat_change_request(user_request):
-        return "direct_edit"
+        return "conversation_llm"
     if is_inline_format_request(user_request):
         return "direct_edit"
     try:

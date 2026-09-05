@@ -1,6 +1,6 @@
 {
   "additionalProperties": false,
-  "description": "Trusted rendering inputs injected by the graph.",
+  "description": "由图编排程序注入的可信渲染输入。",
   "properties": {
     "resume_data": {
       "additionalProperties": true,

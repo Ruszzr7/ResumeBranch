@@ -12,9 +12,9 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass, field
 import re
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from backend.layout_config import normalize_layout_config
 from backend.layout_capabilities import (
@@ -41,8 +41,36 @@ MAX_OPERATION_VALUE_BYTES = 256 * 1024
 MAX_PATH_DEPTH = 32
 
 
+class ResumeEditOperation(BaseModel):
+    """模型提供的一条标准化修改操作。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    op: Literal["set", "replace", "append", "insert", "remove", "move"] = Field(
+        description="操作类型。"
+    )
+    path: str = Field(min_length=1, description="契约定义的最小可写路径。")
+    value: Any | None = Field(default=None, description="set、replace、append 或 insert 的目标值。")
+    index: int | None = Field(default=None, description="insert 或列表 remove 的目标索引。")
+    from_index: int | None = Field(default=None, description="move 的原始索引。")
+    to_index: int | None = Field(default=None, description="move 的目标索引。")
+    target_semantic_role: Literal[
+        "tech_stack", "introduction", "responsibilities", "generic"
+    ] | None = Field(default=None, description="内容块的稳定语义角色，仅用于 content_blocks。")
+
+    @model_validator(mode="after")
+    def validate_operation_fields(self):
+        if self.op in {"set", "replace", "append", "insert"} and self.value is None:
+            raise ValueError(f"{self.op} 操作必须提供 value")
+        if self.op == "insert" and self.index is None:
+            raise ValueError("insert 操作必须提供 index")
+        if self.op == "move" and (self.from_index is None or self.to_index is None):
+            raise ValueError("move 操作必须提供 from_index 和 to_index")
+        return self
+
+
 class ResumeEditToolInput(BaseModel):
-    """Arguments the model is allowed to supply to the Skill."""
+    """模型可以提供给本 Skill 的参数。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -50,18 +78,18 @@ class ResumeEditToolInput(BaseModel):
         default="",
         description="修改预览前需要展示的独立回答或澄清；纯修改请求留空。",
     )
-    resume_operations: list[dict] = Field(
+    resume_operations: list[ResumeEditOperation] = Field(
         default_factory=list,
         description="本次明确授权的简历内容结构化操作。",
     )
-    layout_operations: list[dict] = Field(
+    layout_operations: list[ResumeEditOperation] = Field(
         default_factory=list,
         description="本次明确授权且属于对话可编辑范围的排版结构化操作。",
     )
 
 
 class ResumeEditRuntimeContext(BaseModel):
-    """Trusted graph-owned context that the model cannot provide."""
+    """由图编排程序管理、且不允许模型提供的可信上下文。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -74,7 +102,7 @@ class ResumeEditRuntimeContext(BaseModel):
 
 
 class ResumeEditOutput(BaseModel):
-    """Validated candidate returned to the existing confirmation flow."""
+    """返回给现有确认机制的已校验候选。"""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -89,10 +117,8 @@ _PATH_SEGMENT_RE = re.compile(r"^(?P<key>[A-Za-z_][A-Za-z0-9_]*)(?P<indexes>(?:\
 _INDEX_RE = re.compile(r"\[(\d+)\]")
 
 _RESUME_ROOTS = set(RESUME_EDIT_ROOTS)
-_LAYOUT_ROOTS = {"global", *EDITABLE_MODULE_FIELDS}
+_LAYOUT_ROOTS = {"global", "typography", *EDITABLE_MODULE_FIELDS}
 _FORBIDDEN_LAYOUT_PARTS = {
-    "fontsize",
-    "fontsizes",
     "latinfont",
     "eastasiafont",
     "fallbackfonts",
@@ -139,9 +165,16 @@ def _coerce_operations(value: Any, *, field_name: str) -> tuple[dict, ...]:
         raise ResumeEditOperationError("单次修改操作过多，无法安全生成预览")
     operations: list[dict] = []
     for operation in value:
+        if isinstance(operation, ResumeEditOperation):
+            operations.append(operation.model_dump(exclude_none=True))
+            continue
         if not isinstance(operation, dict):
             raise ResumeEditOperationError(f"{field_name} 中存在无效操作")
-        operations.append(deepcopy(operation))
+        try:
+            parsed = ResumeEditOperation.model_validate(operation)
+        except ValidationError as exc:
+            raise ResumeEditOperationError(f"{field_name} 操作格式无效：{exc.errors()[0]['msg']}") from exc
+        operations.append(parsed.model_dump(exclude_none=True))
     return tuple(operations)
 
 
@@ -183,11 +216,6 @@ def _resolve_parent(root: Any, tokens: tuple[str | int, ...], *, path: str) -> t
     if not tokens:
         raise ResumeEditOperationError(f"目标路径为空：{path}")
     return _resolve(root, tokens[:-1], path=path), tokens[-1]
-
-
-def _check_expected(current: Any, operation: dict, *, path: str) -> None:
-    if "expected" in operation and current != operation["expected"]:
-        raise ResumeEditOperationError(f"目标内容已变化，无法安全修改：{path}")
 
 
 def _validate_semantic_target(
@@ -263,7 +291,7 @@ def _apply_one(root: Any, operation: dict, *, roots: set[str], field_name: str, 
         isinstance(token, str) and token.lower() in _FORBIDDEN_LAYOUT_PARTS
         for token in tokens
     ):
-        raise ResumeEditOperationError("字号和字体由专用排版设置管理，不能通过对话修改")
+        raise ResumeEditOperationError("字体名称与字体文件不能通过对话修改")
     if not layout:
         _validate_semantic_target(root, tokens, operation, path=path)
         try:
@@ -288,15 +316,11 @@ def _apply_one(root: Any, operation: dict, *, roots: set[str], field_name: str, 
         if isinstance(final, int):
             if not isinstance(parent, list) or final >= len(parent):
                 raise ResumeEditOperationError(f"目标路径不存在：{path}")
-            current = parent[final]
-            _check_expected(current, operation, path=path)
             _validate_operation_value(operation)
             parent[final] = deepcopy(operation["value"])
         else:
             if not isinstance(parent, dict) or final not in parent:
                 raise ResumeEditOperationError(f"目标路径不存在：{path}")
-            current = parent[final]
-            _check_expected(current, operation, path=path)
             _validate_operation_value(operation)
             parent[final] = deepcopy(operation["value"])
         return
@@ -332,19 +356,16 @@ def _apply_one(root: Any, operation: dict, *, roots: set[str], field_name: str, 
             index = operation["index"]
             if not isinstance(index, int) or index < 0 or index >= len(target):
                 raise ResumeEditOperationError(f"删除位置无效：{path}")
-            _check_expected(target[index], operation, path=f"{path}[{index}]")
             target.pop(index)
         else:
             parent, final = _resolve_parent(root, tokens, path=path)
             if isinstance(final, int):
                 if not isinstance(parent, list) or final < 0 or final >= len(parent):
                     raise ResumeEditOperationError(f"目标路径不存在：{path}")
-                _check_expected(parent[final], operation, path=path)
                 parent.pop(final)
             else:
                 if not isinstance(parent, dict) or final not in parent:
                     raise ResumeEditOperationError(f"目标路径不存在：{path}")
-                _check_expected(parent[final], operation, path=path)
                 del parent[final]
         return
 
@@ -362,7 +383,6 @@ def _apply_one(root: Any, operation: dict, *, roots: set[str], field_name: str, 
         or to_index >= len(target)
     ):
         raise ResumeEditOperationError(f"移动位置无效：{path}")
-    _check_expected(target[from_index], operation, path=f"{path}[{from_index}]")
     item = target.pop(from_index)
     target.insert(to_index, item)
 
@@ -485,6 +505,7 @@ def export_schemas() -> dict[str, dict]:
 
 __all__ = [
     "ResumeEditOperationError",
+    "ResumeEditOperation",
     "ResumeEditRequest",
     "ResumeEditResult",
     "run_resume_edit",

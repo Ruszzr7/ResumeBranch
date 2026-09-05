@@ -30,7 +30,7 @@ MIN_SCALE = 84 / DEFAULT_DPI
 
 
 class ResumeSnapshotToolInput(BaseModel):
-    """Arguments the model is allowed to supply to the Skill."""
+    """模型可以提供给本 Skill 的参数。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -41,7 +41,7 @@ class ResumeSnapshotToolInput(BaseModel):
 
 
 class ResumeSnapshotRuntimeContext(BaseModel):
-    """Trusted rendering inputs injected by the graph."""
+    """由图编排程序注入的可信渲染输入。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -56,7 +56,7 @@ class ResumeSnapshotRuntimeContext(BaseModel):
 
 
 class ResumeSnapshotOutput(BaseModel):
-    """Ephemeral image parts and non-sensitive snapshot diagnostics."""
+    """临时图像部件和非敏感快照诊断信息。"""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 

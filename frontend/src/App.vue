@@ -45,6 +45,18 @@ const conversationMessagesForSave = (sourceMessages = messages.value) => sourceM
     && !String(message.content ?? '').trim()
   )
 ))
+
+async function persistConversationMessages(targetSessionId, sourceMessages) {
+  const response = await fetch('/save_conversation', {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({
+      session_id: targetSessionId,
+      messages: conversationMessagesForSave(sourceMessages)
+    })
+  })
+  if (!response.ok) throw new Error('对话结果保存失败')
+}
 const plainDisplayText = value => plainInlineText(String(value ?? ''))
 const assistantActions = [
   {
@@ -493,6 +505,9 @@ const taskActionMenuPosition = ref({ top: 0, left: 0 })
 const taskToSetBase = ref(null)
 const isSettingBaseTask = ref(false)
 const setBaseError = ref('')
+const mainContextToReset = ref(null)
+const isResettingMainContext = ref(false)
+const mainContextResetError = ref('')
 const conversationContexts = ref([])
 const isSwitchingContext = ref(false)
 const uiNotice = ref({ visible: false, type: 'error', message: '' })
@@ -587,25 +602,36 @@ const loadingText = contextField('loadingText')
 const processingRequestId = contextField('processingRequestId')
 const processingPhase = contextField('processingPhase')
 const processingText = contextField('processingText')
-const confirmationProgressPhases = new Set(['building_preview', 'validating', 'ready'])
+const PROCESSING_PHASE_TEXT = Object.freeze({
+  thinking: '正在思考…',
+  loading_skill: '正在准备所需能力…',
+  coaching: '正在整理本轮信息…',
+  snapshot: '正在查看简历页面…',
+  building_preview: '正在生成修改预览…',
+  validating: '正在校验修改内容…',
+  ready: '修改预览已准备好…',
+  streaming: '正在输出…'
+})
 const showProcessingBar = computed(() => (
   isResponding.value
-  && confirmationProgressPhases.has(processingPhase.value)
   && Boolean(processingText.value)
 ))
 
 function beginProcessing(requestId, targetState = activeContextUiState.value) {
   targetState.processingRequestId = requestId
-  targetState.processingPhase = ''
-  targetState.processingText = ''
+  targetState.processingPhase = 'thinking'
+  targetState.processingText = PROCESSING_PHASE_TEXT.thinking
+  targetState.loadingText = PROCESSING_PHASE_TEXT.thinking
 }
 
 function updateProcessing(data, targetState = activeContextUiState.value) {
   if (data.request_id && data.request_id !== targetState.processingRequestId) return
-  if (!confirmationProgressPhases.has(data.phase)) return
+  const phase = String(data.phase || '')
+  const text = PROCESSING_PHASE_TEXT[phase]
+  if (!text) return
   targetState.isLoading = false
-  targetState.processingPhase = data.phase
-  targetState.processingText = '正在生成确认框，请勿离开或刷新当前页面…'
+  targetState.processingPhase = phase
+  targetState.processingText = text
 }
 
 function finishProcessing(requestId = '', targetState = activeContextUiState.value) {
@@ -987,6 +1013,10 @@ function contextDisplayTitle(context) {
   return context?.context_type === 'main' ? '主对话' : (context?.title || '任务')
 }
 
+const activeConversationContext = computed(() => conversationContexts.value.find(
+  context => context.session_id === activeContextId.value
+) || null)
+
 function contextEditStatus(context) {
   if (!context || taskEditState.value?.owner_session_id !== context.session_id) return ''
   return taskEditState.value?.status || ''
@@ -1128,6 +1158,62 @@ async function closeMissionContext(context) {
   }
 }
 
+function openMainContextResetDialog() {
+  const context = activeConversationContext.value
+  const state = context ? ensureContextUiState(context.session_id) : null
+  if (
+    !context
+    || context.context_type !== 'main'
+    || state?.isLoading
+    || state?.isResponding
+    || isSwitchingContext.value
+    || isResettingMainContext.value
+  ) return
+  mainContextResetError.value = ''
+  mainContextToReset.value = context
+}
+
+function closeMainContextResetDialog() {
+  if (isResettingMainContext.value) return
+  mainContextToReset.value = null
+  mainContextResetError.value = ''
+}
+
+async function confirmMainContextReset() {
+  const context = mainContextToReset.value
+  if (!context || context.context_type !== 'main' || isResettingMainContext.value) return
+  isResettingMainContext.value = true
+  mainContextResetError.value = ''
+  try {
+    const response = await fetch(
+      `/tasks/${currentTaskId.value}/contexts/${context.id}/reset`,
+      { method: 'POST', headers: getAuthorizationHeaders() }
+    )
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(data.detail || '重置当前对话失败')
+    const oldState = contextUiStates[context.session_id]
+    if (oldState?.loadingTimer) clearTimeout(oldState.loadingTimer)
+    contextUiStates[context.session_id] = {
+      ...createContextUiState(),
+      messages: [{
+        id: Date.now(),
+        role: 'assistant',
+        content: WELCOME_MESSAGE,
+        localOnly: true
+      }],
+      loaded: true
+    }
+    mainContextToReset.value = null
+    await loadTaskContexts({ preserveActive: true })
+    showNotice('当前对话已重新开始', 'success')
+    nextTick(() => scrollToBottom('auto'))
+  } catch (error) {
+    mainContextResetError.value = error.message || '重置当前对话失败，请重试'
+  } finally {
+    isResettingMainContext.value = false
+  }
+}
+
 function openContextFromEvent({ context_id: contextId } = {}) {
   const context = conversationContexts.value.find(item => item.id === contextId)
   if (context) selectConversationContext(context)
@@ -1144,6 +1230,9 @@ async function loadWorkspace() {
   jdData.value = null
   showStartDialog.value = false
   hasConfirmArea.value = false
+  mainContextToReset.value = null
+  mainContextResetError.value = ''
+  isResettingMainContext.value = false
   conversationContexts.value = []
   activeContextId.value = ''
   Object.values(contextUiStates).forEach(state => {
@@ -1427,8 +1516,7 @@ async function buildDirectEditPreview() {
       confirm_id: data.confirm_id,
       selected_change_ids: selectedChangeIds,
       handled: false,
-      streaming: false,
-      localOnly: true
+      streaming: false
     })
     targetState.hasConfirmArea = true
     taskEditState.value = { status: 'awaiting_confirmation', owner_session_id: targetSessionId }
@@ -1712,9 +1800,7 @@ async function sendMessage() {
   const isLoading = stateRef('isLoading')
   const isResponding = stateRef('isResponding')
   const hasConfirmArea = stateRef('hasConfirmArea')
-  const loadingText = stateRef('loadingText')
   const pendingAssistantCommand = stateRef('pendingAssistantCommand')
-  let loadingTextInterval = requestState.loadingTimer
   // 检查登录状态
   if (!isLoggedIn.value) {
     showNotice('请先登录')
@@ -1773,24 +1859,23 @@ async function sendMessage() {
   isLoading.value = true
   isResponding.value = true
   beginProcessing(requestId, requestState)
-  // 启动加载文案切换
-  loadingText.value = '正在处理中...'
-  let textIndex = 0
-  const loadingTexts = ['正在处理中...', '正在思考中...', '正在总结提炼回答...']
-  const textDelays = [8000, 10000] // 第一个8秒，第二个10秒，之后一直显示第三个
+  let terminalEventReceived = false
 
-  // 使用setTimeout实现不同时长的文案切换
-  const runTextCycle = () => {
-    textIndex++
-    if (textIndex < loadingTexts.length) {
-      loadingText.value = loadingTexts[textIndex]
-      const delay = textIndex < textDelays.length ? textDelays[textIndex] : 0
-      if (delay > 0) {
-        loadingTextInterval = setTimeout(runTextCycle, delay)
+  const finishInterruptedStream = (message = '回答连接意外中断，请重新发送。') => {
+    const index = messages.value.findIndex(item => item.id === streamMessageId)
+    if (index !== -1) {
+      const partial = String(messages.value[index].content || '').trim()
+      messages.value[index] = {
+        ...messages.value[index],
+        content: partial ? `${partial}\n\n${message}` : message,
+        streaming: false
       }
     }
+    isLoading.value = false
+    isResponding.value = false
+    finishProcessing(requestId, requestState)
+    if (taskEditState.value?.owner_session_id === requestSessionId) taskEditState.value = null
   }
-  loadingTextInterval = setTimeout(runTextCycle, textDelays[0])
   
   try {
     // 创建FormData对象
@@ -1832,7 +1917,10 @@ async function sendMessage() {
     while (true) {
       const { done, value } = await reader.read()
       
-      if (done) break
+      if (done) {
+        if (!terminalEventReceived) finishInterruptedStream()
+        break
+      }
       
       // 解码接收到的数据
       buffer += decoder.decode(value, { stream: true })
@@ -1859,14 +1947,6 @@ async function sendMessage() {
                   }
                 }
               } else if (data.type === 'stream') {
-                // 停止加载文案切换
-                if (loadingTextInterval) {
-                  clearTimeout(loadingTextInterval)
-                  loadingTextInterval = null
-                }
-                // 收到第一个流式数据时，立即隐藏加载指示器
-                isLoading.value = false
-
                 // 实时流式更新内容
                 const index = messages.value.findIndex(m => m.id === streamMessageId)
                 if (index !== -1) {
@@ -1877,12 +1957,10 @@ async function sendMessage() {
                     streaming: true
                   }
                 }
-              } else if (data.type === 'final') {
-                // 停止加载文案切换
-                if (loadingTextInterval) {
-                  clearTimeout(loadingTextInterval)
-                  loadingTextInterval = null
+                if (String(data.content || '').trim()) {
+                  updateProcessing({ request_id: data.request_id, phase: 'streaming' }, requestState)
                 }
+              } else if (data.type === 'final') {
                 // 更新流式消息为最终内容
                 const index = messages.value.findIndex(m => m.id === streamMessageId)
                 if (index !== -1) {
@@ -1893,7 +1971,7 @@ async function sendMessage() {
                     streaming: false
                   }
                 }
-                // 收到第一个流式输出后，隐藏加载指示器
+                terminalEventReceived = true
                 isLoading.value = false
                 finishProcessing(data.request_id, requestState)
                 // 更新会话ID并保存到localStorage
@@ -1901,13 +1979,7 @@ async function sendMessage() {
                   localStorage.setItem('resumeAssistantSessionId', data.session_id)
                 }
               } else if (data.type === 'tool_call') {
-                // 停止加载文案切换
-                if (loadingTextInterval) {
-                  clearTimeout(loadingTextInterval)
-                  loadingTextInterval = null
-                }
-                // 收到工具调用通知，隐藏加载指示器，显示正在调用工具
-                isLoading.value = false
+                updateProcessing({ request_id: data.request_id, phase: 'loading_skill' }, requestState)
                 // 更新流式消息，显示正在调用工具
                 const index = messages.value.findIndex(m => m.id === streamMessageId)
                 if (index !== -1) {
@@ -1918,11 +1990,7 @@ async function sendMessage() {
                   }
                 }
               } else if (data.type === 'confirm') {
-                // 停止加载文案切换
-                if (loadingTextInterval) {
-                  clearTimeout(loadingTextInterval)
-                  loadingTextInterval = null
-                }
+                terminalEventReceived = true
                 isLoading.value = false
                 isResponding.value = false
                 finishProcessing(data.request_id, requestState)
@@ -1962,10 +2030,6 @@ async function sendMessage() {
                 }
               } else if (data.type === 'proposal_error') {
                 clearConfirmationPreview(requestState)
-                if (loadingTextInterval) {
-                  clearTimeout(loadingTextInterval)
-                  loadingTextInterval = null
-                }
                 const index = messages.value.findIndex(m => m.id === streamMessageId)
                 if (index !== -1) {
                   messages.value[index] = {
@@ -1974,6 +2038,7 @@ async function sendMessage() {
                     streaming: false
                   }
                 }
+                terminalEventReceived = true
                 isLoading.value = false
                 isResponding.value = false
                 finishProcessing(data.request_id, requestState)
@@ -1983,6 +2048,7 @@ async function sendMessage() {
                 showNotice(data.message || '对话状态未能安全保存，请重新发送上一条消息。')
               } else if (data.type === 'end') {
                 // 结束信号，关闭连接
+                terminalEventReceived = true
                 isResponding.value = false
                 finishProcessing(data.request_id, requestState)
                 // 只在流式响应结束时调用一次updateResumeData()
@@ -2010,11 +2076,7 @@ async function sendMessage() {
     } else if (error.message) {
       errorMessage = `抱歉，发送消息失败: ${error.message}`
     }
-    messages.value.push({
-      id: Date.now(),
-      role: 'assistant',
-      content: errorMessage
-    })
+    if (!terminalEventReceived) finishInterruptedStream(errorMessage)
   } finally {
     isLoading.value = false
     isResponding.value = false
@@ -2049,6 +2111,7 @@ async function handleOptionClick({ confirm_id, value, selected_change_ids = [] }
   const isLoading = stateRef('isLoading')
   const isResponding = stateRef('isResponding')
   const confirmMsgIndex = messages.value.findIndex(m => m.type === 'confirm' && m.confirm_id === confirm_id)
+  const originalConfirmMessage = confirmMsgIndex === -1 ? null : { ...messages.value[confirmMsgIndex] }
   if (confirmMsgIndex !== -1) {
     messages.value[confirmMsgIndex] = {
       ...messages.value[confirmMsgIndex],
@@ -2081,14 +2144,40 @@ async function handleOptionClick({ confirm_id, value, selected_change_ids = [] }
     clearConfirmationPreview(targetState)
     if (isAccepting) {
       await updateResumeData()
-      messages.value.push({
-        id: Date.now() * 1000 + 9,
-        role: 'assistant',
-        type: 'undo',
-        content: '本次修改已应用。',
-        handled: false,
-        localOnly: true
-      })
+    }
+    messages.value = messages.value.map((message, index) => {
+      if (index === confirmMsgIndex) {
+        return {
+          ...message,
+          handled: true,
+          result_status: isAccepting ? 'saved' : 'rejected',
+          undo_handled: !isAccepting,
+          revision_id: data.revision_id || null,
+          selected_change_ids: data.selected_change_ids || selected_change_ids,
+          content: isAccepting ? '本次修改已应用。' : '已拒绝本次修改，简历未发生变化。'
+        }
+      }
+      if (
+        isAccepting
+        && (
+          (
+            message.type === 'confirm'
+            && message.result_status === 'saved'
+            && !message.undo_handled
+          )
+          || (message.type === 'undo' && !message.handled)
+        )
+      ) {
+        return message.type === 'confirm'
+          ? { ...message, undo_handled: true }
+          : { ...message, handled: true }
+      }
+      return message
+    })
+    try {
+      await persistConversationMessages(targetSessionId, messages.value)
+    } catch (saveError) {
+      console.error('保存确认结果失败:', saveError)
     }
   } catch (error) {
     if (error.stalePreview) {
@@ -2096,11 +2185,8 @@ async function handleOptionClick({ confirm_id, value, selected_change_ids = [] }
       taskEditState.value = null
       await updateResumeData().catch(() => {})
     } else {
-      if (confirmMsgIndex !== -1) {
-        messages.value[confirmMsgIndex] = {
-          ...messages.value[confirmMsgIndex],
-          handled: false
-        }
+      if (confirmMsgIndex !== -1 && originalConfirmMessage) {
+        messages.value[confirmMsgIndex] = originalConfirmMessage
       }
       hasConfirmArea.value = true
     }
@@ -2123,7 +2209,16 @@ async function handleUndoClick({ message_id }) {
     const data = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(data.detail || '撤回失败，请重试')
     if (index !== -1) {
-      targetState.messages[index] = { ...targetState.messages[index], handled: true, content: '已撤回本次修改。' }
+      const message = targetState.messages[index]
+      targetState.messages[index] = message.type === 'confirm'
+        ? {
+            ...message,
+            handled: true,
+            result_status: 'undone',
+            undo_handled: true,
+            content: '已撤回本次修改。'
+          }
+        : { ...message, handled: true, content: '已撤回本次修改。' }
     }
     targetState.messages = targetState.messages.map(message => (
       message.type === 'confirm' && !message.handled
@@ -2134,11 +2229,7 @@ async function handleUndoClick({ message_id }) {
     clearConfirmationPreview(targetState)
     await updateResumeData()
     showNotice('已撤回本次修改', 'success')
-    await fetch('/save_conversation', {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify({ session_id: targetSessionId, messages: conversationMessagesForSave(targetState.messages) })
-    })
+    await persistConversationMessages(targetSessionId, targetState.messages)
   } catch (error) {
     showNotice(error.message || '撤回失败，请重试')
   }
@@ -2261,7 +2352,7 @@ function handleFileSelect(event) {
     for (let i = 0; i < files.length; i++) {
       const file = files[i]
       // 检查文件类型
-      if (file.type.match(/(image\/(png|jpeg|jpg)|application\/pdf)/)) {
+      if (file.type.match(/image\/(png|jpeg|jpg)/)) {
         // 创建文件对象，包含文件信息和缩略图URL
         const fileObj = {
           id: Date.now() + i,
@@ -2278,9 +2369,6 @@ function handleFileSelect(event) {
             fileObj.thumbnail = e.target.result
           }
           reader.readAsDataURL(file)
-        } else if (file.type === 'application/pdf') {
-          // PDF文件使用默认图标
-          fileObj.thumbnail = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTMgN2MwLTEuMS45LTIgMi0yaDE2YzEuMSAwIDIgLjkgMiAydjEwYzAgMS4xLS45IDItMiAyaC0zLjVjLS42IDAtMS4yLjItMS41LjV2LS41SDV2NkgzbTIgOWguNXYxLjVoLTJ6TTUgMTBoMTZ2Mi41SDV6TTUgMTZoMTR2Mi41SDV6Ii8+PC9zdmc+'
         }
         
         uploadedFiles.value.push(fileObj)
@@ -3826,6 +3914,29 @@ watch(
     </Transition>
   </Teleport>
 
+  <Teleport to="body">
+    <Transition name="dialog-fade">
+      <div v-if="mainContextToReset" class="workspace-modal-mask" @click.self="closeMainContextResetDialog">
+        <div class="workspace-modal compact main-context-reset-modal">
+          <div class="workspace-modal-header">
+            <div><h2>重置当前对话上下文</h2></div>
+            <button type="button" class="modal-close-btn" aria-label="关闭" @click="closeMainContextResetDialog">×</button>
+          </div>
+          <p class="workspace-modal-copy">
+            将清空当前主对话的消息和上下文，但不会影响简历、JD、排版及版本记录。
+          </p>
+          <p v-if="mainContextResetError" class="workspace-modal-error">{{ mainContextResetError }}</p>
+          <div class="workspace-modal-footer">
+            <button type="button" class="workspace-btn secondary" :disabled="isResettingMainContext" @click="closeMainContextResetDialog">取消</button>
+            <button type="button" class="workspace-btn primary" :disabled="isResettingMainContext" @click="confirmMainContextReset">
+              {{ isResettingMainContext ? '重置中…' : '确认重置' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
+
   <!-- 不经过 LLM 的确定文字替换 -->
   <Teleport to="body">
     <Transition name="dialog-fade">
@@ -4413,6 +4524,20 @@ watch(
                 <span class="mission-tab-dot" aria-hidden="true"></span>
                 <span class="mission-tab-label">{{ contextDisplayTitle(context) }}</span>
                 <button
+                  v-if="context.context_type === 'main' && context.session_id === activeContextId"
+                  type="button"
+                  class="main-context-reset-btn"
+                  aria-label="重新开始"
+                  title="重新开始"
+                  :disabled="isLoading || isResponding || isSwitchingContext || isResettingMainContext"
+                  @click.stop="openMainContextResetDialog"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M20 11a8 8 0 1 0-2.34 5.66" />
+                    <path d="M20 4v7h-7" />
+                  </svg>
+                </button>
+                <button
                   v-if="context.context_type !== 'main'"
                   type="button"
                   class="mission-tab-close"
@@ -4435,8 +4560,8 @@ watch(
               @undoClick="handleUndoClick"
               @contextClick="openContextFromEvent"
             />
-            <!-- 只有当没有过程消息且正在加载时才显示默认加载指示器 -->
-          <div v-if="isLoading" class="loading-indicator">
+          <!-- 过程状态不可用时才显示后备加载指示器 -->
+          <div v-if="isLoading && !showProcessingBar" class="loading-indicator">
             <div class="loading-spinner">
               <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
                 <circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="32" stroke-dashoffset="10" opacity="0.3"/>
@@ -4492,10 +4617,6 @@ watch(
               >
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
               </div>
-              <!-- PDF类型 - 不支持点击 -->
-              <div v-else-if="file.type === 'application/pdf'" class="file-icon pdf-icon">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-              </div>
               <div class="file-name">{{ file.name }}</div>
               <div @click="deleteFile(file.id)" class="delete-file-btn">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
@@ -4508,7 +4629,7 @@ watch(
               type="file"
               ref="fileInput"
               multiple
-              accept="image/png, image/jpeg, image/jpg, application/pdf"
+              accept="image/png, image/jpeg, image/jpg"
               @change="handleFileSelect"
               style="display: none;"
             />
@@ -4605,6 +4726,20 @@ watch(
                     <span class="mission-tab-dot" aria-hidden="true"></span>
                     <span class="mission-tab-label">{{ contextDisplayTitle(context) }}</span>
                     <button
+                      v-if="context.context_type === 'main' && context.session_id === activeContextId"
+                      type="button"
+                      class="main-context-reset-btn"
+                      aria-label="重新开始"
+                      title="重新开始"
+                      :disabled="isLoading || isResponding || isSwitchingContext || isResettingMainContext"
+                      @click.stop="openMainContextResetDialog"
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M20 11a8 8 0 1 0-2.34 5.66" />
+                        <path d="M20 4v7h-7" />
+                      </svg>
+                    </button>
+                    <button
                       v-if="context.context_type !== 'main'"
                       type="button"
                       class="mission-tab-close"
@@ -4627,7 +4762,7 @@ watch(
                   @undoClick="handleUndoClick"
                   @contextClick="openContextFromEvent"
                 />
-                <div v-if="isLoading" class="loading-indicator">
+                <div v-if="isLoading && !showProcessingBar" class="loading-indicator">
                   <div class="loading-spinner">
                     <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
                       <circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="32" stroke-dashoffset="10" opacity="0.3"/>
@@ -4675,9 +4810,6 @@ watch(
                   <div v-if="file.type.startsWith('image/')" class="file-icon image-icon" :style="{ cursor: 'pointer' }" @click="openImagePreview(file)">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
                   </div>
-                  <div v-else-if="file.type === 'application/pdf'" class="file-icon pdf-icon">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
-                  </div>
                   <div class="file-name">{{ file.name }}</div>
                   <div @click="deleteFile(file.id)" class="delete-file-btn">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
@@ -4686,7 +4818,7 @@ watch(
               </div>
               
               <div class="input-wrapper">
-                <input type="file" ref="fileInput" multiple accept="image/png, image/jpeg, image/jpg, application/pdf" @change="handleFileSelect" style="display: none;" />
+                <input type="file" ref="fileInput" multiple accept="image/png, image/jpeg, image/jpg" @change="handleFileSelect" style="display: none;" />
                 <div class="textarea-container">
                   <textarea v-model="userInput" @keydown="handleKeyDown" @paste="handlePaste" placeholder="输入你的问题或请求..." rows="1" :disabled="isLoading || isResponding"></textarea>
                   <div class="toolbar mobile-toolbar">
@@ -5600,6 +5732,39 @@ watch(
 
 .mission-tab-close:hover {
   color: #ff9a9a;
+}
+
+.main-context-reset-btn {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: #9ea2ad;
+  background: transparent;
+  cursor: pointer;
+  transition: color 0.16s ease, background-color 0.16s ease, border-color 0.16s ease;
+}
+
+.main-context-reset-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.main-context-reset-btn:hover:not(:disabled) {
+  color: #f2f3f6;
+  background: rgba(255, 255, 255, 0.055);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.main-context-reset-btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
 }
 
 .app-container {
@@ -9067,6 +9232,18 @@ watch(
   font-size: 22px;
   font-weight: 600;
   letter-spacing: -0.02em;
+}
+
+.main-context-reset-modal .workspace-modal-header h2 {
+  margin-top: 0;
+  font-size: 18px;
+}
+
+.main-context-reset-modal .modal-close-btn {
+  width: 28px;
+  height: 28px;
+  font-size: 20px;
+  line-height: 28px;
 }
 
 .workspace-modal-kicker {

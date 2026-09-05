@@ -203,47 +203,117 @@ async def test_chat_connection(config: GatewayConfig, *, timeout: float = 25.0) 
         raise ValueError("该协议尚不能用于项目对话，请使用 OpenAI Chat 兼容地址")
     endpoint = openai_endpoint(config.base_url, "/chat/completions")
     test_temperature = resolve_temperature(config.model, 0.0)
-    structured_payload = {
+    chat_payload = {
         "model": config.model,
-        "messages": [{"role": "user", "content": '只输出 JSON 对象：{"ok":true}'}],
-        "max_tokens": 2048,
-        "response_format": {"type": "json_object"},
+        "messages": [{"role": "user", "content": "只回复 AGENT_OK"}],
+        "max_tokens": 128,
     }
     stream_payload = {
         "model": config.model,
         "messages": [{"role": "user", "content": "只回复 OK"}],
-        "max_tokens": 1024,
+        "max_tokens": 128,
         "stream": True,
     }
+    image_payload = {
+        "model": config.model,
+        "messages": [{"role": "user", "content": [
+            {"type": "text", "text": "如果图片中是红色方块，只回复 IMAGE_OK；否则回复 IMAGE_FAIL。"},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": (
+                        "data:image/png;base64,"
+                        "iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAIAAABMXPacAAAAxklEQVR42u3R"
+                        "QQEAAATAQITRP5AwYvC4RdjldIfuKgsAABAAAAIAQAAACAAAAQAgAAAEAIAAA"
+                        "BAAAAIAQAAACAAAAQAgAAAEAIAAABAAAAIAQAAACAAAAQAgAAAEAIAAABAAAA"
+                        "IAQAAACAAAAQAgAAAEAAAAAQAgAAAEAIAAABAAAAIAQAAACAAAAQAgAAAEAIA"
+                        "AABAAAAIAQAAACAAAAQAgAAAEAIAAABAAAAIAQAAACAAAAQAgAAAEAIAAABAA"
+                        "AAIAQAA+tKWXAijcyf6aAAAAAElFTkSuQmCC"
+                    ),
+                },
+            },
+        ]}],
+        "max_tokens": 128,
+    }
+    tool_payload = {
+        "model": config.model,
+        "messages": [{"role": "user", "content": "调用工具报告项目对话能力正常。"}],
+        "max_tokens": 128,
+        "tools": [{
+            "type": "function",
+            "function": {
+                "name": "report_agent_capability",
+                "description": "报告项目对话能力测试结果",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"status": {"type": "string", "enum": ["ok"]}},
+                    "required": ["status"],
+                    "additionalProperties": False,
+                },
+            },
+        }],
+        "tool_choice": "required",
+    }
     if test_temperature is not None:
-        structured_payload["temperature"] = test_temperature
+        chat_payload["temperature"] = test_temperature
         stream_payload["temperature"] = test_temperature
+        image_payload["temperature"] = test_temperature
+        tool_payload["temperature"] = test_temperature
     headers = {"Authorization": f"Bearer {config.api_key}"}
-    async with asyncio.timeout(timeout):
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as client:
-            structured_response = await client.post(
-                endpoint, headers=headers, json=structured_payload
-            )
-            if structured_response.status_code == 400:
-                if "only 1 is allowed" in structured_response.text.lower():
-                    structured_payload["temperature"] = 1
-                    stream_payload["temperature"] = 1
-                structured_payload.pop("response_format", None)
-                structured_response = await client.post(
-                    endpoint, headers=headers, json=structured_payload
-                )
-            if structured_response.status_code >= 400:
-                raise _gateway_error(structured_response, "对话连接测试")
-            structured_data = structured_response.json()
-            structured_text = message_text(
-                (((structured_data.get("choices") or [{}])[0].get("message") or {}).get("content"))
-            )
+    checks = {
+        "connected": False,
+        "chat": False,
+        "image": False,
+        "stream": False,
+        "tool_calling": False,
+    }
+    failures: list[str] = []
 
-            stream_parts: list[str] = []
+    async def request_message(client: httpx.AsyncClient, payload: dict[str, Any], label: str) -> dict[str, Any] | None:
+        try:
+            response = await client.post(endpoint, headers=headers, json=payload)
+            if response.status_code == 400 and "only 1 is allowed" in response.text.lower():
+                for candidate_payload in (chat_payload, image_payload, tool_payload, stream_payload):
+                    candidate_payload["temperature"] = 1
+                response = await client.post(endpoint, headers=headers, json=payload)
+            if response.status_code >= 400:
+                raise _gateway_error(response, label)
+            checks["connected"] = True
+            return ((response.json().get("choices") or [{}])[0].get("message") or {})
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            failures.append(f"{label}：{str(exc).strip()[:160]}")
+            return None
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as client:
+        chat_message = await request_message(client, chat_payload, "基础对话测试")
+        checks["chat"] = bool(message_text((chat_message or {}).get("content")).strip())
+        if chat_message is not None and not checks["chat"]:
+            failures.append("基础对话测试：接口没有返回文本")
+
+        image_message = await request_message(client, image_payload, "图片输入测试")
+        image_text = message_text((image_message or {}).get("content")).strip().upper()
+        checks["image"] = "IMAGE_OK" in image_text and "IMAGE_FAIL" not in image_text
+        if image_message is not None and not checks["image"]:
+            failures.append("图片输入测试：接口响应了请求，但没有正确识别测试图片")
+
+        tool_message = await request_message(client, tool_payload, "工具调用测试")
+        tool_calls = (tool_message or {}).get("tool_calls") or []
+        checks["tool_calling"] = any(
+            ((item.get("function") or {}).get("name") == "report_agent_capability")
+            for item in tool_calls if isinstance(item, dict)
+        )
+        if tool_message is not None and not checks["tool_calling"]:
+            failures.append("工具调用测试：接口没有返回标准工具调用")
+
+        stream_parts: list[str] = []
+        try:
             async with client.stream("POST", endpoint, headers=headers, json=stream_payload) as streamed:
                 if streamed.status_code >= 400:
                     await streamed.aread()
                     raise _gateway_error(streamed, "流式输出测试")
+                checks["connected"] = True
                 async for line in streamed.aiter_lines():
                     if not line.startswith("data:"):
                         continue
@@ -257,24 +327,22 @@ async def test_chat_connection(config: GatewayConfig, *, timeout: float = 25.0) 
                             stream_parts.append(delta)
                     except json.JSONDecodeError:
                         continue
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            failures.append(f"流式输出测试：{str(exc).strip()[:160]}")
+        checks["stream"] = bool("".join(stream_parts).strip())
+        if not checks["stream"] and not any(item.startswith("流式输出测试：") for item in failures):
+            failures.append("流式输出测试：接口没有返回流式文本")
 
-    text = structured_text.strip()
-    stream_text = "".join(stream_parts).strip()
-    try:
-        structured = parse_json_output(text).get("ok") is True
-    except ValueError:
-        structured = False
+    success = all(checks.values())
     return {
-        "success": bool(text and stream_text and structured),
-        "connected": bool(text or stream_text),
+        "success": success,
+        "connected": checks["connected"],
         "adapter": adapter,
         "model_family": model_family(config.model),
-        "checks": {
-            "connected": bool(text or stream_text),
-            "chat": bool(text),
-            "stream": bool(stream_text),
-            "structured_output": structured,
-        },
+        "checks": checks,
+        "message": "项目对话能力验证通过" if success else "；".join(failures),
     }
 
 

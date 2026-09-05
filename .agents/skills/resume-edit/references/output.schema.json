@@ -1,6 +1,6 @@
 {
   "additionalProperties": false,
-  "description": "Validated candidate returned to the existing confirmation flow.",
+  "description": "返回给现有确认机制的已校验候选。",
   "properties": {
     "resume_data": {
       "additionalProperties": true,

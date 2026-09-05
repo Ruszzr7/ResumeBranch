@@ -662,7 +662,7 @@ async def run_skill(cases: list[dict[str, Any]], *, mode: str) -> tuple[list[dic
                 invalid_calls = list(getattr(response, "invalid_tool_calls", None) or [])
                 for call in calls + invalid_calls:
                     name = str(_tool_call_value(call, "name", "") or "")
-                    if name == "activate_agent_skill":
+                    if name == "load_agent_skill":
                         continue
                     args = _tool_call_value(call, "args", {})
                     schema_valid, executable, validation_error = await _validate_call(name, args)

@@ -22,6 +22,7 @@ from typing import Any
 from .layout_config import (
     ALLOWED_HIDDEN_FIELDS,
     ENUMS,
+    FONT_SIZE_LIMITS,
     FIELD_LABELS,
     MODULE_COMPONENTS,
     MODULE_LABELS,
@@ -32,13 +33,14 @@ from .layout_config import (
 )
 
 
-LAYOUT_CAPABILITY_VERSION = "1"
+LAYOUT_CAPABILITY_VERSION = "2"
 
 # These are the paths that the conversation edit skill may mutate.  The
 # remaining normalized fields are renderer state or compatibility fields and
 # are intentionally read-only to the conversation model.
 EDITABLE_GLOBAL_FIELDS = {
     "density",
+    "fontSize",
     "lineHeight",
     "moduleMargin",
     "marginVertical",
@@ -48,6 +50,17 @@ EDITABLE_GLOBAL_FIELDS = {
     "hiddenSections",
     "titleOverrides",
     "sectionPlacements",
+}
+
+# ``global.fontSize`` remains the canonical body-size field for backward
+# compatibility. The other five semantic roles are independently editable.
+EDITABLE_TYPOGRAPHY_ROLES = frozenset(FONT_SIZE_LIMITS) - {"body"}
+TYPOGRAPHY_FONT_SIZE_LABELS = {
+    "name": "姓名字号",
+    "sectionTitle": "模块标题字号",
+    "entryTitle": "条目标题字号",
+    "meta": "用户信息字号",
+    "label": "字段标签字号",
 }
 
 EDITABLE_MODULE_FIELDS: dict[str, set[str]] = {
@@ -79,6 +92,7 @@ EXTRA_ENUMS: dict[tuple[str, str], set[str]] = {
 }
 
 RANGES: dict[tuple[str, str], tuple[float, float]] = {
+    ("global", "fontSize"): FONT_SIZE_LIMITS["body"],
     ("global", "lineHeight"): (1.0, 1.8),
     ("global", "moduleMargin"): (0.1, 1.0),
     ("global", "marginVertical"): (3.0, 12.0),
@@ -86,6 +100,7 @@ RANGES: dict[tuple[str, str], tuple[float, float]] = {
 }
 
 STEPS: dict[tuple[str, str], float] = {
+    ("global", "fontSize"): 0.5,
     ("global", "lineHeight"): 0.05,
     ("global", "moduleMargin"): 0.1,
     ("global", "marginVertical"): 0.25,
@@ -159,6 +174,10 @@ def build_layout_display_labels() -> dict[str, dict[str, str]]:
         for section, fields in fields_by_section.items()
         for field in fields
     }
+    field_labels.update({
+        f"typography.fontSizes.{role}": label
+        for role, label in TYPOGRAPHY_FONT_SIZE_LABELS.items()
+    })
     enum_values = {
         value
         for section, fields in fields_by_section.items()
@@ -209,9 +228,13 @@ def user_visible_layout_internal_identifiers() -> tuple[str, ...]:
 
 def build_layout_capability_manifest() -> dict[str, Any]:
     """Return the renderer/UI capability contract as JSON-serializable data."""
-    operation_roots = ["global", *sorted(EDITABLE_MODULE_FIELDS)]
+    operation_roots = ["global", "typography", *sorted(EDITABLE_MODULE_FIELDS)]
     operation_paths = {
         "global": [f"global.{field}" for field in sorted(EDITABLE_GLOBAL_FIELDS)],
+        "typography": [
+            f"typography.fontSizes.{role}"
+            for role in sorted(EDITABLE_TYPOGRAPHY_ROLES)
+        ],
         **{
             module_id: [
                 f"{module_id}.{field}"
@@ -250,6 +273,23 @@ def build_layout_capability_manifest() -> dict[str, Any]:
             "modules": {
                 module_id: _module_manifest(module_id)
                 for module_id in EDITABLE_MODULE_FIELDS
+            },
+            "typography": {
+                "editable_fields": [
+                    "global.fontSize",
+                    *[
+                        f"typography.fontSizes.{role}"
+                        for role in sorted(EDITABLE_TYPOGRAPHY_ROLES)
+                    ],
+                ],
+                "allowed_ranges": {
+                    role: {
+                        "min": FONT_SIZE_LIMITS[role][0],
+                        "max": FONT_SIZE_LIMITS[role][1],
+                        "step": 0.5,
+                    }
+                    for role in sorted(FONT_SIZE_LIMITS)
+                },
             },
         },
         "content_forms": {
@@ -299,9 +339,7 @@ def build_layout_capability_manifest() -> dict[str, Any]:
             "sectionPlacements 只支持独立栏目或并入教育经历",
         ],
         "read_only_layout_state": [
-            "typography.fontSizes（字号通过专用排版设置调整）",
             "typography 字体名称与字体文件",
-            "global.fontSize（字号通过专用排版设置调整）",
             "basics.photoWidthMm（由导入照片的原始比例与高度计算）",
             "各模块 componentRows（由稳定预设生成，不接受任意坐标）",
             "各模块 paragraphSpacing/itemSpacing/contentBlockSpacing/rowSpacing/indentLevel",
@@ -413,6 +451,14 @@ def _validate_scalar_value(section: str, field: str, value: Any, path: str) -> N
         return
 
 
+def _validate_typography_font_size(role: str, value: Any, path: str) -> None:
+    minimum, maximum = FONT_SIZE_LIMITS[role]
+    _validate_number(value, minimum, maximum, path)
+    number = float(value)
+    if abs(number * 2 - round(number * 2)) > 1e-6:
+        raise ValueError(f"{path} 必须按 0.5 的步长设置")
+
+
 def _validate_path_and_value(
     operation: dict[str, Any],
     *,
@@ -427,8 +473,20 @@ def _validate_path_and_value(
     if field_key is None:
         raise ValueError(f"layout_operations 不支持该路径：{path}")
     section, field = field_key
+    operation_name = str(operation.get("op", operation.get("type", "")) or "").lower()
+    suffix = tokens[2:]
     if section == "typography":
-        raise ValueError("字号和字体由专用排版设置管理，不能通过对话修改")
+        if (
+            field != "fontSizes"
+            or len(suffix) != 1
+            or not isinstance(suffix[0], str)
+            or suffix[0] not in EDITABLE_TYPOGRAPHY_ROLES
+        ):
+            raise ValueError("仅支持修改指定的语义字号，字体名称和正文大小不属于该路径")
+        if operation_name not in {"set", "replace"} or "value" not in operation:
+            raise ValueError("语义字号只支持 set 或 replace 操作")
+        _validate_typography_font_size(suffix[0], operation["value"], path)
+        return tokens
     if section == "global":
         allowed_fields = EDITABLE_GLOBAL_FIELDS
     elif section in EDITABLE_MODULE_FIELDS:
@@ -438,8 +496,6 @@ def _validate_path_and_value(
     if field not in allowed_fields:
         raise ValueError(f"排版字段“{field}”不属于可执行的对话排版能力")
 
-    operation_name = str(operation.get("op", operation.get("type", "")) or "").lower()
-    suffix = tokens[2:]
     if field in {"sectionOrder", "hiddenSections", "hiddenFields", "hiddenMetrics", "fieldOrder"}:
         # A list field may be replaced as a whole or edited by index.  A move
         # operation must target the list itself.
@@ -541,6 +597,12 @@ def build_layout_context_text(
             }
             for module_id in EDITABLE_MODULE_FIELDS
         },
+        "typography": {
+            "fontSizes": {
+                role: config["typography"]["fontSizes"].get(role)
+                for role in sorted(EDITABLE_TYPOGRAPHY_ROLES)
+            },
+        },
     }
     # The compact context exposes all supported paths and the editable current
     # values.  A layout task additionally receives the complete normalized
@@ -561,6 +623,7 @@ def build_layout_context_text(
 
 __all__ = [
     "LAYOUT_CAPABILITY_VERSION",
+    "EDITABLE_TYPOGRAPHY_ROLES",
     "build_layout_display_labels",
     "build_layout_capability_manifest",
     "build_layout_context_text",

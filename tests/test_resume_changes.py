@@ -94,6 +94,32 @@ class ResumeChangeTests(unittest.TestCase):
         self.assertTrue(any("出生年月" in label for label in labels))
         self.assertFalse(any("birth_date" in label or "custom_sections" in label for label in labels))
 
+    def test_content_block_items_keep_numbered_and_bullet_boundaries_in_preview(self):
+        before = {
+            "project_experience": [{
+                "content_blocks": [
+                    {"type": "numbered_list", "items": ["旧职责一", "旧职责二"]},
+                    {"type": "bullet_list", "items": ["旧补充一", "旧补充二"]},
+                ],
+            }],
+        }
+        after = {
+            "project_experience": [{
+                "content_blocks": [
+                    {"type": "numbered_list", "items": ["新职责一", "新职责二"]},
+                    {"type": "bullet_list", "items": ["新补充一", "新补充二"]},
+                ],
+            }],
+        }
+
+        changes = build_resume_changes(before, after)
+
+        self.assertEqual(changes[0]["before_display"], "1. 旧职责一\n2. 旧职责二")
+        self.assertEqual(changes[0]["after_display"], "1. 新职责一\n2. 新职责二")
+        self.assertEqual(changes[1]["before_display"], "• 旧补充一\n• 旧补充二")
+        self.assertEqual(changes[1]["after_display"], "• 新补充一\n• 新补充二")
+        self.assertTrue(validate_resume_change_set(before, after, changes))
+
     def test_change_set_is_bound_to_the_candidate_before_selective_apply(self):
         changes = build_resume_changes(self.before, self.after)
         self.assertTrue(validate_resume_change_set(self.before, self.after, changes))

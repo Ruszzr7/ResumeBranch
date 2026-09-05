@@ -42,6 +42,22 @@ test('conversation persistence excludes empty streaming assistant placeholders',
   assert.ok(appSource.includes("!String(message.content ?? '').trim()"))
 })
 
+test('runtime feedback follows real SSE phases until a terminal event arrives', () => {
+  assert.ok(appSource.includes("thinking: '正在思考…'"))
+  assert.ok(appSource.includes("loading_skill: '正在准备所需能力…'"))
+  assert.ok(appSource.includes("snapshot: '正在查看简历页面…'"))
+  assert.ok(appSource.includes("building_preview: '正在生成修改预览…'"))
+  assert.ok(appSource.includes("streaming: '正在输出…'"))
+  assert.ok(appSource.includes('isResponding.value\n  && Boolean(processingText.value)'))
+  assert.ok(appSource.includes('v-if="isLoading && !showProcessingBar"'))
+  assert.ok(appSource.includes("if (String(data.content || '').trim())"))
+  assert.ok(appSource.includes("phase: 'streaming'"))
+  assert.ok(appSource.includes('let terminalEventReceived = false'))
+  assert.ok(appSource.includes('if (!terminalEventReceived) finishInterruptedStream()'))
+  assert.ok(appSource.includes('回答连接意外中断，请重新发送。'))
+  assert.equal(appSource.includes("const loadingTexts = ['正在处理中...'"), false)
+})
+
 test('layout advice uses the concise analysis prompt', () => {
   assert.ok(appSource.includes('根据当前简历数据与快照，检查当前简历存在的排版问题，按对简历影响程度从高到低编号列出可执行建议。'))
   assert.equal(appSource.includes('不要把默认状态、已符合规则、赞扬或无操作建议列为问题'), false)
@@ -159,8 +175,37 @@ test('undo keeps the originating conversation session in scope through persisten
   const undoFlow = appSource.slice(start, end)
   assert.ok(undoFlow.includes('const targetSessionId = sessionId.value'))
   assert.ok(undoFlow.includes('const targetState = ensureContextUiState(targetSessionId)'))
-  assert.ok(undoFlow.includes('session_id: targetSessionId'))
-  assert.ok(undoFlow.includes('conversationMessagesForSave(targetState.messages)'))
+  assert.ok(undoFlow.includes('persistConversationMessages(targetSessionId, targetState.messages)'))
+})
+
+test('confirmation history records accepted rejected and undone outcomes', () => {
+  const confirmStart = appSource.indexOf('async function handleOptionClick')
+  const confirmEnd = appSource.indexOf('async function handleUndoClick', confirmStart)
+  const confirmFlow = appSource.slice(confirmStart, confirmEnd)
+  assert.ok(confirmFlow.includes("result_status: isAccepting ? 'saved' : 'rejected'"))
+  assert.ok(confirmFlow.includes("'已拒绝本次修改，简历未发生变化。'"))
+  assert.ok(confirmFlow.includes('persistConversationMessages(targetSessionId, messages.value)'))
+
+  const undoStart = appSource.indexOf('async function handleUndoClick')
+  const undoEnd = appSource.indexOf('// 检测哪个模块发生了变化', undoStart)
+  assert.ok(appSource.slice(undoStart, undoEnd).includes("result_status: 'undone'"))
+  assert.ok(chatMessageSource.includes("props.message.result_status === 'saved'"))
+})
+
+test('confirmation diff safely renders inline bold and stacks long text', () => {
+  assert.ok(chatMessageSource.includes("import { formatInlineHtml } from '../utils/inlineFormatting.js'"))
+  assert.ok(chatMessageSource.includes('v-html="formattedChangeValue(change.before_display)"'))
+  assert.ok(chatMessageSource.includes("'change-values--stacked': isLongChange(change)"))
+  assert.ok(chatMessageSource.includes('<small>修改前</small>'))
+  assert.ok(chatMessageSource.includes('<small>修改后</small>'))
+})
+
+test('handled confirmation results stay in the left-side assistant flow and preview arrows are legible', () => {
+  assert.ok(chatMessageSource.includes("'chat-message--confirmation-result': props.message.type === 'confirm' && props.message.handled && props.message.result_status"))
+  assert.ok(chatMessageSource.includes('.chat-message--confirmation-result'))
+  assert.ok(chatMessageSource.includes('justify-content: flex-start'))
+  assert.ok(chatMessageSource.includes('.change-arrow'))
+  assert.ok(chatMessageSource.includes('font-size: 18px'))
 })
 
 test('resume setting dialogs share one mutually exclusive group and surface color', () => {

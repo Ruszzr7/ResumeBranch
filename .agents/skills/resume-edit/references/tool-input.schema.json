@@ -1,6 +1,108 @@
 {
+  "$defs": {
+    "ResumeEditOperation": {
+      "additionalProperties": false,
+      "description": "模型提供的一条标准化修改操作。",
+      "properties": {
+        "op": {
+          "description": "操作类型。",
+          "enum": [
+            "set",
+            "replace",
+            "append",
+            "insert",
+            "remove",
+            "move"
+          ],
+          "title": "Op",
+          "type": "string"
+        },
+        "path": {
+          "description": "契约定义的最小可写路径。",
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "set、replace、append 或 insert 的目标值。",
+          "title": "Value"
+        },
+        "index": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "insert 或列表 remove 的目标索引。",
+          "title": "Index"
+        },
+        "from_index": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "move 的原始索引。",
+          "title": "From Index"
+        },
+        "to_index": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "move 的目标索引。",
+          "title": "To Index"
+        },
+        "target_semantic_role": {
+          "anyOf": [
+            {
+              "enum": [
+                "tech_stack",
+                "introduction",
+                "responsibilities",
+                "generic"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "内容块的稳定语义角色，仅用于 content_blocks。",
+          "title": "Target Semantic Role"
+        }
+      },
+      "required": [
+        "op",
+        "path"
+      ],
+      "title": "ResumeEditOperation",
+      "type": "object"
+    }
+  },
   "additionalProperties": false,
-  "description": "Arguments the model is allowed to supply to the Skill.",
+  "description": "模型可以提供给本 Skill 的参数。",
   "properties": {
     "answer_text": {
       "default": "",
@@ -11,8 +113,7 @@
     "resume_operations": {
       "description": "本次明确授权的简历内容结构化操作。",
       "items": {
-        "additionalProperties": true,
-        "type": "object"
+        "$ref": "#/$defs/ResumeEditOperation"
       },
       "title": "Resume Operations",
       "type": "array"
@@ -20,8 +121,7 @@
     "layout_operations": {
       "description": "本次明确授权且属于对话可编辑范围的排版结构化操作。",
       "items": {
-        "additionalProperties": true,
-        "type": "object"
+        "$ref": "#/$defs/ResumeEditOperation"
       },
       "title": "Layout Operations",
       "type": "array"

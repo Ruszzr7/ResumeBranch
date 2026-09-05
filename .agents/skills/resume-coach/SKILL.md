@@ -1,9 +1,9 @@
 ---
 name: resume-coach
-description: Guide an evidence-driven, multi-turn discussion of a specific resume-content problem. Use when reliable advice requires confirming facts with the user; deep-polish commands activate it explicitly, while other conversations may activate it on demand. Do not use for layout-only analysis, ordinary questions, or an already-clear direct edit.
+description: 针对一个具体的简历内容问题进行证据驱动的多轮讨论。可靠建议需要与用户确认事实时使用；深度打磨命令会显式启用，其他对话可按需启用。纯排版分析、普通问题或已经清晰的直接修改不应使用本 Skill。
 metadata:
   version: "1.0.0"
-  compatibility: ResumeBranch backend with Python 3.11+ and project dependencies.
+  compatibility: ResumeBranch 后端、Python 3.11 及以上版本与项目依赖。
   entrypoint: scripts/run.py:run
   tool-name: resume_coach
   tool-input-schema: references/tool-input.schema.json
@@ -11,37 +11,37 @@ metadata:
   output-schema: references/output.schema.json
 ---
 
-# Resume Coach
+# 简历教练
 
-Conduct one evidence-led coaching conversation without changing the resume. The Skill keeps a private, source-traceable record for the current issue and may handle several issues sequentially in one deep-polish session.
+在不修改简历的前提下进行一次证据导向的教练对话。本 Skill 为当前问题保留私有、可追溯来源的记录，并可在一次深度打磨会话中依次处理多个问题。
 
-## Entering coaching
+## 进入教练模式
 
-- A deep-polish command is explicit authorization to start. In the first visible reply, tell the user that the conversation will analyze and collect evidence before any edit, that an edit preview will require a later confirmation, and that they may stop or change topic in natural language at any time.
-- In another conversation, if the user explicitly asks for deep questioning or evidence gathering, start and give the same notice.
-- If coaching is only your recommendation, explain the change in behavior and ask whether the user wants to enter. Do not call `resume_coach` with `operation=start` until the user agrees.
-- Interpret consent and exit requests semantically. Never require a fixed command phrase.
+- 深度打磨命令即为显式启动授权。在首条可见回复中告知用户：修改前会先分析并收集证据，后续生成修改预览仍需用户确认，且用户可随时用自然语言停止或切换话题。
+- 在其他对话中，如果用户明确要求深入追问或收集证据，直接启动并给出相同提示。
+- 如果进入教练模式只是你的建议，先说明交互方式会如何变化，并询问用户是否愿意进入。用户同意前，不得使用 `operation=start` 调用 `resume_coach`。
+- 按语义理解用户的同意和退出请求，永远不得要求固定的命令短语。
 
-## While active
+## 活动期间
 
-- Work on one issue at a time. A deep-polish session may move to further issues after the current one is completed or skipped.
-- Read the complete current-issue evidence supplied in the active Skill context on every turn.
-- Ask at most one focused question per reply. Prefer facts about the situation, goal, personal action, decision, trade-off, and result.
-- Use `operation=update` to submit only evidence quoted from the latest user message, plus updated conclusions and unresolved questions.
-- You decide semantically whether the evidence is sufficient. Do not use an evidence count, required-question list, or other mechanical threshold.
-- Do not fabricate facts or numbers. Do not treat your inference as verified evidence.
+- 每次只处理一个问题。当前问题完成或跳过后，一次深度打磨会话可继续处理后续问题。
+- 每轮都要读取活动 Skill 上下文中提供的当前问题完整证据。
+- 每次回复最多只提一个聚焦的问题。优先询问情境、目标、个人行动、决策、取舍和结果等事实。
+- 使用 `operation=update` 时，只提交从用户最新消息中引用的证据，以及更新后的结论和待解问题。
+- 由你根据语义判断证据是否充分；不得使用证据数量、必问清单或其他机械阈值。
+- 不得虚构事实或数字，也不得把自己的推断视为已核实证据。
 
-## Moving toward an edit
+## 转向修改
 
-- When evidence is sufficient, first call `resume_coach` with `operation=offer_preview` and a concrete proposed change. Then ask whether the user wants a modification preview generated from that proposal.
-- If the user does not approve, continue discussing or collecting evidence. Do not activate the edit Skill.
-- Only after the user clearly approves the latest pending offer, call `resume_coach` with `operation=handoff_to_edit`, quoting the approving words from the latest message.
-- After a successful handoff, activate `resume-edit` and submit only the authorized operations returned by this Skill. `resume-coach` never creates the edit candidate and never saves the resume.
-- The generated candidate still requires the existing preview confirmation before it can be saved.
+- 证据充分时，先使用 `operation=offer_preview` 和具体修改建议调用 `resume_coach`，再询问用户是否要基于该建议生成修改预览。
+- 如果用户没有同意，继续讨论或收集证据，不得激活修改 Skill。
+- 只有用户明确同意最新的待确认建议后，才能使用 `operation=handoff_to_edit` 调用 `resume_coach`，并引用用户最新消息中的同意原文。
+- 成功交接后，激活 `resume-edit`，且只提交本 Skill 返回的已授权操作。`resume-coach` 永远不创建修改候选，也永远不保存简历。
+- 生成的候选仍需通过现有预览确认机制确认后才能保存。
 
-## Leaving coaching
+## 退出教练模式
 
-- When the user clearly asks to stop, pause, skip, return to ordinary chat, or abandon the issue, choose the corresponding `complete_issue` or `exit` operation and acknowledge it naturally.
-- An exit keeps the collected record but makes it unavailable to ordinary conversation routing until coaching is activated again.
+- 当用户明确要求停止、暂停、跳过、返回普通对话或放弃当前问题时，选择对应的 `complete_issue` 或 `exit` 操作，并以自然方式回应。
+- 退出后保留已收集的记录，但在再次激活教练 Skill 前，普通对话路由不可使用这些记录。
 
-The Tool input, trusted runtime context, persisted memory, and output contracts are defined in the linked JSON schemas. The entrypoint performs only validation, bounded state updates, authorization binding, and handoff preparation.
+工具输入、可信运行时上下文、持久化记忆和输出契约均在链接的 JSON Schema 中定义。入口只负责校验、有界状态更新、授权绑定和交接准备。

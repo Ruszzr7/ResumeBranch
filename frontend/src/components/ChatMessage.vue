@@ -2,6 +2,7 @@
 import { marked } from 'marked'
 import { ref, computed, watch } from 'vue'
 import { localizeInternalFieldReferences, userFacingFieldLabel } from '../utils/fieldLabels.js'
+import { formatInlineHtml } from '../utils/inlineFormatting.js'
 
 // 配置 marked 使用 GitHub Flavored Markdown (gfm)
 marked.use({
@@ -108,6 +109,11 @@ const handleOptionClick = (option) => {
 }
 
 const handleUndoClick = () => emit('undoClick', { message_id: props.message.id })
+const formattedChangeValue = value => formatInlineHtml(String(value ?? ''))
+const isLongChange = change => [change?.before_display, change?.after_display].some(value => {
+  const text = String(value ?? '')
+  return text.length > 96 || text.includes('\n')
+})
 
 const isContextClosed = computed(() => (
   props.message.type === 'context_event'
@@ -130,7 +136,8 @@ const handleContextClick = () => {
     :class="{
       'chat-message--user': props.message.role === 'user' && props.message.role !== '',
       'chat-message--assistant': props.message.role === 'assistant' || props.message.role === '',
-    'chat-message--confirm': props.message.type === 'confirm'
+      'chat-message--confirm': props.message.type === 'confirm',
+      'chat-message--confirmation-result': props.message.type === 'confirm' && props.message.handled && props.message.result_status
     }"
   >
     <div
@@ -159,17 +166,28 @@ const handleContextClick = () => {
           <input v-if="changes.length > 1" v-model="selectedChangeIds" type="checkbox" :value="change.id" @change="handleSelectionChange" />
           <span class="change-preview-copy">
             <strong>{{ userFacingFieldLabel(change.label) }}</strong>
-            <span v-if="change.kind !== 'layout'" class="change-values">
-              <del>{{ change.before_display }}</del>
-              <span aria-hidden="true">→</span>
-              <ins>{{ change.after_display }}</ins>
+            <span
+              v-if="change.kind !== 'layout'"
+              :class="['change-values', { 'change-values--stacked': isLongChange(change) }]"
+            >
+              <span v-if="isLongChange(change)" class="change-value-block">
+                <small>修改前</small>
+                <del v-html="formattedChangeValue(change.before_display)"></del>
+              </span>
+              <del v-else v-html="formattedChangeValue(change.before_display)"></del>
+              <span class="change-arrow" aria-hidden="true">→</span>
+              <span v-if="isLongChange(change)" class="change-value-block">
+                <small>修改后</small>
+                <ins v-html="formattedChangeValue(change.after_display)"></ins>
+              </span>
+              <ins v-else v-html="formattedChangeValue(change.after_display)"></ins>
             </span>
             <span v-else class="layout-change-details">
               <span v-for="detail in change.details || []" :key="detail.field" class="change-values">
                 <small>{{ userFacingFieldLabel(detail.field_label || detail.field) }}</small>
-                <del>{{ detail.before_display }}</del>
+                <del v-html="formattedChangeValue(detail.before_display)"></del>
                 <span aria-hidden="true">→</span>
-                <ins>{{ detail.after_display }}</ins>
+                <ins v-html="formattedChangeValue(detail.after_display)"></ins>
               </span>
             </span>
           </span>
@@ -201,6 +219,18 @@ const handleContextClick = () => {
           {{ option.label }}
         </button>
       </div>
+    </div>
+
+    <div
+      v-if="props.message.type === 'confirm' && props.message.handled && props.message.result_status"
+      :class="['undo-area', `undo-area--${props.message.result_status}`]"
+    >
+      <span>{{ props.message.content }}</span>
+      <button
+        v-if="props.message.result_status === 'saved' && !props.message.undo_handled"
+        class="undo-btn"
+        @click="handleUndoClick"
+      >撤回本次修改</button>
     </div>
 
     <div v-if="props.message.type === 'undo'" class="undo-area">
@@ -388,6 +418,11 @@ const handleContextClick = () => {
 /* 确认消息样式 - 居中 */
 .chat-message--confirm {
   justify-content: center;
+}
+
+/* 已接受、拒绝或撤回的结果属于聊天记录，保持助手消息的左侧阅读流。 */
+.chat-message--confirmation-result {
+  justify-content: flex-start;
 }
 
 /* 消息内容基础样式 */
@@ -817,17 +852,46 @@ const handleContextClick = () => {
   gap: 8px;
   align-items: baseline;
   color: #9fa0a8;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .change-values del,
 .change-values ins {
   max-width: 46%;
   overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .change-values del { color: #d89595; }
 .change-values ins { color: #9fd1ae; text-decoration: none; }
+
+.change-arrow {
+  color: #c9d4ee;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.change-values--stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
+}
+
+.change-values--stacked .change-value-block {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.change-values--stacked .change-value-block small {
+  color: #b8b9c0;
+  font-size: 13px;
+  line-height: 1.35;
+}
+.change-values--stacked del,
+.change-values--stacked ins { max-width: 100%; }
+.change-values--stacked .change-arrow { align-self: center; }
 
 .change-actions { flex-wrap: wrap; }
 .change-actions .confirm-btn {
@@ -853,6 +917,9 @@ const handleContextClick = () => {
   background: rgba(120, 166, 255, 0.08);
   color: #d8d8dd;
 }
+
+.undo-area--rejected { border-color: rgba(255, 120, 120, 0.24); }
+.undo-area--undone { color: #b8b9c0; }
 
 .undo-btn {
   border: 0;

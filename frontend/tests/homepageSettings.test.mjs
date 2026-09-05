@@ -15,9 +15,32 @@ test('reopening API settings clears transient query and connection results', () 
   const start = homepageSource.indexOf('async function openSettings()')
   const end = homepageSource.indexOf('function selectSettingsRole', start)
   const openFlow = homepageSource.slice(start, end)
-  assert.ok(openFlow.includes("modelQueryStatus.value = { type: '', message: '' }"))
-  assert.ok(openFlow.includes("settingsStatus.value = { type: '', message: '' }"))
-  assert.ok(openFlow.includes('visibleSettingsChecks.value = {}'))
+  assert.ok(openFlow.includes('abortSettingsOperations()'))
+  assert.ok(openFlow.includes('resetSettingsUi()'))
+  assert.ok(openFlow.includes('++settingsDialogGeneration'))
+})
+
+test('chat and parser queries keep independent modal state', () => {
+  assert.ok(homepageSource.includes('settingsUi = ref({ chat: createSettingsUiState(), parser: createSettingsUiState() })'))
+  assert.ok(homepageSource.includes('const role = settingsRole.value'))
+  assert.ok(homepageSource.includes('const ui = settingsUi.value[role]'))
+  assert.ok(homepageSource.includes('settingsAbortControllers[role].models = controller'))
+  assert.ok(homepageSource.includes('settingsAbortControllers[role].test = controller'))
+})
+
+test('closing settings aborts active model and capability requests', () => {
+  const start = homepageSource.indexOf('function closeSettings()')
+  const end = homepageSource.indexOf('function settingsPayload', start)
+  const closeFlow = homepageSource.slice(start, end)
+  assert.ok(closeFlow.includes('abortSettingsOperations()'))
+  assert.ok(closeFlow.includes('resetSettingsUi()'))
+  assert.equal(closeFlow.includes('isTestingSettings.value'), false)
+  assert.equal(closeFlow.includes('isLoadingModels.value'), false)
+})
+
+test('chat capability test is named for project conversation behavior', () => {
+  assert.ok(homepageSource.includes("'测试对话能力'"))
+  assert.ok(homepageSource.includes("tool_calling: '工具调用'"))
 })
 
 test('API settings uses a fixed viewport-aware height and scrollable body', () => {

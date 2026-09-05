@@ -7,6 +7,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from backend.layout_config import default_layout_config
 from backend.layout_capabilities import build_layout_capability_manifest, build_layout_context_text
+from backend.harness.context import EPHEMERAL_MEMORY_FLAG
 from backend.resume_agent import (
     AgentState,
     build_local_layout_candidate,
@@ -42,10 +43,13 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
         manifest = build_layout_capability_manifest()
         namespace = manifest["operation_namespace"]
         self.assertIn("global", namespace["roots"])
+        self.assertIn("typography", namespace["roots"])
         self.assertIn("self_evaluation", namespace["roots"])
         self.assertNotIn("modules", namespace["roots"])
         self.assertTrue(namespace["state_wrapper_is_not_an_operation_root"])
         self.assertIn("self_evaluation.listStyle", namespace["paths"]["self_evaluation"])
+        self.assertIn("global.fontSize", namespace["paths"]["global"])
+        self.assertIn("typography.fontSizes.sectionTitle", namespace["paths"]["typography"])
         self.assertNotIn("basics", namespace["paths"])
         self.assertNotIn("basics", manifest["scope"]["modules"])
         exposed_values = {
@@ -65,17 +69,17 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
 
     def test_skill_descriptions_define_distinct_selection_boundaries(self):
         edit_description = resume_edit_tool.description
-        self.assertIn("validated preview candidate", edit_description)
-        self.assertIn("authorized", edit_description)
-        self.assertIn("do not use for read-only advice", edit_description)
+        self.assertIn("经过校验的待确认候选", edit_description)
+        self.assertIn("明确授权", edit_description)
+        self.assertIn("只读建议", edit_description)
         answer_schema = resume_edit_tool.args_schema.model_json_schema()["properties"]["answer_text"]
         self.assertIn("纯修改请求留空", answer_schema["description"])
         self.assertEqual(answer_schema["default"], "")
 
         snapshot_description = resume_snapshot_tool.description
-        self.assertIn("real PDF pipeline", snapshot_description)
-        self.assertIn("visual inspection", snapshot_description)
-        self.assertIn("do not use for text-only questions", snapshot_description)
+        self.assertIn("真实 PDF 管线", snapshot_description)
+        self.assertIn("视觉检查", snapshot_description)
+        self.assertIn("纯文本问题不应使用", snapshot_description)
         snapshot_schema = resume_snapshot_tool.args_schema.model_json_schema()
         self.assertEqual(set(snapshot_schema["properties"]), {"reason"})
 
@@ -138,8 +142,12 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
 
         result = await tool_node(state)
 
-        content = result["messages"][-1].content
-        self.assertLess(content.index(answer), content.index("已根据你的要求生成修改预览"))
+        answer_message, preview_message = result["messages"][-2:]
+        self.assertEqual(answer_message.content, answer)
+        self.assertIn("已根据你的要求生成修改预览", preview_message.content)
+        self.assertTrue(
+            preview_message.additional_kwargs.get(EPHEMERAL_MEMORY_FLAG)
+        )
         self.assertIsNotNone(result["pending_confirmation"])
 
     def test_review_and_interview_requests_stay_in_conversation_mode(self):
@@ -204,11 +212,11 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
         exposed = fake_llm.bind_tools.call_args.args[0]
         self.assertEqual(
             {item.name for item in exposed},
-            {"activate_agent_skill"},
+            {"load_agent_skill"},
         )
         bound.ainvoke.assert_awaited_once()
         system_prompt = bound.ainvoke.await_args.args[0][0].content
-        self.assertNotIn("已激活 Agent Skill：resume-coach", system_prompt)
+        self.assertNotIn("已加载 Agent Skill：resume-coach", system_prompt)
         self.assertEqual(result["messages"][-1].content, "诊断结果")
 
     async def test_mixed_mission_apply_and_consultation_still_exposes_edit_skill(self):
@@ -229,7 +237,7 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
         with patch("backend.resume_agent.conversation_llm", fake_llm):
             await conversation_node(state)
         exposed = {item.name for item in fake_llm.bind_tools.call_args.args[0]}
-        self.assertEqual(exposed, {"activate_agent_skill"})
+        self.assertEqual(exposed, {"load_agent_skill"})
 
     async def test_common_layout_request_is_local_and_previews_without_llm(self):
         state = AgentState(
@@ -406,11 +414,11 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
         with patch("backend.resume_agent.conversation_llm", fake_llm):
             await conversation_node(state)
         exposed = {item.name for item in fake_llm.bind_tools.call_args.args[0]}
-        self.assertEqual(exposed, {"activate_agent_skill"})
+        self.assertEqual(exposed, {"load_agent_skill"})
         system_prompt = bound.ainvoke.await_args.args[0][0].content
         self.assertIn("可用 Agent Skills", system_prompt)
         self.assertIn("resume-edit", system_prompt)
-        self.assertIn("activate_agent_skill", system_prompt)
+        self.assertIn("load_agent_skill", system_prompt)
         self.assertIn("custom_sections", system_prompt)
         self.assertIn("title", system_prompt)
         self.assertIn("items", system_prompt)
@@ -469,10 +477,7 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bound.ainvoke.await_count, 1)
         self.assertEqual(result["messages"][-1].tool_calls, [])
         self.assertIn("当前尚未生成修改候选", result["messages"][-1].content)
-        self.assertEqual(
-            result["context_metadata_updates"]["edit_intent_state"]["status"],
-            "awaiting_tool",
-        )
+        self.assertNotIn("edit_intent_state", result["context_metadata_updates"])
 
     async def test_ambiguous_execution_claim_is_replaced_without_retry(self):
         state = AgentState(

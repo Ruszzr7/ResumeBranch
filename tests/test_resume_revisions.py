@@ -44,7 +44,7 @@ class ResumeRevisionTests(unittest.TestCase):
             {"basics": {"name": "新姓名"}},
             ["change-1"],
         )
-        status, restored, restored_layout = undo_latest_resume_revision(self.db, 1, "task-1")
+        status, restored, restored_layout, revision_id = undo_latest_resume_revision(self.db, 1, "task-1")
         self.assertEqual(status, "undone")
         self.assertEqual(restored["basics"]["name"], "原姓名")
         self.assertEqual(restored_layout["education"]["schoolTagStyle"], "text")
@@ -53,8 +53,10 @@ class ResumeRevisionTests(unittest.TestCase):
         self.assertEqual(self.task.resume_data["basics"]["name"], "原姓名")
         self.assertEqual(self.project.base_resume_data["basics"]["name"], "原姓名")
         self.assertIsNone(self.task.pending_confirmation)
-        self.assertEqual(self.task.compressed_context[-1]["type"], "system")
-        self.assertIn("已撤回", self.task.compressed_context[-1]["content"])
+        self.assertEqual(self.task.compressed_context, [
+            {"type": "ai", "content": "修改已生效"},
+        ])
+        self.assertIsNotNone(revision_id)
 
     def test_saving_none_explicitly_clears_pending_confirmation(self):
         self.task.pending_confirmation = {"confirm_id": "stale-confirm"}
@@ -78,10 +80,11 @@ class ResumeRevisionTests(unittest.TestCase):
         )
         self.task.resume_data = {"basics": {"name": "用户后来手工修改"}}
         self.db.commit()
-        status, restored, restored_layout = undo_latest_resume_revision(self.db, 1, "task-1")
+        status, restored, restored_layout, revision_id = undo_latest_resume_revision(self.db, 1, "task-1")
         self.assertEqual(status, "conflict")
         self.assertIsNone(restored)
         self.assertIsNone(restored_layout)
+        self.assertIsNone(revision_id)
 
     def test_undo_restores_layout_snapshot(self):
         before_layout = {"education": {"schoolTagStyle": "text"}}
@@ -96,9 +99,10 @@ class ResumeRevisionTests(unittest.TestCase):
             before_layout=before_layout,
             after_layout=after_layout,
         )
-        status, _, restored_layout = undo_latest_resume_revision(self.db, 1, "task-1")
+        status, _, restored_layout, revision_id = undo_latest_resume_revision(self.db, 1, "task-1")
         self.assertEqual(status, "undone")
         self.assertEqual(restored_layout["education"]["schoolTagStyle"], "text")
+        self.assertIsNotNone(revision_id)
 
     def test_deleting_project_removes_revision_snapshots(self):
         record_resume_revision(

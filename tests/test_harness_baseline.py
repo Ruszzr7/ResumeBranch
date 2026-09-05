@@ -6,11 +6,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, SystemMessage, ToolMessage
-from langchain_core.runnables import RunnableLambda
 
 from backend import main
 from backend.database import MemoryVersionConflict
-from backend.harness.context import filter_messages_for_llm
+from backend.harness.context import UNVERIFIED_EXECUTION_STATUS, filter_messages_for_llm
 from backend.harness.persistence import sanitize_messages_for_persistence, serialize_context_messages
 from backend.layout_config import default_layout_config
 from backend.resume_agent import AgentState, conversation_node, make_pending_confirmation
@@ -94,7 +93,114 @@ class FakeConfirmationGraph:
         }
 
 
+class FakeUnverifiedEditGraph:
+    async def astream_events(self, initial_state, config=None, version=None):
+        yield {"event": "on_chain_start", "name": "conversation_llm", "data": {}}
+        yield {
+            "event": "on_chat_model_stream",
+            "name": "fake_model",
+            "data": {"chunk": AIMessageChunk(content="已根据你的要求生成修改预览")},
+        }
+        yield {
+            "event": "on_chain_end",
+            "name": "conversation_llm",
+            "data": {
+                "output": {
+                    "messages": list(initial_state["messages"]) + [AIMessage(
+                        content="当前尚未生成修改候选。"
+                    )],
+                    "pending_confirmation": None,
+                }
+            },
+        }
+
+
+class FakeSkillProgressGraph:
+    def __init__(self, tool_name):
+        self.tool_name = tool_name
+
+    async def astream_events(self, initial_state, config=None, version=None):
+        yield {
+            "event": "on_chain_start",
+            "name": "tool_node",
+            "data": {
+                "input": {
+                    "messages": [AIMessage(content="", tool_calls=[{
+                        "name": self.tool_name,
+                        "args": {},
+                        "id": f"{self.tool_name}-progress-1",
+                        "type": "tool_call",
+                    }])],
+                },
+            },
+        }
+        yield {
+            "event": "on_chain_end",
+            "name": "tool_node",
+            "data": {
+                "output": {
+                    "messages": list(initial_state["messages"]) + [AIMessage(content="已完成")],
+                    "pending_confirmation": None,
+                },
+            },
+        }
+
+
 class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
+    def test_stream_progress_uses_the_actual_skill_tool(self):
+        snapshot_event = {
+            "data": {
+                "input": {
+                    "messages": [AIMessage(content="", tool_calls=[{
+                        "name": "resume_snapshot",
+                        "args": {"reason": "查看字号层级"},
+                        "id": "snapshot-progress-1",
+                        "type": "tool_call",
+                    }])],
+                },
+            },
+        }
+        edit_event = {
+            "data": {
+                "input": {
+                    "messages": [AIMessage(content="", tool_calls=[{
+                        "name": "resume_edit",
+                        "args": {"resume_operations": [], "layout_operations": []},
+                        "id": "edit-progress-1",
+                        "type": "tool_call",
+                    }])],
+                },
+            },
+        }
+        loader_event = {
+            "data": {
+                "input": {
+                    "messages": [AIMessage(content="", tool_calls=[{
+                        "name": "load_agent_skill",
+                        "args": {"name": "resume-edit"},
+                        "id": "loader-progress-1",
+                        "type": "tool_call",
+                    }])],
+                },
+            },
+        }
+        coach_event = {
+            "data": {
+                "input": {
+                    "messages": [AIMessage(content="", tool_calls=[{
+                        "name": "resume_coach",
+                        "args": {"operation": "update"},
+                        "id": "coach-progress-1",
+                        "type": "tool_call",
+                    }])],
+                },
+            },
+        }
+        self.assertEqual(main._stream_tool_names(snapshot_event), {"resume_snapshot"})
+        self.assertEqual(main._stream_tool_names(edit_event), {"resume_edit"})
+        self.assertEqual(main._stream_tool_names(loader_event), {"load_agent_skill"})
+        self.assertEqual(main._stream_tool_names(coach_event), {"resume_coach"})
+
     async def test_empty_tool_assistant_is_never_sent_or_persisted(self):
         messages = [
             HumanMessage(content="请查看当前简历"),
@@ -127,6 +233,32 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
             **HumanMessage(content="请查看当前简历").model_dump(),
             "type": "human",
         }])
+
+    def test_live_tool_protocol_is_preserved_after_latest_user_message(self):
+        messages = [
+            HumanMessage(content="将姓名改为新姓名"),
+            AIMessage(content="", tool_calls=[{
+                "name": "load_agent_skill",
+                "args": {"name": "resume-edit"},
+                "id": "load-edit-1",
+                "type": "tool_call",
+            }]),
+            ToolMessage(
+                content="【Agent Skill：resume-edit】\n完整说明",
+                tool_call_id="load-edit-1",
+                name="load_agent_skill",
+            ),
+        ]
+
+        filtered = filter_messages_for_llm(
+            messages,
+            just_saved=False,
+            preserve_tool_protocol=True,
+        )
+
+        self.assertEqual(filtered, messages)
+        self.assertEqual(filtered[1].tool_calls[0]["name"], "load_agent_skill")
+        self.assertIsInstance(filtered[2], ToolMessage)
 
     async def test_http_conversation_sanitizer_drops_stream_and_legacy_empty_assistant(self):
         messages = main.sanitize_conversation_message_dicts([
@@ -207,31 +339,6 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
             await conversation_node(state)
         bound_model.ainvoke.assert_awaited_once()
 
-    async def test_context_compression_contract_keeps_summary_and_last_five_inputs(self):
-        captured = {}
-
-        async def summarize(prompt_value):
-            captured["prompt"] = prompt_value
-            return AIMessage(content="基线摘要")
-
-        messages = [HumanMessage(content=f"用户消息-{index}") for index in range(12)]
-        with patch("backend.main.conversation_llm", RunnableLambda(summarize)):
-            result = await main.compress_context_with_llm(messages)
-
-        self.assertEqual(len(result), 6)
-        self.assertIsInstance(result[0], SystemMessage)
-        self.assertEqual(result[0].content, "基线摘要")
-        self.assertEqual(
-            [message.content for message in result[1:]],
-            [f"用户消息-{index}" for index in range(7, 12)],
-        )
-        prompt_text = "\n".join(
-            str(message.content) for message in captured["prompt"].to_messages()
-        )
-        self.assertIn("用户消息-0", prompt_text)
-        self.assertIn("用户消息-6", prompt_text)
-        self.assertNotIn("用户消息-7", prompt_text)
-
     def test_pending_confirmation_payload_contract(self):
         before = resume_payload("原姓名")
         after = resume_payload("新姓名")
@@ -270,7 +377,7 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
             patch("backend.main.get_task_layout_config", return_value=default_layout_config()),
             patch("backend.database.clear_pending_confirmation"),
             patch("backend.database.get_agent_memory_state", return_value={
-                "summary": "", "recent_messages": [], "version": 0,
+                "summary": "", "recent_rounds": [], "version": 0,
             }),
             patch("backend.database.get_conversation_context", return_value=[]),
             patch("backend.database.get_pending_confirmation", return_value=None),
@@ -311,6 +418,45 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
             "user:7:task:task-1:session:task-1",
         )
 
+    async def test_chat_progress_reports_the_actual_non_edit_skill_stage(self):
+        progress_cases = {
+            "load_agent_skill": "loading_skill",
+            "resume_snapshot": "snapshot",
+            "resume_coach": "coaching",
+        }
+        for tool_name, expected_phase in progress_cases.items():
+            db = SimpleNamespace(info={"task_id": "task-1"})
+            user = SimpleNamespace(id=7)
+            with (
+                patch("backend.main.require_llm_configured"),
+                patch("backend.main.graph", FakeSkillProgressGraph(tool_name)),
+                patch("backend.main.get_user_resume", return_value=resume_payload()),
+                patch("backend.main.get_user_jd", return_value={}),
+                patch("backend.main.get_task_layout_config", return_value=default_layout_config()),
+                patch("backend.database.clear_pending_confirmation"),
+                patch("backend.database.get_agent_memory_state", return_value={
+                    "summary": "", "recent_rounds": [], "version": 0,
+                }),
+                patch("backend.database.get_conversation_context", return_value=[]),
+                patch("backend.database.get_pending_confirmation", return_value=None),
+                patch("backend.database.find_task_pending_confirmation", return_value=None),
+                patch("backend.database.save_agent_memory_state", return_value=1),
+                patch("backend.database.save_conversation_context"),
+            ):
+                response = await main.chat_endpoint(
+                    message="你好",
+                    files=[],
+                    session_id="task-1",
+                    request_id=f"request-{tool_name}",
+                    current_user=user,
+                    db=db,
+                )
+                events = decode_sse([chunk async for chunk in response.body_iterator])
+
+            self.assertEqual(events[0]["type"], "progress")
+            self.assertEqual(events[0]["phase"], expected_phase)
+            self.assertEqual([event["type"] for event in events[-2:]], ["final", "end"])
+
     async def test_chat_sse_event_contract_for_confirmation_preview(self):
         before = resume_payload("原姓名")
         after = resume_payload("新姓名")
@@ -335,7 +481,7 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
             patch("backend.main.get_task_layout_config", return_value=default_layout_config()),
             patch("backend.database.clear_pending_confirmation"),
             patch("backend.database.get_agent_memory_state", return_value={
-                "summary": "", "recent_messages": [], "version": 0,
+                "summary": "", "recent_rounds": [], "version": 0,
             }),
             patch("backend.database.get_conversation_context", return_value=[]),
             patch("backend.database.get_pending_confirmation", return_value=None),
@@ -357,11 +503,11 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
         events = decode_sse(chunks)
         self.assertEqual(
             [event["type"] for event in events],
-            ["progress", "stream", "progress", "progress", "confirm", "final", "end"],
+            ["progress", "progress", "progress", "stream", "confirm", "final", "end"],
         )
-        self.assertEqual(events[1]["content"], "修改预览已生成")
+        self.assertEqual(events[3]["content"], "修改预览已生成")
         self.assertEqual(
-            [events[index]["phase"] for index in (0, 2, 3)],
+            [events[index]["phase"] for index in (0, 1, 2)],
             ["building_preview", "validating", "ready"],
         )
         self.assertEqual(set(events[4]), {
@@ -371,6 +517,74 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[4]["confirm_id"], pending["confirm_id"])
         self.assertEqual(events[4]["resume_candidate"]["basics"]["name"], "新姓名")
         self.assertEqual(events[5]["content"], "修改预览已生成")
+
+    async def test_explicit_edit_never_exposes_unverified_model_stream(self):
+        db = SimpleNamespace(info={"task_id": "task-1"})
+        user = SimpleNamespace(id=7)
+
+        with (
+            patch("backend.main.require_llm_configured"),
+            patch("backend.main.graph", FakeUnverifiedEditGraph()),
+            patch("backend.main.get_user_resume", return_value=resume_payload()),
+            patch("backend.main.get_user_jd", return_value={}),
+            patch("backend.main.get_task_layout_config", return_value=default_layout_config()),
+            patch("backend.database.clear_pending_confirmation"),
+            patch("backend.database.get_agent_memory_state", return_value={
+                "summary": "", "recent_rounds": [], "version": 0,
+            }),
+            patch("backend.database.get_conversation_context", return_value=[]),
+            patch("backend.database.get_pending_confirmation", return_value=None),
+            patch("backend.database.find_task_pending_confirmation", return_value=None),
+            patch("backend.database.save_agent_memory_state", return_value=1),
+            patch("backend.database.save_conversation_context"),
+        ):
+            response = await main.chat_endpoint(
+                message="将本科的暨南大学改为中山大学",
+                files=[],
+                session_id="task-1",
+                request_id="request-unverified-edit",
+                current_user=user,
+                db=db,
+            )
+            chunks = [chunk async for chunk in response.body_iterator]
+
+        events = decode_sse(chunks)
+        self.assertEqual([event["type"] for event in events], ["final", "end"])
+        self.assertEqual(events[0]["content"], UNVERIFIED_EXECUTION_STATUS)
+
+    async def test_contextual_edit_never_exposes_unverified_model_stream(self):
+        db = SimpleNamespace(info={"task_id": "task-1"})
+        user = SimpleNamespace(id=7)
+
+        with (
+            patch("backend.main.require_llm_configured"),
+            patch("backend.main.graph", FakeUnverifiedEditGraph()),
+            patch("backend.main.get_user_resume", return_value=resume_payload()),
+            patch("backend.main.get_user_jd", return_value={}),
+            patch("backend.main.get_task_layout_config", return_value=default_layout_config()),
+            patch("backend.database.clear_pending_confirmation"),
+            patch("backend.database.get_agent_memory_state", return_value={
+                "summary": "", "recent_rounds": [], "version": 0,
+            }),
+            patch("backend.database.get_conversation_context", return_value=[]),
+            patch("backend.database.get_pending_confirmation", return_value=None),
+            patch("backend.database.find_task_pending_confirmation", return_value=None),
+            patch("backend.database.save_agent_memory_state", return_value=1),
+            patch("backend.database.save_conversation_context"),
+        ):
+            response = await main.chat_endpoint(
+                message="按你认为合理的顺序调整",
+                files=[],
+                session_id="task-1",
+                request_id="request-contextual-unverified-edit",
+                current_user=user,
+                db=db,
+            )
+            chunks = [chunk async for chunk in response.body_iterator]
+
+        events = decode_sse(chunks)
+        self.assertEqual([event["type"] for event in events], ["final", "end"])
+        self.assertEqual(events[0]["content"], UNVERIFIED_EXECUTION_STATUS)
 
     async def test_chat_reports_persistence_conflict_before_final_and_end(self):
         db = SimpleNamespace(info={"task_id": "task-1"})
@@ -384,7 +598,7 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
             patch("backend.main.get_task_layout_config", return_value=default_layout_config()),
             patch("backend.database.clear_pending_confirmation"),
             patch("backend.database.get_agent_memory_state", return_value={
-                "summary": "", "recent_messages": [], "version": 3,
+                "summary": "", "recent_rounds": [], "version": 3,
             }),
             patch("backend.database.get_pending_confirmation", return_value=None),
             patch(
@@ -451,7 +665,7 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
 
         confirm_payload = json.loads(response.body)
         self.assertEqual(set(confirm_payload), {
-            "success", "message", "action", "resume_data", "layout_config", "selected_change_ids",
+            "success", "message", "action", "revision_id", "resume_data", "layout_config", "selected_change_ids",
         })
         self.assertTrue(confirm_payload["success"])
         self.assertEqual(confirm_payload["action"], "saved")

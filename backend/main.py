@@ -71,7 +71,7 @@ def _sanitize_user_visible_text(value: object) -> str:
     """Last-line guard for protocol markers and known internal identifiers."""
     text_value = localize_user_visible_layout_text(value)
     text_value = re.sub(
-        r"\b(?:activate_agent_skill|resume_edit|resume_snapshot|resume_coach|request_resume_edit|render_resume_pdf_images)\b",
+        r"\b(?:load_agent_skill|resume_edit|resume_snapshot|resume_coach|request_resume_edit|render_resume_pdf_images)\b",
         "系统能力",
         text_value,
     )
@@ -86,7 +86,7 @@ def _sanitize_user_visible_text(value: object) -> str:
 
 _STREAM_INTERNAL_IDENTIFIERS = frozenset({
     *user_visible_layout_internal_identifiers(),
-    "activate_agent_skill", "resume_edit", "resume_snapshot", "resume_coach",
+    "load_agent_skill", "resume_edit", "resume_snapshot", "resume_coach",
     "request_resume_edit", "render_resume_pdf_images",
     "layout_config", "resume_data", "jd_data", "session_id", "confirm_id", "request_id",
 })
@@ -106,7 +106,12 @@ def _stable_user_visible_stream_prefix(value: object) -> str:
 
 
 def _sanitize_streaming_user_visible_text(value: object) -> str:
-    return _sanitize_user_visible_text(_stable_user_visible_stream_prefix(value))
+    stable = _sanitize_user_visible_text(_stable_user_visible_stream_prefix(value))
+    # A model-authored execution claim is never authoritative. Keep it out of
+    # SSE until a persisted confirmation lets the backend emit its own status.
+    if resume_agent._contains_unverified_execution_claim(stable):
+        return ""
+    return stable
 
 from fastapi import FastAPI, Request, UploadFile, File, Form, Depends, HTTPException, status
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -134,7 +139,8 @@ from .database import (
     CONTEXT_TYPES, create_or_resume_conversation_context,
     list_conversation_contexts,
     get_conversation_context_record,
-    close_conversation_context, serialize_conversation_context,
+    close_conversation_context, reset_main_conversation_context,
+    serialize_conversation_context,
     append_context_event, get_context_by_session,
     delete_resume_project, delete_resume_task, undo_latest_resume_revision,
     get_task_layout_config, save_task_layout_config, attach_source_document,
@@ -145,7 +151,9 @@ from .database import (
     acquire_resume_edit_lock, mark_resume_edit_awaiting_confirmation,
     release_resume_edit_lock, get_resume_edit_state,
     get_agent_skill_state, save_agent_skill_state,
+    update_agent_memory_round_outcome,
 )
+from .harness.memory import recent_rounds_to_messages
 from .auth import (
     verify_password, get_password_hash, create_access_token,
     get_current_admin, get_current_user, oauth2_scheme, require_multi_user_mode
@@ -168,12 +176,6 @@ from .source_documents import (
     persist_source_document,
     remove_source_document_file,
     source_document_path,
-)
-from .harness.memory import (
-    CompressionState,
-    compress_context_with_llm as _compress_context_with_llm,
-    notify_compression_complete as _notify_compression_complete,
-    wait_for_compression as _wait_for_compression,
 )
 from .harness.persistence import persist_turn_state
 from .harness.observability import harness_metrics
@@ -333,22 +335,6 @@ def _parse_render_style(raw_style: str | dict | None) -> dict:
     return parsed
 
 # PDF 生成器 - 懒加载（在 API 调用时才导入）
-# =============================================================================
-# 上下文压缩状态管理
-# =============================================================================
-
-compression_state = CompressionState()
-
-def wait_for_compression():
-    """等待当前压缩完成（如果正在压缩）"""
-    return _wait_for_compression(compression_state)
-
-
-def notify_compression_complete():
-    """通知压缩完成，处理等待中的请求"""
-    _notify_compression_complete(compression_state)
-
-
 def generate_session_id() -> str:
     """生成唯一会话 ID"""
     return str(uuid.uuid4())
@@ -498,19 +484,6 @@ def serialize_project(project, task_count=0):
 
 
 # =============================================================================
-# LLM 上下文压缩
-# =============================================================================
-
-async def compress_context_with_llm(messages, max_summary_length=1000):
-    """Compatibility wrapper for the extracted legacy compression behavior."""
-    return await _compress_context_with_llm(
-        messages,
-        conversation_llm,
-        max_summary_length=max_summary_length,
-    )
-
-
-# =============================================================================
 # FastAPI 应用
 # =============================================================================
 
@@ -594,8 +567,28 @@ async def get_harness_metrics(current_user=Depends(get_current_user)):
     return harness_metrics.snapshot()
 
 
+async def _run_settings_operation(http_request: Request, operation):
+    """Cancel an upstream settings probe when its modal request disconnects."""
+    task = asyncio.create_task(operation)
+    try:
+        while not task.done():
+            await asyncio.wait({task}, timeout=0.1)
+            if not task.done() and await http_request.is_disconnected():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                raise HTTPException(status_code=499, detail="请求已取消")
+        return await task
+    finally:
+        if not task.done():
+            task.cancel()
+
+
 @app.post("/settings/llm/test", dependencies=[Depends(require_llm_settings_access)])
 async def test_llm_settings(
+    http_request: Request,
     request: LLMSettingsRequest,
     current_user=Depends(get_current_user),
 ):
@@ -618,11 +611,12 @@ async def test_llm_settings(
             model=model,
             adapter=request.adapter,
         )
-        result = (
-            await verify_parser_capabilities(candidate)
+        operation = (
+            verify_parser_capabilities(candidate)
             if request.role == "parser"
-            else await test_chat_connection(candidate)
+            else test_chat_connection(candidate)
         )
+        result = await _run_settings_operation(http_request, operation)
     except asyncio.TimeoutError as exc:
         raise HTTPException(status_code=504, detail="连接超时，请检查接口地址或网络") from exc
     except ValueError as exc:
@@ -636,6 +630,7 @@ async def test_llm_settings(
 
 @app.post("/settings/llm/models", dependencies=[Depends(require_llm_settings_access)])
 async def list_llm_models(
+    http_request: Request,
     request: LLMModelsRequest,
     current_user=Depends(get_current_user),
 ):
@@ -644,7 +639,10 @@ async def list_llm_models(
     stored = get_role_config(request.role)
     api_key = (request.api_key or stored.get("api_key", "")).strip()
     try:
-        return await discover_models(request.base_url, api_key)
+        return await _run_settings_operation(
+            http_request,
+            discover_models(request.base_url, api_key),
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1038,6 +1036,31 @@ async def close_task_context(
     return {"success": True, "context": serialize_conversation_context(closed)}
 
 
+@app.post("/tasks/{task_id}/contexts/{context_id}/reset")
+async def reset_main_context(
+    task_id: str,
+    context_id: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    """Reset the single main chat while preserving resume business data."""
+    task = get_resume_task(db, current_user.id, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="简历版本不存在")
+    context = get_conversation_context_record(db, current_user.id, context_id)
+    if not context or context.task_id != task_id:
+        raise HTTPException(status_code=404, detail="任务会话不存在")
+    try:
+        reset = reset_main_conversation_context(
+            db, current_user.id, task_id, context_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not reset:
+        raise HTTPException(status_code=404, detail="任务会话不存在")
+    return {"success": True, "context": serialize_conversation_context(reset)}
+
+
 @app.patch("/tasks/{task_id}")
 async def rename_task(
     task_id: str,
@@ -1125,13 +1148,24 @@ async def undo_task_resume_change(
     current_user = Depends(get_current_user),
 ):
     """Undo the latest assistant-applied revision when it is still current."""
-    result, resume_data, layout_config = undo_latest_resume_revision(db, current_user.id, task_id)
+    undo_result = undo_latest_resume_revision(db, current_user.id, task_id)
+    result, resume_data, layout_config = undo_result[:3]
+    revision_id = undo_result[3] if len(undo_result) > 3 else None
     if result == "not_found":
         raise HTTPException(status_code=404, detail="岗位版本不存在")
     if result == "no_revision":
         raise HTTPException(status_code=409, detail="没有可以撤回的修改")
     if result == "conflict":
         raise HTTPException(status_code=409, detail="简历在本次修改后又发生了变化，无法直接撤回")
+    update_agent_memory_round_outcome(
+        db,
+        current_user.id,
+        None,
+        task_id=task_id,
+        revision_id=revision_id,
+        status="undone",
+        outcome_updates={"revision_id": revision_id},
+    )
     return {
         "success": True,
         "message": "已撤回本次修改",
@@ -1375,6 +1409,31 @@ async def direct_replace_preview(
                 f"找到 {count} 处相同内容，均位于同一字段；"
                 "接受该项后会一并替换。"
             )
+    if hasattr(db, "query"):
+        from .database import get_agent_memory_state
+        direct_memory = get_agent_memory_state(db, current_user.id, request.session_id)
+        direct_input = {
+            "scope": request.scope,
+            "original_text": original,
+            "target_text": target,
+        }
+        await persist_turn_state(
+            db,
+            current_user.id,
+            request.session_id,
+            [HumanMessage(content=json.dumps(direct_input, ensure_ascii=False))],
+            current,
+            task.jd_data or {},
+            pending,
+            conversation_llm=conversation_llm,
+            previous_summary=str(direct_memory.get("summary") or ""),
+            previous_rounds=direct_memory.get("recent_rounds") or [],
+            expected_version=int(direct_memory.get("version") or 0),
+            round_id=request_id,
+            current_user_content=direct_input,
+            assistant_content="",
+            round_status="preview_pending",
+        )
     return {
         "success": True,
         "content": pending["content"],
@@ -1632,6 +1691,28 @@ def sanitize_conversation_message_dicts(messages):
                 continue
         sanitized.append(message)
     return sanitized
+
+
+def _stream_tool_names(event: dict) -> set[str]:
+    """Read the actual Tool calls entering a streamed LangGraph tool node."""
+    event_input = (event.get("data") or {}).get("input")
+    if isinstance(event_input, dict):
+        event_messages = event_input.get("messages") or []
+    else:
+        event_messages = getattr(event_input, "messages", None) or []
+    for message in reversed(list(event_messages)):
+        calls = getattr(message, "tool_calls", None)
+        if calls is None and isinstance(message, dict):
+            calls = message.get("tool_calls")
+        if not calls:
+            continue
+        names = set()
+        for call in calls:
+            name = call.get("name") if isinstance(call, dict) else getattr(call, "name", "")
+            if str(name or "").strip():
+                names.add(str(name).strip())
+        return names
+    return set()
 
 
 @app.post("/save_conversation")
@@ -2048,7 +2129,17 @@ async def chat_endpoint(
 
         # A new chat request supersedes any older preview. Confirmations use
         # the dedicated /confirm endpoint and never enter the Agent graph.
-        from .database import clear_pending_confirmation
+        from .database import clear_pending_confirmation, get_pending_confirmation
+        superseded_pending = get_pending_confirmation(db, current_user.id, session_id)
+        if superseded_pending:
+            update_agent_memory_round_outcome(
+                db,
+                current_user.id,
+                session_id,
+                round_id=superseded_pending.get("request_id"),
+                status="rejected",
+                outcome_updates={"resolution": "superseded_by_new_round"},
+            )
         clear_pending_confirmation(db, current_user.id, session_id)
 
 
@@ -2057,17 +2148,20 @@ async def chat_endpoint(
         if message.strip():
             message_content.append({"type": "text", "text": message.strip()})
 
-        # 处理文件上传
+        # 聊天附件仅接受图片，与当前问题一起作为单轮多模态输入。
         for file in files:
+            content_type = str(file.content_type or "").lower()
+            if not content_type.startswith("image/"):
+                raise HTTPException(
+                    status_code=415,
+                    detail="聊天附件仅支持图片，PDF 请使用“导入简历”功能处理。",
+                )
             content = await file.read()
-            if file.content_type.startswith("image/"):
-                base64_content = base64.b64encode(content).decode("utf-8")
-                message_content.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{file.content_type};base64,{base64_content}"}
-                })
-            elif file.content_type == "application/pdf":
-                message_content.append(build_file_message_part(content, file.content_type))
+            base64_content = base64.b64encode(content).decode("utf-8")
+            message_content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{content_type};base64,{base64_content}"},
+            })
 
         # 从数据库加载用户数据
         resume_data = get_user_resume(db, current_user.id)
@@ -2083,31 +2177,15 @@ async def chat_endpoint(
             # 只有文本
             current_message = HumanMessage(content=message.strip())
 
-        # 从分层记忆读取摘要、近期完整对话和乐观版本；旧任务会自动回退旧上下文。
+        # 从分层记忆读取结构化摘要、近期完整轮次和乐观版本；旧格式测试记忆不再迁移。
         from .database import get_agent_memory_state
         memory_state = get_agent_memory_state(db, current_user.id, session_id)
-        db_context_raw = memory_state.get("recent_messages", [])
+        recent_rounds = memory_state.get("recent_rounds", [])
         memory_summary = str(memory_state.get("summary", "") or "")
         memory_version = int(memory_state.get("version", 0) or 0)
 
-        # 转换数据库中的消息为 Message 对象
-        historical_messages = []
-        for msg_dict in db_context_raw:
-            msg_type = msg_dict.get("type", "").lower()
-            content = msg_dict.get("content", "")
-            tool_calls = msg_dict.get("tool_calls", [])
-            if tool_calls:
-                continue
-            if msg_type in {"ai", "assistant", "human", "user", "system", "systemmessage"}:
-                message_for_check = {"type": msg_type, "content": content}
-                if not _message_dict_has_text(message_for_check):
-                    continue
-            if msg_type == "human":
-                historical_messages.append(HumanMessage(content=content))
-            elif msg_type == "ai":
-                historical_messages.append(AIMessage(content=content))
-            elif msg_type == "system" or msg_type == "systemmessage":
-                historical_messages.append(SystemMessage(content=content))
+        # 最近五轮以完整结构化轮次恢复；确认、拒绝和撤回状态随原轮次出现。
+        historical_messages = recent_rounds_to_messages(recent_rounds)
 
         # 构建 all_messages：数据库中的历史消息 + 当前用户消息
         all_messages = list(historical_messages) + [current_message]
@@ -2117,7 +2195,6 @@ async def chat_endpoint(
         initial_resume_data = resume_data if resume_data else (get_user_resume(db, current_user.id) or {})
         initial_jd_data = jd_data if jd_data else (get_user_jd(db, current_user.id) or {})
         initial_layout_data = get_task_layout_config(db, current_user.id, task_id)
-
         # A /chat request always replaces any old preview; confirmation is
         # handled separately by /confirm before the graph is entered.
         initial_pending_confirmation = None
@@ -2187,7 +2264,8 @@ async def chat_endpoint(
         async def save_state_async(
             db, user_id, session_id, messages_list, resume_data_result,
             initial_jd_data, pending_confirmation=None,
-            context_metadata_updates=None,
+            context_metadata_updates=None, round_status="answered",
+            assistant_content=None, round_outcome=None,
         ):
             """Compatibility wrapper around the extracted turn persistence service."""
             await persist_turn_state(
@@ -2199,10 +2277,15 @@ async def chat_endpoint(
                 initial_jd_data,
                 pending_confirmation,
                 conversation_llm=conversation_llm,
-                compression_state=compression_state,
                 previous_summary=memory_summary,
+                previous_rounds=recent_rounds,
                 expected_version=memory_version,
                 context_metadata_updates=context_metadata_updates or {},
+                round_id=request_id,
+                current_user_content=message.strip(),
+                assistant_content=assistant_content,
+                round_status=round_status,
+                round_outcome=round_outcome or {},
             )
 
         async def stream_response(config):
@@ -2227,9 +2310,24 @@ async def chat_endpoint(
             confirmation_sent = False
             edit_lock_acquired = False
             proposal_error_result = None
+            assistant_reply_result = ""
+            edit_preview_reply_result = ""
+            edit_tool_called_result = False
+            edit_noop_result = False
+            direct_edit_processed = False
             coach_state_result = coach_state
             coach_state_changed = False
             context_metadata_updates_result = {}
+            execution_trace = {
+                "nodes": [],
+                "tools": [],
+                "skills_loaded": [],
+            }
+            # A model may emit prose while it is still selecting or loading a
+            # Skill.  For an authorized mutation request that prose is not a
+            # user-visible result until the graph either creates a real
+            # confirmation candidate or returns its authoritative final reply.
+            buffer_edit_stream = resume_agent.has_explicit_change_authorization(message)
 
             def acquire_turn_edit_lock():
                 nonlocal edit_lock_acquired
@@ -2267,11 +2365,29 @@ async def chat_endpoint(
                     if event_type == "on_chain_start":
                         current_node = node_name
                         node_start_time[node_name] = time.time()
+                        if node_name not in {"__start__", "entry_router"} and node_name not in execution_trace["nodes"]:
+                            execution_trace["nodes"].append(node_name)
                         LOGGER.debug("Agent 节点开始: %s", node_name)
-                        preview_node = node_name in {"tool_node", "direct_edit"}
-                        if preview_node:
+                        if node_name == "direct_edit":
                             if "building_preview" not in sent_progress_phases:
                                 yield progress_event("building_preview", "正在生成修改预览…")
+                        elif node_name == "tool_node":
+                            tool_names = _stream_tool_names(event)
+                            for tool_name in tool_names:
+                                if tool_name not in execution_trace["tools"]:
+                                    execution_trace["tools"].append(tool_name)
+                            if "resume_edit" in tool_names:
+                                if "building_preview" not in sent_progress_phases:
+                                    yield progress_event("building_preview", "正在生成修改预览…")
+                            elif "resume_snapshot" in tool_names:
+                                if "snapshot" not in sent_progress_phases:
+                                    yield progress_event("snapshot", "正在生成简历快照…")
+                            elif "resume_coach" in tool_names:
+                                if "coaching" not in sent_progress_phases:
+                                    yield progress_event("coaching", "正在整理本轮信息…")
+                            elif "load_agent_skill" in tool_names:
+                                if "loading_skill" not in sent_progress_phases:
+                                    yield progress_event("loading_skill", "正在准备所需能力…")
 
                     if event_type == "on_chat_model_stream" and current_node == "conversation_llm":
                         chunk = event.get("data", {}).get("chunk", {})
@@ -2292,10 +2408,11 @@ async def chat_endpoint(
 
                         if token:
                             accumulated_content += token
-                            visible_content = _sanitize_streaming_user_visible_text(accumulated_content)
-                            if visible_content != last_streamed_content:
-                                last_streamed_content = visible_content
-                                yield f'data: {json.dumps({"type": "stream", "content": visible_content, "request_id": request_id})}\n\n'
+                            if not buffer_edit_stream:
+                                visible_content = _sanitize_streaming_user_visible_text(accumulated_content)
+                                if visible_content != last_streamed_content:
+                                    last_streamed_content = visible_content
+                                    yield f'data: {json.dumps({"type": "stream", "content": visible_content, "request_id": request_id})}\n\n'
 
                     elif event_type == "on_chain_end":
                         if node_name in node_start_time:
@@ -2316,6 +2433,19 @@ async def chat_endpoint(
                         coach_state_changed = coach_state_changed or bool(output.get("coach_state_changed"))
                         if isinstance(output.get("context_metadata_updates"), dict):
                             context_metadata_updates_result.update(output["context_metadata_updates"])
+                        if node_name == "tool_node":
+                            for skill_name in output.get("active_skill_names") or []:
+                                if skill_name not in execution_trace["skills_loaded"]:
+                                    execution_trace["skills_loaded"].append(skill_name)
+                            if isinstance(output.get("assistant_reply"), str):
+                                assistant_reply_result = output["assistant_reply"].strip()
+                            if isinstance(output.get("edit_preview_reply"), str):
+                                edit_preview_reply_result = output["edit_preview_reply"].strip()
+                            edit_tool_called_result = edit_tool_called_result or bool(output.get("edit_tool_called"))
+                            edit_noop_result = edit_noop_result or bool(output.get("edit_noop"))
+                        elif node_name == "direct_edit":
+                            direct_edit_processed = True
+                            edit_noop_result = edit_noop_result or bool(output.get("edit_noop"))
 
                         proposal_error = (
                             output.get("proposal_error")
@@ -2339,24 +2469,6 @@ async def chat_endpoint(
                         )
                         confirm_id = confirm_data.get("confirm_id") if isinstance(confirm_data, dict) else None
                         if confirm_id and confirm_id not in sent_confirm_ids and not confirmation_sent:
-                            # The assistant reply occupies the streaming
-                            # placeholder created before the request.  Emit it
-                            # before the confirmation event so a mixed
-                            # "answer + edit" turn never opens the modal first
-                            # and silently drops the answer.
-                            if not accumulated_content:
-                                for item in reversed(messages_list):
-                                    if not isinstance(item, AIMessage):
-                                        continue
-                                    reply = str(getattr(item, "content", "") or "").strip()
-                                    if not reply or getattr(item, "tool_calls", None):
-                                        continue
-                                    accumulated_content = _sanitize_user_visible_text(reply)
-                                    last_streamed_content = accumulated_content
-                                    yield f'data: {json.dumps({"type": "stream", "content": accumulated_content, "request_id": request_id})}\n\n'
-                                    break
-                            sent_confirm_ids.add(confirm_id)
-                            confirmation_sent = True
                             if "validating" not in sent_progress_phases:
                                 yield progress_event("validating", "正在校验修改内容…")
                             try:
@@ -2404,7 +2516,27 @@ async def chat_endpoint(
                                 }) + '\n\n'
                             else:
                                 pending_confirmation_result = confirm_data
+                                preview_reply = edit_preview_reply_result
+                                if not preview_reply:
+                                    for item in reversed(messages_list):
+                                        if not isinstance(item, AIMessage):
+                                            continue
+                                        reply = str(getattr(item, "content", "") or "").strip()
+                                        if not reply or getattr(item, "tool_calls", None):
+                                            continue
+                                        preview_reply = reply
+                                        break
+                                safe_answer = assistant_reply_result
+                                if resume_agent._contains_unverified_execution_claim(safe_answer):
+                                    safe_answer = ""
+                                reply_parts = [part for part in (safe_answer, preview_reply) if part]
+                                accumulated_content = _sanitize_user_visible_text("\n\n".join(reply_parts))
+                                last_streamed_content = accumulated_content
+                                sent_confirm_ids.add(confirm_id)
+                                confirmation_sent = True
                                 yield progress_event("ready", "修改预览已准备好")
+                                if accumulated_content:
+                                    yield f'data: {json.dumps({"type": "stream", "content": accumulated_content, "request_id": request_id})}\n\n'
                                 yield 'data: ' + json.dumps({
                                     "type": "confirm",
                                     "request_id": request_id,
@@ -2431,6 +2563,15 @@ async def chat_endpoint(
 
                 if proposal_error_result:
                     final_content = proposal_error_result
+                elif buffer_edit_stream:
+                    final_content = None
+                    for msg in reversed(messages_list):
+                        if isinstance(msg, AIMessage) and msg.content and not getattr(msg, "tool_calls", None):
+                            final_content = str(msg.content)
+                            break
+                        if isinstance(msg, ToolMessage) and msg.content:
+                            final_content = str(msg.content)
+                            break
                 elif not accumulated_content:
                     for msg in reversed(messages_list):
                         if isinstance(msg, AIMessage) and msg.content and msg.content != "简历已成功保存到数据库":
@@ -2442,6 +2583,21 @@ async def chat_endpoint(
                             break
                 else:
                     final_content = accumulated_content
+
+                if (
+                    not pending_confirmation_result
+                    and resume_agent._contains_unverified_execution_claim(final_content)
+                ):
+                    final_content = resume_agent._sanitize_unverified_execution_reply(final_content)
+
+                if (
+                    buffer_edit_stream
+                    and not pending_confirmation_result
+                    and not proposal_error_result
+                    and not edit_tool_called_result
+                    and not direct_edit_processed
+                ):
+                    final_content = resume_agent.UNVERIFIED_EXECUTION_STATUS
 
             except Exception as e:
                 LOGGER.exception("Agent 请求执行失败")
@@ -2462,6 +2618,33 @@ async def chat_endpoint(
             if not final_content:
                 final_content = "抱歉，我无法理解您的请求。"
             final_content = _sanitize_user_visible_text(final_content)
+            if pending_confirmation_result:
+                round_status = "preview_pending"
+                memory_assistant_content = ""
+                round_outcome = {
+                    "answer_text": assistant_reply_result,
+                    "execution_trace": execution_trace,
+                }
+            elif proposal_error_result:
+                round_status = "failed"
+                memory_assistant_content = ""
+                round_outcome = {"execution_trace": execution_trace}
+            elif edit_noop_result:
+                round_status = "noop"
+                memory_assistant_content = final_content
+                round_outcome = {"execution_trace": execution_trace}
+            elif buffer_edit_stream and not edit_tool_called_result and not direct_edit_processed:
+                round_status = "failed"
+                memory_assistant_content = ""
+                round_outcome = {"execution_trace": execution_trace}
+            else:
+                round_status = "answered"
+                memory_assistant_content = final_content
+                round_outcome = {"execution_trace": execution_trace}
+
+            execution_trace["resume_edit_called"] = edit_tool_called_result
+            execution_trace["direct_edit_processed"] = direct_edit_processed
+            execution_trace["terminal_status"] = round_status
 
             # Persist before final/end so a following request cannot observe a
             # stale context. Optimistic version conflicts fail closed instead
@@ -2476,6 +2659,9 @@ async def chat_endpoint(
                     initial_jd_data,
                     pending_confirmation_result,
                     context_metadata_updates_result,
+                    round_status,
+                    memory_assistant_content,
+                    round_outcome,
                 )
                 if coach_state_changed and hasattr(db, "query"):
                     save_agent_skill_state(
@@ -2541,7 +2727,6 @@ async def confirm_endpoint(
             clear_pending_confirmation,
             get_pending_confirmation,
             record_resume_revision,
-            update_conversation_context_metadata,
         )
         from .layout_config import apply_layout_change_groups, normalize_layout_config
         from .resume_changes import (
@@ -2568,8 +2753,12 @@ async def confirm_endpoint(
                 owner_session_id=session_id,
                 request_id=pending_confirmation.get("request_id"),
             )
-            update_conversation_context_metadata(
-                db, current_user.id, session_id, {"edit_intent_state": {"status": "none"}},
+            update_agent_memory_round_outcome(
+                db,
+                current_user.id,
+                session_id,
+                round_id=pending_confirmation.get("request_id"),
+                status="rejected",
             )
             return JSONResponse(content={
                 "success": True,
@@ -2603,6 +2792,14 @@ async def confirm_endpoint(
                 db, current_user.id, task_id,
                 owner_session_id=session_id,
                 request_id=pending_confirmation.get("request_id"),
+            )
+            update_agent_memory_round_outcome(
+                db,
+                current_user.id,
+                session_id,
+                round_id=pending_confirmation.get("request_id"),
+                status="failed",
+                outcome_updates={"resolution": "preview_expired"},
             )
             return JSONResponse(content={
                 "error": "简历内容或排版已发生其他修改，请重新生成修改预览"
@@ -2641,7 +2838,7 @@ async def confirm_endpoint(
             if saved_layout is None:
                 return JSONResponse(content={"error": "保存失败：当前简历任务不存在"}, status_code=404)
             updated_layout_data = saved_layout
-        record_resume_revision(
+        revision = record_resume_revision(
             db,
             current_user.id,
             task_id,
@@ -2651,20 +2848,32 @@ async def confirm_endpoint(
             before_layout=before_layout_data,
             after_layout=updated_layout_data,
         )
+        revision_id = getattr(revision, "id", None)
+        if not isinstance(revision_id, (str, int, float, bool, type(None))):
+            revision_id = None
         clear_pending_confirmation(db, current_user.id, session_id)
         release_resume_edit_lock(
             db, current_user.id, task_id,
             owner_session_id=session_id,
             request_id=pending_confirmation.get("request_id"),
         )
-        update_conversation_context_metadata(
-            db, current_user.id, session_id, {"edit_intent_state": {"status": "none"}},
-        )
         selected_changes = [item for item in changes if item.get("id") in ids_to_apply]
+        update_agent_memory_round_outcome(
+            db,
+            current_user.id,
+            session_id,
+            round_id=pending_confirmation.get("request_id"),
+            status="saved",
+            outcome_updates={
+                "revision_id": revision_id,
+                "selected_change_ids": ids_to_apply,
+            },
+        )
         return JSONResponse(content={
             "success": True,
             "message": f"已应用 {len(selected_changes)} 项修改",
             "action": "saved",
+            "revision_id": revision_id,
             "resume_data": updated_resume_data,
             "layout_config": updated_layout_data,
             "selected_change_ids": ids_to_apply,

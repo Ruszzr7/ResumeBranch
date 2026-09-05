@@ -35,10 +35,10 @@ class SkillInvocationError(RuntimeError):
     """Raised when a discovered Agent Skill cannot be executed safely."""
 
 
-class ActivateAgentSkillInput(BaseModel):
+class LoadAgentSkillInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(description="要激活的 Agent Skill 名称，必须来自可用 Skill 目录。")
+    name: str = Field(description="要加载的 Agent Skill 名称，必须来自可用 Skill 目录。")
 
 
 @dataclass(frozen=True)
@@ -222,7 +222,8 @@ class SkillRuntime:
         return (
             "\n\n【可用 Agent Skills】\n"
             "下面只提供用于发现的名称和描述。需要使用某项能力时，先调用 "
-            "activate_agent_skill；激活前不得猜测其参数或调用其执行 Tool。\n"
+            "load_agent_skill 读取完整 SKILL.md；加载前不得猜测其参数"
+            "或调用其执行 Tool。加载说明不代表任务已经完成。\n"
             + "\n".join(rows)
         )
 
@@ -231,7 +232,8 @@ class SkillRuntime:
         for name in dict.fromkeys(str(item) for item in names if item):
             package = self.get(name)
             sections.append(
-                f"\n\n【已激活 Agent Skill：{package.name}】\n{package.instructions}"
+                f"\n\n【已加载 Agent Skill：{package.name}】\n"
+                f"{package.instructions}"
             )
         return "".join(sections)
 
@@ -255,11 +257,15 @@ class SkillRuntime:
 skill_runtime = SkillRuntime()
 
 
-@tool(args_schema=ActivateAgentSkillInput)
-def activate_agent_skill(name: str) -> str:
-    """激活一个已发现的 Agent Skill，以加载其完整说明和结构化执行工具。"""
+@tool(args_schema=LoadAgentSkillInput)
+def load_agent_skill(name: str) -> str:
+    """读取一个已发现 Agent Skill 的完整 SKILL.md 说明。"""
     package = skill_runtime.get(name)
-    return f"已激活 Agent Skill：{package.name}。请按照已加载说明继续处理当前请求。"
+    return (
+        f"【Agent Skill：{package.name}】\n"
+        f"{package.instructions}\n\n"
+        "以上是已加载的完整 Skill 说明；加载本身不代表任务已完成。"
+    )
 
 
 __all__ = [
@@ -268,6 +274,6 @@ __all__ = [
     "SkillInvocationError",
     "SkillPackage",
     "SkillRuntime",
-    "activate_agent_skill",
+    "load_agent_skill",
     "skill_runtime",
 ]

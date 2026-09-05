@@ -5,7 +5,14 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from backend.layout_config import default_layout_config
 from backend.resume_changes import build_resume_state_version
-from backend.resume_agent import AgentState, entry_router, is_mission_resume_edit_request, tool_node, tool_node_router
+from backend.resume_agent import (
+    AgentState,
+    build_deterministic_edit_operations,
+    entry_router,
+    is_mission_resume_edit_request,
+    tool_node,
+    tool_node_router,
+)
 from langgraph.graph import END
 from backend.resume_contract import build_resume_edit_contract, build_resume_edit_contract_text
 from backend.skill_runtime import skill_runtime
@@ -43,6 +50,7 @@ class ResumeEditSkillTests(unittest.IsolatedAsyncioTestCase):
         operation_shape = contract["operation_shape"]
         self.assertEqual(operation_shape["required_fields"], ["op", "path"])
         self.assertIn("path", operation_shape["allowed_fields"])
+        self.assertNotIn("expected", operation_shape["allowed_fields"])
         self.assertNotIn("target", operation_shape)
         self.assertEqual(
             contract["value_shapes"]["custom_section"]["required"],
@@ -96,7 +104,7 @@ class ResumeEditSkillTests(unittest.IsolatedAsyncioTestCase):
                 resume_data=resume_payload(),
                 layout_config=default_layout_config(),
                 resume_operations=({
-                    "op": "set", "path": "basics.name", "value": "新姓名", "expected": "旧姓名",
+                    "op": "set", "path": "basics.name", "value": "新姓名",
                 },),
             )
         )
@@ -114,7 +122,7 @@ class ResumeEditSkillTests(unittest.IsolatedAsyncioTestCase):
                 layout_config=changed_layout,
                 base_version=base_version,
                 resume_operations=({
-                    "op": "set", "path": "basics.name", "value": "新姓名", "expected": "旧姓名",
+                    "op": "set", "path": "basics.name", "value": "新姓名",
                 },),
             )
         )
@@ -184,7 +192,6 @@ class ResumeEditSkillTests(unittest.IsolatedAsyncioTestCase):
                     "op": "set",
                     "path": "project_experience[0].content_blocks[0].text",
                     "value": "Python、FastAPI、MySQL",
-                    "expected": "Python、FastAPI",
                 },),
             )
         )
@@ -192,6 +199,58 @@ class ResumeEditSkillTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(block["semantic_role"], "tech_stack")
         self.assertEqual(block["text"], "Python、FastAPI、MySQL")
         self.assertEqual(result.resume_data["others"]["skills"], [])
+
+    async def test_expected_is_not_part_of_the_model_operation_contract(self):
+        with self.assertRaises(ResumeEditOperationError):
+            await run_resume_edit(
+                ResumeEditRequest(
+                    resume_data=resume_payload(),
+                    layout_config=default_layout_config(),
+                    resume_operations=({
+                        "op": "set",
+                        "path": "basics.name",
+                        "value": "新姓名",
+                        "expected": "旧姓名",
+                    },),
+                )
+            )
+
+    async def test_structured_content_block_must_use_a_leaf_path(self):
+        payload = resume_payload()
+        block = payload["project_experience"][0]["content_blocks"][0]
+        with self.assertRaisesRegex(ResumeEditOperationError, "最小可写字段"):
+            await run_resume_edit(
+                ResumeEditRequest(
+                    resume_data=payload,
+                    layout_config=default_layout_config(),
+                    resume_operations=({
+                        "op": "set",
+                        "path": "project_experience[0].content_blocks[0]",
+                        "value": {**block, "items": ["更新后的第一条"]},
+                    },),
+                )
+            )
+
+    def test_deterministic_operations_compile_to_leaf_paths(self):
+        current = resume_payload()
+        candidate = resume_payload()
+        candidate["basics"]["name"] = "新姓名"
+        candidate["project_experience"][0]["content_blocks"][0]["items"][0] = "更新后的第一条"
+        resume_operations, layout_operations = build_deterministic_edit_operations(
+            current,
+            candidate,
+            default_layout_config(),
+            default_layout_config(),
+        )
+        self.assertFalse(layout_operations)
+        self.assertEqual(
+            {operation["path"] for operation in resume_operations},
+            {
+                "basics.name",
+                "project_experience[0].content_blocks[0].items",
+            },
+        )
+        self.assertTrue(all("expected" not in operation for operation in resume_operations))
 
     async def test_custom_section_uses_title_items_shape(self):
         payload = resume_payload()
@@ -212,7 +271,7 @@ class ResumeEditSkillTests(unittest.IsolatedAsyncioTestCase):
             {"title": "开源实践", "items": ["维护权限校验示例项目"]},
         )
 
-    async def test_indexed_custom_section_uses_the_same_contract(self):
+    async def test_indexed_custom_section_uses_leaf_field_contract(self):
         payload = resume_payload()
         payload["custom_sections"] = [{"title": "开源实践", "items": ["旧内容"]}]
         result = await run_resume_edit(
@@ -221,8 +280,8 @@ class ResumeEditSkillTests(unittest.IsolatedAsyncioTestCase):
                 layout_config=default_layout_config(),
                 resume_operations=({
                     "op": "set",
-                    "path": "custom_sections[0]",
-                    "value": {"title": "开源实践", "items": ["新内容"]},
+                    "path": "custom_sections[0].items",
+                    "value": ["新内容"],
                 },),
             )
         )
@@ -368,7 +427,6 @@ class ResumeEditSkillTests(unittest.IsolatedAsyncioTestCase):
                         "op": "remove",
                         "parent_path": "work_experience[0]",
                         "target_semantic_role": "responsibilities",
-                        "expected": "第二条",
                     },),
                 )
             )
@@ -508,7 +566,7 @@ class ResumeEditSkillTests(unittest.IsolatedAsyncioTestCase):
                 resume_operations=(
                     {"op": "move", "path": "project_experience[0].content_blocks[0].items", "from_index": 0, "to_index": 2},
                     {"op": "insert", "path": "project_experience[0].content_blocks[0].items", "index": 1, "value": "新增"},
-                    {"op": "remove", "path": "project_experience[0].content_blocks[0].items", "index": 2, "expected": "第三条"},
+                    {"op": "remove", "path": "project_experience[0].content_blocks[0].items", "index": 2},
                 ),
             )
         )
@@ -517,7 +575,7 @@ class ResumeEditSkillTests(unittest.IsolatedAsyncioTestCase):
             ["第二条", "新增", "第一条"],
         )
 
-    async def test_layout_operation_is_supported_but_font_sizes_are_rejected(self):
+    async def test_layout_operation_and_semantic_font_sizes_are_supported(self):
         result = await run_resume_edit(
             ResumeEditRequest(
                 resume_data=resume_payload(),
@@ -526,14 +584,19 @@ class ResumeEditSkillTests(unittest.IsolatedAsyncioTestCase):
             )
         )
         self.assertEqual(result.layout_config["global"]["moduleMargin"], 0.7)
-        with self.assertRaises(ResumeEditOperationError):
-            await run_resume_edit(
-                ResumeEditRequest(
-                    resume_data=resume_payload(),
-                    layout_config=default_layout_config(),
-                    layout_operations=({"op": "set", "path": "global.fontSize", "value": 12},),
-                )
+        font_result = await run_resume_edit(
+            ResumeEditRequest(
+                resume_data=resume_payload(),
+                layout_config=default_layout_config(),
+                layout_operations=(
+                    {"op": "set", "path": "global.fontSize", "value": 10.5},
+                    {"op": "set", "path": "typography.fontSizes.sectionTitle", "value": 12.5},
+                ),
             )
+        )
+        self.assertEqual(font_result.layout_config["global"]["fontSize"], 10.5)
+        self.assertEqual(font_result.layout_config["typography"]["fontSizes"]["body"], 10.5)
+        self.assertEqual(font_result.layout_config["typography"]["fontSizes"]["sectionTitle"], 12.5)
         with self.assertRaises(ResumeEditOperationError):
             await run_resume_edit(
                 ResumeEditRequest(
@@ -551,6 +614,9 @@ class ResumeEditSkillTests(unittest.IsolatedAsyncioTestCase):
             {"op": "set", "path": "education.metricsPlacement", "value": "info-column"},
             {"op": "set", "path": "skills.paragraphSpacing", "value": 0.5},
             {"op": "set", "path": "global.lineHeight", "value": 1.37},
+            {"op": "set", "path": "typography.fontSizes.body", "value": 10.5},
+            {"op": "set", "path": "typography.fontSizes.sectionTitle", "value": 12.25},
+            {"op": "set", "path": "typography.latinFont", "value": "Arial"},
         ):
             with self.assertRaises(ResumeEditOperationError):
                 await run_resume_edit(
@@ -609,7 +675,7 @@ class ResumeEditSkillTests(unittest.IsolatedAsyncioTestCase):
                     "name": "resume_edit",
                     "args": {
                         "resume_operations": [{
-                            "op": "set", "path": "basics.name", "value": "新姓名", "expected": "旧姓名",
+                    "op": "set", "path": "basics.name", "value": "新姓名",
                         }],
                         "layout_operations": [],
                     },
@@ -628,10 +694,7 @@ class ResumeEditSkillTests(unittest.IsolatedAsyncioTestCase):
             result["pending_confirmation"]["resume_candidate"]["basics"]["name"],
             "新姓名",
         )
-        self.assertEqual(
-            result["context_metadata_updates"]["edit_intent_state"]["status"],
-            "awaiting_confirmation",
-        )
+        self.assertNotIn("edit_intent_state", result["context_metadata_updates"])
         llm.ainvoke.assert_not_called()
 
     async def test_structured_tool_call_keeps_answer_before_confirmation(self):
@@ -643,7 +706,7 @@ class ResumeEditSkillTests(unittest.IsolatedAsyncioTestCase):
                     "args": {
                         "answer_text": "还可以继续检查项目成果是否量化。",
                         "resume_operations": [{
-                            "op": "set", "path": "basics.name", "value": "新姓名", "expected": "旧姓名",
+                            "op": "set", "path": "basics.name", "value": "新姓名",
                         }],
                         "layout_operations": [],
                     },
@@ -659,8 +722,11 @@ class ResumeEditSkillTests(unittest.IsolatedAsyncioTestCase):
         result = await tool_node(state)
 
         self.assertIsNotNone(result["pending_confirmation"])
-        self.assertIsInstance(result["messages"][-1], AIMessage)
-        self.assertIn("还可以继续检查", result["messages"][-1].content)
+        answer_message, preview_message = result["messages"][-2:]
+        self.assertIsInstance(answer_message, AIMessage)
+        self.assertIsInstance(preview_message, AIMessage)
+        self.assertIn("还可以继续检查", answer_message.content)
+        self.assertIn("已根据你的要求生成修改预览", preview_message.content)
 
     async def test_noop_edit_ends_tool_loop_without_confirmation(self):
         state = AgentState(

@@ -1,6 +1,6 @@
 {
   "additionalProperties": false,
-  "description": "Trusted graph-owned context that the model cannot provide.",
+  "description": "由图编排程序管理、且不允许模型提供的可信上下文。",
   "properties": {
     "resume_data": {
       "additionalProperties": true,

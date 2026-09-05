@@ -245,7 +245,7 @@
                 <button type="button" role="tab" :aria-selected="settingsRole === 'chat'" :class="{ active: settingsRole === 'chat' }" @click="switchSettingsRole('chat')">对话 API</button>
                 <button type="button" role="tab" :aria-selected="settingsRole === 'parser'" :class="{ active: settingsRole === 'parser' }" @click="switchSettingsRole('parser')">解析 API</button>
               </div>
-              <p v-if="settingsRole === 'chat'">用于简历深度打磨、修改、翻译和其他对话功能。接口需兼容项目识别出的对话协议。</p>
+              <p v-if="settingsRole === 'chat'">用于简历深度打磨、修改、翻译和其他对话功能。接口需兼容项目对话协议，并支持文本、图片输入与流式输出。</p>
               <p v-else>用于导入 PDF 和图片。接口必须支持图片、PDF 页面视觉理解和结构化输出，推荐使用 Gemini 文档模型。</p>
               <div class="settings-grid">
                 <div class="field full">
@@ -291,7 +291,7 @@
             </div>
             <footer>
               <button class="secondary-btn" :disabled="isTestingSettings || isSavingSettings" @click="testSettings">
-                {{ isTestingSettings ? '测试中…' : settingsRole === 'parser' ? '测试解析能力' : '测试连接' }}
+                {{ isTestingSettings ? '测试中…' : settingsRole === 'parser' ? '测试解析能力' : '测试对话能力' }}
               </button>
               <button class="primary-btn" :disabled="isTestingSettings || isSavingSettings" @click="saveSettings">
                 {{ isSavingSettings ? '保存中…' : '保存设置' }}
@@ -335,13 +335,7 @@ const isDeletingProject = ref(false)
 const deleteError = ref('')
 const showSettingsDialog = ref(false)
 const settingsRole = ref('chat')
-const isTestingSettings = ref(false)
 const isSavingSettings = ref(false)
-const isLoadingModels = ref(false)
-const availableModels = ref([])
-const modelQueryStatus = ref({ type: '', message: '' })
-const settingsStatus = ref({ type: '', message: '' })
-const visibleSettingsChecks = ref({})
 const settingsConfigs = ref({ chat: {}, parser: {} })
 const llmSettings = ref({
   role: 'chat',
@@ -352,15 +346,67 @@ const llmSettings = ref({
   configured: false
 })
 const adapterCatalog = ref([])
+const settingsUi = ref({ chat: createSettingsUiState(), parser: createSettingsUiState() })
+const settingsAbortControllers = {
+  chat: { models: null, test: null },
+  parser: { models: null, test: null }
+}
+let settingsDialogGeneration = 0
 const plainSummaryText = value => plainInlineText(String(value ?? ''))
+const currentSettingsUi = computed(() => settingsUi.value[settingsRole.value])
+const isTestingSettings = computed(() => currentSettingsUi.value.isTesting)
+const isLoadingModels = computed(() => currentSettingsUi.value.isLoadingModels)
+const availableModels = computed(() => currentSettingsUi.value.availableModels)
+const modelQueryStatus = computed(() => currentSettingsUi.value.modelQueryStatus)
+const settingsStatus = computed(() => currentSettingsUi.value.settingsStatus)
 const canQueryModels = computed(() => !!llmSettings.value.base_url.trim())
 const settingsChecks = computed(() => {
-  const checks = visibleSettingsChecks.value
+  const checks = currentSettingsUi.value.visibleSettingsChecks
   const labels = settingsRole.value === 'parser'
     ? { connected: '接口连接', image: '图片识别', pdf: 'PDF 输入', pdf_vision: 'PDF 页面视觉', native_pdf: 'PDF 原生通道', layout: '格式理解', avatar: '头像识别', structured_output: '结构化输出' }
-    : { connected: '接口连接', chat: '普通对话', stream: '流式输出', structured_output: '结构化输出' }
+    : { connected: '接口连接', chat: '基础对话', image: '图片输入', stream: '流式输出', tool_calling: '工具调用' }
   return Object.entries(labels).filter(([key]) => key in checks).map(([key, label]) => ({ key, label, passed: !!checks[key] }))
 })
+
+function createSettingsUiState() {
+  return {
+    isTesting: false,
+    isLoadingModels: false,
+    availableModels: [],
+    modelQueryStatus: { type: '', message: '' },
+    settingsStatus: { type: '', message: '' },
+    visibleSettingsChecks: {}
+  }
+}
+
+function createSettingsDraft(role, profile = {}) {
+  return {
+    role,
+    model: profile.model || '',
+    base_url: profile.base_url || '',
+    api_key: profile.api_key || '',
+    adapter: profile.adapter || 'auto',
+    resolved_adapter: profile.resolved_adapter || '',
+    model_family: profile.model_family || '',
+    configured: !!profile.configured,
+    api_key_hint: profile.api_key_hint || '',
+    verified: !!profile.verified,
+    capabilities: profile.capabilities || {}
+  }
+}
+
+function resetSettingsUi() {
+  settingsUi.value = { chat: createSettingsUiState(), parser: createSettingsUiState() }
+}
+
+function abortSettingsOperations() {
+  for (const role of ['chat', 'parser']) {
+    settingsAbortControllers[role].models?.abort()
+    settingsAbortControllers[role].test?.abort()
+    settingsAbortControllers[role].models = null
+    settingsAbortControllers[role].test = null
+  }
+}
 
 const isLocalMode = computed(() => appConfig.value?.app_mode === 'local')
 const canUseProjects = computed(() => isLocalMode.value || !!token.value)
@@ -553,46 +599,37 @@ async function confirmDeleteProject() {
 }
 
 async function openSettings() {
+  abortSettingsOperations()
+  resetSettingsUi()
+  const generation = ++settingsDialogGeneration
   showSettingsDialog.value = true
-  availableModels.value = []
-  modelQueryStatus.value = { type: '', message: '' }
-  settingsStatus.value = { type: '', message: '' }
-  visibleSettingsChecks.value = {}
   try {
     const response = await fetch('/settings/llm', { headers: authHeaders() })
     if (!response.ok) throw new Error((await response.json()).detail || '无法读取配置')
     const data = await response.json()
-    settingsConfigs.value = data.configs || { chat: {}, parser: {} }
+    if (!showSettingsDialog.value || generation !== settingsDialogGeneration) return
+    const profiles = data.configs || { chat: {}, parser: {} }
+    settingsConfigs.value = {
+      chat: createSettingsDraft('chat', profiles.chat),
+      parser: createSettingsDraft('parser', profiles.parser)
+    }
     adapterCatalog.value = data.adapters || []
     selectSettingsRole(settingsRole.value)
   } catch (error) {
-    settingsStatus.value = { type: 'error', message: error.message || '无法读取配置' }
+    if (!showSettingsDialog.value || generation !== settingsDialogGeneration) return
+    currentSettingsUi.value.settingsStatus = { type: 'error', message: error.message || '无法读取配置' }
   }
 }
 
 function selectSettingsRole(role) {
-  const profile = settingsConfigs.value[role] || {}
-  llmSettings.value = {
-    role,
-    model: profile.model || '',
-    base_url: profile.base_url || '',
-    api_key: profile.api_key || '',
-    adapter: profile.adapter || 'auto',
-    resolved_adapter: profile.resolved_adapter || '',
-    model_family: profile.model_family || '',
-    configured: !!profile.configured,
-    api_key_hint: profile.api_key_hint || '',
-    verified: !!profile.verified,
-    capabilities: profile.capabilities || {}
+  if (!settingsConfigs.value[role]?.role) {
+    settingsConfigs.value[role] = createSettingsDraft(role, settingsConfigs.value[role])
   }
-  availableModels.value = []
-  modelQueryStatus.value = { type: '', message: '' }
-  settingsStatus.value = { type: '', message: '' }
-  visibleSettingsChecks.value = {}
+  llmSettings.value = settingsConfigs.value[role]
 }
 
 function switchSettingsRole(role) {
-  settingsConfigs.value[settingsRole.value] = { ...settingsConfigs.value[settingsRole.value], ...llmSettings.value }
+  if (role === settingsRole.value) return
   settingsRole.value = role
   selectSettingsRole(role)
 }
@@ -602,131 +639,172 @@ function adapterLabel(adapter) {
 }
 
 function invalidateCurrentTest() {
-  availableModels.value = []
-  modelQueryStatus.value = { type: '', message: '' }
+  const role = settingsRole.value
+  const ui = settingsUi.value[role]
+  settingsAbortControllers[role].models?.abort()
+  settingsAbortControllers[role].test?.abort()
+  ui.isLoadingModels = false
+  ui.isTesting = false
+  ui.availableModels = []
+  ui.modelQueryStatus = { type: '', message: '' }
   llmSettings.value.verified = false
   llmSettings.value.capabilities = {}
-  visibleSettingsChecks.value = {}
-  settingsStatus.value = { type: '', message: '' }
+  ui.visibleSettingsChecks = {}
+  ui.settingsStatus = { type: '', message: '' }
 }
 
 function selectAvailableModel(model) {
   llmSettings.value.model = model
   llmSettings.value.verified = false
   llmSettings.value.capabilities = {}
-  visibleSettingsChecks.value = {}
-  settingsStatus.value = { type: '', message: '' }
+  currentSettingsUi.value.visibleSettingsChecks = {}
+  currentSettingsUi.value.settingsStatus = { type: '', message: '' }
 }
 
 function closeSettings() {
-  if (isTestingSettings.value || isSavingSettings.value || isLoadingModels.value) return
+  if (isSavingSettings.value) return
+  settingsDialogGeneration += 1
+  abortSettingsOperations()
   showSettingsDialog.value = false
-  llmSettings.value.api_key = ''
-  availableModels.value = []
-  modelQueryStatus.value = { type: '', message: '' }
-  settingsStatus.value = { type: '', message: '' }
-  visibleSettingsChecks.value = {}
+  for (const role of ['chat', 'parser']) {
+    if (settingsConfigs.value[role]) settingsConfigs.value[role].api_key = ''
+  }
+  resetSettingsUi()
 }
 
-function settingsPayload() {
+function settingsPayload(role = settingsRole.value, draft = llmSettings.value) {
   return {
-    role: settingsRole.value,
-    model: llmSettings.value.model.trim(),
-    base_url: llmSettings.value.base_url.trim(),
-    api_key: llmSettings.value.api_key.trim() || null,
-    adapter: llmSettings.value.adapter || 'auto',
-    verified: !!llmSettings.value.verified,
-    capabilities: llmSettings.value.capabilities || {}
+    role,
+    model: draft.model.trim(),
+    base_url: draft.base_url.trim(),
+    api_key: draft.api_key.trim() || null,
+    adapter: draft.adapter || 'auto',
+    verified: !!draft.verified,
+    capabilities: draft.capabilities || {}
   }
 }
 
 async function loadAvailableModels() {
-  if (isLoadingModels.value) return
-  const baseUrl = llmSettings.value.base_url.trim()
+  const role = settingsRole.value
+  const draft = llmSettings.value
+  const ui = settingsUi.value[role]
+  if (ui.isLoadingModels) return
+  const baseUrl = draft.base_url.trim()
   if (!baseUrl) {
-    modelQueryStatus.value = { type: 'error', message: '请先填写 URL' }
+    ui.modelQueryStatus = { type: 'error', message: '请先填写 URL' }
     return
   }
-  isLoadingModels.value = true
-  availableModels.value = []
-  modelQueryStatus.value = { type: '', message: '' }
+  const controller = new AbortController()
+  settingsAbortControllers[role].models = controller
+  ui.isLoadingModels = true
+  ui.availableModels = []
+  ui.modelQueryStatus = { type: '', message: '' }
   try {
     const response = await fetch('/settings/llm/models', {
       method: 'POST',
       headers: authHeaders(),
+      signal: controller.signal,
       body: JSON.stringify({
-        role: settingsRole.value,
+        role,
         base_url: baseUrl,
-        api_key: llmSettings.value.api_key.trim() || null
+        api_key: draft.api_key.trim() || null
       })
     })
     const data = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(userFacingApiError(data, '模型查询失败'))
-    availableModels.value = data.models || []
-    if (data.success && !llmSettings.value.model.trim() && availableModels.value.length) {
-      llmSettings.value.model = availableModels.value[0]
+    ui.availableModels = data.models || []
+    if (data.success && !draft.model.trim() && ui.availableModels.length) {
+      draft.model = ui.availableModels[0]
     }
-    modelQueryStatus.value = {
+    ui.modelQueryStatus = {
       type: data.success ? 'success' : 'error',
       message: data.message || (data.success ? '模型列表已更新' : '无法自动获取，请手动填写模型')
     }
   } catch (error) {
-    modelQueryStatus.value = { type: 'error', message: `${error.message || '模型查询失败'}；仍可手动填写模型` }
+    if (error.name !== 'AbortError') {
+      ui.modelQueryStatus = { type: 'error', message: `${error.message || '模型查询失败'}；仍可手动填写模型` }
+    }
   } finally {
-    isLoadingModels.value = false
+    if (settingsAbortControllers[role].models === controller) {
+      settingsAbortControllers[role].models = null
+      ui.isLoadingModels = false
+    }
   }
 }
 
 async function testSettings() {
-  if (isTestingSettings.value) return
-  isTestingSettings.value = true
-  settingsStatus.value = { type: '', message: '' }
+  const role = settingsRole.value
+  const draft = llmSettings.value
+  const ui = settingsUi.value[role]
+  if (ui.isTesting) return
+  const controller = new AbortController()
+  settingsAbortControllers[role].test = controller
+  ui.isTesting = true
+  ui.settingsStatus = { type: '', message: '' }
   try {
     const response = await fetch('/settings/llm/test', {
       method: 'POST',
       headers: authHeaders(),
-      body: JSON.stringify(settingsPayload())
+      signal: controller.signal,
+      body: JSON.stringify(settingsPayload(role, draft))
     })
     const data = await response.json()
     if (!response.ok) throw new Error(userFacingApiError(data, '连接失败'))
     // Persist the protocol that actually passed capability negotiation. This
     // matters for Gemini relays that expose both OpenAI compatibility and a
     // higher-fidelity native document endpoint on the same URL/key.
-    if (data.adapter) llmSettings.value.adapter = data.adapter
-    llmSettings.value.resolved_adapter = data.adapter || llmSettings.value.resolved_adapter
-    llmSettings.value.model_family = data.model_family || llmSettings.value.model_family
-    llmSettings.value.capabilities = data.capabilities || data.checks || { connected: true, chat: true }
-    visibleSettingsChecks.value = { ...llmSettings.value.capabilities }
-    llmSettings.value.verified = data.success !== false
+    if (data.adapter) draft.adapter = data.adapter
+    draft.resolved_adapter = data.adapter || draft.resolved_adapter
+    draft.model_family = data.model_family || draft.model_family
+    draft.capabilities = data.capabilities || data.checks || { connected: true, chat: true }
+    ui.visibleSettingsChecks = { ...draft.capabilities }
+    draft.verified = data.success !== false
     if (data.success === false) {
-      settingsStatus.value = { type: 'error', message: data.message || '接口已响应，但没有通过全部解析能力检查' }
+      ui.settingsStatus = {
+        type: 'error',
+        message: data.message || (role === 'parser'
+          ? '接口已响应，但没有通过全部解析能力检查'
+          : '接口已响应，但没有通过项目对话所需的全部能力检查'
+        )
+      }
     } else {
-      settingsStatus.value = { type: 'success', message: settingsRole.value === 'parser' ? '解析能力验证通过' : `连接成功 · ${data.model}` }
+      ui.settingsStatus = { type: 'success', message: role === 'parser' ? `解析能力验证通过 · ${data.model}` : `对话能力验证通过 · ${data.model}` }
     }
   } catch (error) {
-    settingsStatus.value = { type: 'error', message: error.message || '连接失败' }
+    if (error.name !== 'AbortError') {
+      ui.settingsStatus = { type: 'error', message: error.message || '连接失败' }
+    }
   } finally {
-    isTestingSettings.value = false
+    if (settingsAbortControllers[role].test === controller) {
+      settingsAbortControllers[role].test = null
+      ui.isTesting = false
+    }
   }
 }
 
 async function saveSettings() {
   if (isSavingSettings.value) return
+  const role = settingsRole.value
+  const draft = llmSettings.value
+  const ui = settingsUi.value[role]
   isSavingSettings.value = true
-  settingsStatus.value = { type: '', message: '' }
+  ui.settingsStatus = { type: '', message: '' }
   try {
     const response = await fetch('/settings/llm', {
       method: 'PUT',
       headers: authHeaders(),
-      body: JSON.stringify(settingsPayload())
+      body: JSON.stringify(settingsPayload(role, draft))
     })
     const data = await response.json()
     if (!response.ok) throw new Error(userFacingApiError(data, '保存失败'))
-    settingsConfigs.value = data.configs || settingsConfigs.value
+    const profiles = data.configs || {}
+    for (const itemRole of ['chat', 'parser']) {
+      if (profiles[itemRole]) settingsConfigs.value[itemRole] = createSettingsDraft(itemRole, profiles[itemRole])
+    }
     selectSettingsRole(settingsRole.value)
-    settingsStatus.value = { type: 'success', message: '设置已保存，后续请求立即生效' }
+    settingsUi.value[role].settingsStatus = { type: 'success', message: '设置已保存，后续请求立即生效' }
   } catch (error) {
-    settingsStatus.value = { type: 'error', message: error.message || '保存失败' }
+    ui.settingsStatus = { type: 'error', message: error.message || '保存失败' }
   } finally {
     isSavingSettings.value = false
   }

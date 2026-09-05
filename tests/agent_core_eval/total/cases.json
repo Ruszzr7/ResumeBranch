@@ -175,7 +175,7 @@
     {
       "id": "route-031",
       "prompt": "把正文字号调整为 10.5 磅。",
-      "expected_route": "direct_edit"
+      "expected_route": "conversation_llm"
     },
     {
       "id": "route-032",
@@ -471,7 +471,7 @@
     {
       "id": "route-v2-031",
       "prompt": "将正文字号设置为 11 磅。",
-      "expected_route": "direct_edit"
+      "expected_route": "conversation_llm"
     },
     {
       "id": "route-v2-032",
@@ -1366,8 +1366,7 @@
           "op": "remove",
           "path": "work_experience[0].content_blocks[0].items",
           "index": 1,
-          "target_semantic_role": "responsibilities",
-          "expected": "整理接口文档并协助定位慢查询"
+          "target_semantic_role": "responsibilities"
         }
       ]
     },
@@ -2944,8 +2943,7 @@
           "op": "move",
           "path": "project_experience[0].content_blocks[1].items",
           "from_index": 1,
-          "to_index": 0,
-          "expected": "为核心接口补充自动化测试"
+          "to_index": 0
         }
       ],
       "answer_expectation": "empty"
@@ -2964,8 +2962,7 @@
         {
           "op": "remove",
           "path": "work_experience[0].content_blocks[0].items",
-          "index": 1,
-          "expected": "整理接口文档并协助定位慢查询"
+          "index": 1
         },
         {
           "op": "append",
@@ -3332,8 +3329,7 @@
         {
           "op": "remove",
           "path": "project_experience[0].content_blocks[1].items",
-          "index": 1,
-          "expected": "为核心接口补充自动化测试"
+          "index": 1
         }
       ],
       "answer_expectation": "empty",
@@ -4278,7 +4274,6 @@
           "path": "project_experience[0].content_blocks[1].items",
           "from_index": 1,
           "to_index": 0,
-          "expected": "为核心接口补充自动化测试",
           "target_semantic_role": "responsibilities"
         }
       ],
@@ -4724,8 +4719,7 @@
           "op": "move",
           "path": "project_experience[0].content_blocks[1].items",
           "from_index": 1,
-          "to_index": 0,
-          "expected": "为核心接口补充自动化测试"
+          "to_index": 0
         }
       ],
       "answer_expectation": "empty"
@@ -4744,8 +4738,7 @@
         {
           "op": "remove",
           "path": "work_experience[0].content_blocks[0].items",
-          "index": 1,
-          "expected": "整理接口文档并协助定位慢查询"
+          "index": 1
         },
         {
           "op": "append",
@@ -4928,8 +4921,7 @@
         {
           "op": "remove",
           "path": "others.skills",
-          "index": 2,
-          "expected": "Git"
+          "index": 2
         }
       ],
       "answer_expectation": "empty"
@@ -5746,8 +5738,7 @@
           "op": "move",
           "path": "project_experience[0].content_blocks[1].items",
           "from_index": 1,
-          "to_index": 0,
-          "expected": "为核心接口补充自动化测试"
+          "to_index": 0
         }
       ],
       "answer_expectation": "empty"
@@ -6636,8 +6627,7 @@
           "op": "move",
           "path": "project_experience[0].content_blocks[1].items",
           "from_index": 1,
-          "to_index": 0,
-          "expected": "为核心接口补充自动化测试"
+          "to_index": 0
         }
       ],
       "expected_changes": {
@@ -6747,8 +6737,7 @@
       "resume_operations": [
         {
           "op": "remove",
-          "path": "honors[0]",
-          "expected": "2023 年海岚大学创新实践奖"
+          "path": "honors[0]"
         }
       ],
       "expected_changes": {
@@ -6807,8 +6796,7 @@
           "op": "move",
           "path": "others.skills",
           "from_index": 2,
-          "to_index": 0,
-          "expected": "Git"
+          "to_index": 0
         }
       ],
       "expected_changes": {
@@ -6982,8 +6970,7 @@
         {
           "op": "remove",
           "path": "project_experience[0].content_blocks[1].items",
-          "index": 1,
-          "expected": "为核心接口补充自动化测试"
+          "index": 1
         }
       ],
       "expected_changes": {
@@ -7037,8 +7024,7 @@
           "op": "move",
           "path": "project_experience[0].content_blocks[1].items",
           "from_index": 1,
-          "to_index": 0,
-          "expected": "为核心接口补充自动化测试"
+          "to_index": 0
         }
       ],
       "expected_changes": {
@@ -7272,8 +7258,7 @@
           "op": "move",
           "path": "others.skills",
           "from_index": 2,
-          "to_index": 0,
-          "expected": "Git"
+          "to_index": 0
         }
       ],
       "expected_changes": {
@@ -7418,8 +7403,7 @@
           "op": "move",
           "path": "project_experience[0].content_blocks[1].items",
           "from_index": 1,
-          "to_index": 0,
-          "expected": "为核心接口补充自动化测试"
+          "to_index": 0
         }
       ],
       "expected_changes": {

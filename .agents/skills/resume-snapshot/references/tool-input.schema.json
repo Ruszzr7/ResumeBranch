@@ -1,6 +1,6 @@
 {
   "additionalProperties": false,
-  "description": "Arguments the model is allowed to supply to the Skill.",
+  "description": "模型可以提供给本 Skill 的参数。",
   "properties": {
     "reason": {
       "default": "",

@@ -219,6 +219,8 @@ class AgentMemoryState(Base):
     user_id = Column(Integer, nullable=False, index=True)
     session_id = Column(String(36), nullable=False)
     summary = Column(large_text_type, default="")
+    # The physical column name is retained to avoid a schema migration. Its
+    # current payload is a list of structured complete conversation rounds.
     recent_messages = Column(JSON, default=list)
     version = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -623,6 +625,43 @@ def close_conversation_context(db, user_id: int, context_id: str):
     ).delete(synchronize_session=False)
     db.commit()
     return context
+
+
+def reset_main_conversation_context(db, user_id: int, task_id: str, context_id: str):
+    """Reset one durable main conversation without changing resume business data."""
+    task = get_resume_task(db, user_id, task_id)
+    context = get_conversation_context_record(db, user_id, context_id)
+    if not task or not context or context.task_id != task.id:
+        return None
+    if context.context_type != "main":
+        raise ValueError("只能重置主对话")
+    try:
+        task.messages = []
+        task.compressed_context = []
+        task.pending_confirmation = None
+        task.updated_at = datetime.utcnow()
+        context.metadata_json = {}
+        context.updated_at = datetime.utcnow()
+        db.query(AgentMemoryState).filter(
+            AgentMemoryState.user_id == user_id,
+            AgentMemoryState.scope_id == f"task:{task.id}",
+        ).delete(synchronize_session=False)
+        db.query(AgentSkillState).filter(
+            AgentSkillState.user_id == user_id,
+            AgentSkillState.task_id == task.id,
+            AgentSkillState.session_id == context.session_id,
+        ).delete(synchronize_session=False)
+        db.query(ResumeEditLock).filter(
+            ResumeEditLock.user_id == user_id,
+            ResumeEditLock.task_id == task.id,
+            ResumeEditLock.owner_session_id == context.session_id,
+        ).delete(synchronize_session=False)
+        db.commit()
+        db.refresh(context)
+        return context
+    except Exception:
+        db.rollback()
+        raise
 
 
 def serialize_conversation_context(context):
@@ -1068,26 +1107,28 @@ def record_resume_revision(
     return revision
 
 
-def undo_latest_resume_revision(db, user_id: int, task_id: str) -> tuple[str, dict | None, dict | None]:
+def undo_latest_resume_revision(
+    db, user_id: int, task_id: str,
+) -> tuple[str, dict | None, dict | None, str | None]:
     """Undo the latest revision only when no later edit has changed its result."""
     from .resume_changes import resume_digest
 
     task = get_resume_task(db, user_id, task_id)
     if not task:
-        return "not_found", None, None
+        return "not_found", None, None, None
     revision = db.query(ResumeRevision).filter(
         ResumeRevision.task_id == task_id,
         ResumeRevision.user_id == user_id,
         ResumeRevision.undone_at.is_(None),
     ).order_by(ResumeRevision.created_at.desc()).first()
     if not revision:
-        return "no_revision", None, None
+        return "no_revision", None, None, None
     current_data = validate_resume_data(task.resume_data or {})
     if resume_digest(current_data) != resume_digest(validate_resume_data(revision.after_data or {})):
-        return "conflict", None, None
+        return "conflict", None, None, None
     current_layout = normalize_layout_config(task.layout_config)
     if revision.after_layout is not None and current_layout != normalize_layout_config(revision.after_layout):
-        return "conflict", None, None
+        return "conflict", None, None, None
 
     restored = validate_resume_data(revision.before_data or {})
     task.resume_data = restored
@@ -1097,22 +1138,6 @@ def undo_latest_resume_revision(db, user_id: int, task_id: str) -> tuple[str, di
     )
     task.layout_config = restored_layout
     task.pending_confirmation = None
-    undo_event = {
-        "type": "system",
-        "content": (
-            "系统事件：用户已撤回上一轮简历修改。当前数据库中的简历内容已恢复；"
-            "后续判断必须以当前简历数据为准，不得沿用历史消息中‘修改已生效’的描述。"
-        ),
-    }
-    task.compressed_context = list(task.compressed_context or []) + [undo_event]
-    memory = db.query(AgentMemoryState).filter(
-        AgentMemoryState.scope_id == f"task:{task_id}",
-        AgentMemoryState.user_id == user_id,
-    ).first()
-    if memory:
-        memory.recent_messages = list(memory.recent_messages or []) + [undo_event]
-        memory.version = int(memory.version or 0) + 1
-        memory.updated_at = datetime.utcnow()
     task.updated_at = datetime.utcnow()
     if task.is_base:
         project = db.query(ResumeProject).filter(ResumeProject.id == task.project_id).first()
@@ -1121,7 +1146,7 @@ def undo_latest_resume_revision(db, user_id: int, task_id: str) -> tuple[str, di
             project.updated_at = datetime.utcnow()
     revision.undone_at = datetime.utcnow()
     db.commit()
-    return "undone", restored, restored_layout
+    return "undone", restored, restored_layout, revision.id
 
 
 def get_task_layout_config(db, user_id: int, task_id: str) -> dict | None:
@@ -1582,50 +1607,31 @@ def _agent_memory_scope(db, user_id: int, session_id: str) -> tuple[str, str | N
     return f"conversation:{user_id}:{session_id}", None
 
 
-def _split_legacy_memory(context: list) -> tuple[str, list]:
-    items = list(context or [])
-    if not items:
-        return "", []
-    first = items[0] if isinstance(items[0], dict) else {}
-    first_type = str(first.get("type", "")).lower()
-    first_content = str(first.get("content", "") or "")
-    if first_type in {"system", "systemmessage"} and not first_content.startswith("系统事件："):
-        return first_content, items[1:]
-    return "", items
-
-
 def get_agent_memory_state(db, user_id: int, session_id: str) -> dict:
-    """Load layered memory, lazily falling back to the legacy context field."""
+    """Load the rolling summary and recent complete conversation rounds."""
+    from .harness.memory import normalize_memory_summary, normalize_recent_rounds, serialize_memory_summary
+
     scope_id, task_id = _agent_memory_scope(db, user_id, session_id)
     memory = db.query(AgentMemoryState).filter(
         AgentMemoryState.scope_id == scope_id,
         AgentMemoryState.user_id == user_id,
     ).first()
     if memory:
+        recent_rounds = normalize_recent_rounds(memory.recent_messages)
+        legacy_memory = bool(memory.recent_messages) and not recent_rounds
+        summary = serialize_memory_summary(normalize_memory_summary(memory.summary))
         return {
             "scope_id": scope_id,
             "task_id": task_id,
-            "summary": memory.summary or "",
-            "recent_messages": memory.recent_messages or [],
+            "summary": "" if legacy_memory else summary,
+            "recent_rounds": recent_rounds,
             "version": memory.version or 0,
         }
-
-    task = _active_task(db, user_id)
-    context = _context_query(db, user_id, session_id) if task else None
-    if task and (not context or context.context_type == "main"):
-        legacy_context = task.compressed_context or []
-    else:
-        conversation = db.query(Conversation).filter(
-            Conversation.user_id == user_id,
-            Conversation.session_id == session_id,
-        ).first()
-        legacy_context = conversation.compressed_context if conversation else []
-    summary, recent_messages = _split_legacy_memory(legacy_context)
     return {
         "scope_id": scope_id,
         "task_id": task_id,
-        "summary": summary,
-        "recent_messages": recent_messages,
+        "summary": "",
+        "recent_rounds": [],
         "version": 0,
     }
 
@@ -1635,12 +1641,15 @@ def save_agent_memory_state(
     user_id: int,
     session_id: str,
     summary: str,
-    recent_messages: list,
+    recent_rounds: list,
     expected_version: int,
 ) -> int:
     """Persist layered memory with optimistic concurrency control."""
+    from .harness.memory import normalize_memory_summary, serialize_memory_summary
+
     scope_id, task_id = _agent_memory_scope(db, user_id, session_id)
     now = datetime.utcnow()
+    normalized_summary = serialize_memory_summary(normalize_memory_summary(summary))
     memory = db.query(AgentMemoryState).filter(
         AgentMemoryState.scope_id == scope_id,
         AgentMemoryState.user_id == user_id,
@@ -1653,8 +1662,8 @@ def save_agent_memory_state(
             task_id=task_id,
             user_id=user_id,
             session_id=session_id,
-            summary=summary or "",
-            recent_messages=recent_messages or [],
+            summary=normalized_summary,
+            recent_messages=recent_rounds or [],
             version=1,
             updated_at=now,
         )
@@ -1671,8 +1680,8 @@ def save_agent_memory_state(
         AgentMemoryState.user_id == user_id,
         AgentMemoryState.version == int(expected_version or 0),
     ).update({
-        AgentMemoryState.summary: summary or "",
-        AgentMemoryState.recent_messages: recent_messages or [],
+        AgentMemoryState.summary: normalized_summary,
+        AgentMemoryState.recent_messages: recent_rounds or [],
         AgentMemoryState.session_id: session_id,
         AgentMemoryState.version: int(expected_version or 0) + 1,
         AgentMemoryState.updated_at: now,
@@ -1682,6 +1691,72 @@ def save_agent_memory_state(
         raise MemoryVersionConflict("记忆状态版本已变化，请重新加载后重试")
     db.commit()
     return int(expected_version or 0) + 1
+
+
+def update_agent_memory_round_outcome(
+    db,
+    user_id: int,
+    session_id: str | None,
+    *,
+    status: str,
+    task_id: str | None = None,
+    round_id: str | None = None,
+    revision_id: str | None = None,
+    outcome_updates: dict | None = None,
+) -> bool:
+    """Update the originating recent round after confirm, reject or undo."""
+    from .harness.memory import (
+        normalize_recent_rounds,
+        update_conversation_round,
+        update_summary_edit_event,
+    )
+
+    if not hasattr(db, "query"):
+        return False
+    query = db.query(AgentMemoryState).filter(AgentMemoryState.user_id == user_id)
+    if session_id:
+        scope_id, _ = _agent_memory_scope(db, user_id, session_id)
+        query = query.filter(AgentMemoryState.scope_id == scope_id)
+    elif task_id:
+        query = query.filter(AgentMemoryState.task_id == task_id)
+    else:
+        return False
+    for memory in query.all():
+        rounds = normalize_recent_rounds(memory.recent_messages)
+        target_round_id = str(round_id or "").strip()
+        if not target_round_id and revision_id:
+            for item in reversed(rounds):
+                outcome = item.get("outcome") or {}
+                if str(outcome.get("revision_id") or "") == str(revision_id):
+                    target_round_id = str(item.get("round_id") or "")
+                    break
+        if target_round_id:
+            updated_rounds, changed = update_conversation_round(
+                rounds,
+                target_round_id,
+                status=status,
+                outcome_updates=outcome_updates,
+            )
+            if changed:
+                memory.recent_messages = updated_rounds
+                memory.version = int(memory.version or 0) + 1
+                memory.updated_at = datetime.utcnow()
+                db.commit()
+                return True
+        updated_summary, changed_summary = update_summary_edit_event(
+            memory.summary,
+            round_id=str(round_id or "").strip(),
+            revision_id=str(revision_id or "").strip(),
+            status=status,
+            outcome_updates=outcome_updates,
+        )
+        if changed_summary:
+            memory.summary = updated_summary
+            memory.version = int(memory.version or 0) + 1
+            memory.updated_at = datetime.utcnow()
+            db.commit()
+            return True
+    return False
 
 
 def get_agent_skill_state(db, user_id: int, session_id: str, skill_name: str) -> dict:

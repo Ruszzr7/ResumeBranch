@@ -10,6 +10,8 @@ from backend.resume_agent import (
     direct_edit_node,
     entry_router,
     is_explicit_resume_change_request,
+    is_font_size_chat_change_request,
+    _preview_summary,
     route_after_conversation,
     skill_runtime,
 )
@@ -43,6 +45,30 @@ def resume_payload(name="测试用户", *, with_education=False):
             "theses": [],
         }]
     return payload
+
+
+class PreviewSummaryTests(unittest.TestCase):
+    def test_long_change_summary_uses_stacked_before_and_after_values(self):
+        before = "旧内容" * 60
+        after = "新内容" * 60
+        summary = _preview_summary([{
+            "label": "项目经历 1 · 正文",
+            "kind": "content",
+            "before_display": before,
+            "after_display": after,
+        }])
+        self.assertIn("修改前：\n  " + before, summary)
+        self.assertIn("\n  →\n", summary)
+        self.assertIn("修改后：\n  " + after, summary)
+
+    def test_short_change_summary_keeps_inline_transition(self):
+        summary = _preview_summary([{
+            "label": "基础信息 · 姓名",
+            "kind": "content",
+            "before_display": "旧姓名",
+            "after_display": "新姓名",
+        }])
+        self.assertIn("旧姓名 → 新姓名", summary)
 
 
 class ConfirmationFlowTests(unittest.IsolatedAsyncioTestCase):
@@ -171,17 +197,20 @@ class ConfirmationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(candidate["self_evaluation"], ["保持持续学习和复盘"])
         self.assertEqual(result["resume_data"]["self_evaluation"], ["保持**持续学习**和复盘"])
 
-    async def test_font_size_chat_change_redirects_to_modal_without_candidate(self):
+    async def test_font_size_chat_change_stays_on_agent_skill_path(self):
         state = AgentState(
             messages=[HumanMessage(content="把正文字号调整为10.5磅")],
             resume_data=resume_payload("测试用户"), jd_data={}, user_id=7, task_id="task-1",
         )
-        self.assertEqual(entry_router(state), "direct_edit")
-        with patch("backend.resume_agent.conversation_llm") as llm:
-            result = await direct_edit_node(state)
-        llm.ainvoke.assert_not_called()
-        self.assertIsNone(result["pending_confirmation"])
-        self.assertIn("设置各部分字号", result["messages"][-1].content)
+        self.assertEqual(entry_router(state), "conversation_llm")
+
+    async def test_font_size_visual_question_is_not_treated_as_mutation(self):
+        state = AgentState(
+            messages=[HumanMessage(content="你认为目前页边距和字号大小是否需要修改？")],
+            resume_data=resume_payload("测试用户"), jd_data={}, user_id=7, task_id="task-1",
+        )
+        self.assertFalse(is_font_size_chat_change_request(state.messages[-1].content))
+        self.assertEqual(entry_router(state), "conversation_llm")
 
     async def test_scoped_school_replacement_uses_local_preview_without_touching_honors(self):
         before = resume_payload("测试用户", with_education=True)

@@ -1,6 +1,6 @@
 {
   "additionalProperties": false,
-  "description": "Ephemeral image parts and non-sensitive snapshot diagnostics.",
+  "description": "临时图像部件和非敏感快照诊断信息。",
   "properties": {
     "parts": {
       "items": {

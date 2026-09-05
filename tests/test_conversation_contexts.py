@@ -10,7 +10,9 @@ from backend.database import (
     Conversation,
     ConversationContext,
     ProjectTask,
+    ResumeEditLock,
     ResumeProject,
+    ResumeRevision,
     close_conversation_context,
     create_or_resume_conversation_context,
     ensure_main_context,
@@ -20,6 +22,7 @@ from backend.database import (
     get_conversation,
     delete_resume_project,
     list_conversation_contexts,
+    reset_main_conversation_context,
     save_agent_memory_state,
     save_agent_skill_state,
     save_conversation,
@@ -83,16 +86,64 @@ class ConversationContextTests(unittest.TestCase):
             ["closed"],
         )
 
-    def test_recommendation_snapshot_is_small_context_metadata(self):
+    def test_mission_lifecycle_marker_is_small_context_metadata(self):
         context = create_or_resume_conversation_context(self.db, 1, "task-1", "layout")
         updated = update_conversation_context_metadata(
             self.db,
             1,
             context.session_id,
-            {"latest_recommendations": "1. 只保留真实存在的排版问题。"},
+            {"initial_analysis_completed": True},
         )
-        self.assertEqual(updated.metadata_json["latest_recommendations"].split(".")[0], "1")
+        self.assertTrue(updated.metadata_json["initial_analysis_completed"])
         self.assertNotIn("messages", updated.metadata_json)
+
+    def test_reset_main_context_clears_chat_state_only(self):
+        main = ensure_main_context(self.db, 1, "task-1")
+        task = self.db.query(ProjectTask).filter(ProjectTask.id == "task-1").one()
+        task.resume_data = {"basics": {"name": "张三"}}
+        task.jd_data = {"position": "后端开发"}
+        task.layout_config = {"version": 10}
+        task.messages = [{"role": "user", "content": "历史消息"}]
+        task.compressed_context = [{"type": "human", "content": "近期消息"}]
+        task.pending_confirmation = {"confirm_id": "confirm-1"}
+        main.metadata_json = {"initial_analysis_completed": True}
+        self.db.add_all([
+            ResumeEditLock(
+                task_id="task-1", user_id=1, owner_session_id=main.session_id,
+                request_id="request-1", status="awaiting_confirmation",
+            ),
+            ResumeRevision(
+                id="revision-1", task_id="task-1", user_id=1,
+                before_data={"basics": {"name": "旧姓名"}},
+                after_data={"basics": {"name": "张三"}},
+            ),
+        ])
+        self.db.commit()
+        save_agent_memory_state(self.db, 1, main.session_id, "摘要", [], 0)
+        save_agent_skill_state(
+            self.db, 1, main.session_id, "resume-coach", {"active": True}, 0
+        )
+
+        reset = reset_main_conversation_context(self.db, 1, "task-1", main.id)
+
+        self.assertEqual(reset.id, main.id)
+        self.db.refresh(task)
+        self.assertEqual(task.messages, [])
+        self.assertEqual(task.compressed_context, [])
+        self.assertIsNone(task.pending_confirmation)
+        self.assertEqual(task.resume_data, {"basics": {"name": "张三"}})
+        self.assertEqual(task.jd_data, {"position": "后端开发"})
+        self.assertEqual(task.layout_config, {"version": 10})
+        self.assertEqual(reset.metadata_json, {})
+        self.assertEqual(self.db.query(AgentMemoryState).count(), 0)
+        self.assertEqual(self.db.query(AgentSkillState).count(), 0)
+        self.assertEqual(self.db.query(ResumeEditLock).count(), 0)
+        self.assertEqual(self.db.query(ResumeRevision).count(), 1)
+
+    def test_reset_rejects_mission_context(self):
+        context = create_or_resume_conversation_context(self.db, 1, "task-1", "layout")
+        with self.assertRaisesRegex(ValueError, "只能重置主对话"):
+            reset_main_conversation_context(self.db, 1, "task-1", context.id)
 
     def test_project_delete_removes_mission_storage(self):
         context = create_or_resume_conversation_context(self.db, 1, "task-1", "layout")

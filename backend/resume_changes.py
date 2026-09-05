@@ -150,6 +150,36 @@ def _display_value(value: Any, field_key: str = "", path: list[Any] | None = Non
     return VALUE_LABELS.get(str(value), str(value))
 
 
+def _value_at_path(root: Any, path: list[Any]) -> Any:
+    current = root
+    for token in path:
+        if isinstance(token, int):
+            if not isinstance(current, list) or token < 0 or token >= len(current):
+                return None
+            current = current[token]
+        else:
+            if not isinstance(current, dict) or token not in current:
+                return None
+            current = current[token]
+    return current
+
+
+def _display_change_value(root: dict, value: Any, path: list[Any]) -> str:
+    """Render list-backed content blocks without flattening their item boundaries."""
+    if path and path[-1] == "items" and isinstance(value, list):
+        block = _value_at_path(root, path[:-1])
+        block_type = str(block.get("type") or "") if isinstance(block, dict) else ""
+        rendered = [_display_value(item, path=[*path, index]) for index, item in enumerate(value)]
+        if not rendered:
+            return "未填写"
+        if block_type == "numbered_list":
+            return "\n".join(f"{index}. {item}" for index, item in enumerate(rendered, start=1))
+        if block_type == "bullet_list":
+            return "\n".join(f"• {item}" for item in rendered)
+        return "\n".join(rendered)
+    return _display_value(value, str(path[-1]) if path else "", path)
+
+
 def _is_blank(value: Any) -> bool:
     return value is None or value == "" or value == [] or value == {}
 
@@ -181,8 +211,8 @@ def build_resume_changes(before: dict, after: dict) -> list[dict]:
             "label": label,
             "before": deepcopy(old),
             "after": deepcopy(new),
-            "before_display": _display_value(old, str(path[-1]) if path else "", path),
-            "after_display": _display_value(new, str(path[-1]) if path else "", path),
+            "before_display": _display_change_value(before, old, path),
+            "after_display": _display_change_value(after, new, path),
             "operation": operation,
         })
 

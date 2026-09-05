@@ -51,13 +51,6 @@ class ResumeVisualSkillTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(should_force_initial_visual_snapshot(initial))
         self.assertFalse(should_force_initial_visual_snapshot(follow_up))
 
-        legacy_follow_up = AgentState(
-            messages=[AIMessage(content="1. 调整间距"), HumanMessage(content="继续")],
-            context_type="layout",
-            context_metadata={"latest_recommendations": "1. 调整间距"},
-        )
-        self.assertFalse(should_force_initial_visual_snapshot(legacy_follow_up))
-
         explicit_command = AgentState(
             messages=[HumanMessage(content="检查排版")],
             context_type="layout",
@@ -142,7 +135,7 @@ class ResumeVisualSkillTests(unittest.IsolatedAsyncioTestCase):
         exposed = {item.name for item in model.bind_tools.call_args.args[0]}
         self.assertEqual(
             exposed,
-            {"activate_agent_skill"},
+            {"load_agent_skill"},
         )
         sent = bound.ainvoke.await_args.args[0]
         self.assertTrue(any(
@@ -173,7 +166,7 @@ class ResumeVisualSkillTests(unittest.IsolatedAsyncioTestCase):
         bound_tools = model.bind_tools.call_args.args[0]
         self.assertEqual(
             {value.name for value in bound_tools},
-            {"activate_agent_skill"},
+            {"load_agent_skill"},
         )
 
     async def test_model_visual_tool_renders_once_and_returns_ephemeral_parts(self):
@@ -232,7 +225,6 @@ class ResumeVisualSkillTests(unittest.IsolatedAsyncioTestCase):
                     "op": "set",
                     "path": "global.moduleMargin",
                     "value": 0.6,
-                    "expected": 0.5,
                 }],
             },
             "id": "layout-edit-1",
@@ -247,10 +239,7 @@ class ResumeVisualSkillTests(unittest.IsolatedAsyncioTestCase):
             resume_data={"basics": {"name": "张三"}},
             layout_data=default_layout_config(),
             context_type="layout",
-            context_metadata={
-                "initial_analysis_completed": True,
-                "latest_recommendations": "1. 将模块间距调整为 0.6。",
-            },
+            context_metadata={"initial_analysis_completed": True},
             user_id=1,
             task_id="task-1",
         )

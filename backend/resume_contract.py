@@ -236,7 +236,7 @@ def build_resume_edit_contract() -> dict[str, Any]:
             "required_fields": ["op", "path"],
             "allowed_fields": [
                 "op", "path", "value", "index", "from_index", "to_index",
-                "expected", "target_semantic_role",
+                "target_semantic_role",
             ],
             "op_values": ["set", "replace", "append", "insert", "remove", "move"],
             "path_rule": "path 必须指向当前规范化简历或排版配置中存在的目标",
@@ -679,6 +679,14 @@ def validate_resume_operation_path(
         raise ValueError(f"列表操作必须作用于契约声明的列表路径：{path}")
     if operation == "remove" and len(tokens) == 1:
         raise ValueError(f"不能删除简历根栏目：{path}")
+    if operation in {"set", "replace"}:
+        if kind == "root":
+            raise ValueError(f"整体对象必须拆分为最小可写字段：{path}")
+        if kind == "item" and (
+            _shape in RESUME_EXPERIENCE_SHAPES
+            or _shape in _CONTRACT_STRUCTURED_FIELDS
+        ):
+            raise ValueError(f"结构化对象必须拆分为最小可写字段：{path}")
 
 
 def validate_resume_operation_item(value: Any, tokens: tuple[str | int, ...], *, path: str) -> None:
