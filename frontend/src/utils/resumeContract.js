@@ -153,10 +153,14 @@ export function normalizeContentBlock(block = {}, { keepEmpty = true } = {}) {
   const labelBold = boolValue(source.label_bold, true) || labelWrappedBold
   let normalizedText = text(source.text)
   let normalizedItems = items
+  const hasExplicitSemanticRole = Object.prototype.hasOwnProperty.call(source, 'semantic_role')
+    && text(source.semantic_role)
   if (semantic_role === 'generic') {
     if (labelRole === 'generic') {
-      label = ''
-    } else if (label) {
+      // A generic block with an explicit semantic role and a custom label is
+      // a real visible submodule name, not parser decoration.
+      if (!hasExplicitSemanticRole) label = ''
+    } else if (label && !hasExplicitSemanticRole) {
       const flattened = flattenGenericLabel(label, labelBold, normalizedText, normalizedItems)
       normalizedText = flattened.text
       normalizedItems = flattened.items
@@ -269,17 +273,8 @@ export function normalizeContentBlocks(value, { experienceKind = 'project' } = {
       }
     })
   }
-  const orderProjectBlocks = blocks => {
-    if (experienceKind !== 'project') return blocks
-    if (!blocks.some(block => block.semantic_role === 'tech_stack')) return blocks
-    const roleOrder = { tech_stack: 0, introduction: 1, responsibilities: 2, generic: 3 }
-    return blocks
-      .map((block, index) => ({ block, index }))
-      .sort((left, right) => (
-        (roleOrder[left.block.semantic_role] ?? 3) - (roleOrder[right.block.semantic_role] ?? 3)
-        || left.index - right.index
-      ))
-      .map(({ block }) => block)
-  }
-  return orderProjectBlocks(normalizedExplicit)
+  // The module-order dialog owns project block ordering.  Never sort by
+  // semantic role here, otherwise an explicit user arrangement is lost on
+  // every preview/export pass.
+  return normalizedExplicit
 }

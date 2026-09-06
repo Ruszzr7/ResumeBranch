@@ -33,7 +33,7 @@ from .layout_config import (
 )
 
 
-LAYOUT_CAPABILITY_VERSION = "2"
+LAYOUT_CAPABILITY_VERSION = "4"
 
 # These are the paths that the conversation edit skill may mutate.  The
 # remaining normalized fields are renderer state or compatibility fields and
@@ -66,7 +66,7 @@ TYPOGRAPHY_FONT_SIZE_LABELS = {
 EDITABLE_MODULE_FIELDS: dict[str, set[str]] = {
     "education": {
         "schoolTagStyle", "hiddenMetrics",
-        "thesisDisplay", "supplementListStyle",
+        "thesisDisplay", "supplementListStyle", "childSectionOrder",
     },
     "skills": {"listStyle"},
     "research_interests": {"listStyle"},
@@ -81,6 +81,7 @@ EDITABLE_MODULE_FIELDS: dict[str, set[str]] = {
 
 # Values for fields whose enum is not represented by layout_config.ENUMS.
 EXTRA_ENUMS: dict[tuple[str, str], set[str]] = {
+    ("education", "childSectionOrder"): {"education_supplement", "honors", "publications", "research_interests", "others"},
     ("skills", "listStyle"): {"paragraph", "bullet", "numbered"},
     ("research_interests", "listStyle"): {"paragraph", "bullet", "numbered"},
     ("honors", "listStyle"): {"paragraph", "bullet", "numbered"},
@@ -111,6 +112,7 @@ LIST_FIELDS: dict[tuple[str, str], set[str]] = {
     ("global", "sectionOrder"): set(SECTION_IDS),
     ("global", "hiddenSections"): set(SECTION_IDS),
     ("education", "hiddenMetrics"): set(ALLOWED_HIDDEN_FIELDS["education"]),
+    ("education", "childSectionOrder"): {"education_supplement", "honors", "publications", "research_interests", "others"},
     ("others", "fieldOrder"): set(ALLOWED_HIDDEN_FIELDS["others"]),
     ("others", "hiddenFields"): set(ALLOWED_HIDDEN_FIELDS["others"]),
 }
@@ -315,7 +317,7 @@ def build_layout_capability_manifest() -> dict[str, Any]:
             "tech_stack": "项目技术栈，默认段落；仅用于项目经历，不等同于顶层专业技能栏目",
             "introduction": "简介语义；工作经历显示工作简介，项目经历显示项目简介，默认段落",
             "responsibilities": "职责语义；工作经历显示工作职责，项目经历显示项目职责，默认编号",
-            "generic": "其他内容语义；工作经历对应其他工作内容，项目经历对应其他项目内容，默认分点",
+            "generic": "其他内容语义；工作经历对应其他工作内容，项目经历对应其他项目内容，允许新增多个、标题可为空；空标题正文仍显示和导出，默认分点",
             "education_supplement": "教育经历补充，不显示独立模块标题",
             "merged_sections": "并入教育经历的研究方向、主要荣誉、论文、其他信息不再显示自己的顶层标题",
         },
@@ -326,16 +328,17 @@ def build_layout_capability_manifest() -> dict[str, Any]:
             "publications": "论文支持段落、分点、编号",
             "custom_sections": "自定义栏目内容支持段落、分点、编号",
             "self_evaluation": "自我评价支持段落、分点、编号",
-            "work_experience": "工作内容由工作简介、工作职责、其他工作内容三种内容块组成；职责默认编号，其他内容默认分点",
-            "project_experience": "项目内容按技术栈、项目简介、项目职责、其他项目内容固定顺序组成；技术栈和项目简介默认段落，职责默认编号，其他内容默认分点",
+            "work_experience": "工作内容由工作简介、工作职责及零个或多个其他工作内容块组成；其他内容标题可为空且空标题正文仍显示和导出；顺序按当前 content_blocks 保存，仅可在同一条工作经历内通过 resume_operations 的 move 调整，职责默认编号，其他内容默认分点",
+            "project_experience": "项目内容由技术栈、项目简介、项目职责及零个或多个其他项目内容块组成；其他内容标题可为空且空标题正文仍显示和导出；顺序按当前 content_blocks 保存，仅可在同一项目内通过 resume_operations 的 move 调整",
             "others": "证书和语言各自独立一行，条目之间使用分隔符，不提供长文本换行",
-            "education": "教育经历为学校、学历/专业/成绩、日期三栏；教育经历补充使用 education.supplementListStyle",
+            "education": "教育经历为学校、学历/专业/成绩、日期三栏；教育经历补充与并入教育经历的子模块按 education.childSectionOrder 排列，教育经历补充默认在最上方",
         },
         "global_rules": [
             "lineHeight 是全局行距；模块不能单独覆盖行距",
             "moduleMargin 是全局模块间距；模块不能单独设置另一份模块间距",
             "titleStyle 是全局统一的模块标题样式",
             "sectionOrder 只排列实际有内容且未并入教育经历的顶层模块；多个自定义栏目按各自标题独立排列",
+            "education.childSectionOrder 只排列教育经历内部的教育经历补充和已并入教育经历的子模块，不改变顶层 sectionOrder",
             "sectionPlacements 只支持独立栏目或并入教育经历",
         ],
         "read_only_layout_state": [
@@ -496,7 +499,7 @@ def _validate_path_and_value(
     if field not in allowed_fields:
         raise ValueError(f"排版字段“{field}”不属于可执行的对话排版能力")
 
-    if field in {"sectionOrder", "hiddenSections", "hiddenFields", "hiddenMetrics", "fieldOrder"}:
+    if field in {"sectionOrder", "hiddenSections", "hiddenFields", "hiddenMetrics", "fieldOrder", "childSectionOrder"}:
         # A list field may be replaced as a whole or edited by index.  A move
         # operation must target the list itself.
         if (section, field) not in LIST_FIELDS:

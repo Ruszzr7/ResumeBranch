@@ -422,12 +422,20 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
             for value in (other_values.get(field) or [])
         ]
         merged_sections.append(("others", merged_other_values))
-        merged_sections.sort(key=lambda item: global_layout["sectionOrder"].index(item[0]))
-        supplement_values = list(resume_data.get("education_supplement") or [])
-        for section_id, values in merged_sections:
-            if not merged_into_education(section_id) or hidden(section_id):
+        global_order = global_layout["sectionOrder"]
+        merged_sections.sort(key=lambda item: global_order.index(item[0]))
+        merged_by_id = {section_id: values for section_id, values in merged_sections}
+        child_order = layout_config["education"].get("childSectionOrder") or [
+            "education_supplement", *[section_id for section_id, _ in merged_sections]
+        ]
+        supplement_values = []
+        for section_id in child_order:
+            if section_id == "education_supplement":
+                supplement_values.extend(resume_data.get("education_supplement") or [])
                 continue
-            supplement_values.extend(values)
+            values = merged_by_id.get(section_id)
+            if values is not None and merged_into_education(section_id) and not hidden(section_id):
+                supplement_values.extend(values)
         if supplement_values:
             list_style = layout_config["education"].get("supplementListStyle", "bullet")
             display_values = _module_list_values(supplement_values, list_style)

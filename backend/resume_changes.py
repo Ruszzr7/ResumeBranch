@@ -230,6 +230,12 @@ def build_resume_changes(before: dict, after: dict) -> list[dict]:
             return
         if isinstance(old, list) and isinstance(new, list):
             field = str(path[-1]) if path else ""
+            if field == "content_blocks" and len(old) == len(new):
+                old_signatures = [json.dumps(item, ensure_ascii=False, sort_keys=True) for item in old]
+                new_signatures = [json.dumps(item, ensure_ascii=False, sort_keys=True) for item in new]
+                if sorted(old_signatures) == sorted(new_signatures):
+                    add(path, old, new, "replace")
+                    return
             if field in ATOMIC_LIST_FIELDS or all(not isinstance(item, dict) for item in old + new):
                 add(path, old, new, "replace")
                 return

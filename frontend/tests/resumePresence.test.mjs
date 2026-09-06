@@ -6,6 +6,7 @@ import { hasMeaningfulResumeContent } from '../src/utils/resumePresence.js'
 test('normalized empty resume is still considered empty', () => {
   assert.equal(hasMeaningfulResumeContent({
     parsing_status: 'none',
+    formatting_version: 0,
     basics: { name: '', target_position: '', photo: 'data:image/png;base64,ignored' },
     education: [],
     work_experience: [],

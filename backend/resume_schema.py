@@ -104,7 +104,7 @@ class WorkExperience(ResumeModel):
     job_type: str = Field(default="", description="工作类型；原文没有明确标注时必须留空，不得推断")
     content_blocks: list[ProjectContentBlock] = Field(
         default_factory=list,
-        description="工作简介、工作职责、其他工作内容等语义内容块；每种内容均可按原文或用户要求使用段落、分点或编号形式；工作经历不使用项目技术栈角色",
+        description="工作简介、工作职责及零个或多个其他工作内容语义块；其他工作内容可带自定义标签或留空，空标签正文仍显示和导出；按当前 content_blocks 顺序保存；每种内容均可按原文或用户要求使用段落、分点或编号形式；工作经历不使用项目技术栈角色",
     )
 
 
@@ -116,7 +116,7 @@ class ProjectExperience(ResumeModel):
     date_range: list[str] = Field(default_factory=list, description="项目时间")
     content_blocks: list[ProjectContentBlock] = Field(
         default_factory=list,
-        description="技术栈、项目简介、项目职责、其他项目内容语义块；语义角色与段落、分点、编号形式相互独立",
+        description="技术栈、项目简介、项目职责及零个或多个其他项目内容语义块；其他项目内容可带自定义标签或留空，空标签正文仍显示和导出；按当前 content_blocks 顺序保存，语义角色与段落、分点、编号形式相互独立",
     )
 
 

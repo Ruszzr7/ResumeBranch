@@ -99,8 +99,37 @@ const props = defineProps({
 
 // 获取当前语言的标签
 const t = computed(() => labels[props.lang] || labels.zh)
+const experienceItems = (data, root) => root === 'project_experience'
+  ? (data?.project_experience || data?.projects || [])
+  : (data?.work_experience || [])
+const experienceBlocksForOrdering = (item, root) => normalizeContentBlocks(item?.content_blocks, {
+  experienceKind: root === 'project_experience' ? 'project' : 'work'
+})
+const experienceContentOrderSnapshot = (data, root) => experienceItems(data, root).map(item => (
+  experienceBlocksForOrdering(item, root).map((_, index) => index)
+))
+const defaultExperienceContentOrder = (item, root) => {
+  const roleOrder = { tech_stack: 0, introduction: 1, responsibilities: 2, generic: 3 }
+  return experienceBlocksForOrdering(item, root)
+    .map((block, index) => ({ index, role: resolveContentBlockFlow(block).semanticRole }))
+    .sort((left, right) => (roleOrder[left.role] ?? 3) - (roleOrder[right.role] ?? 3) || left.index - right.index)
+    .map(item => item.index)
+}
 const initialLayout = expandSectionOrderForData(props.layoutConfig, props.data)
 const localSectionOrder = ref(initialLayout.global.sectionOrder)
+const localEducationChildOrder = ref([...(initialLayout.education?.childSectionOrder || [
+  'education_supplement', 'honors', 'publications', 'research_interests', 'others'
+])])
+const localProjectContentOrders = ref(experienceContentOrderSnapshot(props.data, 'project_experience'))
+const localWorkContentOrders = ref(experienceItems(props.data, 'work_experience')
+  .map(work => defaultExperienceContentOrder(work, 'work_experience')))
+// Work and project data can arrive at different times while the active resume
+// is being hydrated.  Keep the work default-order marker independent so a
+// project arriving first cannot make a newly-arrived work item preserve its
+// legacy generic-first order.
+const workOrdersHydrated = ref(false)
+const workOrderDataSource = ref(props.data)
+const preserveWorkOrderOnNextDataUpdate = ref(false)
 const RESUME_SETTINGS_DIALOG_EVENT = 'resume-settings-dialog-open'
 const showSectionSettingsDialog = ref(false)
 const isSavingSectionSettings = ref(false)
@@ -110,6 +139,7 @@ const layout = computed(() => {
   const source = showSectionSettingsDialog.value ? sectionSettingsDraft.value : props.layoutConfig
   const value = normalizeLayoutConfig(source)
   value.global.sectionOrder = [...localSectionOrder.value]
+  value.education.childSectionOrder = [...localEducationChildOrder.value]
   return value
 })
 const baseModuleName = name => isCustomSectionModule(name) ? 'custom_sections' : name
@@ -182,18 +212,37 @@ const mergedEducationGroups = computed(() => {
       })
     }
   ]
+  const childOrder = moduleLayout('education').childSectionOrder || [
+    'education_supplement', 'honors', 'publications', 'research_interests', 'others'
+  ]
+  const childIndex = section => {
+    const index = childOrder.indexOf(section.id)
+    return index < 0 ? childOrder.length : index
+  }
   return sections
     .filter(section => sectionMergedIntoEducation(section.id) && !hiddenSection(section.id) && section.values.length)
-    .sort((left, right) => sectionOrder(layout.value, left.id) - sectionOrder(layout.value, right.id))
+    .sort((left, right) => childIndex(left) - childIndex(right)
+      || sectionOrder(layout.value, left.id) - sectionOrder(layout.value, right.id))
 })
 const educationSupplementValues = computed(() => {
   const manual = (props.data?.education_supplement || [])
     .map(value => String(value || '').trim())
     .filter(Boolean)
-  const values = [
-    ...mergedEducationGroups.value.flatMap(section => section.values),
-    ...manual
+  const groupsById = new Map(mergedEducationGroups.value.map(section => [section.id, section]))
+  const childOrder = moduleLayout('education').childSectionOrder || [
+    'education_supplement', 'honors', 'publications', 'research_interests', 'others'
   ]
+  const values = []
+  const handled = new Set()
+  for (const childId of [...childOrder, ...groupsById.keys()]) {
+    if (handled.has(childId)) continue
+    handled.add(childId)
+    if (childId === 'education_supplement') {
+      values.push(...manual)
+      continue
+    }
+    values.push(...(groupsById.get(childId)?.values || []))
+  }
   return educationSupplementStyle.value === 'paragraph' && values.length
     ? [values.join('\n')]
     : values
@@ -291,8 +340,17 @@ function academicMetrics(item) {
   return metrics
 }
 
-function projectContentBlocks(item, experienceKind = 'project') {
-  return normalizeContentBlocks(item?.content_blocks, { experienceKind })
+function projectContentBlocks(item, experienceKind = 'project', experienceIndex = null) {
+  let blocks = normalizeContentBlocks(item?.content_blocks, { experienceKind })
+  if (Number.isInteger(experienceIndex)) {
+    const canonicalBlocks = blocks
+    const localOrders = experienceKind === 'project' ? localProjectContentOrders : localWorkContentOrders
+    const order = [...(localOrders.value[experienceIndex] || canonicalBlocks.map((_, index) => index))]
+      .filter(index => Number.isInteger(index) && index >= 0 && index < canonicalBlocks.length)
+    canonicalBlocks.forEach((_, index) => { if (!order.includes(index)) order.push(index) })
+    blocks = order.map(index => canonicalBlocks[index])
+  }
+  return blocks
     .filter(block => resolveContentBlockFlow(block).visible)
 }
 
@@ -490,15 +548,18 @@ function visibleOtherComponentRows() {
   })).filter(row => row.cells.length)
 }
 
-const emit = defineEmits(['open-jd-dialog', 'open-resume-edit', 'open-resume-import', 'toggle-lang', 'use-layout-prompt', 'layout-updated', 'render-style-updated'])
+const emit = defineEmits(['open-jd-dialog', 'open-resume-edit', 'open-resume-import', 'toggle-lang', 'use-layout-prompt', 'layout-updated', 'resume-updated', 'render-style-updated'])
 
 const SECTION_LABELS = {
   education: '教育经历', skills: '专业技能', research_interests: '研究方向', honors: '主要荣誉',
   publications: '论文',
   work_experience: '工作经历', project_experience: '项目经历',
-  custom_sections: '自定义栏目', others: '证书与语言', self_evaluation: '自我评价'
+  custom_sections: '自定义栏目', others: '证书与语言', self_evaluation: '自我评价',
+  education_supplement: '教育经历补充'
 }
-const isEducationChildSection = section => section !== 'education' && sectionMergedIntoEducation(section)
+const isEducationChildSection = section => section !== 'education'
+  && section !== 'education_supplement'
+  && sectionMergedIntoEducation(section)
 const hasResumeListContent = value => Array.isArray(value) && value.some(item => String(item || '').trim())
 const sectionHasContent = section => {
   const data = props.data || {}
@@ -508,6 +569,7 @@ const sectionHasContent = section => {
     return Boolean(custom?.title && hasResumeListContent(custom.items))
   }
   if (section === 'education') return Array.isArray(data.education) && data.education.length > 0
+  if (section === 'education_supplement') return (data.education_supplement || []).some(value => String(value || '').trim())
   if (section === 'skills') return hasResumeListContent(data.others?.skills)
   if (section === 'research_interests') return hasResumeListContent(data.research_interests)
   if (section === 'honors') return hasResumeListContent(data.honors)
@@ -523,28 +585,107 @@ const sectionHasContent = section => {
 }
 const reorderableTopSections = computed(() => localSectionOrder.value
   .filter(section => sectionLabel(section) && sectionHasContent(section) && !hiddenSection(section) && !isEducationChildSection(section)))
-const reorderableEducationChildren = computed(() => localSectionOrder.value
-  .filter(section => sectionLabel(section) && sectionHasContent(section) && !hiddenSection(section) && isEducationChildSection(section)))
-const reorderableSections = computed(() => reorderableTopSections.value.flatMap(section => (
-  section === 'education' ? [section, ...reorderableEducationChildren.value] : [section]
-)))
+const reorderableEducationChildren = computed(() => localEducationChildOrder.value
+  .filter(section => section === 'education_supplement'
+    ? sectionHasContent('education') && (props.data?.education_supplement || []).some(value => String(value || '').trim())
+    : sectionLabel(section) && sectionHasContent(section) && !hiddenSection(section) && isEducationChildSection(section)))
+const experienceChildRowId = (root, experienceIndex, blockIndex) => `${root}[${experienceIndex}].content_blocks[${blockIndex}]`
+const experienceChildRowParts = rowId => {
+  const match = /^(work_experience|project_experience)\[(\d+)\]\.content_blocks\[(\d+)\]$/.exec(String(rowId || ''))
+  return match ? { root: match[1], experienceIndex: Number(match[2]), blockIndex: Number(match[3]) } : null
+}
+const experienceChildRows = root => {
+  const localOrders = root === 'project_experience' ? localProjectContentOrders : localWorkContentOrders
+  return experienceItems(props.data, root).flatMap((experience, experienceIndex) => {
+    const blocks = experienceBlocksForOrdering(experience, root)
+    const order = [...(localOrders.value[experienceIndex] || blocks.map((_, index) => index))]
+      .filter(index => Number.isInteger(index) && index >= 0 && index < blocks.length)
+    blocks.forEach((_, index) => { if (!order.includes(index)) order.push(index) })
+    return order
+      .filter(index => resolveContentBlockFlow(blocks[index]).visible)
+      .map(blockIndex => experienceChildRowId(root, experienceIndex, blockIndex))
+  })
+}
+const reorderableProjectChildren = computed(() => experienceChildRows('project_experience'))
+const reorderableWorkChildren = computed(() => experienceChildRows('work_experience'))
+const reorderableSections = computed(() => reorderableTopSections.value.flatMap(section => {
+  const children = section === 'education'
+    ? reorderableEducationChildren.value
+    : section === 'project_experience' ? reorderableProjectChildren.value
+      : section === 'work_experience' ? reorderableWorkChildren.value : []
+  return [section, ...children]
+}))
+function hasExperienceGroupDivider(section) {
+  const parts = experienceChildRowParts(section)
+  if (!parts) return false
+  const index = reorderableSections.value.indexOf(section)
+  const next = reorderableSections.value[index + 1]
+  const nextParts = experienceChildRowParts(next)
+  return Boolean(nextParts
+    && nextParts.root === parts.root
+    && nextParts.experienceIndex > parts.experienceIndex)
+}
 const draggedSection = ref('')
 const isSavingSectionOrder = ref(false)
 const showSectionOrderDialog = ref(false)
 const sectionOrderChangedByDrag = ref(false)
-const sectionOrderSnapshot = ref([])
+const sectionOrderSnapshot = ref(null)
 const sectionOrderError = ref('')
 const listSettingSections = ['skills', 'research_interests', 'honors', 'publications', 'custom_sections', 'self_evaluation']
 const mergeSettingSections = ['research_interests', 'honors', 'publications', 'others']
 const LIST_STYLE_LABELS = { paragraph: '段落', bullet: '分点', numbered: '编号' }
 
 function sectionLabel(section) {
+  const experienceParts = experienceChildRowParts(section)
+  if (experienceParts) {
+    const experience = experienceItems(props.data, experienceParts.root)[experienceParts.experienceIndex]
+    const block = experience ? experienceBlocksForOrdering(experience, experienceParts.root)[experienceParts.blockIndex] : null
+    if (!block) return ''
+    const flow = resolveContentBlockFlow(block)
+    const isProject = experienceParts.root === 'project_experience'
+    let fallback = isProject
+      ? ({ tech_stack: '技术栈', introduction: '项目简介', responsibilities: '项目职责', generic: '其他项目内容（无标题）' }[flow.semanticRole] || '其他项目内容（无标题）')
+      : ({ introduction: '工作简介', responsibilities: '工作职责', generic: '其他工作内容（无标题）' }[flow.semanticRole] || '其他工作内容（无标题）')
+    if (flow.semanticRole === 'generic' && !flow.label) {
+      const unnamedGenericIndexes = experienceBlocksForOrdering(experience, experienceParts.root)
+        .map((candidate, index) => ({ candidate, index }))
+        .filter(({ candidate }) => {
+          const candidateFlow = resolveContentBlockFlow(candidate)
+          return candidateFlow.semanticRole === 'generic' && !candidateFlow.label
+        })
+        .map(({ index }) => index)
+      if (unnamedGenericIndexes.length > 1) {
+        fallback = fallback.replace('）', ` ${unnamedGenericIndexes.indexOf(experienceParts.blockIndex) + 1}）`)
+      }
+    }
+    const experienceName = plainInlineText(isProject
+      ? (experience?.project_name || experience?.name || `项目 ${experienceParts.experienceIndex + 1}`)
+      : (experience?.company_name || experience?.job_title || `工作 ${experienceParts.experienceIndex + 1}`))
+    return `${experienceName} · ${flow.label || fallback}`
+  }
   const customIndex = customSectionIndex(section)
   if (customIndex !== null) {
     return plainInlineText(props.data?.custom_sections?.[customIndex]?.title || `自定义栏目 ${customIndex + 1}`)
   }
   const fallback = SECTION_LABELS[section] || ''
   return fallback ? displayTitleText(section, fallback) : ''
+}
+
+function sectionOrderGroup(section) {
+  if (section === 'education_supplement' || isEducationChildSection(section)) return 'education'
+  const parts = experienceChildRowParts(section)
+  return parts ? `${parts.root}:${parts.experienceIndex}` : 'top'
+}
+
+function moveListItem(source, item, target, direction) {
+  const order = [...(source || [])]
+  const sourceIndex = order.indexOf(item)
+  const targetIndex = order.indexOf(target)
+  if (sourceIndex < 0 || targetIndex < 0) return order
+  order.splice(sourceIndex, 1)
+  const insertionIndex = order.indexOf(target) + (direction > 0 ? 1 : 0)
+  order.splice(insertionIndex, 0, item)
+  return order
 }
 
 function editableSectionPlacement(section) {
@@ -614,7 +755,37 @@ async function persistSectionOrder() {
   sectionOrderError.value = ''
   const candidate = normalizeLayoutConfig(layout.value)
   candidate.global.sectionOrder = [...localSectionOrder.value]
+  candidate.education.childSectionOrder = [...localEducationChildOrder.value]
+  const resumeCandidate = props.data ? JSON.parse(JSON.stringify(props.data)) : null
+  let resumeChanged = false
+  let workOrderChanged = false
+  if (resumeCandidate) {
+    for (const root of ['work_experience', 'project_experience']) {
+      const localOrders = root === 'project_experience' ? localProjectContentOrders : localWorkContentOrders
+      experienceItems(resumeCandidate, root).forEach((experience, experienceIndex) => {
+        const blocks = experienceBlocksForOrdering(experience, root)
+        if (!blocks.length) return
+        const currentOrder = blocks.map((_, index) => index)
+        const requestedOrder = [...(localOrders.value[experienceIndex] || currentOrder)]
+          .filter(index => Number.isInteger(index) && index >= 0 && index < blocks.length)
+        currentOrder.forEach(index => { if (!requestedOrder.includes(index)) requestedOrder.push(index) })
+        if (requestedOrder.join('|') === currentOrder.join('|')) return
+        experience.content_blocks = requestedOrder.map(index => blocks[index])
+        resumeChanged = true
+        if (root === 'work_experience') workOrderChanged = true
+      })
+    }
+  }
   try {
+    if (resumeChanged) {
+      const resumeResponse = await fetch('/save_resume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Task-ID': props.taskId, ...buildAuthorizationHeaders() },
+        body: JSON.stringify({ resume_data: resumeCandidate })
+      })
+      const resumeData = await resumeResponse.json().catch(() => ({}))
+      if (!resumeResponse.ok) throw new Error(resumeData.detail || '保存经历内容顺序失败')
+    }
     const response = await fetch(`/tasks/${props.taskId}/layout`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ...buildAuthorizationHeaders() },
@@ -622,14 +793,36 @@ async function persistSectionOrder() {
     })
     const data = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(data.detail || '保存模块顺序失败')
-    localSectionOrder.value = [...expandSectionOrderForData(data.layout_config, props.data).global.sectionOrder]
-    emit('layout-updated', data.layout_config)
-    sectionOrderSnapshot.value = []
+    const savedLayout = normalizeLayoutConfig(data.layout_config || candidate)
+    localSectionOrder.value = [...expandSectionOrderForData(savedLayout, resumeCandidate || props.data).global.sectionOrder]
+    localEducationChildOrder.value = [...savedLayout.education.childSectionOrder]
+    localProjectContentOrders.value = experienceContentOrderSnapshot(resumeCandidate || props.data, 'project_experience')
+    localWorkContentOrders.value = experienceContentOrderSnapshot(resumeCandidate || props.data, 'work_experience')
+    if (workOrderChanged) {
+      // The child order was explicitly saved in this dialog.  Preserve that
+      // authored order when the parent replaces the resume object below.
+      preserveWorkOrderOnNextDataUpdate.value = true
+    }
+    if (resumeChanged) {
+      emit('resume-updated', resumeCandidate)
+    }
+    emit('layout-updated', savedLayout)
+    sectionOrderSnapshot.value = null
     return true
   } catch (error) {
-    localSectionOrder.value = sectionOrderSnapshot.value.length
-      ? [...sectionOrderSnapshot.value]
+    const snapshot = sectionOrderSnapshot.value
+    localSectionOrder.value = snapshot?.global?.length
+      ? [...snapshot.global]
       : [...expandSectionOrderForData(props.layoutConfig, props.data).global.sectionOrder]
+    localEducationChildOrder.value = snapshot?.education?.length
+      ? [...snapshot.education]
+      : [...(normalizeLayoutConfig(props.layoutConfig).education.childSectionOrder)]
+    localProjectContentOrders.value = snapshot?.projects
+      ? JSON.parse(JSON.stringify(snapshot.projects))
+      : experienceContentOrderSnapshot(props.data, 'project_experience')
+    localWorkContentOrders.value = snapshot?.work
+      ? JSON.parse(JSON.stringify(snapshot.work))
+      : experienceContentOrderSnapshot(props.data, 'work_experience')
     sectionOrderError.value = error.message || '保存模块顺序失败'
     console.error(error)
     return false
@@ -640,10 +833,30 @@ async function persistSectionOrder() {
 
 function moveSection(section, direction) {
   if (isSavingSectionOrder.value) return
-  const visible = isEducationChildSection(section) ? reorderableEducationChildren.value : reorderableTopSections.value
+  const group = sectionOrderGroup(section)
+  const visible = group === 'education'
+    ? reorderableEducationChildren.value
+    : (group.startsWith('project_experience:') || group.startsWith('work_experience:'))
+      ? [...reorderableProjectChildren.value, ...reorderableWorkChildren.value].filter(item => sectionOrderGroup(item) === group)
+      : reorderableTopSections.value
   const visibleIndex = visible.indexOf(section)
   const targetSection = visible[visibleIndex + direction]
   if (visibleIndex < 0 || !targetSection) return
+  if (group === 'education') {
+    localEducationChildOrder.value = moveListItem(localEducationChildOrder.value, section, targetSection, direction)
+    return
+  }
+  if (group.startsWith('project_experience:') || group.startsWith('work_experience:')) {
+    const [root, rawIndex] = group.split(':')
+    const experienceIndex = Number(rawIndex)
+    const localOrders = root === 'project_experience' ? localProjectContentOrders : localWorkContentOrders
+    const order = [...(localOrders.value[experienceIndex] || [])]
+    const sourceParts = experienceChildRowParts(section)
+    const targetParts = experienceChildRowParts(targetSection)
+    if (!sourceParts || !targetParts) return
+    localOrders.value[experienceIndex] = moveListItem(order, sourceParts.blockIndex, targetParts.blockIndex, direction)
+    return
+  }
   const order = [...localSectionOrder.value]
   const sourceIndex = order.indexOf(section)
   order.splice(sourceIndex, 1)
@@ -659,16 +872,30 @@ function openSectionOrderDialog() {
   closeSectionSettingsDialog()
   closeToolbarMenu()
   activateResumeSettingsDialog('section-order')
-  sectionOrderSnapshot.value = [...expandSectionOrderForData(props.layoutConfig, props.data).global.sectionOrder]
-  localSectionOrder.value = [...sectionOrderSnapshot.value]
+  const snapshotLayout = expandSectionOrderForData(props.layoutConfig, props.data)
+  sectionOrderSnapshot.value = {
+    global: [...snapshotLayout.global.sectionOrder],
+    education: [...snapshotLayout.education.childSectionOrder],
+    projects: experienceContentOrderSnapshot(props.data, 'project_experience'),
+    work: localWorkContentOrders.value.map(order => [...order])
+  }
+  localSectionOrder.value = [...sectionOrderSnapshot.value.global]
+  localEducationChildOrder.value = [...sectionOrderSnapshot.value.education]
+  localProjectContentOrders.value = JSON.parse(JSON.stringify(sectionOrderSnapshot.value.projects))
+  localWorkContentOrders.value = JSON.parse(JSON.stringify(sectionOrderSnapshot.value.work))
   sectionOrderError.value = ''
   showSectionOrderDialog.value = true
 }
 
 function closeSectionOrderDialog() {
   if (isSavingSectionOrder.value) return
-  if (sectionOrderSnapshot.value.length) localSectionOrder.value = [...sectionOrderSnapshot.value]
-  sectionOrderSnapshot.value = []
+  if (sectionOrderSnapshot.value) {
+    localSectionOrder.value = [...sectionOrderSnapshot.value.global]
+    localEducationChildOrder.value = [...sectionOrderSnapshot.value.education]
+    localProjectContentOrders.value = JSON.parse(JSON.stringify(sectionOrderSnapshot.value.projects))
+    localWorkContentOrders.value = JSON.parse(JSON.stringify(sectionOrderSnapshot.value.work))
+  }
+  sectionOrderSnapshot.value = null
   sectionOrderError.value = ''
   draggedSection.value = ''
   sectionOrderChangedByDrag.value = false
@@ -693,15 +920,41 @@ function dragOverSection(event, targetSection) {
   event.preventDefault()
   const source = draggedSection.value
   if (!source || source === targetSection || isSavingSectionOrder.value) return
-  if (isEducationChildSection(source) !== isEducationChildSection(targetSection)) return
+  if (sectionOrderGroup(source) !== sectionOrderGroup(targetSection)) return
   const row = event.currentTarget
   const insertAfter = event.clientY > row.getBoundingClientRect().top + row.offsetHeight / 2
-  const order = [...localSectionOrder.value].filter(section => section !== source)
-  const targetIndex = order.indexOf(targetSection)
-  order.splice(targetIndex < 0 ? order.length : targetIndex + (insertAfter ? 1 : 0), 0, source)
-  if (order.join('|') !== localSectionOrder.value.join('|')) {
-    localSectionOrder.value = order
-    sectionOrderChangedByDrag.value = true
+  const group = sectionOrderGroup(source)
+  if (group === 'education') {
+    const order = [...localEducationChildOrder.value].filter(section => section !== source)
+    const targetIndex = order.indexOf(targetSection)
+    order.splice(targetIndex < 0 ? order.length : targetIndex + (insertAfter ? 1 : 0), 0, source)
+    if (order.join('|') !== localEducationChildOrder.value.join('|')) {
+      localEducationChildOrder.value = order
+      sectionOrderChangedByDrag.value = true
+    }
+  } else if (group.startsWith('project_experience:') || group.startsWith('work_experience:')) {
+    const [root, rawIndex] = group.split(':')
+    const experienceIndex = Number(rawIndex)
+    const localOrders = root === 'project_experience' ? localProjectContentOrders : localWorkContentOrders
+    const sourceParts = experienceChildRowParts(source)
+    const targetParts = experienceChildRowParts(targetSection)
+    if (sourceParts && targetParts) {
+      const order = [...(localOrders.value[experienceIndex] || [])].filter(index => index !== sourceParts.blockIndex)
+      const targetIndex = order.indexOf(targetParts.blockIndex)
+      order.splice(targetIndex < 0 ? order.length : targetIndex + (insertAfter ? 1 : 0), 0, sourceParts.blockIndex)
+      if (order.join('|') !== (localOrders.value[experienceIndex] || []).join('|')) {
+        localOrders.value[experienceIndex] = order
+        sectionOrderChangedByDrag.value = true
+      }
+    }
+  } else {
+    const order = [...localSectionOrder.value].filter(section => section !== source)
+    const targetIndex = order.indexOf(targetSection)
+    order.splice(targetIndex < 0 ? order.length : targetIndex + (insertAfter ? 1 : 0), 0, source)
+    if (order.join('|') !== localSectionOrder.value.join('|')) {
+      localSectionOrder.value = order
+      sectionOrderChangedByDrag.value = true
+    }
   }
   const list = row.closest('.section-order-list')
   if (list) {
@@ -718,7 +971,12 @@ function finishSectionDrag() {
 
 function canMoveSection(section, direction) {
   if (isSavingSectionOrder.value) return false
-  const visible = isEducationChildSection(section) ? reorderableEducationChildren.value : reorderableTopSections.value
+  const group = sectionOrderGroup(section)
+  const visible = group === 'education'
+    ? reorderableEducationChildren.value
+    : (group.startsWith('project_experience:') || group.startsWith('work_experience:'))
+      ? [...reorderableProjectChildren.value, ...reorderableWorkChildren.value].filter(item => sectionOrderGroup(item) === group)
+      : reorderableTopSections.value
   const index = visible.indexOf(section)
   return index >= 0 && index + direction >= 0 && index + direction < visible.length
 }
@@ -731,6 +989,11 @@ function resetSectionOrder() {
     ...defaultOrder.filter(section => currentOrder.includes(section)),
     ...currentOrder.filter(section => !defaultOrder.includes(section))
   ]
+  localEducationChildOrder.value = [...DEFAULT_LAYOUT_CONFIG.education.childSectionOrder]
+  localProjectContentOrders.value = experienceItems(props.data, 'project_experience')
+    .map(project => defaultExperienceContentOrder(project, 'project_experience'))
+  localWorkContentOrders.value = experienceItems(props.data, 'work_experience')
+    .map(work => defaultExperienceContentOrder(work, 'work_experience'))
 }
 
 // ========== 样式控制变量 ==========
@@ -1328,7 +1591,7 @@ const allItems = computed(() => {
         push({ type: 'work-title', groupId: `${section}:${entries[0].dataIndex}`, breakKey: `${section}:${entries[0].dataIndex}`, isSectionTitle: true })
         entries.forEach(({ item, dataIndex }) => {
           push({ type: 'work-item', dataIndex, groupId: `${section}:${dataIndex}`, breakKey: `${section}:${dataIndex}` })
-          if (projectContentBlocks(item, 'work').length) push({ type: 'work-details', dataIndex, groupId: `${section}:${dataIndex}`, breakKey: `${section}:${dataIndex}` })
+          if (projectContentBlocks(item, 'work', dataIndex).length) push({ type: 'work-details', dataIndex, groupId: `${section}:${dataIndex}`, breakKey: `${section}:${dataIndex}` })
         })
       }
     }
@@ -1338,7 +1601,7 @@ const allItems = computed(() => {
         push({ type: 'projects-title', groupId: 'project_experience:0', breakKey: 'project_experience:0', isSectionTitle: true })
         projects.forEach((proj, i) => {
           push({ type: 'project-item', dataIndex: i, groupId: `project_experience:${i}`, breakKey: `project_experience:${i}` })
-          if (projectContentBlocks(proj).length) push({ type: 'project-details', dataIndex: i, groupId: `project_experience:${i}`, breakKey: `project_experience:${i}` })
+          if (projectContentBlocks(proj, 'project', i).length) push({ type: 'project-details', dataIndex: i, groupId: `project_experience:${i}`, breakKey: `project_experience:${i}` })
         })
       }
     }
@@ -1519,11 +1782,30 @@ watch([marginVertical, marginHorizontal, moduleMargin, lineHeight, fontSize], sa
 watch([marginVertical, marginHorizontal, moduleMargin, lineHeight, fontSize, pageBreakBefore, () => props.sourcePageCount], emitCurrentRenderStyle, { immediate: true })
 watch(() => [props.layoutConfig, props.data], () => {
   syncingLayoutProps = true
-  localSectionOrder.value = [...expandSectionOrderForData(props.layoutConfig, props.data).global.sectionOrder]
+  const nextLayout = expandSectionOrderForData(props.layoutConfig, props.data)
+  localSectionOrder.value = [...nextLayout.global.sectionOrder]
+  localEducationChildOrder.value = [...nextLayout.education.childSectionOrder]
+  localProjectContentOrders.value = experienceContentOrderSnapshot(props.data, 'project_experience')
+  const workItems = experienceItems(props.data, 'work_experience')
+  const workDataChanged = props.data !== workOrderDataSource.value
+  if (!workItems.length) {
+    workOrdersHydrated.value = false
+    localWorkContentOrders.value = []
+  } else if (!workOrdersHydrated.value || workDataChanged) {
+    localWorkContentOrders.value = preserveWorkOrderOnNextDataUpdate.value
+      ? experienceContentOrderSnapshot(props.data, 'work_experience')
+      : workItems.map(work => defaultExperienceContentOrder(work, 'work_experience'))
+    workOrdersHydrated.value = true
+  }
+  workOrderDataSource.value = props.data
+  preserveWorkOrderOnNextDataUpdate.value = false
   loadLayoutSettings()
   nextTick(() => { syncingLayoutProps = false })
 }, { deep: true, immediate: true })
 watch(() => props.taskId, () => {
+  workOrdersHydrated.value = false
+  workOrderDataSource.value = null
+  preserveWorkOrderOnNextDataUpdate.value = false
   closeSourceDocument()
   loadLayoutSettings()
   calculatePagination()
@@ -2098,8 +2380,8 @@ const getItemIndex = (type, dataIndex) => {
               </div>
             </div>
           </div>
-          <div v-if="projectContentBlocks(entry.item, 'work').length" class="pageable-item work-details" :class="`details-${moduleLayout(section.id).detailsStyle}`" :style="moduleOrder(section.id)">
-            <div v-for="(block, bIdx) in projectContentBlocks(entry.item, 'work')" :key="bIdx" class="project-content-block" :class="contentBlockClasses(block)">
+          <div v-if="projectContentBlocks(entry.item, 'work', entry.dataIndex).length" class="pageable-item work-details" :class="`details-${moduleLayout(section.id).detailsStyle}`" :style="moduleOrder(section.id)">
+            <div v-for="(block, bIdx) in projectContentBlocks(entry.item, 'work', entry.dataIndex)" :key="bIdx" class="project-content-block" :class="contentBlockClasses(block)">
               <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(paragraphText(block.text))"></span></p>
               <template v-else>
                 <div v-if="contentBlockLabel(block, 'separate')" class="project-block-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'separate') }" v-html="`${formatText(contentBlockLabel(block, 'separate'))}：`"></div>
@@ -2128,8 +2410,8 @@ const getItemIndex = (type, dataIndex) => {
               </div>
             </div>
           </div>
-          <div v-if="projectContentBlocks(item).length" class="pageable-item project-details" :style="moduleOrder('project_experience')">
-            <div v-for="(block, blockIndex) in projectContentBlocks(item)" :key="blockIndex" class="project-content-block" :class="contentBlockClasses(block)">
+          <div v-if="projectContentBlocks(item, 'project', idx).length" class="pageable-item project-details" :style="moduleOrder('project_experience')">
+            <div v-for="(block, blockIndex) in projectContentBlocks(item, 'project', idx)" :key="blockIndex" class="project-content-block" :class="contentBlockClasses(block)">
               <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(paragraphText(block.text))"></span></p>
               <template v-else>
                 <div v-if="contentBlockLabel(block, 'separate')" class="project-block-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'separate') }" v-html="`${formatText(contentBlockLabel(block, 'separate'))}：`"></div>
@@ -2265,7 +2547,7 @@ const getItemIndex = (type, dataIndex) => {
             </div>
             <span v-if="dateRangeText(item)" class="work-period" v-html="formatText(dateRangeText(item))"></span>
           </div>
-            <div v-for="(block, bIdx) in projectContentBlocks(item, 'work')" :key="bIdx" class="project-content-block" :class="contentBlockClasses(block)">
+            <div v-for="(block, bIdx) in projectContentBlocks(item, 'work', idx)" :key="bIdx" class="project-content-block" :class="contentBlockClasses(block)">
             <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(paragraphText(block.text))"></span></p>
             <template v-else>
               <div v-if="contentBlockLabel(block, 'separate')" class="project-block-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'separate') }" v-html="`${formatText(contentBlockLabel(block, 'separate'))}：`"></div>
@@ -2291,7 +2573,7 @@ const getItemIndex = (type, dataIndex) => {
               <span v-else-if="item.role" v-html="formatText(item.role)"></span>
             </div>
           </div>
-            <div v-for="(block, blockIndex) in projectContentBlocks(item)" :key="blockIndex" class="project-content-block" :class="contentBlockClasses(block)">
+            <div v-for="(block, blockIndex) in projectContentBlocks(item, 'project', idx)" :key="blockIndex" class="project-content-block" :class="contentBlockClasses(block)">
             <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(paragraphText(block.text))"></span></p>
             <template v-else>
               <div v-if="contentBlockLabel(block, 'separate')" class="project-block-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'separate') }" v-html="`${formatText(contentBlockLabel(block, 'separate'))}：`"></div>
@@ -2416,8 +2698,8 @@ const getItemIndex = (type, dataIndex) => {
                   </div>
                 </div>
                 <!-- 工作详情（独立分页项） -->
-                <div v-if="projectContentBlocks(entry.item, 'work').length && isItemVisible({index: getItemIndex('work-details', entry.dataIndex)}, page - 1)" class="work-details" :class="`details-${moduleLayout(section.id).detailsStyle}`" :style="moduleOrder(section.id)">
-                  <div v-for="(block, bIdx) in projectContentBlocks(entry.item, 'work')" :key="bIdx" class="project-content-block" :class="contentBlockClasses(block)">
+                <div v-if="projectContentBlocks(entry.item, 'work', entry.dataIndex).length && isItemVisible({index: getItemIndex('work-details', entry.dataIndex)}, page - 1)" class="work-details" :class="`details-${moduleLayout(section.id).detailsStyle}`" :style="moduleOrder(section.id)">
+                  <div v-for="(block, bIdx) in projectContentBlocks(entry.item, 'work', entry.dataIndex)" :key="bIdx" class="project-content-block" :class="contentBlockClasses(block)">
                     <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(paragraphText(block.text))"></span></p>
                     <template v-else>
                       <div v-if="contentBlockLabel(block, 'separate')" class="project-block-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'separate') }" v-html="`${formatText(contentBlockLabel(block, 'separate'))}：`"></div>
@@ -2447,8 +2729,8 @@ const getItemIndex = (type, dataIndex) => {
                   </div>
                 </div>
                 <!-- 项目详情（独立分页项） -->
-                <div v-if="projectContentBlocks(item).length && isItemVisible({index: getItemIndex('project-details', idx)}, page - 1)" :key="'proj-details-'+idx" class="project-details" :style="moduleOrder('project_experience')">
-                  <div v-for="(block, blockIndex) in projectContentBlocks(item)" :key="blockIndex" class="project-content-block" :class="contentBlockClasses(block)">
+                <div v-if="projectContentBlocks(item, 'project', idx).length && isItemVisible({index: getItemIndex('project-details', idx)}, page - 1)" :key="'proj-details-'+idx" class="project-details" :style="moduleOrder('project_experience')">
+                  <div v-for="(block, blockIndex) in projectContentBlocks(item, 'project', idx)" :key="blockIndex" class="project-content-block" :class="contentBlockClasses(block)">
                     <p v-if="block.type === 'paragraph'" class="project-paragraph"><span v-if="contentBlockLabel(block, 'inline')" class="project-inline-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'inline') }" v-html="`${formatText(contentBlockLabel(block, 'inline'))}：`"></span><span v-html="formatText(paragraphText(block.text))"></span></p>
                     <template v-else>
                       <div v-if="contentBlockLabel(block, 'separate')" class="project-block-label" :class="{ 'is-bold': contentBlockLabelBold(block, 'separate') }" v-html="`${formatText(contentBlockLabel(block, 'separate'))}：`"></div>
@@ -2576,11 +2858,10 @@ const getItemIndex = (type, dataIndex) => {
         <button class="layout-guide-close" aria-label="关闭模块排序" :disabled="isSavingSectionOrder" @click="closeSectionOrderDialog">×</button>
       </div>
       <div class="section-order-list">
+        <template v-for="section in reorderableSections" :key="section">
         <div
-          v-for="section in reorderableSections"
-          :key="section"
           class="section-order-row section-order-dialog-row"
-          :class="{ dragging: draggedSection === section, 'education-child-row': isEducationChildSection(section) }"
+          :class="{ dragging: draggedSection === section, 'education-child-row': isEducationChildSection(section) || section === 'education_supplement', 'experience-child-row': experienceChildRowParts(section) }"
           draggable="true"
           @dragstart="startSectionDrag(section, $event)"
           @dragover="dragOverSection($event, section)"
@@ -2588,12 +2869,14 @@ const getItemIndex = (type, dataIndex) => {
           @dragend="finishSectionDrag"
         >
           <span class="drag-handle" aria-hidden="true">⋮⋮</span>
-          <span class="section-order-name">{{ sectionLabel(section) }}</span>
+          <span class="section-order-name" :title="sectionLabel(section)">{{ sectionLabel(section) }}</span>
           <span class="section-order-actions">
             <button type="button" :disabled="!canMoveSection(section, -1)" :aria-label="`上移${sectionLabel(section)}`" @click="moveSection(section, -1)">↑</button>
             <button type="button" :disabled="!canMoveSection(section, 1)" :aria-label="`下移${sectionLabel(section)}`" @click="moveSection(section, 1)">↓</button>
           </span>
         </div>
+        <div v-if="hasExperienceGroupDivider(section)" class="section-order-group-divider" aria-hidden="true"></div>
+        </template>
       </div>
       <div v-if="sectionOrderError" class="font-size-error" role="alert">{{ sectionOrderError }}</div>
       <div class="section-order-dialog-footer">
@@ -4027,7 +4310,7 @@ const getItemIndex = (type, dataIndex) => {
   background: rgba(7, 8, 11, 0.16);
 }
 .section-order-dialog {
-  width: min(340px, calc(100vw - 40px));
+  width: min(425px, calc(100vw - 40px));
   max-height: min(680px, calc(100vh - 48px));
   padding: 18px;
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -4054,6 +4337,10 @@ const getItemIndex = (type, dataIndex) => {
   cursor: grab;
 }
 .section-order-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 0.82rem;
   font-weight: 600;
 }
@@ -4070,6 +4357,17 @@ const getItemIndex = (type, dataIndex) => {
   margin-left: 24px;
   box-sizing: border-box;
   background: rgba(255, 255, 255, 0.035);
+}
+.section-order-dialog-row.experience-child-row {
+  width: calc(100% - 24px);
+  margin-left: 24px;
+  box-sizing: border-box;
+  background: rgba(255, 255, 255, 0.035);
+}
+.section-order-group-divider {
+  height: 1px;
+  margin: 9px 0 9px 24px;
+  background: rgba(255, 255, 255, 0.16);
 }
 .section-settings-overlay {
   right: auto;
@@ -4148,7 +4446,7 @@ const getItemIndex = (type, dataIndex) => {
     background: rgba(7, 8, 11, 0.62);
   }
   .section-order-dialog {
-    width: min(340px, calc(100vw - 32px));
+    width: min(425px, calc(100vw - 32px));
     max-height: calc(100vh - 32px);
   }
   .section-settings-dialog { width: min(390px, calc(100vw - 32px)); height: min(440px, calc(100vh - 48px)); max-height: calc(100vh - 48px); }

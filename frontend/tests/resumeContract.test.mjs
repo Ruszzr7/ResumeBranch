@@ -49,26 +49,50 @@ test('content block defaults follow semantic roles and unknown labels stay inlin
   })
 })
 
-test('project technical stack is recognized and kept before the existing semantic blocks', () => {
+test('project technical stack is recognized while authored block order remains intact', () => {
   const blocks = normalizeContentBlocks([
     { type: 'numbered_list', semantic_role: 'responsibilities', label: '项目职责', items: ['职责'] },
     { type: 'paragraph', semantic_role: 'introduction', label: '项目简介', text: '背景' },
     { type: 'paragraph', label: '技术选型', text: 'Python、FastAPI' },
     { type: 'bullet_list', semantic_role: 'generic', label: '', items: ['补充'] }
   ])
-  assert.deepEqual(blocks.map(block => block.semantic_role), ['tech_stack', 'introduction', 'responsibilities', 'generic'])
-  assert.equal(blocks[0].label, '技术选型')
-  assert.equal(blocks[0].type, 'paragraph')
+  assert.deepEqual(blocks.map(block => block.semantic_role), ['responsibilities', 'introduction', 'tech_stack', 'generic'])
+  assert.equal(blocks[2].label, '技术选型')
+  assert.equal(blocks[2].type, 'paragraph')
 })
 
-test('explicit project semantic blocks preserve top-level semantics', () => {
+test('explicit project semantic blocks preserve authored semantics and order', () => {
   const blocks = normalizeContentBlocks([
     { type: 'paragraph', semantic_role: 'introduction', label: '项目简介', text: '背景' },
     { type: 'paragraph', semantic_role: 'tech_stack', label: '技术栈', text: 'Python、FastAPI' },
     { type: 'numbered_list', semantic_role: 'responsibilities', label: '项目职责', items: ['完成联调'] }
   ])
-  assert.deepEqual(blocks.map(block => block.semantic_role), ['tech_stack', 'introduction', 'responsibilities'])
-  assert.equal(blocks[0].text, 'Python、FastAPI')
+  assert.deepEqual(blocks.map(block => block.semantic_role), ['introduction', 'tech_stack', 'responsibilities'])
+  assert.equal(blocks[1].text, 'Python、FastAPI')
+})
+
+test('explicit generic labels remain visible and identify their stable generic role', () => {
+  const block = normalizeContentBlock({
+    type: 'bullet_list',
+    semantic_role: 'generic',
+    label: '项目成果',
+    items: ['获得校级优秀项目称号']
+  })
+  assert.equal(block.semantic_role, 'generic')
+  assert.equal(block.label, '项目成果')
+  assert.deepEqual(block.items, ['获得校级优秀项目称号'])
+})
+
+test('work and project keep multiple generic blocks with optional labels', () => {
+  for (const experienceKind of ['work', 'project']) {
+    const blocks = normalizeContentBlocks([
+      { type: 'bullet_list', semantic_role: 'generic', label: '', items: ['无标题补充'] },
+      { type: 'numbered_list', semantic_role: 'generic', label: '项目成果', items: ['可见成果'] }
+    ], { experienceKind })
+    assert.deepEqual(blocks.map(block => block.semantic_role), ['generic', 'generic'])
+    assert.deepEqual(blocks.map(block => block.label), ['', '项目成果'])
+    assert.deepEqual(blocks[0].items, ['无标题补充'])
+  }
 })
 
 test('explicit work introduction and responsibilities share the contract', () => {

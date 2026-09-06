@@ -990,9 +990,17 @@ def generate_docx(
         ]
         merged_sections.append(("others", merged_other))
         merged_sections.sort(key=lambda item: global_layout["sectionOrder"].index(item[0]))
-        supplement_values = list(data.get("education_supplement") or [])
-        for section_id, values in merged_sections:
-            if merged_into_education(section_id) and section_id not in hidden_sections:
+        merged_by_id = {section_id: values for section_id, values in merged_sections}
+        child_order = layout["education"].get("childSectionOrder") or [
+            "education_supplement", *[section_id for section_id, _ in merged_sections]
+        ]
+        supplement_values = []
+        for section_id in child_order:
+            if section_id == "education_supplement":
+                supplement_values.extend(data.get("education_supplement") or [])
+                continue
+            values = merged_by_id.get(section_id)
+            if values is not None and merged_into_education(section_id) and section_id not in hidden_sections:
                 supplement_values.extend(values)
         supplement_style = layout["education"].get("supplementListStyle", "bullet")
         for value_index, value in enumerate(_module_list_values(supplement_values, supplement_style)):

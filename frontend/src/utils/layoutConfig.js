@@ -93,7 +93,10 @@ export const DEFAULT_LAYOUT_CONFIG = Object.freeze({
     // the imported image's aspect ratio at render time.
     photoHeightMm: 26, photoWidthMm: 21, hiddenFields: []
   }),
-  education: moduleContract('education', { schoolTagStyle: 'text', hiddenMetrics: [], thesisDisplay: 'expanded', supplementListStyle: 'bullet' }),
+  education: moduleContract('education', {
+    schoolTagStyle: 'text', hiddenMetrics: [], thesisDisplay: 'expanded', supplementListStyle: 'bullet',
+    childSectionOrder: ['education_supplement', 'honors', 'publications', 'research_interests', 'others']
+  }),
   skills: moduleContract('skills', { listStyle: 'bullet' }),
   research_interests: moduleContract('research_interests', { listStyle: 'bullet' }),
   honors: moduleContract('honors', { listStyle: 'bullet' }),
@@ -411,6 +414,18 @@ export function normalizeLayoutConfig(value = {}) {
       .map(section => [section, 'education'])
   )
 
+  // Education supplement and modules merged into education use a dedicated
+  // sibling order.  Migrate older layouts from their existing top-level order
+  // while keeping the supplement at the top.
+  const suppliedEducation = value?.education && typeof value.education === 'object' ? value.education : {}
+  const childIds = ['education_supplement', 'honors', 'publications', 'research_interests', 'others']
+  const suppliedChildOrder = suppliedEducation.childSectionOrder
+  const childOrder = Array.isArray(suppliedChildOrder)
+    ? [...new Set(suppliedChildOrder.filter(item => childIds.includes(item)))]
+    : ['education_supplement', ...result.global.sectionOrder.filter(item => childIds.includes(item) && item !== 'education_supplement')]
+  childIds.forEach(item => { if (!childOrder.includes(item)) childOrder.push(item) })
+  result.education.childSectionOrder = childOrder
+
   for (const section of ['skills', 'research_interests', 'honors', 'publications', 'custom_sections', 'self_evaluation']) {
     if (!['paragraph', 'bullet', 'numbered'].includes(result[section].listStyle)) {
       result[section].listStyle = DEFAULT_LAYOUT_CONFIG[section].listStyle
@@ -723,7 +738,7 @@ export function resolveContentBlockFlow(block = {}) {
   const type = normalized.type
   const label = normalized.label
   const semanticRole = normalized.semantic_role
-  const requiresLabel = semanticRole !== 'generic'
+  const requiresLabel = semanticRole !== 'generic' || Boolean(label)
   // Labeled lists preserve two visible hierarchy levels: the outer semantic
   // label and its child bullets/numbers. Generic lists use one level.
   const isList = ['numbered_list', 'bullet_list'].includes(type)

@@ -477,7 +477,11 @@ const projectDutiesFlow = project => resolveContentBlockFlow({
   label_bold: isFullyBoldInlineText(project?._dutiesLabel)
 })
 const genericDetailsFlow = item => resolveContentBlockFlow({
-  type: item?._detailsType || 'bullet_list', semantic_role: 'generic', label: ''
+  type: item?._detailsType || 'bullet_list', semantic_role: 'generic', label: item?._detailsLabel || ''
+})
+const projectGenericFlow = block => resolveContentBlockFlow({
+  type: block?._type || 'bullet_list', semantic_role: 'generic', label: block?._label || '',
+  label_bold: isFullyBoldInlineText(block?._label)
 })
 const hasEditorText = value => Boolean(String(value || '').trim())
 const showTaskCreateDialog = ref(false)
@@ -1557,10 +1561,21 @@ function handleLayoutUpdated(layoutConfig) {
   previewLayoutConfig.value = null
 }
 
+function handleResumeUpdated(data) {
+  if (!data || typeof data !== 'object') return
+  resumeData.value = cloneResumeData(data)
+  previewResumeData.value = null
+}
+
 function handleRenderStyleUpdated(style) {
   activeRenderStyle.value = style && typeof style === 'object'
     ? { ...style }
     : null
+}
+
+function splitLoadedResume(data) {
+  const { parsing_status: parsingStatus = 'none', ...resumeContent } = data || {}
+  return { resumeContent, parsingStatus }
 }
 
 // 加载初始数据的函数（同时检查首次访问）
@@ -1585,10 +1600,8 @@ async function loadInitialData() {
     }
 
     const data = await response.json()
-    resumeData.value = data
-
-    // 检查解析状态
-    const parsingStatus = data.parsing_status || 'none'
+    const { resumeContent, parsingStatus } = splitLoadedResume(data)
+    resumeData.value = resumeContent
 
     // 如果正在解析中，显示上传弹窗并启动轮询
     if (parsingStatus === 'parsing') {
@@ -1754,9 +1767,8 @@ async function loadResumeData() {
     }
 
     const data = await response.json()
-    resumeData.value = data
-    // 更新简历内容
-    const { parsing_status, ...resumeContent } = data
+    const { resumeContent } = splitLoadedResume(data)
+    resumeData.value = resumeContent
     if (resumeContent && Object.keys(resumeContent).length > 0) {
     }
   } catch (error) {
@@ -2462,6 +2474,12 @@ function initializeExperienceContentEditor(proj, migrateDefaultBold = false, exp
     return value.includes('**') ? value : `**${value}**`
   }
   const extraBlocks = blocks.filter(block => block !== techStack && block !== intro && block !== duties)
+  const genericDraft = (block, index) => ({
+    _index: index,
+    _label: editorLabel(block),
+    _type: CONTENT_BLOCK_TYPE_OPTIONS[block?.type] ? block.type : 'bullet_list',
+    _text: block?.type === 'paragraph' ? (block?.text || '') : arrayToMultiline(block?.items || [])
+  })
   const extraBlockValues = block => {
     const values = block?.items?.length
       ? block.items
@@ -2488,6 +2506,16 @@ function initializeExperienceContentEditor(proj, migrateDefaultBold = false, exp
   proj._introText = intro?.type === 'paragraph' ? (intro?.text || '') : arrayToMultiline(intro?.items || [])
   proj._dutiesText = duties?.type === 'paragraph' ? (duties?.text || '') : arrayToMultiline(duties?.items || [])
   proj._extraDetailsText = arrayToMultiline(extraBlocks.flatMap(extraBlockValues))
+  // “其他内容”统一以可选标题的 generic 内容块编辑。空标题是合法的，
+  // 不再保留独立的旧输入框或把它迁移成带默认标题的块。
+  proj._genericBlocks = extraBlocks.map(genericDraft)
+  proj._contentBlockOrder = blocks.map((block, index) => ({
+    semanticRole: resolveContentBlockFlow(block).semanticRole,
+    genericIndex: resolveContentBlockFlow(block).semanticRole === 'generic'
+      ? extraBlocks.indexOf(block)
+      : null,
+    sourceIndex: index
+  }))
 
   if (migrateDefaultBold) {
     proj._techStackLabel = wrapDefaultBold(proj._techStackLabel)
@@ -2617,7 +2645,6 @@ function initializeProjectContentEditor(proj, migrateDefaultBold = false) {
 
 function initializeWorkContentEditor(work, migrateDefaultBold = false) {
   initializeExperienceContentEditor(work, migrateDefaultBold, 'work')
-  work._detailsText = work._extraDetailsText
 }
 
 function editableExperienceToContentBlocks(work) {
@@ -2642,26 +2669,41 @@ function editableExperienceToContentBlocks(work) {
       items: resolvedType === 'paragraph' ? [] : values
     }
   }
-  const detailsText = normalizeEditorMultiline(work?._detailsText ?? work?._extraDetailsText)
-  const lines = multilineToArray(detailsText)
-  const blocks = []
   const techStack = contentBlock('tech_stack', work?._techStackLabel, work?._techStackType || 'paragraph', work?._techStackText)
   const intro = contentBlock('introduction', work?._introLabel, work?._introType || 'paragraph', work?._introText)
   const duties = contentBlock('responsibilities', work?._dutiesLabel, work?._dutiesType || 'numbered_list', work?._dutiesText)
-  if (techStack) blocks.push(techStack)
-  if (intro) blocks.push(intro)
-  if (duties) blocks.push(duties)
-  if (lines.length) {
-    const type = CONTENT_BLOCK_TYPE_OPTIONS[work?._detailsType] ? work._detailsType : 'bullet_list'
-    blocks.push({
-      type,
-      semantic_role: 'generic',
-      label: '',
-      label_bold: false,
-      text: type === 'paragraph' ? detailsText : '',
-      items: type === 'paragraph' ? [] : lines,
-    })
+  const genericBlocks = Array.isArray(work?._genericBlocks)
+    ? work._genericBlocks.map(block => contentBlock(
+      'generic', block?._label, block?._type || 'bullet_list', block?._text
+    )).filter(Boolean)
+    : []
+  const blocks = []
+  const roleBlocks = { tech_stack: techStack, introduction: intro, responsibilities: duties }
+  const usedRoles = new Set()
+  const usedGenericIndexes = new Set()
+  const order = Array.isArray(work?._contentBlockOrder) ? work._contentBlockOrder : []
+  if (genericBlocks.length || order.length) {
+    for (const token of order) {
+      const role = token?.semanticRole
+      if (role === 'generic') {
+        const index = Number(token.genericIndex)
+        if (Number.isInteger(index) && genericBlocks[index] && !usedGenericIndexes.has(index)) {
+          blocks.push(genericBlocks[index])
+          usedGenericIndexes.add(index)
+        }
+      } else if (roleBlocks[role] && !usedRoles.has(role)) {
+        blocks.push(roleBlocks[role])
+        usedRoles.add(role)
+      }
+    }
   }
+  for (const role of ['tech_stack', 'introduction', 'responsibilities']) {
+    if (roleBlocks[role] && !usedRoles.has(role)) blocks.push(roleBlocks[role])
+  }
+  genericBlocks.forEach((block, index) => {
+    if (!usedGenericIndexes.has(index)) blocks.push(block)
+  })
+
   return blocks
 }
 
@@ -2997,7 +3039,8 @@ function addWork() {
     _detailsType: 'bullet_list',
     _introText: '',
     _dutiesText: '',
-    _detailsText: ''
+    _genericBlocks: [],
+    _contentBlockOrder: []
   })
 }
 
@@ -3023,9 +3066,42 @@ function addProject() {
     _introText: '',
     _dutiesText: '',
     _techStackText: '',
-    _extraDetailsText: ''
+    _extraDetailsText: '',
+    _genericBlocks: [],
+    _contentBlockOrder: []
   })
 }
+
+function addExperienceGenericBlock(experience) {
+  if (!experience) return
+  if (!Array.isArray(experience._genericBlocks)) experience._genericBlocks = []
+  if (!Array.isArray(experience._contentBlockOrder)) experience._contentBlockOrder = []
+  const newIndex = experience._genericBlocks.length
+  experience._genericBlocks.push({
+    _index: newIndex,
+    _label: '',
+    _type: 'bullet_list',
+    _text: ''
+  })
+  experience._contentBlockOrder.push({ semanticRole: 'generic', genericIndex: newIndex })
+}
+
+function removeExperienceGenericBlock(experience, index) {
+  if (!experience || !Array.isArray(experience._genericBlocks)) return
+  experience._genericBlocks.splice(index, 1)
+  if (Array.isArray(experience._contentBlockOrder)) {
+    experience._contentBlockOrder = experience._contentBlockOrder
+      .filter(token => token.semanticRole !== 'generic' || token.genericIndex !== index)
+      .map(token => token.semanticRole === 'generic' && token.genericIndex > index
+        ? { ...token, genericIndex: token.genericIndex - 1 }
+        : token)
+  }
+}
+
+function addProjectGenericBlock(project) { addExperienceGenericBlock(project) }
+function addWorkGenericBlock(work) { addExperienceGenericBlock(work) }
+function removeProjectGenericBlock(project, index) { removeExperienceGenericBlock(project, index) }
+function removeWorkGenericBlock(work, index) { removeExperienceGenericBlock(work, index) }
 
 // 删除项目经历
 function removeProject(index) {
@@ -3091,7 +3167,8 @@ async function loadResume() {
       body: JSON.stringify({})
     })
     const data = await response.json()
-    resumeData.value = data
+    const { resumeContent } = splitLoadedResume(data)
+    resumeData.value = resumeContent
   } catch (error) {
     console.error('加载简历失败:', error)
   }
@@ -3144,9 +3221,9 @@ function buildResumeEditorData() {
   })
   dataToSave.work_experience?.forEach(work => {
     convertDateRangeToSave(work)
-    if (work._detailsText !== undefined) {
+    if (work._genericBlocks !== undefined || work._contentBlockOrder !== undefined) {
       work.content_blocks = editableExperienceToContentBlocks(work)
-      for (const key of ['_techStackLabel', '_techStackType', '_techStackText', '_introLabel', '_dutiesLabel', '_introLabelBold', '_dutiesLabelBold', '_introType', '_dutiesType', '_detailsType', '_introText', '_dutiesText', '_detailsText', '_extraDetailsText']) delete work[key]
+      for (const key of ['_techStackLabel', '_techStackType', '_techStackText', '_introLabel', '_dutiesLabel', '_introLabelBold', '_dutiesLabelBold', '_introType', '_dutiesType', '_detailsType', '_introText', '_dutiesText', '_detailsText', '_extraDetailsText', '_genericBlocks', '_contentBlockOrder']) delete work[key]
     }
   })
   dataToSave.project_experience?.forEach(proj => {
@@ -3165,6 +3242,8 @@ function buildResumeEditorData() {
     delete proj._introText
     delete proj._dutiesText
     delete proj._extraDetailsText
+    delete proj._genericBlocks
+    delete proj._contentBlockOrder
   })
 
   dataToSave.research_interests = multilineToArray(researchInterestsText.value)
@@ -4694,7 +4773,7 @@ watch(
       <!-- 右侧简历预览区 -->
       <div class="resume-section">
         <div class="resume-content">
-          <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :project-name="currentProject?.title || ''" :version-name="currentTask?.title || ''" :local-mode="isLocalMode" :source-page-count="currentTask?.source_page_count || 1" :has-source-document="!!currentTask?.has_source_document" :highlighted-module="highlightedModule" :jd-data="jdData" :lang="currentLang" :translation-busy="isTranslating" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @open-resume-import="showUploadResumeDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @layout-updated="handleLayoutUpdated" @render-style-updated="handleRenderStyleUpdated" />
+          <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :project-name="currentProject?.title || ''" :version-name="currentTask?.title || ''" :local-mode="isLocalMode" :source-page-count="currentTask?.source_page_count || 1" :has-source-document="!!currentTask?.has_source_document" :highlighted-module="highlightedModule" :jd-data="jdData" :lang="currentLang" :translation-busy="isTranslating" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @open-resume-import="showUploadResumeDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @layout-updated="handleLayoutUpdated" @resume-updated="handleResumeUpdated" @render-style-updated="handleRenderStyleUpdated" />
         </div>
       </div>
       </template>
@@ -4840,7 +4919,7 @@ watch(
 
           <!-- 简历 Tab 内容 -->
           <div v-else-if="currentTab === 'resume'" class="mobile-resume-view" key="resume">
-            <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :project-name="currentProject?.title || ''" :version-name="currentTask?.title || ''" :local-mode="isLocalMode" :source-page-count="currentTask?.source_page_count || 1" :has-source-document="!!currentTask?.has_source_document" :highlighted-module="highlightedModule" :jd-data="jdData" :is-mobile-view="isMobileView" :lang="currentLang" :translation-busy="isTranslating" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @open-resume-import="showUploadResumeDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @layout-updated="handleLayoutUpdated" @render-style-updated="handleRenderStyleUpdated" />
+            <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :project-name="currentProject?.title || ''" :version-name="currentTask?.title || ''" :local-mode="isLocalMode" :source-page-count="currentTask?.source_page_count || 1" :has-source-document="!!currentTask?.has_source_document" :highlighted-module="highlightedModule" :jd-data="jdData" :is-mobile-view="isMobileView" :lang="currentLang" :translation-busy="isTranslating" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @open-resume-import="showUploadResumeDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @layout-updated="handleLayoutUpdated" @resume-updated="handleResumeUpdated" @render-style-updated="handleRenderStyleUpdated" />
           </div>
         </Transition>
 
@@ -5373,7 +5452,7 @@ watch(
                   :resume-metrics="resumeEditorMetrics"
                   :resume-flow="projectIntroFlow(work)"
                 />
-                <div v-if="hasEditorText(work._introText) && !hasEditorText(work._introLabel)" class="semantic-hidden-notice">标签为空，该简介已保留但不会显示或导出。</div>
+                <div v-if="hasEditorText(work._introText) && !hasEditorText(work._introLabel)" class="semantic-hidden-notice">标签为空，该工作简介已保留但不会显示或导出。</div>
               </div>
               <div class="array-item-nested">
                 <div class="content-block-heading-row">
@@ -5389,23 +5468,25 @@ watch(
                   :resume-metrics="resumeEditorMetrics"
                   :resume-flow="projectDutiesFlow(work)"
                 />
-                <div v-if="hasEditorText(work._dutiesText) && !hasEditorText(work._dutiesLabel)" class="semantic-hidden-notice">标签为空，该职责内容已保留但不会显示或导出。</div>
+                <div v-if="hasEditorText(work._dutiesText) && !hasEditorText(work._dutiesLabel)" class="semantic-hidden-notice">标签为空，该工作职责已保留但不会显示或导出。</div>
               </div>
-              <div class="array-item-nested">
+              <div v-for="(block, blockIndex) in work._genericBlocks" :key="`work-generic-${i}-${blockIndex}`" class="array-item-nested experience-generic-content-block">
                 <div class="content-block-heading-row generic-content-heading">
-                  <label>其他工作内容（可选）</label>
-                  <select v-model="work._detailsType" aria-label="其他工作内容分点形式">
+                  <RichTextEditor v-model="block._label" placeholder="例如 工作成果" compact default-bold />
+                  <select v-model="block._type" aria-label="其他工作内容形式">
                     <option v-for="(label, value) in CONTENT_BLOCK_TYPE_OPTIONS" :key="value" :value="value">{{ label }}</option>
                   </select>
                 </div>
                 <RichTextEditor
-                  v-model="work._detailsText"
+                  v-model="block._text"
                   placeholder="例如 参与日常需求分析与开发"
                   class="rich-editor-field"
                   :resume-metrics="resumeEditorMetrics"
-                  :resume-flow="genericDetailsFlow(work)"
+                  :resume-flow="projectGenericFlow(block)"
                 />
+                <button type="button" class="remove-btn generic-block-remove-btn" @click="removeWorkGenericBlock(work, blockIndex)">删除</button>
               </div>
+              <button type="button" class="add-btn nested-add-btn" @click="addWorkGenericBlock(work)">+ 添加其他工作内容</button>
             </div>
             <button @click="addWork" class="add-btn">+ 添加工作经历</button>
 
@@ -5449,7 +5530,7 @@ watch(
                   :resume-metrics="resumeEditorMetrics"
                   :resume-flow="projectTechStackFlow(proj)"
                 />
-                <div v-if="hasEditorText(proj._techStackText) && !hasEditorText(proj._techStackLabel)" class="semantic-hidden-notice">标签为空，该技术栈内容已保留但不会显示或导出。</div>
+                <div v-if="hasEditorText(proj._techStackText) && !hasEditorText(proj._techStackLabel)" class="semantic-hidden-notice">标签为空，该技术栈已保留但不会显示或导出。</div>
               </div>
               <div class="array-item-nested">
                 <div class="content-block-heading-row">
@@ -5465,7 +5546,7 @@ watch(
                   :resume-metrics="resumeEditorMetrics"
                   :resume-flow="projectIntroFlow(proj)"
                 />
-                <div v-if="hasEditorText(proj._introText) && !hasEditorText(proj._introLabel)" class="semantic-hidden-notice">标签为空，该简介已保留但不会显示或导出。</div>
+                <div v-if="hasEditorText(proj._introText) && !hasEditorText(proj._introLabel)" class="semantic-hidden-notice">标签为空，该项目简介已保留但不会显示或导出。</div>
               </div>
               <div class="array-item-nested">
                 <div class="content-block-heading-row">
@@ -5481,23 +5562,25 @@ watch(
                   :resume-metrics="resumeEditorMetrics"
                   :resume-flow="projectDutiesFlow(proj)"
                 />
-                <div v-if="hasEditorText(proj._dutiesText) && !hasEditorText(proj._dutiesLabel)" class="semantic-hidden-notice">标签为空，该职责内容已保留但不会显示或导出。</div>
+                <div v-if="hasEditorText(proj._dutiesText) && !hasEditorText(proj._dutiesLabel)" class="semantic-hidden-notice">标签为空，该项目职责已保留但不会显示或导出。</div>
               </div>
-              <div class="array-item-nested">
-                <div class="content-block-heading-row generic-content-heading">
-                  <label>其他项目内容（可选）</label>
-                  <select v-model="proj._detailsType" aria-label="其他项目内容分点形式">
-                    <option v-for="(label, value) in CONTENT_BLOCK_TYPE_OPTIONS" :key="value" :value="value">{{ label }}</option>
-                  </select>
+                <div v-for="(block, blockIndex) in proj._genericBlocks" :key="`project-generic-${i}-${blockIndex}`" class="array-item-nested experience-generic-content-block">
+                  <div class="content-block-heading-row generic-content-heading">
+                    <RichTextEditor v-model="block._label" placeholder="例如 项目成果" compact default-bold />
+                    <select v-model="block._type" aria-label="其他项目内容形式">
+                      <option v-for="(label, value) in CONTENT_BLOCK_TYPE_OPTIONS" :key="value" :value="value">{{ label }}</option>
+                    </select>
+                  </div>
+                  <RichTextEditor
+                    v-model="block._text"
+                    placeholder="例如 获得校级优秀项目称号"
+                    class="rich-editor-field"
+                    :resume-metrics="resumeEditorMetrics"
+                    :resume-flow="projectGenericFlow(block)"
+                  />
+                  <button type="button" class="remove-btn generic-block-remove-btn" @click="removeProjectGenericBlock(proj, blockIndex)">删除</button>
                 </div>
-                <RichTextEditor
-                  v-model="proj._extraDetailsText"
-                  placeholder="例如 获得校级优秀项目称号"
-                  class="rich-editor-field"
-                  :resume-metrics="resumeEditorMetrics"
-                  :resume-flow="genericDetailsFlow(proj)"
-                />
-              </div>
+              <button type="button" class="add-btn nested-add-btn" @click="addProjectGenericBlock(proj)">+ 添加其他项目内容</button>
             </div>
             <button @click="addProject" class="add-btn">+ 添加项目经历</button>
 
@@ -7862,6 +7945,16 @@ watch(
 
 .generic-content-heading > label {
   margin: 0;
+}
+
+.generic-block-remove-btn {
+  display: block;
+  margin: 0.65rem 0 0 auto;
+}
+
+.nested-add-btn {
+  display: block;
+  margin-top: 0.75rem;
 }
 
 .module-title-editor {

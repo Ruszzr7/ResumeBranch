@@ -4,7 +4,7 @@ import json
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from ..prompt_contract import build_model_contract_context
+from ..prompt_contract import build_model_contract_context, build_resume_content_label_context
 from .memory import render_memory_summary
 
 
@@ -129,6 +129,7 @@ def build_system_content(
         system_content = system_content.replace("{{layout_contract}}", f"\n{layout_contract}\n")
     else:
         system_content += f"\n\n{layout_contract}"
+    system_content += f"\n\n{build_resume_content_label_context(resume_data, layout_data)}"
     system_content += CURRENT_STATE_PRIORITY
     system_content += MISSION_CONTEXT_GUIDANCE.get(str(context_type or "main"), "")
     if mission_initial_turn:

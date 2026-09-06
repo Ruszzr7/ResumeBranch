@@ -72,7 +72,7 @@ CONTENT_BLOCK_ROLE_DESCRIPTORS = {
             "project_experience": "其他项目内容",
         },
         "roots": ["work_experience", "project_experience"],
-        "meaning": "无法或无需映射到其他语义角色的经历正文",
+        "meaning": "无法或无需映射到其他语义角色的经历正文；可新增多个，自定义标签可留空且空标签正文仍显示和导出",
     },
 }
 CONTENT_BLOCK_TYPE_DESCRIPTORS = {
@@ -97,7 +97,7 @@ class ProjectContentBlock(BaseModel):
     semantic_role: Literal["tech_stack", "introduction", "responsibilities", "generic"] | None = Field(
         default=None, description="稳定语义角色；旧数据缺省时由类型和标签兼容推断"
     )
-    label: str = Field(default="", description="用户当前看到的内容块名称，例如工作职责或项目职责")
+    label: str = Field(default="", description="用户当前看到的内容块名称；generic 可留空且正文仍显示，其他语义角色空标签时正文不显示或导出")
     label_bold: bool = Field(default=True, description="语义标签是否加粗")
     text: str = Field(default="", description="paragraph 类型的正文")
     items: list[str] = Field(default_factory=list, description="列表类型的逐条内容，不包含序号")
@@ -217,10 +217,10 @@ RESUME_EDIT_OPERATION_RULES = (
     "set/replace 可写入契约声明的简历根字段、目标字段或列表项，所有值都必须通过对应 Schema 校验",
     "append/insert 只能作用于契约声明的列表字段，move 只能作用于列表本身",
     "列表元素和对象字段必须符合声明的规范结构；不做自然语言解析、猜测或自动修复",
-    "内容块的 semantic_role 只表达内容含义，不决定展示形式；type 必须保留当前形式或遵循用户明确要求，三种形式均可用于允许的语义角色",
+    "内容块的 semantic_role 只表达内容含义，不决定展示形式；type 必须保留当前形式或遵循用户明确要求，三种形式均可用于允许的语义角色；work_experience 与 project_experience 均可 append/insert 多个 generic，generic 的 label 可为空且正文仍显示和导出",
     "经历内容块索引必须以当前规范化简历中的实际 content_blocks 为准；空的编辑器输入位置不代表持久化数据中存在占位元素",
     "对象的可选字段只有在用户明确要求该属性时才能提交；未明确要求时必须省略并继承当前值或系统默认值",
-    "内容通过所属上级模块路径、当前显示标签和稳定内部语义共同定位；修改显示标签不得改变 semantic_role，无法唯一定位时应先澄清",
+    "内容通过所属上级模块路径、当前显示标签和稳定内部语义共同定位；修改显示标签不得改变 semantic_role，target_semantic_role 可作为当前状态断言，无法唯一定位时应先澄清",
 )
 
 
@@ -260,13 +260,13 @@ def build_resume_edit_contract() -> dict[str, Any]:
                 "path": "work_experience[index].content_blocks[index]",
                 "label": "其他工作内容",
                 "shape": "content_block",
-                "meaning": "工作经历中没有独立语义标题的补充正文",
+                "meaning": "工作经历中的补充正文；可有零个或多个用户自定义 label，label 可为空且空标签正文仍显示和导出，semantic_role 始终为 generic",
             },
             "project_experience.generic": {
                 "path": "project_experience[index].content_blocks[index]",
                 "label": "其他项目内容",
                 "shape": "content_block",
-                "meaning": "项目经历中没有独立语义标题的补充正文",
+                "meaning": "项目经历中的补充正文；可有零个或多个用户自定义 label，label 可为空且空标签正文仍显示和导出，semantic_role 始终为 generic",
             },
         },
         "path_groups": RESUME_EDIT_PATH_GROUPS,
@@ -984,10 +984,14 @@ def normalize_content_block(raw: Any, *, keep_empty: bool = False) -> dict[str, 
     items = [strip_content_marker(item) for item in _string_list(raw.get("items"))]
     items = [item for item in items if item]
     label_bold = _bool_value(raw.get("label_bold"), True) or label_wrapped_bold
+    has_explicit_semantic_role = isinstance(raw, Mapping) and bool(_text(raw.get("semantic_role")))
     if semantic_role == "generic":
         if label_role == "generic":
-            label = ""
-        elif label:
+            # An explicitly authored generic label is a real visible submodule
+            # name (for example “项目成果”), not parser decoration.
+            if not has_explicit_semantic_role:
+                label = ""
+        elif label and not has_explicit_semantic_role:
             text, items = _flatten_generic_label(label, label_bold, text, items)
             label = ""
     result = {
@@ -1008,25 +1012,13 @@ def _order_project_content_blocks(
     *,
     experience_kind: str,
 ) -> list[dict[str, Any]]:
-    """Apply the fixed semantic order when a project has technical-stack content.
+    """Keep the authored project block order intact.
 
-    The editor exposes a fixed project order rather than a generic drag-and-
-    drop operation.  Projects without the new role are returned untouched so
-    existing resume ordering remains backward-compatible.  Once a project
-    explicitly contains technical-stack content, all four semantic roles use
-    the canonical order.
+    The module-order dialog is the single place that changes this list.  The
+    contract must therefore be order-preserving; sorting by semantic role
+    would silently undo an explicit user arrangement on every render/save.
     """
-    if experience_kind != "project":
-        return blocks
-    if not any(block.get("semantic_role") == "tech_stack" for block in blocks):
-        return blocks
-    role_order = {"tech_stack": 0, "introduction": 1, "responsibilities": 2, "generic": 3}
-    return [
-        block for _, block in sorted(
-            enumerate(blocks),
-            key=lambda pair: (role_order.get(pair[1].get("semantic_role"), 3), pair[0]),
-        )
-    ]
+    return blocks
 
 
 def normalize_content_blocks(

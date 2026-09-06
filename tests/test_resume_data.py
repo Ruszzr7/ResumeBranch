@@ -33,10 +33,11 @@ class ResumeImportPreparationTests(unittest.TestCase):
 
         blocks = result["project_experience"][0]["content_blocks"]
         self.assertEqual([block["semantic_role"] for block in blocks], [
-            "tech_stack", "introduction", "responsibilities", "generic",
+            "responsibilities", "tech_stack", "introduction", "generic",
         ])
-        self.assertEqual(blocks[0]["type"], "paragraph")
-        self.assertEqual(blocks[0]["label"], "技术栈")
+        self.assertEqual(blocks[0]["type"], "numbered_list")
+        self.assertEqual(blocks[0]["label"], "项目职责")
+        self.assertEqual(blocks[1]["label"], "技术栈")
         self.assertEqual(result["others"]["skills"], ["Python"])
 
     def test_publications_are_a_standalone_editable_string_list(self):

@@ -40,7 +40,7 @@ def resolve_content_block_flow(block: dict[str, Any] | None = None) -> dict[str,
     block_type = block["type"]
     label = block["label"]
     semantic_role = block["semantic_role"]
-    requires_label = semantic_role != "generic"
+    requires_label = semantic_role != "generic" or bool(label)
     # A labeled list has two visible hierarchy levels: the outer semantic
     # label and its child bullets/numbers. Paragraph labels remain at level 1,
     # as do generic lists without an outer label.
@@ -139,6 +139,13 @@ SECTION_IDS = (
     "custom_sections",
     "others",
     "self_evaluation",
+)
+EDUCATION_CHILD_SECTION_IDS = (
+    "education_supplement",
+    "honors",
+    "publications",
+    "research_interests",
+    "others",
 )
 _CUSTOM_SECTION_MODULE_RE = re.compile(r"^custom_sections:(\d+)$")
 
@@ -290,6 +297,7 @@ DEFAULT_LAYOUT_CONFIG: dict[str, Any] = {
         hiddenMetrics=[],
         thesisDisplay="expanded",
         supplementListStyle="bullet",
+        childSectionOrder=["education_supplement", "honors", "publications", "research_interests", "others"],
     ),
     "skills": _module_contract("skills", listStyle="bullet"),
     "research_interests": _module_contract("research_interests", listStyle="bullet"),
@@ -369,6 +377,8 @@ VALUE_LABELS = {
     "expanded": "完整展示", "bullets": "圆点列表", "bullet": "分点", "bullet_list": "分点",
     "numbered": "编号", "numbered_list": "编号", "paragraph": "普通段落",
     "tech_stack": "技术栈", "introduction": "项目简介", "responsibilities": "项目职责", "generic": "普通内容",
+    "education_supplement": "教育经历补充", "honors": "主要荣誉", "publications": "论文",
+    "research_interests": "研究方向", "others": "其他信息",
     "standalone": "独立栏目",
     "paragraphs": "分段", "tags": "标签", "pipe": "竖线分隔", "dot": "圆点分隔",
 }
@@ -393,6 +403,7 @@ FIELD_LABELS = {
     ("education", "hiddenMetrics"): "隐藏成绩项",
     ("education", "thesisDisplay"): "论文展示方式",
     ("education", "supplementListStyle"): "教育经历补充分点形式",
+    ("education", "childSectionOrder"): "教育经历子模块顺序",
     ("skills", "listStyle"): "专业技能展示形式",
     ("research_interests", "listStyle"): "研究方向展示形式",
     ("honors", "listStyle"): "主要荣誉展示形式",
@@ -785,6 +796,27 @@ def normalize_layout_config(value: dict | None) -> dict:
         for section in ("research_interests", "honors", "publications", "others")
         if placements.get(section) == "education"
     }
+
+    # Education supplement and modules merged into education have their own
+    # sibling order.  Older layouts had no persisted child list, so derive the
+    # merged-module portion from the existing top-level order while keeping the
+    # supplement at the top as the established default.
+    supplied_education = value.get("education") if isinstance(value, dict) and isinstance(value.get("education"), dict) else {}
+    supplied_child_order = supplied_education.get("childSectionOrder")
+    if isinstance(supplied_child_order, list):
+        child_order = [
+            item for item in dict.fromkeys(supplied_child_order)
+            if item in EDUCATION_CHILD_SECTION_IDS
+        ]
+    else:
+        child_order = ["education_supplement"] + [
+            item for item in global_config["sectionOrder"]
+            if item in EDUCATION_CHILD_SECTION_IDS and item != "education_supplement"
+        ]
+    for item in EDUCATION_CHILD_SECTION_IDS:
+        if item not in child_order:
+            child_order.append(item)
+    result["education"]["childSectionOrder"] = child_order
 
     for section in ("skills", "research_interests", "honors", "publications", "custom_sections", "self_evaluation"):
         allowed_styles = {"paragraph", "bullet", "numbered"}

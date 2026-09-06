@@ -5,6 +5,8 @@ import { readFileSync } from 'node:fs'
 const previewSource = readFileSync(new URL('../src/components/ResumePreview.vue', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 const layoutConfigSource = readFileSync(new URL('../src/utils/layoutConfig.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 const appSource = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
+const promptContractSource = readFileSync(new URL('../../backend/prompt_contract.py', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
+const harnessContextSource = readFileSync(new URL('../../backend/harness/context.py', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 
 test('desktop workspace heading and resume toolbar share the compact row height', () => {
   assert.ok(appSource.includes('.chat-panel-header {\n  height: 54px;\n  min-height: 54px;'))
@@ -88,8 +90,8 @@ test('resume fields render the escaped bold-only protocol', () => {
 })
 
 test('work and project details share semantic block rendering', () => {
-  assert.ok(previewSource.includes("projectContentBlocks(entry.item, 'work').length"))
-  assert.ok(previewSource.includes('projectContentBlocks(item).length'))
+  assert.ok(previewSource.includes("projectContentBlocks(entry.item, 'work', entry.dataIndex).length"))
+  assert.ok(previewSource.includes("projectContentBlocks(item, 'project', idx).length"))
   assert.ok(previewSource.includes("block.type === 'numbered_list'"))
   assert.ok(previewSource.includes('project-block-label'))
 })
@@ -105,11 +107,11 @@ test('preview pagination measures shared spacing and uses a strict page boundary
 })
 
 test('work and project previews use only canonical content blocks', () => {
-  assert.ok(previewSource.includes("function projectContentBlocks(item, experienceKind = 'project')"))
+  assert.ok(previewSource.includes("function projectContentBlocks(item, experienceKind = 'project', experienceIndex = null)"))
   assert.ok(previewSource.includes('normalizeContentBlocks(item?.content_blocks, { experienceKind })'))
   assert.equal(previewSource.includes('normalizeContentBlocks(item?.content_blocks, item?.details'), false)
-  assert.ok(previewSource.includes("projectContentBlocks(entry.item, 'work')"))
-  assert.ok(previewSource.includes("projectContentBlocks(item, 'work')"))
+  assert.ok(previewSource.includes("projectContentBlocks(entry.item, 'work', entry.dataIndex)"))
+  assert.ok(previewSource.includes("projectContentBlocks(item, 'work', idx)"))
 })
 
 test('layout menu opens a dedicated bidirectional manual ordering dialog', () => {
@@ -126,11 +128,16 @@ test('layout menu opens a dedicated bidirectional manual ordering dialog', () =>
 test('module ordering only exposes visible modules with content', () => {
   assert.ok(previewSource.includes('const sectionHasContent = section =>'))
   assert.ok(previewSource.includes("return fallback ? displayTitleText(section, fallback) : ''"))
-  assert.ok(previewSource.includes(".filter(section => sectionLabel(section) && sectionHasContent(section) && !hiddenSection(section) && !isEducationChildSection(section))"))
+  assert.ok(previewSource.includes('const reorderableTopSections = computed(() => localSectionOrder.value'))
   for (const section of ['honors', 'publications', 'research_interests', 'skills', 'work_experience', 'project_experience', 'custom_sections', 'others', 'self_evaluation']) {
     assert.ok(previewSource.includes(`${section}:`), `missing module label: ${section}`)
   }
-  assert.ok(previewSource.includes(".filter(section => sectionLabel(section) && sectionHasContent(section) && !hiddenSection(section) && isEducationChildSection(section))"))
+  assert.ok(previewSource.includes('const reorderableEducationChildren = computed(() => localEducationChildOrder.value'))
+  assert.ok(previewSource.includes("section === 'education_supplement'"))
+  assert.ok(previewSource.includes('const reorderableProjectChildren = computed'))
+  assert.ok(previewSource.includes('const reorderableWorkChildren = computed'))
+  assert.ok(previewSource.includes('${root}[${experienceIndex}].content_blocks[${blockIndex}]'))
+  assert.ok(previewSource.includes('experience-child-row'))
   assert.ok(previewSource.includes('customSectionModuleId(sectionIndex)'))
   assert.ok(previewSource.includes('expandSectionOrderForData(props.layoutConfig, props.data)'))
 })
@@ -155,7 +162,7 @@ test('font size order and section dialogs are mutually exclusive', () => {
 test('section ordering uses a compact left-side dialog so the PDF stays visible', () => {
   assert.ok(previewSource.includes('width: calc((100vw - 156px) * 0.39)'))
   assert.ok(previewSource.includes('justify-content: flex-end'))
-  assert.ok(previewSource.includes('width: min(340px, calc(100vw - 40px))'))
+  assert.ok(previewSource.includes('width: min(425px, calc(100vw - 40px))'))
   assert.ok(previewSource.includes('background: rgba(7, 8, 11, 0.16)'))
   assert.ok(previewSource.includes('.font-size-overlay,\n.spacing-overlay {\n  right: auto;\n  left: 156px;'))
   assert.ok(previewSource.includes('.settings-dialog-action {\n  width: 76px;\n  min-width: 76px;\n  height: 34px;'))
@@ -272,7 +279,9 @@ test('paragraph content preserves authored line boundaries in the preview', () =
 test('closing live-preview settings restores saved values', () => {
   assert.ok(previewSource.includes('fontSizeDraft.value = { ...fontSizes.value }'))
   assert.ok(previewSource.includes('sectionSettingsDraft.value = normalizeLayoutConfig(props.layoutConfig)'))
-  assert.ok(previewSource.includes('localSectionOrder.value = [...sectionOrderSnapshot.value]'))
+  assert.ok(previewSource.includes('localSectionOrder.value = [...sectionOrderSnapshot.value.global]'))
+  assert.ok(previewSource.includes('localEducationChildOrder.value = [...sectionOrderSnapshot.value.education]'))
+  assert.ok(previewSource.includes('localProjectContentOrders.value = JSON.parse(JSON.stringify(sectionOrderSnapshot.value.projects))'))
 })
 
 test('birth date and merged education headings use body semantics', () => {
@@ -296,13 +305,54 @@ test('target position label follows the content bold state', () => {
 })
 
 test('merged education children use their saved order and cannot leave education', () => {
-  assert.ok(previewSource.includes('.sort((left, right) => sectionOrder(layout.value, left.id) - sectionOrder(layout.value, right.id))'))
+  assert.ok(previewSource.includes('const childOrder = moduleLayout(\'education\').childSectionOrder'))
+  assert.ok(previewSource.includes('childIndex(left) - childIndex(right)'))
+  assert.ok(previewSource.includes('const groupsById = new Map(mergedEducationGroups.value.map(section => [section.id, section]))'))
+  assert.ok(previewSource.includes('for (const childId of [...childOrder, ...groupsById.keys()])'))
   assert.ok(previewSource.includes('const reorderableEducationChildren = computed'))
-  assert.ok(previewSource.includes("section === 'education' ? [section, ...reorderableEducationChildren.value] : [section]"))
-  assert.ok(previewSource.includes('isEducationChildSection(source) !== isEducationChildSection(targetSection)'))
+  assert.ok(previewSource.includes("if (sectionOrderGroup(source) !== sectionOrderGroup(targetSection)) return"))
+  assert.ok(previewSource.includes("if (section === 'education_supplement' || isEducationChildSection(section)) return 'education'"))
   assert.ok(previewSource.includes(':disabled="!canMoveSection(section, -1)"'))
   assert.ok(previewSource.includes('section-order-dialog-row.education-child-row'))
+  assert.ok(previewSource.includes('education.childSectionOrder = [...localEducationChildOrder.value]'))
   assert.ok(previewSource.includes('margin-left: 24px'))
+})
+
+test('work and project child ordering stays in the module-order dialog and saves canonical content blocks', () => {
+  assert.ok(previewSource.includes('experienceChildRowId'))
+  assert.ok(previewSource.includes("const reorderableWorkChildren = computed(() => experienceChildRows('work_experience'))"))
+  assert.ok(previewSource.includes('const experienceChildRowParts = rowId =>'))
+  assert.ok(previewSource.includes("const resumeResponse = await fetch('/save_resume'"))
+  assert.ok(previewSource.includes("'X-Task-ID': props.taskId"))
+  assert.ok(previewSource.includes("emit('resume-updated', resumeCandidate)"))
+  assert.ok(previewSource.includes('flow.label || fallback'))
+  assert.ok(previewSource.includes('const defaultExperienceContentOrder = (item, root) =>'))
+  assert.ok(previewSource.includes('section-order-group-divider'))
+  assert.ok(previewSource.includes('nextParts.experienceIndex > parts.experienceIndex'))
+  assert.ok(previewSource.includes(".map(work => defaultExperienceContentOrder(work, 'work_experience'))"))
+  assert.ok(previewSource.includes('const workOrdersHydrated = ref(false)'))
+  assert.ok(previewSource.includes('const workOrderDataSource = ref(props.data)'))
+  assert.ok(previewSource.includes('const workDataChanged = props.data !== workOrderDataSource.value'))
+  assert.ok(previewSource.includes('let workOrderChanged = false'))
+  assert.ok(previewSource.includes('if (root === \'work_experience\') workOrderChanged = true'))
+  assert.ok(previewSource.includes('preserveWorkOrderOnNextDataUpdate.value'))
+  assert.ok(previewSource.includes('if (!workItems.length)'))
+  assert.ok(previewSource.includes('workOrdersHydrated.value = true'))
+  assert.equal(previewSource.includes('experienceOrdersHydrated'), false)
+  assert.ok(previewSource.includes("width: min(425px, calc(100vw - 40px))"))
+  assert.ok(appSource.includes('function addExperienceGenericBlock(experience)'))
+  assert.ok(appSource.includes("_label: ''"))
+  assert.ok(appSource.includes('>删除</button>'))
+  assert.ok(appSource.includes('.nested-add-btn'))
+  assert.equal(appSource.includes('let migratedLegacyBlock = false'), false)
+})
+
+test('custom experience labels are exposed to the agent beside stable paths', () => {
+  assert.ok(promptContractSource.includes('build_resume_content_label_context'))
+  assert.ok(promptContractSource.includes('当前经历内容块标签索引'))
+  assert.ok(harnessContextSource.includes('build_resume_content_label_context(resume_data, layout_data)'))
+  assert.ok(promptContractSource.includes('当前显示标签和稳定内部语义共同定位'))
+  assert.ok(promptContractSource.includes('空标题 generic 的正文仍显示和导出'))
 })
 
 test('edit content follows the default module order and saves live-editable titles and pending tags', () => {

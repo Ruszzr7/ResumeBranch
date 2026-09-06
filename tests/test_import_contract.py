@@ -169,9 +169,10 @@ class ImportContractTests(unittest.TestCase):
 
         self.assertTrue(quality.accepted)
         blocks = result["project_experience"][0]["content_blocks"]
-        self.assertEqual([block["semantic_role"] for block in blocks], ["tech_stack", "introduction"])
-        self.assertEqual(blocks[0]["label"], "技术栈")
-        self.assertTrue(blocks[0]["label_bold"])
+        self.assertEqual([block["semantic_role"] for block in blocks], ["introduction", "tech_stack"])
+        self.assertEqual(blocks[0]["label"], "项目简介")
+        self.assertEqual(blocks[1]["label"], "技术栈")
+        self.assertTrue(blocks[1]["label_bold"])
         self.assertEqual(result["others"]["skills"], ["Docker"])
 
     def test_finalize_import_preserves_responsibility_paragraphs(self):

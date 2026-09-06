@@ -1,4 +1,4 @@
-const IGNORED_KEYS = new Set(['parsing_status', 'photo'])
+const IGNORED_KEYS = new Set(['parsing_status', 'formatting_version', 'photo'])
 
 function hasMeaningfulValue(value, key = '') {
   if (IGNORED_KEYS.has(key)) return false

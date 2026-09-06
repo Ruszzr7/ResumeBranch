@@ -50,6 +50,11 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("self_evaluation.listStyle", namespace["paths"]["self_evaluation"])
         self.assertIn("global.fontSize", namespace["paths"]["global"])
         self.assertIn("typography.fontSizes.sectionTitle", namespace["paths"]["typography"])
+        self.assertIn("childSectionOrder", manifest["scope"]["modules"]["education"]["editable_fields"])
+        self.assertEqual(
+            manifest["scope"]["modules"]["education"]["allowed_values"]["childSectionOrder"],
+            ["education_supplement", "honors", "others", "publications", "research_interests"],
+        )
         self.assertNotIn("basics", namespace["paths"])
         self.assertNotIn("basics", manifest["scope"]["modules"])
         exposed_values = {
@@ -66,6 +71,15 @@ class LayoutConversationTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("contactLayout", context)
         self.assertNotIn("metricsPlacement", context)
         self.assertIn("当前可编辑排版状态（只读，不是操作路径）", context)
+
+    def test_experience_contract_exposes_multiple_optional_label_generic_blocks_and_local_ordering(self):
+        manifest = build_layout_capability_manifest()
+        rules = manifest["semantic_content_rules"]
+        arrangements = manifest["module_content_arrangements"]
+        self.assertIn("允许新增多个、标题可为空", rules["generic"])
+        self.assertIn("空标题正文仍显示和导出", arrangements["work_experience"])
+        self.assertIn("仅可在同一条工作经历内", arrangements["work_experience"])
+        self.assertIn("仅可在同一项目内", arrangements["project_experience"])
 
     def test_skill_descriptions_define_distinct_selection_boundaries(self):
         edit_description = resume_edit_tool.description

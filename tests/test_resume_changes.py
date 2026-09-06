@@ -120,6 +120,31 @@ class ResumeChangeTests(unittest.TestCase):
         self.assertEqual(changes[1]["after_display"], "• 新补充一\n• 新补充二")
         self.assertTrue(validate_resume_change_set(before, after, changes))
 
+    def test_content_block_reorder_is_one_coherent_replace(self):
+        before = {
+            "project_experience": [{
+                "content_blocks": [
+                    {"type": "paragraph", "semantic_role": "introduction", "label": "项目背景", "text": "背景"},
+                    {"type": "paragraph", "semantic_role": "tech_stack", "label": "技术栈", "text": "Python"},
+                    {"type": "bullet_list", "semantic_role": "generic", "label": "项目成果", "items": ["成果"]},
+                ],
+            }],
+        }
+        after = {
+            "project_experience": [{
+                "content_blocks": [before["project_experience"][0]["content_blocks"][2],
+                                    before["project_experience"][0]["content_blocks"][0],
+                                    before["project_experience"][0]["content_blocks"][1]],
+            }],
+        }
+
+        changes = build_resume_changes(before, after)
+
+        self.assertEqual(len(changes), 1)
+        self.assertEqual(changes[0]["path"], ["project_experience", 0, "content_blocks"])
+        self.assertEqual(changes[0]["operation"], "replace")
+        self.assertTrue(validate_resume_change_set(before, after, changes))
+
     def test_change_set_is_bound_to_the_candidate_before_selective_apply(self):
         changes = build_resume_changes(self.before, self.after)
         self.assertTrue(validate_resume_change_set(self.before, self.after, changes))

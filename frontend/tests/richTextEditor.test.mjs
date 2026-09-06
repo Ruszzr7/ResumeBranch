@@ -90,7 +90,7 @@ test('multiline editors estimate resume visual lines from shared layout metrics'
 test('multiline content keeps authored line boundaries when switching display styles', () => {
   assert.ok(editorSource.includes('const lineBreak = document.createElement(\'br\')'))
   assert.ok(appSource.includes('text: resolvedType === \'paragraph\' ? normalizedText : \'\''))
-  assert.ok(appSource.includes('text: type === \'paragraph\' ? detailsText : \'\''))
+  assert.ok(appSource.includes('block?._type || \'bullet_list\', block?._text'))
   assert.equal(appSource.includes('text: resolvedType === \'paragraph\' ? values.join(\' \') : \'\''), false)
   assert.ok(appSource.includes('RESUME_LIST_STYLE_OPTIONS'))
   assert.ok(appSource.includes("setResumeEditListStyle('self_evaluation'"))
@@ -120,7 +120,8 @@ test('work and project semantic labels use the same inline bold editor and hide 
   assert.ok(appSource.includes("_introLabel: '**项目简介**'"))
   assert.equal(appSource.includes('简介标签</label>'), false)
   assert.equal(appSource.includes('_introLabelBold = !'), false)
-  assert.ok(appSource.includes('标签为空，该职责内容已保留但不会显示或导出'))
+  assert.ok(appSource.includes('标签为空，该项目职责已保留但不会显示或导出'))
+  assert.ok(appSource.includes('标签为空，该工作职责已保留但不会显示或导出'))
   assert.equal(appSource.includes("'项目简介', '项目背景', '项目概述', '项目说明'"), false)
   assert.ok(appSource.includes("semantic_role: 'introduction'"))
   assert.ok(appSource.includes('work.content_blocks = editableExperienceToContentBlocks(work)'))

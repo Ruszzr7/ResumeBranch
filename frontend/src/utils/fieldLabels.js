@@ -60,6 +60,7 @@ const FIELD_LABELS = Object.freeze({
   fontSize: '正文字号',
   titleStyle: '模块标题样式',
   sectionOrder: '模块顺序',
+  childSectionOrder: '教育经历子模块顺序',
   hiddenSections: '隐藏模块',
   preset: '排版预设',
   separator: '分隔方式',
@@ -77,6 +78,11 @@ const INTERNAL_VALUE_LABELS = Object.freeze({
   introduction: '项目简介',
   responsibilities: '项目职责',
   generic: '普通内容',
+  education_supplement: '教育经历补充',
+  honors: '主要荣誉',
+  publications: '论文',
+  research_interests: '研究方向',
+  others: '其他信息',
   standalone: '独立栏目',
 })
 

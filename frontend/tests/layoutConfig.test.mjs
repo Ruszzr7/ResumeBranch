@@ -9,6 +9,9 @@ test('current defaults use the compact practical spacing range', () => {
   assert.equal(result.global.moduleMargin, 0.5)
   assert.equal(result.global.titleStyle, 'underline')
   assert.equal(result.education.supplementListStyle, 'bullet')
+  assert.deepEqual(result.education.childSectionOrder, [
+    'education_supplement', 'honors', 'publications', 'research_interests', 'others'
+  ])
   assert.equal(result.basics.photoWidthMm, 21)
   assert.equal(normalizeLayoutConfig({ global: { lineHeight: 9, moduleMargin: 9 } }).global.lineHeight, 1.8)
   assert.equal(normalizeLayoutConfig({ global: { lineHeight: 9, moduleMargin: 9 } }).global.moduleMargin, 1)
@@ -23,6 +26,14 @@ test('current defaults use the compact practical spacing range', () => {
 test('education supplement list style is normalized as part of the shared education contract', () => {
   assert.equal(normalizeLayoutConfig({ version: 8, education: { supplementListStyle: 'numbered' } }).education.supplementListStyle, 'numbered')
   assert.equal(normalizeLayoutConfig({ version: 8, education: { supplementListStyle: 'invalid' } }).education.supplementListStyle, 'bullet')
+})
+
+test('education child order keeps explicit order and appends missing children', () => {
+  assert.deepEqual(normalizeLayoutConfig({
+    education: { childSectionOrder: ['research_interests', 'education_supplement', 'research_interests', 'invalid'] }
+  }).education.childSectionOrder, [
+    'research_interests', 'education_supplement', 'honors', 'publications', 'others'
+  ])
 })
 
 test('retired education metrics placement is discarded', () => {
