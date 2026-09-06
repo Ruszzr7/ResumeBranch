@@ -1,4 +1,4 @@
-import { normalizeContentBlock } from './resumeContract.js'
+import { normalizeContentBlock, normalizeContentBlocks } from './resumeContract.js'
 import { isFullyBoldInlineText, joinInlineWithInheritedSeparator, plainInlineText } from './inlineFormatting.js'
 
 export const MODULE_COMPONENTS = Object.freeze({
@@ -101,8 +101,8 @@ export const DEFAULT_LAYOUT_CONFIG = Object.freeze({
   research_interests: moduleContract('research_interests', { listStyle: 'bullet' }),
   honors: moduleContract('honors', { listStyle: 'bullet' }),
   publications: moduleContract('publications', { listStyle: 'bullet' }),
-  work_experience: moduleContract('work_experience', { detailsStyle: 'bullets', datePosition: 'right', showJobType: true }),
-  project_experience: moduleContract('project_experience', { detailsStyle: 'bullets', datePosition: 'right', showRole: true, showDate: true }),
+  work_experience: moduleContract('work_experience', { detailsStyle: 'bullets', datePosition: 'right', showJobType: true, contentBlockOrderByEntry: {} }),
+  project_experience: moduleContract('project_experience', { detailsStyle: 'bullets', datePosition: 'right', showRole: true, showDate: true, contentBlockOrderByEntry: {} }),
   custom_sections: moduleContract('custom_sections', { listStyle: 'bullet' }),
   others: moduleContract('others', { fieldOrder: ['skills', 'certificates', 'languages'], hiddenFields: [], separator: 'dot' }),
   self_evaluation: moduleContract('self_evaluation', { listStyle: 'paragraph' })
@@ -432,7 +432,45 @@ export function normalizeLayoutConfig(value = {}) {
     }
   }
   normalizeModuleContracts(result, value, suppliedVersion, boundedConfigNumber)
+  for (const section of ['work_experience', 'project_experience']) {
+    const rawOrders = value?.[section]?.contentBlockOrderByEntry
+    const cleanOrders = {}
+    if (rawOrders && typeof rawOrders === 'object' && !Array.isArray(rawOrders)) {
+      for (const [entryId, order] of Object.entries(rawOrders)) {
+        const key = String(entryId || '').trim()
+        if (!key || !Array.isArray(order)) continue
+        cleanOrders[key] = [...new Set(order.map(item => String(item || '').trim()).filter(Boolean))]
+      }
+    }
+    result[section].contentBlockOrderByEntry = cleanOrders
+  }
   return result
+}
+
+export function orderedExperienceContentBlocks(item = {}, value = {}, experienceKind = 'project') {
+  const blocks = normalizeContentBlocks(item?.content_blocks, {
+    experienceKind: experienceKind === 'work' ? 'work' : 'project'
+  })
+  if (!blocks.length) return []
+  const config = normalizeLayoutConfig(value)
+  const root = experienceKind === 'work' ? 'work_experience' : 'project_experience'
+  const entryId = String(item?.entry_id || '').trim()
+  const order = entryId ? (config[root]?.contentBlockOrderByEntry?.[entryId] || []) : []
+  const byId = new Map(blocks.map(block => [String(block?.block_id || ''), block]).filter(([id]) => id))
+  const selected = []
+  for (const blockId of order) {
+    const block = byId.get(String(blockId))
+    if (block && !selected.includes(block)) selected.push(block)
+  }
+  const remaining = blocks.filter(block => !selected.includes(block))
+  if (order.length) return [...selected, ...remaining]
+  const roleOrder = experienceKind === 'work'
+    ? { introduction: 0, responsibilities: 1, generic: 2 }
+    : { tech_stack: 0, introduction: 1, responsibilities: 2, generic: 3 }
+  return [...blocks].sort((left, right) => (
+    (roleOrder[resolveContentBlockFlow(left).semanticRole] ?? 3)
+      - (roleOrder[resolveContentBlockFlow(right).semanticRole] ?? 3)
+  ))
 }
 
 /**

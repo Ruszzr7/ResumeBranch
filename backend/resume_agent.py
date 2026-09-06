@@ -79,14 +79,15 @@ _edit_lock_acquirer: ContextVar[object | None] = ContextVar(
 )
 
 
-async def acquire_current_edit_lock() -> None:
+async def acquire_current_edit_lock() -> object | None:
     """Ask the HTTP boundary to reserve this task before preview generation."""
     callback = _edit_lock_acquirer.get()
     if callback is None:
-        return
+        return None
     result = callback()
     if hasattr(result, "__await__"):
-        await result
+        result = await result
+    return result
 
 
 def set_edit_lock_acquirer(callback):
@@ -462,6 +463,8 @@ class AgentState:
     resume_data: dict = None  # None 表示尚未读取简历
     jd_data: dict = None  # None 表示尚未加载JD
     layout_data: dict = None
+    state_sequence: int = 0
+    state_change_notice: str = ""
     pending_confirmation: dict = None  # 待确认状态
     just_saved: bool = False  # 刚保存简历后设置为 True
     user_id: int = None  # 当前用户ID
@@ -1537,12 +1540,13 @@ def make_pending_confirmation(
     """Build the same pending-confirmation contract for tool and fallback paths."""
     current = validate_resume_data(state.resume_data or {})
     current_layout = normalize_layout_config(state.layout_data)
+    state.state_change_notice = ""
     candidate = validate_resume_data(candidate if candidate is not None else current)
     layout_candidate = normalize_layout_config(
         layout_candidate if layout_candidate is not None else current_layout
     )
     resume_changes = build_resume_changes(current, candidate)
-    layout_changes = build_layout_changes(current_layout, layout_candidate)
+    layout_changes = build_layout_changes(current_layout, layout_candidate, current)
     changes = resume_changes + layout_changes
     if not changes:
         raise ValueError("没有检测到可应用的简历修改")
@@ -1554,7 +1558,11 @@ def make_pending_confirmation(
             {"label": "全部接受", "value": "confirm", "style": "primary"},
             {"label": "全部拒绝", "value": "cancel", "style": "default"},
         ],
-        "base_version": build_resume_state_version(current, current_layout),
+        "base_version": build_resume_state_version(
+            current,
+            current_layout,
+            sequence=int(getattr(state, "state_sequence", 0) or 0),
+        ),
         "task_id": state.task_id,
         "resume_candidate": candidate,
         "layout_candidate": layout_candidate,
@@ -1634,12 +1642,17 @@ async def direct_edit_node(state: AgentState) -> dict:
     )
     return {
         "messages": list(state.messages) + [assistant_message],
-        "resume_data": current,
+        "resume_data": preview.get("resume_data") if preview.get("state_changed") else current,
         "jd_data": state.jd_data or {},
-        "layout_data": current_layout,
+        "layout_data": preview.get("layout_data") if preview.get("state_changed") else current_layout,
         "pending_confirmation": pending,
         "proposal_error": None,
         "edit_noop": bool(preview.get("already_satisfied")),
+        "state_sequence": int(preview.get("state_sequence", getattr(state, "state_sequence", 0)) or 0),
+        "state_change_notice": str(
+            preview.get("message") if preview.get("state_changed")
+            else getattr(state, "state_change_notice", "") or ""
+        ),
         "just_saved": False,
         "user_id": state.user_id,
         "task_id": state.task_id,
@@ -1669,7 +1682,33 @@ async def generate_resume_edit_preview(
     layout_operations=(),
 ) -> dict:
     """Run the generic edit Skill with already-structured operations."""
-    await acquire_current_edit_lock()
+    lock_result = await acquire_current_edit_lock()
+    if isinstance(lock_result, dict) and lock_result.get("status") == "state_changed":
+        current = validate_resume_data(lock_result.get("resume_data") or {})
+        current_layout = normalize_layout_config(lock_result.get("layout_data") or {})
+        current_sequence = int(lock_result.get("state_sequence", 0) or 0)
+        current_version = lock_result.get("state_version") or build_resume_state_version(
+            current,
+            current_layout,
+            sequence=current_sequence,
+        )
+        state.resume_data = current
+        state.layout_data = current_layout
+        state.state_sequence = current_sequence
+        state.state_change_notice = (
+            "在本轮生成修改预览前，简历内容或排版已被其他操作更新。"
+            f"当前状态序列为 {current_sequence}，当前内容/排版版本已重新注入。"
+        )
+        return {
+            "pending_confirmation": None,
+            "already_satisfied": False,
+            "state_changed": True,
+            "message": "简历状态已更新；请基于当前内容重新判断这项请求，之前的修改参数未执行。",
+            "resume_data": current,
+            "layout_data": current_layout,
+            "state_sequence": current_sequence,
+            "state_version": current_version,
+        }
     current = validate_resume_data(state.resume_data or {})
     current_layout = normalize_layout_config(state.layout_data)
     edit_result = await skill_runtime.invoke(
@@ -1684,13 +1723,17 @@ async def generate_resume_edit_preview(
             "layout_config": current_layout,
             "jd_data": state.jd_data or {},
             "context_type": getattr(state, "context_type", "main") or "main",
-            "base_version": build_resume_state_version(current, current_layout),
+            "base_version": build_resume_state_version(
+                current,
+                current_layout,
+                sequence=int(getattr(state, "state_sequence", 0) or 0),
+            ),
             "conversation_context": "",
         },
     )
     candidate = edit_result.resume_data
     layout_candidate = edit_result.layout_config
-    changes = build_resume_changes(current, candidate) + build_layout_changes(current_layout, layout_candidate)
+    changes = build_resume_changes(current, candidate) + build_layout_changes(current_layout, layout_candidate, current)
     if not changes:
         return {
             "pending_confirmation": None,
@@ -1804,6 +1847,14 @@ async def conversation_node(state: AgentState) -> dict:
         mission_initial_turn=mission_initial_turn,
         preserve_tool_protocol=True,
     )
+    state_change_notice = str(getattr(state, "state_change_notice", "") or "").strip()
+    if state_change_notice and messages and isinstance(messages[0], SystemMessage):
+        messages[0] = SystemMessage(content=(
+            str(messages[0].content)
+            + "\n\n【本轮状态变更提示】\n"
+            + state_change_notice
+            + "\n请只依据下方注入的当前简历和排版重新判断，不要沿用过期工具参数。"
+        ))
     if messages and isinstance(messages[0], SystemMessage):
         preloaded_skill_names = [
             name for name in active_skill_names
@@ -1822,6 +1873,14 @@ async def conversation_node(state: AgentState) -> dict:
                   "不得把结论摘要当作用户事实。\n"
                 + json.dumps(coach_state, ensure_ascii=False, indent=2)
             ))
+        messages[0] = SystemMessage(content=(
+            str(messages[0].content)
+            + "\n\n【ResumeBranch 当前补充契约】项目/工作经历子模块排序属于排版配置："
+              "只在模块排序入口通过 layout_operations 设置对应的 contentBlockOrderByEntry，"
+              "不得用 resume_operations 的 move 改写 content_blocks 保存顺序，也不得跨经历排序。"
+              "generic 可新增多个；每个 generic 有 type、label、正文，label 为空时正文仍显示并导出。"
+              "顶层模块自定义标题和经历内容块自定义 label 都是当前状态中的定位别名，不会创建新的语义角色。"
+        ))
     if visual_attached:
         messages = _attach_visual_resume_parts(messages, visual_parts)
         LOGGER.debug("已附加 %s 页临时视觉上下文", len(visual_parts))
@@ -1943,6 +2002,8 @@ async def conversation_node(state: AgentState) -> dict:
         "resume_data": state.resume_data or {},
         "jd_data": state.jd_data or {},
         "layout_data": normalize_layout_config(state.layout_data),
+        "state_sequence": int(getattr(state, "state_sequence", 0) or 0),
+        "state_change_notice": getattr(state, "state_change_notice", "") or "",
         "pending_confirmation": pending_conf,
         "just_saved": False,  # 清除 just_saved 标记
         "user_id": state.user_id,  # 保留用户ID
@@ -2008,6 +2069,8 @@ async def tool_node(state: AgentState) -> dict:
             "resume_data": state.resume_data or {},
             "jd_data": state.jd_data or {},
             "layout_data": normalize_layout_config(state.layout_data),
+            "state_sequence": int(getattr(state, "state_sequence", 0) or 0),
+            "state_change_notice": getattr(state, "state_change_notice", "") or "",
             "user_id": state.user_id,
             "task_id": state.task_id,
             "context_metadata_updates": metadata_updates,
@@ -2212,15 +2275,28 @@ async def tool_node(state: AgentState) -> dict:
                             proposal_error = "本次修改无法安全生成确认预览，系统未对简历做任何更改。"
                             result = proposal_error
                         else:
+                            if preview.get("state_changed"):
+                                # The Skill was intentionally not invoked with
+                                # stale parameters.  Replace the in-graph
+                                # snapshot and let the next LLM turn decide
+                                # whether a fresh edit is still necessary.
+                                state.resume_data = preview.get("resume_data") or state.resume_data
+                                state.layout_data = preview.get("layout_data") or state.layout_data
+                                state.state_sequence = int(preview.get("state_sequence", 0) or 0)
+                                state.state_change_notice = str(
+                                    getattr(state, "state_change_notice", "") or preview.get("message") or ""
+                                )
                             pending_confirmation = preview.get("pending_confirmation")
                             if pending_confirmation and coach_edit_handoff:
                                 pending_confirmation["coach_offer_id"] = coach_edit_handoff.get("offer_id")
                             edit_noop = bool(preview.get("already_satisfied"))
                             assistant_reply = str(tool_args.get("answer_text", "") or "").strip()
-                            edit_preview_reply = str(
+                            edit_preview_reply = "" if preview.get("state_changed") else str(
                                 preview.get("message", "已生成修改预览。") or ""
                             ).strip()
                             result = edit_preview_reply
+                            if preview.get("state_changed"):
+                                result = str(preview.get("message") or "简历状态已更新，请基于当前内容重新判断。")
                 else:
                     # 其他工具直接执行
                     result = tool_func.invoke(tool_args)
@@ -2268,6 +2344,8 @@ async def tool_node(state: AgentState) -> dict:
         "resume_data": state.resume_data or {},
         "jd_data": state.jd_data or {},
         "layout_data": normalize_layout_config(state.layout_data),
+        "state_sequence": int(getattr(state, "state_sequence", 0) or 0),
+        "state_change_notice": getattr(state, "state_change_notice", "") or "",
         "pending_confirmation": pending_confirmation,
         "assistant_reply": assistant_reply,
         "edit_preview_reply": edit_preview_reply,
@@ -2344,7 +2422,15 @@ graph_builder.add_conditional_edges(
     }
 )
 
-graph_builder.add_edge("direct_edit", END)
+def direct_edit_router(state: AgentState) -> str:
+    return "conversation_llm" if getattr(state, "state_change_notice", "") else END
+
+
+graph_builder.add_conditional_edges(
+    "direct_edit",
+    direct_edit_router,
+    {"conversation_llm": "conversation_llm", END: END},
+)
 
 
 # =============================================================================

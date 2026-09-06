@@ -227,7 +227,7 @@ const handleContextClick = () => {
     >
       <span>{{ props.message.content }}</span>
       <button
-        v-if="props.message.result_status === 'saved' && !props.message.undo_handled"
+        v-if="props.message.result_status === 'saved' && !props.message.undo_handled && props.message.revision_id"
         class="undo-btn"
         @click="handleUndoClick"
       >撤回本次修改</button>
@@ -235,7 +235,7 @@ const handleContextClick = () => {
 
     <div v-if="props.message.type === 'undo'" class="undo-area">
       <span>{{ props.message.content }}</span>
-      <button v-if="!props.message.handled" class="undo-btn" @click="handleUndoClick">撤回本次修改</button>
+      <button v-if="!props.message.handled && props.message.revision_id" class="undo-btn" @click="handleUndoClick">撤回本次修改</button>
     </div>
 
     <!-- 消息内容 - 无头像（confirm 类型不显示） -->

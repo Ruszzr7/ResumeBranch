@@ -175,6 +175,8 @@ export function normalizeContentBlock(block = {}, { keepEmpty = true } = {}) {
     text: normalizedText,
     items: normalizedItems
   }
+  const blockId = text(source.block_id)
+  if (blockId) normalized.block_id = blockId
   if (!keepEmpty && !normalized.text && !normalized.items.length) return null
   return normalized
 }

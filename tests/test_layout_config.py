@@ -450,6 +450,54 @@ class LayoutConfigTests(unittest.TestCase):
         self.assertEqual(selected["education"]["schoolTagStyle"], "outline")
         self.assertEqual(selected["self_evaluation"]["listStyle"], "paragraph")
 
+    def test_experience_order_change_displays_labels_instead_of_internal_ids(self):
+        before = default_layout_config()
+        after = default_layout_config()
+        project_entry_id = "project-entry-uuid"
+        work_entry_id = "work-entry-uuid"
+        project_blocks = [
+            {"block_id": "project-tech-uuid", "semantic_role": "tech_stack", "label": "技术栈", "type": "paragraph", "text": "Python"},
+            {"block_id": "project-intro-uuid", "semantic_role": "introduction", "label": "项目简介", "type": "paragraph", "text": "背景"},
+            {"block_id": "project-generic-uuid", "semantic_role": "generic", "label": "项目成果", "type": "bullet_list", "items": ["结果"]},
+        ]
+        work_blocks = [
+            {"block_id": "work-intro-uuid", "semantic_role": "introduction", "label": "工作简介", "type": "paragraph", "text": "背景"},
+            {"block_id": "work-responsibility-uuid", "semantic_role": "responsibilities", "label": "工作职责", "type": "numbered_list", "items": ["职责"]},
+        ]
+        resume_data = {
+            "project_experience": [{
+                "entry_id": project_entry_id,
+                "project_name": "项目 Alpha",
+                "content_blocks": project_blocks,
+            }],
+            "work_experience": [{
+                "entry_id": work_entry_id,
+                "company_name": "公司 Beta",
+                "content_blocks": work_blocks,
+            }],
+        }
+        after["project_experience"]["contentBlockOrderByEntry"] = {
+            project_entry_id: ["project-generic-uuid", "project-tech-uuid", "project-intro-uuid"],
+        }
+        after["work_experience"]["contentBlockOrderByEntry"] = {
+            work_entry_id: ["work-responsibility-uuid", "work-intro-uuid"],
+        }
+
+        changes = build_layout_changes(before, after, resume_data)
+        project_detail = next(
+            detail for change in changes if change["id"] == "layout-project_experience"
+            for detail in change["details"] if detail["field"] == "contentBlockOrderByEntry"
+        )
+        work_detail = next(
+            detail for change in changes if change["id"] == "layout-work_experience"
+            for detail in change["details"] if detail["field"] == "contentBlockOrderByEntry"
+        )
+        self.assertIn("项目 Alpha：项目成果 — 技术栈 — 项目简介", project_detail["after_display"])
+        self.assertIn("公司 Beta：工作职责 — 工作简介", work_detail["after_display"])
+        for detail in (project_detail, work_detail):
+            self.assertNotIn("uuid", detail["before_display"] + detail["after_display"])
+            self.assertNotIn("entry", detail["before_display"] + detail["after_display"])
+
     def test_reset_one_module_preserves_other_overrides(self):
         config = default_layout_config()
         config["education"]["schoolTagStyle"] = "outline"

@@ -12,6 +12,7 @@ import {
   isCompactAcademicMetricLeadingBold,
   normalizeLayoutConfig,
   resolveContentBlockFlow,
+  orderedExperienceContentBlocks,
   resolveEducationColumnWidths,
   resolveLayoutTokens,
   resolvePhotoHeightMm,
@@ -70,6 +71,11 @@ const props = defineProps({
     required: false,
     default: ''
   },
+  stateVersion: {
+    type: Object,
+    required: false,
+    default: () => null
+  },
   projectName: {
     type: String,
     required: false,
@@ -105,15 +111,29 @@ const experienceItems = (data, root) => root === 'project_experience'
 const experienceBlocksForOrdering = (item, root) => normalizeContentBlocks(item?.content_blocks, {
   experienceKind: root === 'project_experience' ? 'project' : 'work'
 })
-const experienceContentOrderSnapshot = (data, root) => experienceItems(data, root).map(item => (
-  experienceBlocksForOrdering(item, root).map((_, index) => index)
-))
+
+const layoutRequestBody = layoutConfig => JSON.stringify({
+  layout_config: layoutConfig,
+  base_version: props.stateVersion || null
+})
+const experienceContentOrderSnapshot = (data, root, layoutConfig = props.layoutConfig) => experienceItems(data, root).map(item => {
+  const blocks = experienceBlocksForOrdering(item, root)
+  const ordered = orderedExperienceContentBlocks(
+    item,
+    layoutConfig,
+    root === 'project_experience' ? 'project' : 'work'
+  )
+  return ordered.map(block => {
+    const blockId = String(block?.block_id || '').trim()
+    const byId = blockId ? blocks.findIndex(candidate => String(candidate?.block_id || '').trim() === blockId) : -1
+    return byId >= 0 ? byId : blocks.indexOf(block)
+  }).filter(index => index >= 0)
+})
 const defaultExperienceContentOrder = (item, root) => {
-  const roleOrder = { tech_stack: 0, introduction: 1, responsibilities: 2, generic: 3 }
-  return experienceBlocksForOrdering(item, root)
-    .map((block, index) => ({ index, role: resolveContentBlockFlow(block).semanticRole }))
-    .sort((left, right) => (roleOrder[left.role] ?? 3) - (roleOrder[right.role] ?? 3) || left.index - right.index)
-    .map(item => item.index)
+  return experienceContentOrderSnapshot({
+    project_experience: root === 'project_experience' ? [item] : [],
+    work_experience: root === 'work_experience' ? [item] : []
+  }, root, {})[0] || []
 }
 const initialLayout = expandSectionOrderForData(props.layoutConfig, props.data)
 const localSectionOrder = ref(initialLayout.global.sectionOrder)
@@ -121,15 +141,13 @@ const localEducationChildOrder = ref([...(initialLayout.education?.childSectionO
   'education_supplement', 'honors', 'publications', 'research_interests', 'others'
 ])])
 const localProjectContentOrders = ref(experienceContentOrderSnapshot(props.data, 'project_experience'))
-const localWorkContentOrders = ref(experienceItems(props.data, 'work_experience')
-  .map(work => defaultExperienceContentOrder(work, 'work_experience')))
+const localWorkContentOrders = ref(experienceContentOrderSnapshot(props.data, 'work_experience'))
 // Work and project data can arrive at different times while the active resume
 // is being hydrated.  Keep the work default-order marker independent so a
 // project arriving first cannot make a newly-arrived work item preserve its
 // legacy generic-first order.
 const workOrdersHydrated = ref(false)
 const workOrderDataSource = ref(props.data)
-const preserveWorkOrderOnNextDataUpdate = ref(false)
 const RESUME_SETTINGS_DIALOG_EVENT = 'resume-settings-dialog-open'
 const showSectionSettingsDialog = ref(false)
 const isSavingSectionSettings = ref(false)
@@ -342,13 +360,23 @@ function academicMetrics(item) {
 
 function projectContentBlocks(item, experienceKind = 'project', experienceIndex = null) {
   let blocks = normalizeContentBlocks(item?.content_blocks, { experienceKind })
-  if (Number.isInteger(experienceIndex)) {
+  // The order dialog owns its unsaved draft order separately.  Normal preview
+  // rendering must resolve the persisted layout by stable IDs so an editor
+  // draft that adds/removes a block cannot make index-based rows jump to the
+  // wrong position before the draft is saved.
+  if (Number.isInteger(experienceIndex) && showSectionOrderDialog.value) {
     const canonicalBlocks = blocks
     const localOrders = experienceKind === 'project' ? localProjectContentOrders : localWorkContentOrders
     const order = [...(localOrders.value[experienceIndex] || canonicalBlocks.map((_, index) => index))]
       .filter(index => Number.isInteger(index) && index >= 0 && index < canonicalBlocks.length)
     canonicalBlocks.forEach((_, index) => { if (!order.includes(index)) order.push(index) })
     blocks = order.map(index => canonicalBlocks[index])
+  } else if (Number.isInteger(experienceIndex)) {
+    blocks = orderedExperienceContentBlocks(
+      item,
+      layout.value,
+      experienceKind === 'work' ? 'work' : 'project',
+    )
   }
   return blocks
     .filter(block => resolveContentBlockFlow(block).visible)
@@ -736,11 +764,11 @@ async function applySectionSettings() {
     const response = await fetch(`/tasks/${props.taskId}/layout`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ...buildAuthorizationHeaders() },
-      body: JSON.stringify({ layout_config: candidate })
+      body: layoutRequestBody(candidate)
     })
     const payload = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(payload.detail || '保存栏目设置失败')
-    emit('layout-updated', normalizeLayoutConfig(payload.layout_config || candidate))
+    emit('layout-updated', normalizeLayoutConfig(payload.layout_config || candidate), payload.state_version)
     showSectionSettingsDialog.value = false
   } catch (error) {
     sectionSettingsError.value = error.message || '保存栏目设置失败'
@@ -757,11 +785,11 @@ async function persistSectionOrder() {
   candidate.global.sectionOrder = [...localSectionOrder.value]
   candidate.education.childSectionOrder = [...localEducationChildOrder.value]
   const resumeCandidate = props.data ? JSON.parse(JSON.stringify(props.data)) : null
-  let resumeChanged = false
-  let workOrderChanged = false
   if (resumeCandidate) {
     for (const root of ['work_experience', 'project_experience']) {
       const localOrders = root === 'project_experience' ? localProjectContentOrders : localWorkContentOrders
+      const module = candidate[root]
+      module.contentBlockOrderByEntry = {}
       experienceItems(resumeCandidate, root).forEach((experience, experienceIndex) => {
         const blocks = experienceBlocksForOrdering(experience, root)
         if (!blocks.length) return
@@ -769,27 +797,20 @@ async function persistSectionOrder() {
         const requestedOrder = [...(localOrders.value[experienceIndex] || currentOrder)]
           .filter(index => Number.isInteger(index) && index >= 0 && index < blocks.length)
         currentOrder.forEach(index => { if (!requestedOrder.includes(index)) requestedOrder.push(index) })
-        if (requestedOrder.join('|') === currentOrder.join('|')) return
-        experience.content_blocks = requestedOrder.map(index => blocks[index])
-        resumeChanged = true
-        if (root === 'work_experience') workOrderChanged = true
+        const entryId = String(experience.entry_id || '').trim()
+        if (!entryId) return
+        const blockIds = requestedOrder
+          .map(index => String(blocks[index]?.block_id || '').trim())
+          .filter(Boolean)
+        if (blockIds.length) module.contentBlockOrderByEntry[entryId] = blockIds
       })
     }
   }
   try {
-    if (resumeChanged) {
-      const resumeResponse = await fetch('/save_resume', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Task-ID': props.taskId, ...buildAuthorizationHeaders() },
-        body: JSON.stringify({ resume_data: resumeCandidate })
-      })
-      const resumeData = await resumeResponse.json().catch(() => ({}))
-      if (!resumeResponse.ok) throw new Error(resumeData.detail || '保存经历内容顺序失败')
-    }
     const response = await fetch(`/tasks/${props.taskId}/layout`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ...buildAuthorizationHeaders() },
-      body: JSON.stringify({ layout_config: candidate })
+      body: layoutRequestBody(candidate)
     })
     const data = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(data.detail || '保存模块顺序失败')
@@ -798,15 +819,7 @@ async function persistSectionOrder() {
     localEducationChildOrder.value = [...savedLayout.education.childSectionOrder]
     localProjectContentOrders.value = experienceContentOrderSnapshot(resumeCandidate || props.data, 'project_experience')
     localWorkContentOrders.value = experienceContentOrderSnapshot(resumeCandidate || props.data, 'work_experience')
-    if (workOrderChanged) {
-      // The child order was explicitly saved in this dialog.  Preserve that
-      // authored order when the parent replaces the resume object below.
-      preserveWorkOrderOnNextDataUpdate.value = true
-    }
-    if (resumeChanged) {
-      emit('resume-updated', resumeCandidate)
-    }
-    emit('layout-updated', savedLayout)
+    emit('layout-updated', savedLayout, data.state_version)
     sectionOrderSnapshot.value = null
     return true
   } catch (error) {
@@ -1071,14 +1084,16 @@ async function migrateLegacyLayoutSettings() {
       const response = await fetch(`/tasks/${props.taskId}/layout`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', ...buildAuthorizationHeaders() },
-        body: JSON.stringify({ layout_config: candidate })
+        body: layoutRequestBody(candidate)
       })
       if (response.ok) {
+        const payload = await response.json().catch(() => ({}))
         marginVertical.value = candidate.global.marginVertical
         marginHorizontal.value = candidate.global.marginHorizontal
         moduleMargin.value = candidate.global.moduleMargin
         lineHeight.value = candidate.global.lineHeight
         fontSize.value = candidate.global.fontSize
+        emit('layout-updated', normalizeLayoutConfig(payload.layout_config || candidate), payload.state_version)
       }
     }
     localStorage.removeItem(key)
@@ -1103,11 +1118,14 @@ function saveLayoutSettings() {
     })
     candidate.typography.fontSizes = { ...fontSizes.value, body: fontSize.value }
     try {
-      await fetch(`/tasks/${props.taskId}/layout`, {
+      const response = await fetch(`/tasks/${props.taskId}/layout`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', ...buildAuthorizationHeaders() },
-        body: JSON.stringify({ layout_config: candidate })
+        body: layoutRequestBody(candidate)
       })
+      const payload = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(payload.detail || '保存排版设置失败')
+      emit('layout-updated', normalizeLayoutConfig(payload.layout_config || candidate), payload.state_version)
     } catch (error) {
       console.error('保存排版设置失败:', error)
     }
@@ -1184,14 +1202,14 @@ async function applyFontSizeSettings() {
     const response = await fetch(`/tasks/${props.taskId}/layout`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ...buildAuthorizationHeaders() },
-      body: JSON.stringify({ layout_config: candidate })
+      body: layoutRequestBody(candidate)
     })
     const payload = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(payload.detail || '保存字号设置失败')
     const saved = normalizeLayoutConfig(payload.layout_config || candidate)
     fontSizes.value = { ...saved.typography.fontSizes }
     fontSize.value = saved.global.fontSize
-    emit('layout-updated', saved)
+    emit('layout-updated', saved, payload.state_version)
     showFontSizeDialog.value = false
   } catch (error) {
     fontSizeSaveError.value = error.message || '保存字号设置失败'
@@ -1786,26 +1804,15 @@ watch(() => [props.layoutConfig, props.data], () => {
   localSectionOrder.value = [...nextLayout.global.sectionOrder]
   localEducationChildOrder.value = [...nextLayout.education.childSectionOrder]
   localProjectContentOrders.value = experienceContentOrderSnapshot(props.data, 'project_experience')
-  const workItems = experienceItems(props.data, 'work_experience')
-  const workDataChanged = props.data !== workOrderDataSource.value
-  if (!workItems.length) {
-    workOrdersHydrated.value = false
-    localWorkContentOrders.value = []
-  } else if (!workOrdersHydrated.value || workDataChanged) {
-    localWorkContentOrders.value = preserveWorkOrderOnNextDataUpdate.value
-      ? experienceContentOrderSnapshot(props.data, 'work_experience')
-      : workItems.map(work => defaultExperienceContentOrder(work, 'work_experience'))
-    workOrdersHydrated.value = true
-  }
+  localWorkContentOrders.value = experienceContentOrderSnapshot(props.data, 'work_experience', nextLayout)
+  workOrdersHydrated.value = true
   workOrderDataSource.value = props.data
-  preserveWorkOrderOnNextDataUpdate.value = false
   loadLayoutSettings()
   nextTick(() => { syncingLayoutProps = false })
 }, { deep: true, immediate: true })
 watch(() => props.taskId, () => {
   workOrdersHydrated.value = false
   workOrderDataSource.value = null
-  preserveWorkOrderOnNextDataUpdate.value = false
   closeSourceDocument()
   loadLayoutSettings()
   calculatePagination()
@@ -4339,8 +4346,13 @@ const getItemIndex = (type, dataIndex) => {
 .section-order-name {
   min-width: 0;
   overflow: hidden;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  line-height: 1.35;
   font-size: 0.82rem;
   font-weight: 600;
 }

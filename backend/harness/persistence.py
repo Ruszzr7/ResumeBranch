@@ -163,7 +163,6 @@ async def persist_turn_state(
     filtered_messages = sanitize_messages_for_persistence(messages_list)
     all_human = [message for message in filtered_messages if isinstance(message, HumanMessage)]
     all_ai = [message for message in filtered_messages if isinstance(message, AIMessage)]
-    final_resume_data = resume_data_result if resume_data_result else {}
     final_jd_data = jd_data if jd_data else {}
 
     LOGGER.debug(
@@ -178,11 +177,13 @@ async def persist_turn_state(
         save_conversation_context,
         update_conversation_context_metadata,
         save_user_jd,
-        save_user_resume,
     )
 
-    if final_resume_data:
-        save_user_resume(db, user_id, final_resume_data)
+    # ``resume_data_result`` is the Agent's request-scoped snapshot.  It may
+    # be stale by the time a normal answer finishes, so it must never be an
+    # implicit canonical-resume write.  Content/layout mutations are persisted
+    # only by their lock + state-version guarded endpoints (manual save,
+    # confirmation, import, translation, or undo).
     if final_jd_data:
         save_user_jd(db, user_id, final_jd_data)
 

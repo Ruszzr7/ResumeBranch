@@ -33,7 +33,7 @@ from .layout_config import (
 )
 
 
-LAYOUT_CAPABILITY_VERSION = "4"
+LAYOUT_CAPABILITY_VERSION = "5"
 
 # These are the paths that the conversation edit skill may mutate.  The
 # remaining normalized fields are renderer state or compatibility fields and
@@ -72,8 +72,8 @@ EDITABLE_MODULE_FIELDS: dict[str, set[str]] = {
     "research_interests": {"listStyle"},
     "honors": {"listStyle"},
     "publications": {"listStyle"},
-    "work_experience": {"detailsStyle", "datePosition", "showJobType"},
-    "project_experience": {"detailsStyle", "datePosition", "showRole", "showDate"},
+    "work_experience": {"detailsStyle", "datePosition", "showJobType", "contentBlockOrderByEntry"},
+    "project_experience": {"detailsStyle", "datePosition", "showRole", "showDate", "contentBlockOrderByEntry"},
     "custom_sections": {"listStyle"},
     "others": {"fieldOrder", "hiddenFields", "separator"},
     "self_evaluation": {"listStyle"},
@@ -120,6 +120,8 @@ LIST_FIELDS: dict[tuple[str, str], set[str]] = {
 OBJECT_FIELDS = {
     ("global", "titleOverrides"),
     ("global", "sectionPlacements"),
+    ("work_experience", "contentBlockOrderByEntry"),
+    ("project_experience", "contentBlockOrderByEntry"),
 }
 
 HISTORICAL_LAYOUT_DISPLAY_LABELS = {
@@ -310,6 +312,18 @@ def build_layout_capability_manifest() -> dict[str, Any]:
                 "key_set": ["research_interests", "honors", "publications", "others"],
                 "value": {"type": "string", "allowed_values": ["education"]},
             },
+            "work_experience.contentBlockOrderByEntry": {
+                "type": "object",
+                "key": "server-generated work entry_id",
+                "value": "ordered list of server-generated content block_id values",
+                "scope": "one work experience entry only; never crosses entries",
+            },
+            "project_experience.contentBlockOrderByEntry": {
+                "type": "object",
+                "key": "server-generated project entry_id",
+                "value": "ordered list of server-generated content block_id values",
+                "scope": "one project experience entry only; never crosses entries",
+            },
         },
         "semantic_content_rules": {
             "experience_content": ["introduction", "responsibilities", "generic"],
@@ -328,8 +342,8 @@ def build_layout_capability_manifest() -> dict[str, Any]:
             "publications": "论文支持段落、分点、编号",
             "custom_sections": "自定义栏目内容支持段落、分点、编号",
             "self_evaluation": "自我评价支持段落、分点、编号",
-            "work_experience": "工作内容由工作简介、工作职责及零个或多个其他工作内容块组成；其他内容标题可为空且空标题正文仍显示和导出；顺序按当前 content_blocks 保存，仅可在同一条工作经历内通过 resume_operations 的 move 调整，职责默认编号，其他内容默认分点",
-            "project_experience": "项目内容由技术栈、项目简介、项目职责及零个或多个其他项目内容块组成；其他内容标题可为空且空标题正文仍显示和导出；顺序按当前 content_blocks 保存，仅可在同一项目内通过 resume_operations 的 move 调整",
+            "work_experience": "工作内容由工作简介、工作职责及零个或多个其他工作内容块组成；其他内容标题可为空且空标题正文仍显示和导出；顺序只保存在排版配置中，仅可在同一条工作经历内调整，职责默认编号，其他内容默认分点",
+            "project_experience": "项目内容由技术栈、项目简介、项目职责及零个或多个其他项目内容块组成；其他内容标题可为空且空标题正文仍显示和导出；顺序只保存在排版配置中，仅可在同一项目内调整",
             "others": "证书和语言各自独立一行，条目之间使用分隔符，不提供长文本换行",
             "education": "教育经历为学校、学历/专业/成绩、日期三栏；教育经历补充与并入教育经历的子模块按 education.childSectionOrder 排列，教育经历补充默认在最上方",
         },
@@ -339,6 +353,7 @@ def build_layout_capability_manifest() -> dict[str, Any]:
             "titleStyle 是全局统一的模块标题样式",
             "sectionOrder 只排列实际有内容且未并入教育经历的顶层模块；多个自定义栏目按各自标题独立排列",
             "education.childSectionOrder 只排列教育经历内部的教育经历补充和已并入教育经历的子模块，不改变顶层 sectionOrder",
+            "work_experience.contentBlockOrderByEntry 和 project_experience.contentBlockOrderByEntry 只排列每条经历内部的子模块；经历之间的顺序不在此字段中调整",
             "sectionPlacements 只支持独立栏目或并入教育经历",
         ],
         "read_only_layout_state": [
@@ -435,6 +450,14 @@ def _validate_object_value(section: str, field: str, value: Any, path: str) -> N
         allowed_modules = {"research_interests", "honors", "publications", "others"}
         if any(module_id not in allowed_modules or placement != "education" for module_id, placement in value.items()):
             raise ValueError(f"{path} 只支持将指定模块并入教育经历")
+    elif field == "contentBlockOrderByEntry":
+        for entry_id, order in value.items():
+            if not isinstance(entry_id, str) or not entry_id.strip() or not isinstance(order, list):
+                raise ValueError(f"{path} 必须是经历 ID 到内容块 ID 列表的映射")
+            if any(not isinstance(block_id, str) or not block_id.strip() for block_id in order):
+                raise ValueError(f"{path} 的内容块 ID 无效")
+            if len(set(order)) != len(order):
+                raise ValueError(f"{path} 的内容块 ID 不能重复")
 
 
 def _validate_scalar_value(section: str, field: str, value: Any, path: str) -> None:

@@ -481,7 +481,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
             }))
 
             # 工作详情沿用与项目经历一致的语义块，避免标题和已编号内容被重复加圆点。
-            for block, flow in iter_experience_content_blocks(work, experience_kind="work"):
+            for block, flow in iter_experience_content_blocks(work, experience_kind="work", layout_config=layout_config):
                 block_type = flow["type"]
                 label = flow["label"]
                 label_class = " is-bold" if flow["labelBold"] else ""
@@ -533,7 +533,7 @@ def render_resume_to_html(resume_data: dict, style: dict = None, photo: str = No
             }))
 
             # 项目详情使用语义块：标题不带圆点，职责内部保留编号。
-            for block, flow in iter_experience_content_blocks(project, experience_kind="project"):
+            for block, flow in iter_experience_content_blocks(project, experience_kind="project", layout_config=layout_config):
                 block_type = flow["type"]
                 label = flow["label"]
                 label_class = " is-bold" if flow["labelBold"] else ""

@@ -16,7 +16,11 @@ from .inline_formatting import (
     join_inline_with_inherited_separator,
     plain_inline_text,
 )
-from .resume_contract import normalize_content_block
+from .resume_contract import (
+    CONTENT_BLOCK_ROLE_LABELS_BY_ROOT,
+    normalize_content_block,
+    normalize_content_blocks,
+)
 
 
 LAYOUT_SCHEMA_VERSION = 10
@@ -307,12 +311,14 @@ DEFAULT_LAYOUT_CONFIG: dict[str, Any] = {
         detailsStyle="bullets",
         datePosition="right",
         showJobType=True,
+        contentBlockOrderByEntry={},
     ),
     "project_experience": _module_contract("project_experience",
         detailsStyle="bullets",
         datePosition="right",
         showRole=True,
         showDate=True,
+        contentBlockOrderByEntry={},
     ),
     "custom_sections": _module_contract("custom_sections", listStyle="bullet"),
     "others": _module_contract("others",
@@ -411,10 +417,12 @@ FIELD_LABELS = {
     ("work_experience", "detailsStyle"): "工作描述样式",
     ("work_experience", "datePosition"): "工作日期位置",
     ("work_experience", "showJobType"): "显示工作类型",
+    ("work_experience", "contentBlockOrderByEntry"): "工作经历子模块顺序",
     ("project_experience", "detailsStyle"): "项目描述样式",
     ("project_experience", "datePosition"): "项目日期位置",
     ("project_experience", "showRole"): "显示项目角色",
     ("project_experience", "showDate"): "显示项目日期",
+    ("project_experience", "contentBlockOrderByEntry"): "项目经历子模块顺序",
     ("custom_sections", "listStyle"): "自定义栏目展示形式",
     ("others", "fieldOrder"): "信息顺序",
     ("others", "hiddenFields"): "隐藏字段",
@@ -437,7 +445,88 @@ ITEM_LABELS = {
 }
 
 
-def _display_layout_value(value: Any, field_key: str = "") -> str:
+def _experience_content_order_display(
+    value: Any,
+    field_key: str,
+    resume_data: dict | None = None,
+) -> str:
+    """Render experience child-order maps without exposing server IDs.
+
+    ``contentBlockOrderByEntry`` is intentionally stored as an entry-id to
+    block-id map.  Those identifiers are useful for applying a change but are
+    not meaningful to a user reading a confirmation preview, so resolve them
+    against the current resume before building the display string.
+    """
+    if not isinstance(value, dict):
+        return "默认顺序"
+    if not isinstance(resume_data, dict):
+        return "默认顺序"
+
+    root = "project_experience" if field_key == "contentBlockOrderByEntry" else ""
+    # The caller supplies the module through a temporary marker when needed;
+    # keep the fallback generic for direct callers of _display_layout_value.
+    if field_key == "contentBlockOrderByEntry.work":
+        root = "work_experience"
+    elif field_key == "contentBlockOrderByEntry.project":
+        root = "project_experience"
+    if not root:
+        return "默认顺序"
+
+    entries = resume_data.get(root) or []
+    entry_by_id = {
+        str(entry.get("entry_id") or "").strip(): entry
+        for entry in entries
+        if isinstance(entry, dict) and str(entry.get("entry_id") or "").strip()
+    }
+    rendered_entries: list[str] = []
+    role_labels = CONTENT_BLOCK_ROLE_LABELS_BY_ROOT[root]
+    for entry_id, order in value.items():
+        entry = entry_by_id.get(str(entry_id).strip())
+        if not entry or not isinstance(order, list):
+            continue
+        blocks = normalize_content_blocks(
+            entry.get("content_blocks"),
+            experience_kind="project" if root == "project_experience" else "work",
+        )
+        block_by_id = {
+            str(block.get("block_id") or "").strip(): block
+            for block in blocks
+            if str(block.get("block_id") or "").strip()
+        }
+        labels: list[str] = []
+        unnamed_count = 0
+        for block_id in order:
+            block = block_by_id.get(str(block_id).strip())
+            if not block:
+                continue
+            role = str(block.get("semantic_role") or "generic")
+            label = plain_inline_text(str(block.get("label") or "")).strip()
+            if not label:
+                label = role_labels.get(role, role_labels["generic"])
+                if role == "generic":
+                    unnamed_count += 1
+                    if unnamed_count > 1:
+                        label = f"{label}（{unnamed_count}）"
+            labels.append(label)
+        if not labels:
+            continue
+        entry_name = plain_inline_text(
+            str(
+                entry.get("project_name")
+                or entry.get("company_name")
+                or entry.get("name")
+                or "经历"
+            )
+        ).strip() or "经历"
+        rendered_entries.append(f"{entry_name}：" + " — ".join(labels))
+    return "；".join(rendered_entries) or "默认顺序"
+
+
+def _display_layout_value(
+    value: Any,
+    field_key: str = "",
+    resume_data: dict | None = None,
+) -> str:
     if isinstance(value, bool):
         return "是" if value else "否"
     if isinstance(value, list):
@@ -447,6 +536,8 @@ def _display_layout_value(value: Any, field_key: str = "") -> str:
             for item in value
         ) or "无"
     if isinstance(value, dict):
+        if field_key in {"contentBlockOrderByEntry.work", "contentBlockOrderByEntry.project"}:
+            return _experience_content_order_display(value, field_key, resume_data)
         if field_key == "titleOverrides":
             return "、".join(
                 f"{ITEM_LABELS.get(str(key), str(key))}："
@@ -823,7 +914,62 @@ def normalize_layout_config(value: dict | None) -> dict:
         if result[section].get("listStyle") not in allowed_styles:
             result[section]["listStyle"] = DEFAULT_LAYOUT_CONFIG[section]["listStyle"]
     _normalize_module_contract(result, value, supplied_version)
+    for section in ("work_experience", "project_experience"):
+        source_module = value.get(section) if isinstance(value, dict) and isinstance(value.get(section), dict) else {}
+        raw_orders = source_module.get("contentBlockOrderByEntry", result[section].get("contentBlockOrderByEntry", {}))
+        clean_orders: dict[str, list[str]] = {}
+        if isinstance(raw_orders, dict):
+            for entry_id, order in raw_orders.items():
+                entry_key = str(entry_id or "").strip()
+                if not entry_key or not isinstance(order, list):
+                    continue
+                clean_orders[entry_key] = list(dict.fromkeys(
+                    str(block_id).strip()
+                    for block_id in order
+                    if str(block_id or "").strip()
+                ))
+        result[section]["contentBlockOrderByEntry"] = clean_orders
     return result
+
+
+def _default_experience_content_order(blocks: list[dict[str, Any]], experience_kind: str) -> list[dict[str, Any]]:
+    """Return canonical blocks in the established default display order."""
+    role_order = {"tech_stack": 0, "introduction": 1, "responsibilities": 2, "generic": 3}
+    if experience_kind == "work":
+        role_order = {"introduction": 0, "responsibilities": 1, "generic": 2}
+    return sorted(
+        blocks,
+        key=lambda item: role_order.get(resolve_content_block_flow(item).get("semanticRole"), 3),
+    )
+
+
+def ordered_experience_content_blocks(
+    item: dict[str, Any] | None,
+    layout_config: dict | None,
+    *,
+    experience_kind: str = "project",
+) -> list[dict[str, Any]]:
+    """Resolve one experience's display order from layout, never content order."""
+    item = item if isinstance(item, dict) else {}
+    root = "work_experience" if experience_kind == "work" else "project_experience"
+    blocks = normalize_content_blocks(item.get("content_blocks"), experience_kind=experience_kind)
+    if not blocks:
+        return []
+    normalized = normalize_layout_config(layout_config or {})
+    entry_id = str(item.get("entry_id") or "").strip()
+    saved_order = normalized[root].get("contentBlockOrderByEntry", {}).get(entry_id, []) if entry_id else []
+    by_id = {str(block.get("block_id")): block for block in blocks if str(block.get("block_id") or "").strip()}
+    ordered: list[dict[str, Any]] = []
+    for block_id in saved_order:
+        block = by_id.get(str(block_id))
+        if block is not None and block not in ordered:
+            ordered.append(block)
+    remaining = [block for block in blocks if block not in ordered]
+    if saved_order:
+        ordered.extend(remaining)
+    else:
+        ordered = _default_experience_content_order(blocks, experience_kind)
+    return ordered
 
 
 def resolve_module_layout(config: dict | None, module_id: str) -> dict[str, Any]:
@@ -1134,7 +1280,11 @@ def apply_density(config: dict, density: str) -> dict:
     return normalize_layout_config(result)
 
 
-def build_layout_changes(before: dict | None, after: dict | None) -> list[dict]:
+def build_layout_changes(
+    before: dict | None,
+    after: dict | None,
+    resume_data: dict | None = None,
+) -> list[dict]:
     """Build module-level atomic confirmation groups."""
     old = normalize_layout_config(before)
     new = normalize_layout_config(after)
@@ -1149,13 +1299,16 @@ def build_layout_changes(before: dict | None, after: dict | None) -> list[dict]:
                 continue
             before_value = old[section].get(key)
             after_value = new[section].get(key)
+            display_field_key = key
+            if key == "contentBlockOrderByEntry" and section in {"work_experience", "project_experience"}:
+                display_field_key = f"{key}.{'work' if section == 'work_experience' else 'project'}"
             details.append({
                 "field": key,
                 "field_label": FIELD_LABELS.get((section, key), key),
                 "before": before_value,
                 "after": after_value,
-                "before_display": _display_layout_value(before_value, key),
-                "after_display": _display_layout_value(after_value, key),
+                "before_display": _display_layout_value(before_value, display_field_key, resume_data),
+                "after_display": _display_layout_value(after_value, display_field_key, resume_data),
             })
         if typography_changed:
             before_value = old["typography"]["fontSizes"]

@@ -351,13 +351,13 @@ class HarnessModuleTests(unittest.IsolatedAsyncioTestCase):
             AIMessage(content="助手回答"),
         ]
         with (
-            patch("backend.database.save_user_resume"),
+            patch("backend.database.save_user_resume") as save_resume,
             patch("backend.database.save_user_jd"),
             patch("backend.database.save_agent_memory_state", return_value=1) as save_memory,
             patch("backend.database.save_conversation_context"),
         ):
             await persist_turn_state(
-                object(), 7, "task-1", messages, {}, {}, None,
+                object(), 7, "task-1", messages, {"basics": {"name": "旧快照"}}, {}, None,
                 conversation_llm=None, round_id="round-1",
             )
         stored = save_memory.call_args.args[4]
@@ -366,6 +366,7 @@ class HarnessModuleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored[0]["input"]["content"], [{"type": "text", "text": "保留文本"}])
         self.assertNotIn("SECRET", str(stored))
         self.assertEqual(stored[0]["assistant_content"], "助手回答")
+        save_resume.assert_not_called()
 
     async def test_persistence_keeps_preview_as_structured_outcome_only(self):
         pending = {

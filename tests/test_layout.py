@@ -622,17 +622,17 @@ class LayoutRuleTests(unittest.TestCase):
         html = render_resume_to_html(data)
         for text in ("技术栈", "Python、FastAPI", "项目简介", "项目职责", "其他说明"):
             self.assertIn(text, html)
-        self.assertLess(html.index("其他说明"), html.index("项目简介"))
-        self.assertLess(html.index("项目简介"), html.index("技术栈"))
-        self.assertLess(html.index("技术栈"), html.index("项目职责"))
+        self.assertLess(html.index("技术栈"), html.index("项目简介"))
+        self.assertLess(html.index("项目简介"), html.index("项目职责"))
+        self.assertLess(html.index("项目职责"), html.index("其他说明"))
 
         document = Document(BytesIO(generate_docx(data)))
         combined = "\n".join(paragraph.text for paragraph in document.paragraphs)
         for text in ("技术栈", "Python、FastAPI", "项目简介", "项目职责", "其他说明"):
             self.assertIn(text, combined)
-        self.assertLess(combined.index("其他说明"), combined.index("项目简介"))
-        self.assertLess(combined.index("项目简介"), combined.index("技术栈"))
-        self.assertLess(combined.index("技术栈"), combined.index("项目职责"))
+        self.assertLess(combined.index("技术栈"), combined.index("项目简介"))
+        self.assertLess(combined.index("项目简介"), combined.index("项目职责"))
+        self.assertLess(combined.index("项目职责"), combined.index("其他说明"))
 
     def test_paragraph_mode_preserves_authored_line_breaks(self):
         data = resume_with_two_jobs()

@@ -24,7 +24,7 @@ class RenderContractTests(unittest.TestCase):
         }))
         self.assertEqual(blocks, [])
 
-    def test_project_content_blocks_keep_authored_order(self):
+    def test_project_content_blocks_use_default_semantic_order_without_layout_override(self):
         blocks = list(iter_experience_content_blocks({
             "content_blocks": [
                 {"type": "paragraph", "semantic_role": "introduction", "label": "项目简介", "text": "背景"},
@@ -33,9 +33,9 @@ class RenderContractTests(unittest.TestCase):
             ],
         }, experience_kind="project"))
         self.assertEqual([block["semantic_role"] for block, _ in blocks], [
-            "introduction", "responsibilities", "tech_stack",
+            "tech_stack", "introduction", "responsibilities",
         ])
-        self.assertEqual([flow["type"] for _, flow in blocks], ["paragraph", "numbered_list", "paragraph"])
+        self.assertEqual([flow["type"] for _, flow in blocks], ["paragraph", "paragraph", "numbered_list"])
 
 
 if __name__ == "__main__":

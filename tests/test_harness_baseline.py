@@ -418,6 +418,57 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
             "user:7:task:task-1:session:task-1",
         )
 
+    async def test_chat_discards_buffered_answer_when_resume_changes_mid_turn(self):
+        db = SimpleNamespace(info={"task_id": "task-1"}, query=MagicMock())
+        user = SimpleNamespace(id=7)
+        initial_resume = resume_payload("修改前")
+        changed_resume = resume_payload("人工修改后")
+        initial_task = SimpleNamespace(
+            session_id="task-1", state_sequence=1, layout_config=default_layout_config()
+        )
+        changed_task = SimpleNamespace(
+            session_id="task-1", state_sequence=2, layout_config=default_layout_config()
+        )
+        fresh_db = SimpleNamespace(info={}, close=MagicMock())
+        task_calls = {"count": 0}
+
+        def current_task(*_args, **_kwargs):
+            task_calls["count"] += 1
+            return changed_task if task_calls["count"] > 2 else initial_task
+
+        with (
+            patch("backend.main.require_llm_configured"),
+            patch("backend.main.graph", FakeConversationGraph()),
+            patch("backend.main.get_context_by_session", return_value=SimpleNamespace(
+                status="active", context_type="main", metadata_json={}
+            )),
+            patch("backend.main.get_resume_task", side_effect=current_task),
+            patch("backend.main.get_user_resume", side_effect=[initial_resume, changed_resume]),
+            patch("backend.main.get_user_jd", return_value={}),
+            patch("backend.main.get_user_photo", return_value=""),
+            patch("backend.main.get_task_layout_config", return_value=default_layout_config()),
+            patch("backend.database.SessionLocal", return_value=fresh_db),
+            patch("backend.database.clear_pending_confirmation"),
+            patch("backend.database.get_pending_confirmation", return_value=None),
+            patch("backend.database.get_agent_memory_state", return_value={
+                "summary": "", "recent_rounds": [], "version": 0,
+            }),
+            patch("backend.main.get_agent_skill_state", return_value={"state": {}, "version": 0}),
+            patch("backend.main.persist_turn_state", new_callable=AsyncMock),
+        ):
+            response = await main.chat_endpoint(
+                message="请分析当前简历",
+                files=[],
+                session_id="task-1",
+                request_id="request-stale-answer",
+                current_user=user,
+                db=db,
+            )
+            events = decode_sse([chunk async for chunk in response.body_iterator])
+
+        self.assertEqual([event["type"] for event in events], ["final", "end"])
+        self.assertIn("本轮回答期间简历已发生其他修改", events[0]["content"])
+
     async def test_chat_progress_reports_the_actual_non_edit_skill_stage(self):
         progress_cases = {
             "load_agent_skill": "loading_skill",

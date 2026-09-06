@@ -1133,7 +1133,11 @@ def generate_docx(
         module_tokens = tokens["modules"][module_id]
         module_indent_mm = module_tokens["indentPt"] * 25.4 / 72.0
         semantic_indent_mm = module_indent_mm + list_text_indent_mm
-        blocks = iter_experience_content_blocks(item, experience_kind="work" if module_id == "work_experience" else "project")
+        blocks = iter_experience_content_blocks(
+            item,
+            experience_kind="work" if module_id == "work_experience" else "project",
+            layout_config=layout_config,
+        )
         rendered = False
         for block, flow in blocks:
             rendered = True

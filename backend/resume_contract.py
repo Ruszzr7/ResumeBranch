@@ -91,6 +91,13 @@ class ProjectContentBlock(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    # Stable identity metadata used by the layout configuration.  These are
+    # not editable content fields and never determine the authored order.
+    block_id: str | None = Field(
+        default=None,
+        description="稳定内部内容块标识；由服务端生成，Agent 不得修改",
+    )
+
     type: Literal["paragraph", "numbered_list", "bullet_list"] = Field(
         default="paragraph", description="段落、编号列表或普通分点列表"
     )
@@ -126,7 +133,7 @@ class ProjectContentBlock(BaseModel):
 # it is intentionally separate from the natural-language parser.  Prompt
 # generation and execution validation both consume these definitions so a
 # field shape is not re-described for individual evaluation cases.
-RESUME_EDIT_CONTRACT_VERSION = "2"
+RESUME_EDIT_CONTRACT_VERSION = "3"
 RESUME_EDIT_ROOTS = (
     "basics",
     "education",
@@ -145,7 +152,7 @@ RESUME_EDIT_PATH_GROUPS: dict[str, dict[str, Any]] = {
     "basics": {
         "scalar_fields": [
             "name", "gender", "birth_date", "phone", "email",
-            "target_position", "photo",
+            "target_position",
         ],
         "list_fields": {"additional_fields": "additional_basic_field"},
     },
@@ -218,7 +225,8 @@ RESUME_EDIT_OPERATION_RULES = (
     "append/insert 只能作用于契约声明的列表字段，move 只能作用于列表本身",
     "列表元素和对象字段必须符合声明的规范结构；不做自然语言解析、猜测或自动修复",
     "内容块的 semantic_role 只表达内容含义，不决定展示形式；type 必须保留当前形式或遵循用户明确要求，三种形式均可用于允许的语义角色；work_experience 与 project_experience 均可 append/insert 多个 generic，generic 的 label 可为空且正文仍显示和导出",
-    "经历内容块索引必须以当前规范化简历中的实际 content_blocks 为准；空的编辑器输入位置不代表持久化数据中存在占位元素",
+    "项目和工作经历子模块的显示顺序属于排版配置，只能在同一条经历内部调整，不得通过重排 content_blocks 数组改变正文数据顺序",
+    "经历条目和内容块的稳定内部 ID 只用于定位排版顺序，不属于 Agent 可修改字段；新增内容由服务端生成 ID",
     "对象的可选字段只有在用户明确要求该属性时才能提交；未明确要求时必须省略并继承当前值或系统默认值",
     "内容通过所属上级模块路径、当前显示标签和稳定内部语义共同定位；修改显示标签不得改变 semantic_role，target_semantic_role 可作为当前状态断言，无法唯一定位时应先澄清",
 )
@@ -275,7 +283,7 @@ def build_resume_edit_contract() -> dict[str, Any]:
                 "type": "object",
                 "scalar_fields": list(RESUME_EDIT_PATH_GROUPS["basics"]["scalar_fields"]),
                 "list_fields": dict(RESUME_EDIT_PATH_GROUPS["basics"]["list_fields"]),
-                "preserved_numeric_fields": ["photo_aspect_ratio"],
+                "preserved_numeric_fields": [],
                 "additional_properties": False,
             },
             "others": {
@@ -428,18 +436,13 @@ def _contract_validate_root_object(root: str, value: Any, *, path: str) -> None:
     if root == "basics":
         allowed = {
             *RESUME_EDIT_PATH_GROUPS["basics"]["scalar_fields"],
-            "additional_fields", "photo_aspect_ratio",
+            "additional_fields",
         }
         if set(value) - allowed:
             raise ValueError(f"基本信息包含不支持的字段：{path}")
         for field in RESUME_EDIT_PATH_GROUPS["basics"]["scalar_fields"]:
             if field in value:
                 _contract_require_string(value[field], path=f"{path}.{field}")
-        if "photo_aspect_ratio" in value and not (
-            isinstance(value["photo_aspect_ratio"], (int, float))
-            and not isinstance(value["photo_aspect_ratio"], bool)
-        ):
-            raise ValueError(f"基本信息照片比例必须是数值：{path}.photo_aspect_ratio")
         additional_fields = value.get("additional_fields", [])
         if not isinstance(additional_fields, list):
             raise ValueError(f"基本信息附加字段必须是列表：{path}.additional_fields")
@@ -1002,6 +1005,9 @@ def normalize_content_block(raw: Any, *, keep_empty: bool = False) -> dict[str, 
         "text": text,
         "items": items,
     }
+    block_id = _text(raw.get("block_id")) if isinstance(raw, Mapping) else ""
+    if block_id:
+        result["block_id"] = block_id
     if not keep_empty and not text and not items:
         return None
     return result

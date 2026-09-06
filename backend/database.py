@@ -17,7 +17,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
-from .resume_schema import validate_resume_data
+from .resume_schema import ensure_resume_identity, validate_resume_data
 from .layout_config import default_layout_config, normalize_layout_config
 
 LOGGER = logging.getLogger(__name__)
@@ -194,6 +194,10 @@ class ProjectTask(Base):
     compressed_context = Column(JSON, default=list)
     pending_confirmation = Column(JSON, default=None)
     layout_config = Column(JSON, default=dict)
+    # Monotonic mutation sequence for the content/layout state.  It is a
+    # signal used together with domain digests; photos intentionally do not
+    # advance it because they are stored independently.
+    state_sequence = Column(Integer, nullable=False, default=0)
     last_accessed = Column(DateTime, default=datetime.utcnow)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -311,6 +315,7 @@ def init_db():
     migrate_project_task_source_page_count()
     migrate_project_task_source_document()
     migrate_layout_config_fields()
+    migrate_project_task_state_sequence()
     migrate_user_admin_field()
 
 
@@ -356,6 +361,20 @@ def migrate_layout_config_fields():
                 connection.execute(text("ALTER TABLE resume_revisions ADD COLUMN before_layout JSON"))
             if "after_layout" not in columns:
                 connection.execute(text("ALTER TABLE resume_revisions ADD COLUMN after_layout JSON"))
+
+
+def migrate_project_task_state_sequence():
+    """Add the mutation sequence without rewriting existing resume payloads."""
+    inspector = inspect(engine)
+    if "project_tasks" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("project_tasks")}
+    if "state_sequence" in columns:
+        return
+    with engine.begin() as connection:
+        connection.execute(text(
+            "ALTER TABLE project_tasks ADD COLUMN state_sequence INTEGER NOT NULL DEFAULT 0"
+        ))
 
 
 def migrate_user_admin_field():
@@ -454,6 +473,44 @@ def revoke_auth_session(db, user_id: int, session_id: str = "") -> bool:
     return bool(deleted)
 
 
+def _task_needs_resume_identity(data: dict | None) -> bool:
+    if not isinstance(data, dict):
+        return True
+    seen_entries: set[str] = set()
+    for root in ("work_experience", "project_experience"):
+        for entry in data.get(root) or []:
+            if not isinstance(entry, dict):
+                continue
+            entry_id = str(entry.get("entry_id") or "").strip()
+            if not entry_id or entry_id in seen_entries:
+                return True
+            seen_entries.add(entry_id)
+            seen_blocks: set[str] = set()
+            for block in entry.get("content_blocks") or []:
+                if not isinstance(block, dict):
+                    continue
+                block_id = str(block.get("block_id") or "").strip()
+                if not block_id or block_id in seen_blocks:
+                    return True
+                seen_blocks.add(block_id)
+    return False
+
+
+def _ensure_task_resume_identity(db, task):
+    """Lazily persist server identities without a content revision or sequence."""
+    if task is None or not _task_needs_resume_identity(task.resume_data or {}):
+        return task
+    task.resume_data = ensure_resume_identity(task.resume_data or {})
+    task.updated_at = datetime.utcnow()
+    if task.is_base:
+        project = db.query(ResumeProject).filter(ResumeProject.id == task.project_id).first()
+        if project:
+            project.base_resume_data = deepcopy(task.resume_data)
+            project.updated_at = datetime.utcnow()
+    db.commit()
+    return task
+
+
 def _active_task(db, user_id: int):
     task_id = db.info.get("task_id")
     if not task_id:
@@ -464,6 +521,7 @@ def _active_task(db, user_id: int):
     ).first()
     if not task:
         raise ValueError("当前简历任务不存在或不属于该用户")
+    _ensure_task_resume_identity(db, task)
     return task
 
 
@@ -779,7 +837,7 @@ def get_or_create_legacy_project(db, user_id: int):
                 title="主简历",
                 is_base=True,
                 session_id=task_id,
-                resume_data=project.base_resume_data or {},
+                resume_data=ensure_resume_identity(project.base_resume_data or {}),
                 photo=project.photo or "",
                 layout_config=default_layout_config(),
             ))
@@ -806,7 +864,7 @@ def get_or_create_legacy_project(db, user_id: int):
         id=project_id,
         user_id=user_id,
         title=title,
-        base_resume_data=(resume.resume_data if resume else {}),
+        base_resume_data=ensure_resume_identity(resume.resume_data if resume else {}),
         photo=(resume.photo if resume else ""),
     )
     base_task = ProjectTask(
@@ -816,7 +874,7 @@ def get_or_create_legacy_project(db, user_id: int):
         title="主简历",
         is_base=True,
         session_id=base_task_id,
-        resume_data=(resume.resume_data if resume else {}),
+        resume_data=ensure_resume_identity(resume.resume_data if resume else {}),
         photo=(resume.photo if resume else ""),
         parsing_status=(resume.parsing_status if resume else "none"),
         layout_config=default_layout_config(),
@@ -831,7 +889,7 @@ def get_or_create_legacy_project(db, user_id: int):
             title=(jd.position or jd.company or "首个岗位版本") if jd else "旧版对话",
             is_base=False,
             session_id=jd_task_id,
-            resume_data=(resume.resume_data if resume else {}),
+            resume_data=ensure_resume_identity(resume.resume_data if resume else {}),
             photo=(resume.photo if resume else ""),
             parsing_status=(resume.parsing_status if resume else "none"),
             jd_data=(jd.jd_data if jd else {}),
@@ -943,7 +1001,7 @@ def create_resume_task(
         title=(title or "新岗位版本").strip()[:120],
         is_base=False,
         session_id=task_id,
-        resume_data=validate_resume_data(source_task.resume_data or {}) if source_task else validate_resume_data({}),
+        resume_data=ensure_resume_identity(source_task.resume_data or {}) if source_task else ensure_resume_identity({}),
         photo=(source_task.photo or "") if source_task else "",
         source_page_count=max(1, int(source_task.source_page_count or 1)) if source_task else 1,
         source_document_id=(source_task.source_document_id if source_task else None),
@@ -960,10 +1018,11 @@ def create_resume_task(
 
 
 def get_resume_task(db, user_id: int, task_id: str):
-    return db.query(ProjectTask).filter(
+    task = db.query(ProjectTask).filter(
         ProjectTask.id == task_id,
         ProjectTask.user_id == user_id,
     ).first()
+    return _ensure_task_resume_identity(db, task)
 
 
 def rename_resume_task(db, user_id: int, task_id: str, title: str):
@@ -1108,21 +1167,42 @@ def record_resume_revision(
 
 
 def undo_latest_resume_revision(
-    db, user_id: int, task_id: str,
+    db,
+    user_id: int,
+    task_id: str,
+    revision_id: str | None = None,
 ) -> tuple[str, dict | None, dict | None, str | None]:
-    """Undo the latest revision only when no later edit has changed its result."""
+    """Undo a targeted revision only while it is still the current state.
+
+    The optional ID keeps lightweight legacy callers working, while real API
+    requests pass the revision attached to the clicked confirmation message.
+    A targeted revision is invalid once any later content/layout revision has
+    been recorded, even if a later edit happened to restore identical text.
+    """
     from .resume_changes import resume_digest
 
     task = get_resume_task(db, user_id, task_id)
     if not task:
         return "not_found", None, None, None
-    revision = db.query(ResumeRevision).filter(
+    revision_query = db.query(ResumeRevision).filter(
         ResumeRevision.task_id == task_id,
         ResumeRevision.user_id == user_id,
         ResumeRevision.undone_at.is_(None),
-    ).order_by(ResumeRevision.created_at.desc()).first()
+    )
+    if revision_id:
+        revision = revision_query.filter(ResumeRevision.id == str(revision_id)).first()
+    else:
+        revision = revision_query.order_by(ResumeRevision.created_at.desc()).first()
     if not revision:
         return "no_revision", None, None, None
+    if revision_id:
+        later_revision = db.query(ResumeRevision).filter(
+            ResumeRevision.task_id == task_id,
+            ResumeRevision.user_id == user_id,
+            ResumeRevision.created_at > revision.created_at,
+        ).first()
+        if later_revision:
+            return "conflict", None, None, None
     current_data = validate_resume_data(task.resume_data or {})
     if resume_digest(current_data) != resume_digest(validate_resume_data(revision.after_data or {})):
         return "conflict", None, None, None
@@ -1138,6 +1218,7 @@ def undo_latest_resume_revision(
     )
     task.layout_config = restored_layout
     task.pending_confirmation = None
+    task.state_sequence = int(getattr(task, "state_sequence", 0) or 0) + 1
     task.updated_at = datetime.utcnow()
     if task.is_base:
         project = db.query(ResumeProject).filter(ResumeProject.id == task.project_id).first()
@@ -1165,6 +1246,199 @@ def save_task_layout_config(db, user_id: int, task_id: str, config: dict) -> dic
     task.updated_at = datetime.utcnow()
     db.commit()
     return normalized
+
+
+class ResumeStateConflict(RuntimeError):
+    """Raised when a mutation was prepared from an older resume state."""
+
+    def __init__(self, message: str, *, task=None, token: dict | None = None):
+        super().__init__(message)
+        self.task = task
+        self.token = token or {}
+
+
+def build_task_state_version(task) -> dict:
+    """Return the current content/layout token for one persisted task."""
+    from .resume_changes import build_resume_state_version
+
+    return build_resume_state_version(
+        validate_resume_data(task.resume_data or {}),
+        normalize_layout_config(task.layout_config),
+        sequence=int(getattr(task, "state_sequence", 0) or 0),
+    )
+
+
+def assert_resume_edit_lock(
+    db,
+    user_id: int,
+    task_id: str,
+    *,
+    owner_session_id: str,
+    request_id: str,
+) -> bool:
+    """Require the exact task-wide lock owner before a mutation commits."""
+    if not hasattr(db, "query"):
+        return True
+    return db.query(ResumeEditLock).filter(
+        ResumeEditLock.task_id == task_id,
+        ResumeEditLock.user_id == user_id,
+        ResumeEditLock.owner_session_id == owner_session_id,
+        ResumeEditLock.request_id == request_id,
+    ).first() is not None
+
+
+def _sanitize_experience_content_orders(resume_data: dict, layout_config: dict) -> dict:
+    """Keep layout order maps scoped to existing entries and their own blocks."""
+    result = deepcopy(layout_config)
+    for root in ("work_experience", "project_experience"):
+        entries = {
+            str(entry.get("entry_id") or "").strip(): {
+                str(block.get("block_id") or "").strip()
+                for block in entry.get("content_blocks", [])
+                if str(block.get("block_id") or "").strip()
+            }
+            for entry in (resume_data.get(root) or [])
+            if isinstance(entry, dict) and str(entry.get("entry_id") or "").strip()
+        }
+        raw_orders = result.get(root, {}).get("contentBlockOrderByEntry", {})
+        result[root]["contentBlockOrderByEntry"] = {
+            entry_id: [block_id for block_id in order if block_id in entries[entry_id]]
+            for entry_id, order in raw_orders.items()
+            if entry_id in entries and isinstance(order, list)
+        }
+    return result
+
+
+def commit_resume_mutation(
+    db,
+    user_id: int,
+    task_id: str,
+    *,
+    resume_data: dict | None = None,
+    layout_config: dict | None = None,
+    base_version: dict | None = None,
+    check_content: bool = True,
+    check_layout: bool = False,
+    owner_session_id: str = "",
+    request_id: str = "",
+    selected_change_ids: list[str] | None = None,
+    source: str = "manual",
+) -> dict:
+    """Atomically persist a content/layout mutation and its undo snapshot.
+
+    The lock is deliberately checked at the final write boundary.  Content and
+    layout use separate digests so an unrelated layout edit does not make a
+    text-only save fail, while the monotonic sequence still tells the caller
+    that a newer state exists.
+    """
+    from .resume_changes import resume_content_digest, resume_state_version_matches
+
+    task = get_resume_task(db, user_id, task_id)
+    if not task:
+        raise LookupError("当前简历任务不存在")
+    if owner_session_id and not assert_resume_edit_lock(
+        db, user_id, task_id,
+        owner_session_id=owner_session_id,
+        request_id=request_id,
+    ):
+        raise PermissionError("当前修改锁不属于本次请求")
+
+    before_data = validate_resume_data(deepcopy(task.resume_data or {}))
+    before_layout = normalize_layout_config(deepcopy(task.layout_config or {}))
+    current_token = build_task_state_version(task)
+    if base_version is not None and not resume_state_version_matches(
+        base_version,
+        before_data,
+        before_layout,
+        check_content=check_content,
+        check_layout=check_layout,
+        current_sequence=int(getattr(task, "state_sequence", 0) or 0),
+    ):
+        raise ResumeStateConflict(
+            "简历在本次操作准备期间已发生其他修改",
+            task=task,
+            token=current_token,
+        )
+
+    after_data = (
+        ensure_resume_identity(deepcopy(resume_data))
+        if resume_data is not None else ensure_resume_identity(deepcopy(before_data))
+    )
+    # Keep the photo outside the structured content payload.  The editor may
+    # send it for compatibility, but photo changes are persisted independently
+    # and intentionally do not create content revisions or advance sequence.
+    if isinstance(after_data.get("basics"), dict) and "photo" in after_data["basics"]:
+        after_data = deepcopy(after_data)
+        after_data["basics"].pop("photo", None)
+    after_layout = (
+        normalize_layout_config(deepcopy(layout_config))
+        if layout_config is not None else before_layout
+    )
+    after_layout = _sanitize_experience_content_orders(after_data, after_layout)
+
+    content_changed = resume_content_digest(before_data) != resume_content_digest(after_data)
+    layout_changed = before_layout != after_layout
+    raw_basics = resume_data.get("basics") if isinstance(resume_data, dict) else None
+    photo_supplied = isinstance(raw_basics, dict) and "photo" in raw_basics
+    photo_value = raw_basics.get("photo") if photo_supplied else None
+    if not content_changed and not layout_changed:
+        if photo_supplied:
+            task.photo = str(photo_value or "")
+            if task.is_base:
+                project = db.query(ResumeProject).filter(ResumeProject.id == task.project_id).first()
+                if project:
+                    project.photo = task.photo
+                    project.updated_at = datetime.utcnow()
+            task.updated_at = datetime.utcnow()
+            db.commit()
+        return {
+            "task": task,
+            "resume_data": before_data,
+            "layout_config": before_layout,
+            "state_version": build_task_state_version(task),
+            "revision": None,
+            "changed": False,
+            "source": source,
+        }
+
+    task.resume_data = after_data
+    task.layout_config = after_layout
+    if photo_supplied:
+        task.photo = str(photo_value or "")
+    task.state_sequence = int(getattr(task, "state_sequence", 0) or 0) + 1
+    task.pending_confirmation = None if source != "ai_confirm" else task.pending_confirmation
+    task.updated_at = datetime.utcnow()
+    if task.is_base:
+        project = db.query(ResumeProject).filter(ResumeProject.id == task.project_id).first()
+        if project:
+            project.base_resume_data = after_data
+            if photo_supplied:
+                project.photo = task.photo or ""
+            if project.title in {"未命名简历", "未命名简历组"}:
+                project.title = after_data.get("basics", {}).get("name") or project.title
+            project.updated_at = datetime.utcnow()
+    revision = ResumeRevision(
+        task_id=task_id,
+        user_id=user_id,
+        before_data=before_data,
+        after_data=after_data,
+        selected_change_ids=list(selected_change_ids or []),
+        before_layout=before_layout,
+        after_layout=after_layout,
+    )
+    db.add(revision)
+    db.commit()
+    db.refresh(task)
+    db.refresh(revision)
+    return {
+        "task": task,
+        "resume_data": after_data,
+        "layout_config": after_layout,
+        "state_version": build_task_state_version(task),
+        "revision": revision,
+        "changed": True,
+        "source": source,
+    }
 
 
 def delete_resume_project(db, user_id: int, project_id: str) -> bool:
@@ -1412,7 +1686,7 @@ def save_user_resume(db, user_id: int, data: dict, name: str = "默认简历", p
         (isinstance(raw_basics, dict) and "photo" in raw_basics)
     )
     photo_argument_supplied = photo is not None
-    data = validate_resume_data(data)
+    data = ensure_resume_identity(data)
     task = _active_task(db, user_id)
     if task:
         existing_photo = task.photo or ""

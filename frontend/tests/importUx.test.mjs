@@ -176,6 +176,8 @@ test('undo keeps the originating conversation session in scope through persisten
   assert.ok(undoFlow.includes('const targetSessionId = sessionId.value'))
   assert.ok(undoFlow.includes('const targetState = ensureContextUiState(targetSessionId)'))
   assert.ok(undoFlow.includes('persistConversationMessages(targetSessionId, targetState.messages)'))
+  const staleUndoCatch = undoFlow.slice(undoFlow.indexOf('} catch (error)'))
+  assert.ok(staleUndoCatch.includes('await persistConversationMessages(targetSessionId, targetState.messages)'))
 })
 
 test('confirmation history records accepted rejected and undone outcomes', () => {

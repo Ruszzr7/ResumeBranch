@@ -1,4 +1,5 @@
 import unittest
+from datetime import timedelta
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -81,6 +82,33 @@ class ResumeRevisionTests(unittest.TestCase):
         self.task.resume_data = {"basics": {"name": "用户后来手工修改"}}
         self.db.commit()
         status, restored, restored_layout, revision_id = undo_latest_resume_revision(self.db, 1, "task-1")
+        self.assertEqual(status, "conflict")
+        self.assertIsNone(restored)
+        self.assertIsNone(restored_layout)
+        self.assertIsNone(revision_id)
+
+    def test_targeted_undo_refuses_after_a_later_revision_even_when_ids_are_known(self):
+        first = record_resume_revision(
+            self.db, 1, "task-1",
+            {"basics": {"name": "A"}},
+            {"basics": {"name": "B"}},
+            ["change-a"],
+        )
+        self.task.resume_data = {"basics": {"name": "B"}}
+        self.db.commit()
+        second = record_resume_revision(
+            self.db, 1, "task-1",
+            {"basics": {"name": "B"}},
+            {"basics": {"name": "C"}},
+            ["change-b"],
+        )
+        self.task.resume_data = {"basics": {"name": "C"}}
+        second.created_at = first.created_at + timedelta(seconds=1)
+        self.db.commit()
+
+        status, restored, restored_layout, revision_id = undo_latest_resume_revision(
+            self.db, 1, "task-1", revision_id=first.id,
+        )
         self.assertEqual(status, "conflict")
         self.assertIsNone(restored)
         self.assertIsNone(restored_layout)

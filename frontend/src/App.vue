@@ -208,7 +208,8 @@ async function restoreChineseResume() {
     try {
       let response = await fetch('/restore_resume_translation', {
         method: 'POST',
-        headers: getAuthHeaders()
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ base_version: currentTask.value?.state_version || null })
       })
       let payload = await response.json().catch(() => ({}))
       let restoredData = payload.resume_data
@@ -217,11 +218,19 @@ async function restoreChineseResume() {
         response = await fetch('/save_resume', {
           method: 'POST',
           headers: getAuthHeaders(),
-          body: JSON.stringify({ resume_data: sourceData })
+          body: JSON.stringify({
+            resume_data: sourceData,
+            base_version: currentTask.value?.state_version || null
+          })
         })
+        payload = await response.json().catch(() => ({}))
         restoredData = sourceData
       }
       if (!response.ok || !restoredData) throw new Error(payload.detail || '中文简历恢复失败')
+      if (currentTask.value && payload.state_version) {
+        currentTask.value.state_version = payload.state_version
+        invalidateUndoCandidates(payload.state_version)
+      }
       const currentPhoto = resumeData.value?.basics?.photo
       if (currentPhoto && restoredData.basics) restoredData.basics.photo = currentPhoto
       resumeData.value = restoredData
@@ -283,18 +292,34 @@ async function confirmTranslate() {
       const response = await fetch('/save_resume', {
         method: 'POST',
         headers: getAuthHeaders(),
-        body: JSON.stringify({ resume_data: translatedData })
+        body: JSON.stringify({
+          resume_data: translatedData,
+          base_version: currentTask.value?.state_version || null
+        })
       })
-      if (!response.ok) throw new Error('保存英文简历失败')
+      const payload = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(payload.detail || '保存英文简历失败')
+      if (currentTask.value && payload.state_version) {
+        currentTask.value.state_version = payload.state_version
+        invalidateUndoCandidates(payload.state_version)
+      }
     } else {
       const response = await fetch('/translate_resume', {
         method: 'POST',
         headers: getAuthHeaders(),
-        body: JSON.stringify({ source_language: 'zh', target_language: 'en' })
+        body: JSON.stringify({
+          source_language: 'zh',
+          target_language: 'en',
+          base_version: currentTask.value?.state_version || null
+        })
       })
       const payload = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(payload.detail || payload.error || '简历翻译失败，请重试')
       translatedData = payload.resume_data
+      if (currentTask.value && payload.state_version) {
+        currentTask.value.state_version = payload.state_version
+        invalidateUndoCandidates(payload.state_version)
+      }
       cacheHits = Number(payload.cache_hits || 0)
       reusedFullResult = Boolean(payload.full_snapshot_reused)
     }
@@ -1556,8 +1581,10 @@ async function runAssistantAction(action) {
   nextTick(() => sendMessage())
 }
 
-function handleLayoutUpdated(layoutConfig) {
+function handleLayoutUpdated(layoutConfig, stateVersion = null) {
   if (currentTask.value) currentTask.value.layout_config = normalizeLayoutConfig(layoutConfig)
+  if (currentTask.value && stateVersion) currentTask.value.state_version = stateVersion
+  if (stateVersion) invalidateUndoCandidates(stateVersion)
   previewLayoutConfig.value = null
 }
 
@@ -1574,8 +1601,12 @@ function handleRenderStyleUpdated(style) {
 }
 
 function splitLoadedResume(data) {
-  const { parsing_status: parsingStatus = 'none', ...resumeContent } = data || {}
-  return { resumeContent, parsingStatus }
+  const {
+    parsing_status: parsingStatus = 'none',
+    state_version: stateVersion = null,
+    ...resumeContent
+  } = data || {}
+  return { resumeContent, parsingStatus, stateVersion }
 }
 
 // 加载初始数据的函数（同时检查首次访问）
@@ -1600,8 +1631,9 @@ async function loadInitialData() {
     }
 
     const data = await response.json()
-    const { resumeContent, parsingStatus } = splitLoadedResume(data)
+    const { resumeContent, parsingStatus, stateVersion } = splitLoadedResume(data)
     resumeData.value = resumeContent
+    if (currentTask.value && stateVersion) currentTask.value.state_version = stateVersion
 
     // 如果正在解析中，显示上传弹窗并启动轮询
     if (parsingStatus === 'parsing') {
@@ -1638,7 +1670,7 @@ async function loadInitialData() {
 
     // 检查是否首次进入（无简历且无聊天记录）
     // 修正判断逻辑：检查basics中是否有有效字段
-    const hasResume = hasMeaningfulResumeContent(data)
+    const hasResume = hasMeaningfulResumeContent(resumeContent)
 
     // 加载对话历史
     try {
@@ -1767,8 +1799,9 @@ async function loadResumeData() {
     }
 
     const data = await response.json()
-    const { resumeContent } = splitLoadedResume(data)
+    const { resumeContent, stateVersion } = splitLoadedResume(data)
     resumeData.value = resumeContent
+    if (currentTask.value && stateVersion) currentTask.value.state_version = stateVersion
     if (resumeContent && Object.keys(resumeContent).length > 0) {
     }
   } catch (error) {
@@ -2156,6 +2189,7 @@ async function handleOptionClick({ confirm_id, value, selected_change_ids = [] }
     clearConfirmationPreview(targetState)
     if (isAccepting) {
       await updateResumeData()
+      invalidateUndoCandidates(currentTask.value?.state_version)
     }
     messages.value = messages.value.map((message, index) => {
       if (index === confirmMsgIndex) {
@@ -2165,6 +2199,9 @@ async function handleOptionClick({ confirm_id, value, selected_change_ids = [] }
           result_status: isAccepting ? 'saved' : 'rejected',
           undo_handled: !isAccepting,
           revision_id: data.revision_id || null,
+          applied_state_version: isAccepting && currentTask.value?.state_version
+            ? { ...currentTask.value.state_version }
+            : null,
           selected_change_ids: data.selected_change_ids || selected_change_ids,
           content: isAccepting ? '本次修改已应用。' : '已拒绝本次修改，简历未发生变化。'
         }
@@ -2209,17 +2246,47 @@ async function handleOptionClick({ confirm_id, value, selected_change_ids = [] }
   }
 }
 
+function invalidateUndoCandidates(stateVersion) {
+  const currentSequence = String(stateVersion?.sequence ?? '')
+  if (!currentSequence) return
+  for (const state of Object.values(contextUiStates)) {
+    state.messages = (state.messages || []).map(message => {
+      if (
+        message?.type === 'confirm'
+        && message.result_status === 'saved'
+        && !message.undo_handled
+        && message.applied_state_version?.sequence != null
+        && String(message.applied_state_version.sequence) !== currentSequence
+      ) {
+        return { ...message, undo_handled: true }
+      }
+      return message
+    })
+  }
+}
+
 async function handleUndoClick({ message_id }) {
   const targetSessionId = sessionId.value
   const targetState = ensureContextUiState(targetSessionId)
   const index = targetState.messages.findIndex(message => message.id === message_id)
+  const targetMessage = index !== -1 ? targetState.messages[index] : null
+  const revisionId = String(targetMessage?.revision_id || '').trim()
   try {
+    if (!revisionId) throw new Error('本次撤回缺少对应的修改记录，请重新加载后重试')
     const response = await fetch(`/tasks/${currentTaskId.value}/undo`, {
       method: 'POST',
-      headers: getAuthorizationHeaders()
+      headers: { ...getAuthorizationHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        revision_id: revisionId,
+        base_version: currentTask.value?.state_version || null,
+      })
     })
     const data = await response.json().catch(() => ({}))
-    if (!response.ok) throw new Error(data.detail || '撤回失败，请重试')
+    if (!response.ok) {
+      const error = new Error(data.detail || '撤回失败，请重试')
+      error.staleUndo = response.status === 409
+      throw error
+    }
     if (index !== -1) {
       const message = targetState.messages[index]
       targetState.messages[index] = message.type === 'confirm'
@@ -2240,9 +2307,24 @@ async function handleUndoClick({ message_id }) {
     targetState.hasConfirmArea = false
     clearConfirmationPreview(targetState)
     await updateResumeData()
+    invalidateUndoCandidates(currentTask.value?.state_version)
     showNotice('已撤回本次修改', 'success')
     await persistConversationMessages(targetSessionId, targetState.messages)
   } catch (error) {
+    if (
+      index !== -1
+      && (error.staleUndo || /变化|修改记录|重新加载/.test(String(error.message || '')))
+    ) {
+      targetState.messages[index] = {
+        ...targetState.messages[index],
+        undo_handled: true,
+      }
+      // A stale cross-page undo is terminal for this candidate. Persist the
+      // handled marker so reloading the page cannot resurrect the button.
+      await persistConversationMessages(targetSessionId, targetState.messages).catch(saveError => {
+        console.error('保存撤回失效状态失败:', saveError)
+      })
+    }
     showNotice(error.message || '撤回失败，请重试')
   }
 }
@@ -2275,12 +2357,14 @@ async function updateResumeData() {
       body: JSON.stringify({})
     })
     const newData = await response.json()
+    const { resumeContent: loadedResume, stateVersion } = splitLoadedResume(newData)
 
     // 保存旧数据用于比较
     const oldData = resumeData.value ? JSON.parse(JSON.stringify(resumeData.value)) : null
 
     // 先更新数据
-    resumeData.value = newData
+    resumeData.value = loadedResume
+    if (currentTask.value && stateVersion) currentTask.value.state_version = stateVersion
 
     if (currentTaskId.value) {
       const layoutResponse = await fetch(`/tasks/${currentTaskId.value}/layout`, {
@@ -2302,7 +2386,7 @@ async function updateResumeData() {
     }
 
     // 检测变化并触发高亮
-    const changedModule = detectChangedModule(oldData, newData)
+    const changedModule = detectChangedModule(oldData, loadedResume)
 
     if (changedModule) {
       highlightedModule.value = changedModule
@@ -2476,6 +2560,7 @@ function initializeExperienceContentEditor(proj, migrateDefaultBold = false, exp
   const extraBlocks = blocks.filter(block => block !== techStack && block !== intro && block !== duties)
   const genericDraft = (block, index) => ({
     _index: index,
+    _blockId: block?.block_id || '',
     _label: editorLabel(block),
     _type: CONTENT_BLOCK_TYPE_OPTIONS[block?.type] ? block.type : 'bullet_list',
     _text: block?.type === 'paragraph' ? (block?.text || '') : arrayToMultiline(block?.items || [])
@@ -2498,6 +2583,9 @@ function initializeExperienceContentEditor(proj, migrateDefaultBold = false, exp
   proj._techStackLabel = techStack ? editorLabel(techStack) : '**技术栈**'
   proj._introLabel = intro ? editorLabel(intro) : (experienceKind === 'work' ? '**工作简介**' : '**项目简介**')
   proj._dutiesLabel = duties ? editorLabel(duties) : (experienceKind === 'work' ? '**工作职责**' : '**项目职责**')
+  proj._techStackBlockId = techStack?.block_id || ''
+  proj._introBlockId = intro?.block_id || ''
+  proj._dutiesBlockId = duties?.block_id || ''
   proj._techStackType = techStack?.type || 'paragraph'
   proj._introType = intro?.type || 'paragraph'
   proj._dutiesType = duties?.type || 'numbered_list'
@@ -2648,7 +2736,7 @@ function initializeWorkContentEditor(work, migrateDefaultBold = false) {
 }
 
 function editableExperienceToContentBlocks(work) {
-  const contentBlock = (semanticRole, label, type, rawText) => {
+  const contentBlock = (semanticRole, label, type, rawText, blockId = '') => {
     const fallbackType = ['tech_stack', 'introduction'].includes(semanticRole)
       ? 'paragraph'
       : semanticRole === 'responsibilities' ? 'numbered_list' : 'bullet_list'
@@ -2657,7 +2745,7 @@ function editableExperienceToContentBlocks(work) {
     const values = multilineToArray(normalizedText)
     if (!values.length) return null
     const normalizedLabel = String(label || '').trim()
-    return {
+    const block = {
       type: resolvedType,
       semantic_role: semanticRole,
       label: normalizedLabel,
@@ -2668,13 +2756,15 @@ function editableExperienceToContentBlocks(work) {
       text: resolvedType === 'paragraph' ? normalizedText : '',
       items: resolvedType === 'paragraph' ? [] : values
     }
+    if (String(blockId || '').trim()) block.block_id = String(blockId).trim()
+    return block
   }
-  const techStack = contentBlock('tech_stack', work?._techStackLabel, work?._techStackType || 'paragraph', work?._techStackText)
-  const intro = contentBlock('introduction', work?._introLabel, work?._introType || 'paragraph', work?._introText)
-  const duties = contentBlock('responsibilities', work?._dutiesLabel, work?._dutiesType || 'numbered_list', work?._dutiesText)
+  const techStack = contentBlock('tech_stack', work?._techStackLabel, work?._techStackType || 'paragraph', work?._techStackText, work?._techStackBlockId)
+  const intro = contentBlock('introduction', work?._introLabel, work?._introType || 'paragraph', work?._introText, work?._introBlockId)
+  const duties = contentBlock('responsibilities', work?._dutiesLabel, work?._dutiesType || 'numbered_list', work?._dutiesText, work?._dutiesBlockId)
   const genericBlocks = Array.isArray(work?._genericBlocks)
     ? work._genericBlocks.map(block => contentBlock(
-      'generic', block?._label, block?._type || 'bullet_list', block?._text
+      'generic', block?._label, block?._type || 'bullet_list', block?._text, block?._blockId
     )).filter(Boolean)
     : []
   const blocks = []
@@ -3167,8 +3257,9 @@ async function loadResume() {
       body: JSON.stringify({})
     })
     const data = await response.json()
-    const { resumeContent } = splitLoadedResume(data)
+    const { resumeContent, stateVersion } = splitLoadedResume(data)
     resumeData.value = resumeContent
+    if (currentTask.value && stateVersion) currentTask.value.state_version = stateVersion
   } catch (error) {
     console.error('加载简历失败:', error)
   }
@@ -3223,7 +3314,7 @@ function buildResumeEditorData() {
     convertDateRangeToSave(work)
     if (work._genericBlocks !== undefined || work._contentBlockOrder !== undefined) {
       work.content_blocks = editableExperienceToContentBlocks(work)
-      for (const key of ['_techStackLabel', '_techStackType', '_techStackText', '_introLabel', '_dutiesLabel', '_introLabelBold', '_dutiesLabelBold', '_introType', '_dutiesType', '_detailsType', '_introText', '_dutiesText', '_detailsText', '_extraDetailsText', '_genericBlocks', '_contentBlockOrder']) delete work[key]
+      for (const key of ['_techStackLabel', '_techStackType', '_techStackText', '_techStackBlockId', '_introLabel', '_introBlockId', '_dutiesLabel', '_dutiesBlockId', '_introLabelBold', '_dutiesLabelBold', '_introType', '_dutiesType', '_detailsType', '_introText', '_dutiesText', '_detailsText', '_extraDetailsText', '_genericBlocks', '_contentBlockOrder']) delete work[key]
     }
   })
   dataToSave.project_experience?.forEach(proj => {
@@ -3232,8 +3323,11 @@ function buildResumeEditorData() {
     delete proj._techStackLabel
     delete proj._techStackType
     delete proj._techStackText
+    delete proj._techStackBlockId
     delete proj._introLabel
+    delete proj._introBlockId
     delete proj._dutiesLabel
+    delete proj._dutiesBlockId
     delete proj._introLabelBold
     delete proj._dutiesLabelBold
     delete proj._introType
@@ -3280,33 +3374,34 @@ async function saveResume() {
     addResumeCert()
     addResumeLang()
     const dataToSave = buildResumeEditorData()
+    const layoutCandidate = buildResumeTitleLayout()
+    const baseVersion = currentTask.value?.state_version || null
 
     const response = await fetch('/save_resume', {
       method: 'POST',
       headers: getAuthHeaders(),
-      body: JSON.stringify({ resume_data: dataToSave })
+      body: JSON.stringify({
+        resume_data: dataToSave,
+        layout_config: layoutCandidate,
+        base_version: baseVersion
+      })
     })
 
     if (response.ok) {
-      const layoutCandidate = buildResumeTitleLayout()
-      const layoutResponse = await fetch(`/tasks/${currentTaskId.value}/layout`, {
-        method: 'PUT',
-        headers: getAuthHeaders(),
-        body: JSON.stringify({ layout_config: layoutCandidate })
-      })
-      const layoutPayload = await layoutResponse.json().catch(() => ({}))
-      if (!layoutResponse.ok) {
-        showNotice(layoutPayload.detail || '简历内容已保存，但模块标题保存失败，请重试')
-        return
+      const payload = await response.json().catch(() => ({}))
+      if (currentTask.value && payload.state_version) {
+        currentTask.value.state_version = payload.state_version
+        invalidateUndoCandidates(payload.state_version)
       }
-      handleLayoutUpdated(layoutPayload.layout_config || layoutCandidate)
+      handleLayoutUpdated(payload.layout_config || layoutCandidate, payload.state_version)
       resumeEditorPreviousResumeData = null
       resumeEditorPreviousPreviewLayout = null
       closeResumeEditDialog()
       // 刷新简历渲染
       loadResume()
     } else {
-      showNotice('保存失败，请重试')
+      const payload = await response.json().catch(() => ({}))
+      showNotice(payload.detail || '保存失败，请重试')
     }
   } catch (error) {
     console.error('保存简历失败:', error)
@@ -3853,11 +3948,16 @@ async function confirmResumeImportDraft(draft, taskId = currentTaskId.value) {
     body: JSON.stringify({
       resume_data: draft?.resume_data || {},
       source_page_count: draft?.source_page_count || 1,
-      source_document_token: draft?.source_document_token || null
+      source_document_token: draft?.source_document_token || null,
+      base_version: currentTask.value?.state_version || null
     })
   })
   const data = await response.json().catch(() => ({}))
   if (!response.ok || !data.success) throw new Error(data.detail || data.error || '保存导入结果失败')
+  if (currentTask.value && data.state_version) {
+    currentTask.value.state_version = data.state_version
+    invalidateUndoCandidates(data.state_version)
+  }
   return data
 }
 
@@ -4773,7 +4873,7 @@ watch(
       <!-- 右侧简历预览区 -->
       <div class="resume-section">
         <div class="resume-content">
-          <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :project-name="currentProject?.title || ''" :version-name="currentTask?.title || ''" :local-mode="isLocalMode" :source-page-count="currentTask?.source_page_count || 1" :has-source-document="!!currentTask?.has_source_document" :highlighted-module="highlightedModule" :jd-data="jdData" :lang="currentLang" :translation-busy="isTranslating" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @open-resume-import="showUploadResumeDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @layout-updated="handleLayoutUpdated" @resume-updated="handleResumeUpdated" @render-style-updated="handleRenderStyleUpdated" />
+          <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :state-version="currentTask?.state_version || null" :task-id="currentTaskId" :project-name="currentProject?.title || ''" :version-name="currentTask?.title || ''" :local-mode="isLocalMode" :source-page-count="currentTask?.source_page_count || 1" :has-source-document="!!currentTask?.has_source_document" :highlighted-module="highlightedModule" :jd-data="jdData" :lang="currentLang" :translation-busy="isTranslating" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @open-resume-import="showUploadResumeDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @layout-updated="handleLayoutUpdated" @resume-updated="handleResumeUpdated" @render-style-updated="handleRenderStyleUpdated" />
         </div>
       </div>
       </template>
@@ -4919,7 +5019,7 @@ watch(
 
           <!-- 简历 Tab 内容 -->
           <div v-else-if="currentTab === 'resume'" class="mobile-resume-view" key="resume">
-            <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :task-id="currentTaskId" :project-name="currentProject?.title || ''" :version-name="currentTask?.title || ''" :local-mode="isLocalMode" :source-page-count="currentTask?.source_page_count || 1" :has-source-document="!!currentTask?.has_source_document" :highlighted-module="highlightedModule" :jd-data="jdData" :is-mobile-view="isMobileView" :lang="currentLang" :translation-busy="isTranslating" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @open-resume-import="showUploadResumeDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @layout-updated="handleLayoutUpdated" @resume-updated="handleResumeUpdated" @render-style-updated="handleRenderStyleUpdated" />
+            <ResumePreview :data="activeResumeData" :layout-config="activeLayoutConfig" :state-version="currentTask?.state_version || null" :task-id="currentTaskId" :project-name="currentProject?.title || ''" :version-name="currentTask?.title || ''" :local-mode="isLocalMode" :source-page-count="currentTask?.source_page_count || 1" :has-source-document="!!currentTask?.has_source_document" :highlighted-module="highlightedModule" :jd-data="jdData" :is-mobile-view="isMobileView" :lang="currentLang" :translation-busy="isTranslating" @open-jd-dialog="openJDDialog" @open-resume-edit="openResumeEditDialog" @open-resume-import="showUploadResumeDialog" @toggle-lang="switchLang" @use-layout-prompt="useLayoutPrompt" @layout-updated="handleLayoutUpdated" @resume-updated="handleResumeUpdated" @render-style-updated="handleRenderStyleUpdated" />
           </div>
         </Transition>
 
