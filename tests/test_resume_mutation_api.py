@@ -346,6 +346,24 @@ class ResumeMutationApiTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_ai_message_without_session_uses_the_task_main_session(self):
+        response = self.client_a.post(
+            "/api/chat/save_ai_message",
+            headers=self.headers,
+            json={"message": "主会话欢迎语"},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["session_id"], "task-1")
+        db = self.Session()
+        try:
+            task = get_resume_task(db, self.user_id, "task-1")
+            self.assertEqual(task.messages, [{"type": "ai", "content": "主会话欢迎语"}])
+            self.assertEqual(task.compressed_context, [{"type": "ai", "content": "主会话欢迎语"}])
+            self.assertEqual(db.query(Conversation).count(), 0)
+        finally:
+            db.close()
+
     def test_translation_rejects_a_stale_content_version(self):
         current, version = self.load_resume()
         changed_b = deepcopy(current)

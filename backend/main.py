@@ -143,7 +143,7 @@ from .database import (
     serialize_conversation_context,
     append_context_event, get_context_by_session,
     delete_resume_project, delete_resume_task, undo_latest_resume_revision,
-    get_task_layout_config, save_task_layout_config, attach_source_document,
+    get_task_layout_config, attach_source_document,
     build_task_state_version, commit_resume_mutation, ResumeStateConflict,
     delete_unreferenced_source_documents, discard_pending_source_document,
     get_source_document, get_task_source_document,
@@ -334,12 +334,6 @@ def _parse_render_style(raw_style: str | dict | None) -> dict:
         elif key == "pageBreakBefore" and isinstance(value, str):
             parsed[key] = value[:80]
     return parsed
-
-# PDF 生成器 - 懒加载（在 API 调用时才导入）
-def generate_session_id() -> str:
-    """生成唯一会话 ID"""
-    return str(uuid.uuid4())
-
 
 # =============================================================================
 # Pydantic Models
@@ -2383,20 +2377,24 @@ async def chat_endpoint(
         task_id = db.info.get("task_id")
         if not task_id:
             return JSONResponse(content={"error": "请先选择一个简历任务"}, status_code=400)
+        task_record = (
+            get_resume_task(db, current_user.id, task_id)
+            if hasattr(db, "query") else None
+        )
+        if hasattr(db, "query") and not task_record:
+            return JSONResponse(content={"error": "任务不存在"}, status_code=404)
+        if not session_id:
+            session_id = str(getattr(task_record, "session_id", "") or task_id)
         context_record = None
-        if hasattr(db, "query") and session_id:
+        if hasattr(db, "query"):
             context_record = get_context_by_session(db, current_user.id, task_id, session_id)
             if context_record and context_record.status != "active":
                 return JSONResponse(content={"error": "该任务会话已关闭，请重新开启命令"}, status_code=409)
-            task_record = get_resume_task(db, current_user.id, task_id)
             if task_record and session_id != task_record.session_id and context_record is None:
                 return JSONResponse(content={"error": "无效的任务会话"}, status_code=409)
         context_type = context_record.context_type if context_record else "main"
         context_metadata = dict(getattr(context_record, "metadata_json", {}) or {}) if context_record else {}
-        # 生成会话 ID
-        if not session_id:
-            session_id = generate_session_id()
-        elif len(session_id) > 36:
+        if len(session_id) > 36:
             return JSONResponse(
                 content={"error": "session_id 最长为 36 个字符"},
                 status_code=400,
@@ -3429,7 +3427,7 @@ async def first_message_endpoint(
     - user_type: 'custom' 表示自定义身份
     - custom_identity: 用户描述的身份信息
     """
-    _require_request_task(db, current_user.id)
+    task = _require_request_task(db, current_user.id)
     require_llm_configured()
     try:
         user_type = request.user_type
@@ -3442,9 +3440,8 @@ async def first_message_endpoint(
         if not custom_identity or not custom_identity.strip():
             return JSONResponse(content={"error": "请输入身份描述"}, status_code=400)
 
-        # 生成会话 ID
         if not session_id:
-            session_id = generate_session_id()
+            session_id = str(task.session_id)
 
         # 填充 prompt
         prompt = FIRST_MESSAGE_FOR_CUSTOM_IDENTITY_PROMPT.format(custom_identity=custom_identity)
@@ -3508,14 +3505,13 @@ async def first_message_from_resume_endpoint(
     """
     根据已解析的简历内容获取首次提问
     """
-    _require_request_task(db, current_user.id)
+    task = _require_request_task(db, current_user.id)
     require_llm_configured()
     try:
         session_id = request.session_id
 
-        # 生成会话 ID
         if not session_id:
-            session_id = generate_session_id()
+            session_id = str(task.session_id)
 
         # 从数据库获取用户简历数据
         resume_data = get_user_resume(db, current_user.id)
@@ -3584,7 +3580,7 @@ async def save_ai_message_endpoint(
     """
     保存 AI 消息到数据库（同时保存到 messages 和 compressed_context）
     """
-    _require_request_task(db, current_user.id)
+    task = _require_request_task(db, current_user.id)
     try:
         message = request.message
         session_id = request.session_id
@@ -3592,9 +3588,8 @@ async def save_ai_message_endpoint(
         if not message or not message.strip():
             return JSONResponse(content={"error": "消息不能为空"}, status_code=400)
 
-        # 生成会话 ID
         if not session_id:
-            session_id = generate_session_id()
+            session_id = str(task.session_id)
 
         # 保存 AI 消息到数据库
         from .database import save_conversation, save_conversation_context

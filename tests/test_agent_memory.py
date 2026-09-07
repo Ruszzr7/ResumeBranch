@@ -5,13 +5,16 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.database import (
     AgentMemoryState,
+    AgentSkillState,
     Base,
     MemoryVersionConflict,
     ProjectTask,
     ResumeProject,
     delete_conversation_context,
     get_agent_memory_state,
+    get_agent_skill_state,
     save_agent_memory_state,
+    save_agent_skill_state,
     update_agent_memory_round_outcome,
 )
 from backend.harness.memory import (
@@ -57,6 +60,41 @@ class AgentMemoryStateTests(unittest.TestCase):
         self.assertEqual(state["recent_rounds"], [])
         self.assertEqual(state["version"], 0)
         self.assertEqual(self.db.query(AgentMemoryState).count(), 0)
+        self.assertEqual(self.db.query(AgentSkillState).count(), 0)
+
+    def test_memory_and_skill_state_require_an_active_task(self):
+        self.db.info.pop("task_id", None)
+
+        with self.assertRaisesRegex(ValueError, "请先选择一个简历任务"):
+            get_agent_memory_state(self.db, 1, "orphan")
+        with self.assertRaisesRegex(ValueError, "请先选择一个简历任务"):
+            save_agent_memory_state(self.db, 1, "orphan", "", [], 0)
+        with self.assertRaisesRegex(ValueError, "请先选择一个简历任务"):
+            get_agent_skill_state(self.db, 1, "orphan", "resume-coach")
+        with self.assertRaisesRegex(ValueError, "请先选择一个简历任务"):
+            save_agent_skill_state(self.db, 1, "orphan", "resume-coach", {}, 0)
+
+        self.assertEqual(self.db.query(AgentMemoryState).count(), 0)
+        self.assertEqual(self.db.query(AgentSkillState).count(), 0)
+
+    def test_memory_and_skill_state_reject_an_unknown_task_session(self):
+        with self.assertRaisesRegex(ValueError, "无效的任务会话"):
+            get_agent_memory_state(self.db, 1, "unknown-session")
+        with self.assertRaisesRegex(ValueError, "无效的任务会话"):
+            save_agent_memory_state(self.db, 1, "unknown-session", "", [], 0)
+        with self.assertRaisesRegex(ValueError, "无效的任务会话"):
+            get_agent_skill_state(self.db, 1, "unknown-session", "resume-coach")
+        with self.assertRaisesRegex(ValueError, "无效的任务会话"):
+            save_agent_skill_state(self.db, 1, "unknown-session", "resume-coach", {}, 0)
+
+        self.assertEqual(self.db.query(AgentMemoryState).count(), 0)
+        self.assertEqual(self.db.query(AgentSkillState).count(), 0)
+
+    def test_empty_session_uses_the_active_task_main_scope(self):
+        state = get_agent_memory_state(self.db, 1, "")
+
+        self.assertEqual(state["scope_id"], "task:task-1")
+        self.assertEqual(state["task_id"], "task-1")
 
     def test_legacy_agent_memory_discards_its_stale_summary(self):
         self.db.add(AgentMemoryState(

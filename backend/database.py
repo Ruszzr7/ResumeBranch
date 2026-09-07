@@ -1120,17 +1120,6 @@ def get_task_layout_config(db, user_id: int, task_id: str) -> dict | None:
     return normalize_layout_config(task.layout_config)
 
 
-def save_task_layout_config(db, user_id: int, task_id: str, config: dict) -> dict | None:
-    task = get_resume_task(db, user_id, task_id)
-    if not task:
-        return None
-    normalized = normalize_layout_config(config)
-    task.layout_config = normalized
-    task.updated_at = datetime.utcnow()
-    db.commit()
-    return normalized
-
-
 class ResumeStateConflict(RuntimeError):
     """Raised when a mutation was prepared from an older resume state."""
 
@@ -1643,20 +1632,16 @@ def create_invite_code(db, code: str):
 
 
 def _agent_memory_scope(db, user_id: int, session_id: str) -> tuple[str, str | None]:
-    task = _active_task(db, user_id)
-    if task:
-        normalized_session = str(session_id or "")
-        # Keep the legacy main-task scope stable so existing summaries remain
-        # readable. Mission sessions are isolated by their own session id.
-        if normalized_session in {"", str(task.session_id)}:
-            return f"task:{task.id}", task.id
-        context = get_context_by_session(db, user_id, task.id, normalized_session)
-        if context:
-            return f"task:{task.id}:context:{context.session_id}", task.id
-        # A caller that has not created a context yet must not fall back to the
-        # active task's shared scope. This keeps arbitrary session ids isolated.
-        return f"conversation:{user_id}:{normalized_session}", None
-    return f"conversation:{user_id}:{session_id}", None
+    task = _require_active_task(db, user_id)
+    normalized_session = str(session_id or task.session_id)
+    # The main-task scope remains stable while mission sessions are isolated by
+    # their task-owned ConversationContext.
+    if normalized_session == str(task.session_id):
+        return f"task:{task.id}", task.id
+    context = get_context_by_session(db, user_id, task.id, normalized_session)
+    if not context:
+        raise ValueError("无效的任务会话")
+    return f"task:{task.id}:context:{context.session_id}", task.id
 
 
 def get_agent_memory_state(db, user_id: int, session_id: str) -> dict:
@@ -2141,14 +2126,6 @@ def cleanup_old_contexts(db, days: int = 7):
     db.query(Conversation).filter(
         Conversation.last_accessed < cutoff
     ).update({"compressed_context": []})
-    db.query(AgentMemoryState).filter(
-        AgentMemoryState.task_id.is_(None),
-        AgentMemoryState.updated_at < cutoff,
-    ).delete(synchronize_session=False)
-    db.query(AgentSkillState).filter(
-        AgentSkillState.task_id.is_(None),
-        AgentSkillState.updated_at < cutoff,
-    ).delete(synchronize_session=False)
     db.commit()
 
 
