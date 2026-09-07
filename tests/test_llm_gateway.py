@@ -16,7 +16,7 @@ from backend.llm_gateway import (
     model_family,
     openai_endpoint,
     parse_json_output,
-    test_chat_connection,
+    test_chat_connection as check_chat_connection,
 )
 
 
@@ -118,7 +118,7 @@ class ChatGatewayTests(unittest.IsolatedAsyncioTestCase):
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         with patch("backend.llm_gateway.httpx.AsyncClient", return_value=client):
-            result = await test_chat_connection(
+            result = await check_chat_connection(
                 GatewayConfig("chat", "https://relay.example/v1", "vision-model", "secret")
             )
 
@@ -149,7 +149,7 @@ class ChatGatewayTests(unittest.IsolatedAsyncioTestCase):
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         with patch("backend.llm_gateway.httpx.AsyncClient", return_value=client):
-            result = await test_chat_connection(
+            result = await check_chat_connection(
                 GatewayConfig("chat", "https://relay.example/v1", "vision-model", "secret")
             )
 

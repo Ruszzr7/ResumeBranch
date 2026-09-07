@@ -16,6 +16,7 @@ from backend import main
 from backend.auth import ensure_local_user
 from backend.database import (
     Base,
+    Conversation,
     ProjectTask,
     ResumeProject,
     ResumeRevision,
@@ -281,6 +282,12 @@ class ResumeMutationApiTests(unittest.TestCase):
         requests = (
             lambda: self.client_a.post("/load_resume"),
             lambda: self.client_a.post("/save_resume", json={"resume_data": resume_payload()}),
+            lambda: self.client_a.post("/load_jd", json={}),
+            lambda: self.client_a.post("/save_jd", json={"jd_data": {"position": "后端工程师"}}),
+            lambda: self.client_a.post("/load_conversation", json={"session_id": "task-1"}),
+            lambda: self.client_a.post("/save_conversation", json={"session_id": "task-1", "messages": []}),
+            lambda: self.client_a.post("/api/chat/first_message", json={"user_type": "custom", "custom_identity": "开发者"}),
+            lambda: self.client_a.post("/api/chat/save_ai_message", json={"message": "欢迎"}),
             lambda: self.client_a.post("/translate_resume", json={}),
             lambda: self.client_a.post("/restore_resume_translation", json={}),
             lambda: self.client_a.post(
@@ -302,6 +309,11 @@ class ResumeMutationApiTests(unittest.TestCase):
         stored = self.stored_task()
         self.assertEqual(stored["state_sequence"], 0)
         self.assertEqual(stored["revisions"], 0)
+        db = self.Session()
+        try:
+            self.assertEqual(db.query(Conversation).count(), 0)
+        finally:
+            db.close()
 
     def test_invalid_task_header_returns_not_found_before_resume_write(self):
         response = self.client_a.post(
@@ -314,6 +326,25 @@ class ResumeMutationApiTests(unittest.TestCase):
         self.assertEqual(stored["resume_data"]["basics"]["name"], "A")
         self.assertEqual(stored["state_sequence"], 0)
         self.assertEqual(stored["revisions"], 0)
+
+    def test_invalid_task_header_rejects_jd_and_conversation_endpoints(self):
+        invalid_headers = {"X-Task-ID": "missing-task"}
+        requests = (
+            lambda: self.client_a.post("/load_jd", headers=invalid_headers, json={}),
+            lambda: self.client_a.post("/save_jd", headers=invalid_headers, json={"jd_data": {}}),
+            lambda: self.client_a.post("/load_conversation", headers=invalid_headers, json={"session_id": "x"}),
+            lambda: self.client_a.post("/save_conversation", headers=invalid_headers, json={"session_id": "x", "messages": []}),
+        )
+        for request in requests:
+            with self.subTest(request=request):
+                response = request()
+                self.assertEqual(response.status_code, 404, response.text)
+
+        db = self.Session()
+        try:
+            self.assertEqual(db.query(Conversation).count(), 0)
+        finally:
+            db.close()
 
     def test_translation_rejects_a_stale_content_version(self):
         current, version = self.load_resume()

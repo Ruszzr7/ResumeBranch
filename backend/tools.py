@@ -5,7 +5,7 @@
 
 import os
 from sqlalchemy.orm import Session
-from .database import get_db, get_user_jd, get_user_resume, save_user_jd
+from .database import get_db, get_user_resume
 
 
 def list_directory(path: str) -> str:
@@ -74,70 +74,6 @@ def load_resume(user_id: int = None, task_id: str = None, db: Session = None) ->
             db.info["task_id"] = task_id
 
         return get_user_resume(db, user_id)
-    except Exception as e:
-        return {"error": f"加载失败：{str(e)}"}
-    finally:
-        if owns_db and db:
-            db.close()
-
-
-def save_jd(data: dict, user_id: int = None, task_id: str = None, db: Session = None) -> str:
-    """
-    保存用户 JD 数据到 SQLite
-
-    Args:
-        data: JD 数据字典
-        user_id: 用户ID（可选）
-        db: 数据库会话（可选）
-
-    Returns:
-        str: 操作结果消息
-    """
-    owns_db = db is None
-    if owns_db:
-        db_gen = get_db()
-        db = next(db_gen)
-
-    try:
-        if user_id is None:
-            return "错误：无法确定用户身份"
-        if task_id:
-            db.info["task_id"] = task_id
-
-        company = data.get('company', '')
-        position = data.get('position', '')
-        save_user_jd(db, user_id, data, company, position)
-        return "JD 数据已成功保存"
-    except Exception as e:
-        return f"保存失败：{str(e)}"
-    finally:
-        if owns_db and db:
-            db.close()
-
-
-def load_jd(user_id: int = None, task_id: str = None, db: Session = None) -> dict:
-    """
-    从 SQLite 加载用户 JD 数据
-
-    Args:
-        user_id: 用户ID（可选）
-        db: 数据库会话（可选）
-
-    Returns:
-        dict: JD 数据，如果不存在返回空字典
-    """
-    owns_db = db is None
-    if owns_db:
-        db_gen = get_db()
-        db = next(db_gen)
-
-    try:
-        if user_id is None:
-            return {}
-        if task_id:
-            db.info["task_id"] = task_id
-
-        return get_user_jd(db, user_id)
     except Exception as e:
         return {"error": f"加载失败：{str(e)}"}
     finally:

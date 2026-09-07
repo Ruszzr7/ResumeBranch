@@ -675,6 +675,8 @@ const jdInputText = ref('')
 const jdInputImage = ref('') // base64
 const isParsingJD = ref(false) // 解析中状态
 const isSaving = ref(false) // 保存中状态
+const isClearingJD = ref(false)
+const isConfirmingJDClear = ref(false)
 const jdFormData = ref({}) // 解析后的表单数据
 const newSkill = ref('') // 用于添加技能标签
 
@@ -2485,6 +2487,7 @@ function closeImagePreview() {
 function openJDDialog() {
   activateResumeSettingsDialog('jd')
   isJDDialogOpen.value = true
+  isConfirmingJDClear.value = false
   // 如果已有岗位信息，直接显示编辑表单
   if (jdData.value && Object.keys(jdData.value).length > 0) {
     jdInputMode.value = 'form'
@@ -2527,6 +2530,7 @@ function backToInputMode() {
 
 // 关闭JD弹窗
 function closeJDDialog() {
+  isConfirmingJDClear.value = false
   isJDDialogOpen.value = false
 }
 
@@ -3482,6 +3486,33 @@ async function saveJD() {
     showNotice('保存失败，请重试')
   } finally {
     isSaving.value = false
+  }
+}
+
+async function clearJD() {
+  isClearingJD.value = true
+  try {
+    const response = await fetch('/save_jd', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        jd_data: {},
+        session_id: sessionId.value
+      })
+    })
+    const result = await response.json().catch(() => ({}))
+    if (!response.ok || !result.success) {
+      throw new Error(result.detail || result.error || '清除失败')
+    }
+    jdData.value = null
+    isConfirmingJDClear.value = false
+    isJDDialogOpen.value = false
+    showNotice('目标岗位 JD 已清除', 'success')
+  } catch (error) {
+    console.error('清除 JD 失败:', error)
+    showNotice(error.message || '清除失败，请重试')
+  } finally {
+    isClearingJD.value = false
   }
 }
 
@@ -5243,11 +5274,27 @@ watch(
               </button>
             </template>
             <template v-else>
-              <button class="cancel-btn" @click="closeJDDialog">取消</button>
-              <button class="save-btn" @click="saveJD" :disabled="isSaving">
-                <span v-if="isSaving" class="spinner"></span>
-                <span>{{ isSaving ? '保存中...' : '保存' }}</span>
-              </button>
+              <template v-if="isConfirmingJDClear">
+                <span class="jd-clear-confirmation">确定清除当前 JD？此操作不可撤销。</span>
+                <button class="cancel-btn" @click="isConfirmingJDClear = false" :disabled="isClearingJD">取消</button>
+                <button class="clear-jd-btn confirm" @click="clearJD" :disabled="isClearingJD">
+                  <span v-if="isClearingJD" class="spinner"></span>
+                  <span>{{ isClearingJD ? '清除中...' : '确认清除' }}</span>
+                </button>
+              </template>
+              <template v-else>
+                <button
+                  v-if="jdData && Object.keys(jdData).length > 0"
+                  class="clear-jd-btn"
+                  @click="isConfirmingJDClear = true"
+                  :disabled="isSaving"
+                >清除 JD</button>
+                <button class="cancel-btn" @click="closeJDDialog">取消</button>
+                <button class="save-btn" @click="saveJD" :disabled="isSaving">
+                  <span v-if="isSaving" class="spinner"></span>
+                  <span>{{ isSaving ? '保存中...' : '保存' }}</span>
+                </button>
+              </template>
             </template>
           </div>
         </div>
@@ -9282,6 +9329,86 @@ watch(
   background: rgba(255, 255, 255, 0.065);
   border-color: rgba(120, 166, 255, 0.55);
   box-shadow: 0 0 0 3px rgba(120, 166, 255, 0.09);
+}
+
+.jd-dialog .back-btn {
+  color: #d5d5da;
+  background: rgba(255, 255, 255, 0.055);
+  border-color: rgba(255, 255, 255, 0.1);
+  border-radius: 9px;
+}
+
+.jd-dialog .back-btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.jd-dialog .tags-input {
+  color: #d5d5da;
+  background: rgba(255, 255, 255, 0.035);
+  border-color: rgba(255, 255, 255, 0.09);
+  border-radius: 10px;
+}
+
+.jd-dialog .tags-input .tag {
+  color: #dbe6ff;
+  background: rgba(95, 143, 242, 0.13);
+  border-radius: 6px;
+}
+
+.jd-dialog .tags-input .tag-remove {
+  color: #9fb7e9;
+}
+
+.jd-dialog .tags-input .tag-remove:hover {
+  color: #fff;
+}
+
+.jd-dialog .tags-input .tag-input,
+.jd-dialog .tags-input .tag-input:focus {
+  color: #ededf1;
+  background: transparent !important;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.jd-dialog .clear-jd-btn {
+  min-width: 76px;
+  height: 34px;
+  margin-right: auto;
+  padding: 0 12px;
+  color: #ffaaaa;
+  background: rgba(255, 91, 91, 0.08);
+  border: 1px solid rgba(255, 123, 123, 0.28);
+  border-radius: 7px;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.jd-dialog .clear-jd-btn:hover:not(:disabled),
+.jd-dialog .clear-jd-btn.confirm {
+  color: #fff;
+  background: rgba(196, 61, 61, 0.72);
+  border-color: rgba(255, 136, 136, 0.6);
+}
+
+.jd-dialog .clear-jd-btn.confirm {
+  margin-right: 0;
+}
+
+.jd-dialog .clear-jd-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.jd-dialog .jd-clear-confirmation {
+  margin-right: auto;
+  color: #ffb4b4;
+  font-size: 0.78rem;
 }
 
 .jd-dialog .parse-btn {

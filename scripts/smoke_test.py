@@ -32,9 +32,7 @@ def cleanup_test_data(email: str, invite_code: str | None) -> None:
     from backend.database import (
         Conversation,
         InviteCode,
-        JobDescription,
         ProjectTask,
-        Resume,
         ResumeProject,
         SessionLocal,
         User,
@@ -47,8 +45,6 @@ def cleanup_test_data(email: str, invite_code: str | None) -> None:
             db.query(ProjectTask).filter(ProjectTask.user_id == user.id).delete()
             db.query(ResumeProject).filter(ResumeProject.user_id == user.id).delete()
             db.query(Conversation).filter(Conversation.user_id == user.id).delete()
-            db.query(JobDescription).filter(JobDescription.user_id == user.id).delete()
-            db.query(Resume).filter(Resume.user_id == user.id).delete()
             db.delete(user)
         if invite_code:
             db.query(InviteCode).filter(InviteCode.code == invite_code).delete()

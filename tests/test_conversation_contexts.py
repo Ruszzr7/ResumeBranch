@@ -20,12 +20,14 @@ from backend.database import (
     get_agent_memory_state,
     get_agent_skill_state,
     get_conversation,
+    get_conversation_context,
     delete_resume_project,
     list_conversation_contexts,
     reset_main_conversation_context,
     save_agent_memory_state,
     save_agent_skill_state,
     save_conversation,
+    save_conversation_context,
     update_conversation_context_metadata,
 )
 
@@ -65,6 +67,18 @@ class ConversationContextTests(unittest.TestCase):
             f"task:task-1:context:{layout.session_id}",
         )
         self.assertEqual(get_agent_memory_state(self.db, 1, main.session_id)["scope_id"], "task:task-1")
+
+    def test_conversation_storage_requires_an_active_task(self):
+        self.db.info.pop("task_id", None)
+        with self.assertRaisesRegex(ValueError, "请先选择一个简历任务"):
+            save_conversation(self.db, 1, "orphan", [{"type": "human", "content": "孤立消息"}])
+        with self.assertRaisesRegex(ValueError, "请先选择一个简历任务"):
+            get_conversation(self.db, 1, "orphan")
+        with self.assertRaisesRegex(ValueError, "请先选择一个简历任务"):
+            save_conversation_context(self.db, 1, "orphan", [])
+        with self.assertRaisesRegex(ValueError, "请先选择一个简历任务"):
+            get_conversation_context(self.db, 1, "orphan")
+        self.assertEqual(self.db.query(Conversation).count(), 0)
 
     def test_closing_mission_clears_memory_but_keeps_audit_record(self):
         context = create_or_resume_conversation_context(self.db, 1, "task-1", "coaching")

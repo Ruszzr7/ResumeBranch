@@ -1826,6 +1826,7 @@ async def load_jd_endpoint(db: Session = Depends(get_db), current_user = Depends
     """
     加载当前用户的JD数据
     """
+    _require_request_task(db, current_user.id)
     try:
         jd_data = get_user_jd(db, current_user.id)
         if isinstance(jd_data, dict) and "error" in jd_data:
@@ -1840,6 +1841,7 @@ async def save_jd_endpoint(request: Request, db: Session = Depends(get_db), curr
     """
     保存当前用户的JD数据
     """
+    _require_request_task(db, current_user.id)
     try:
         request_data = await request.json()
         jd_data = request_data.get('jd_data', {})
@@ -1934,6 +1936,7 @@ async def save_conversation_endpoint(request: Request, db: Session = Depends(get
     """
     保存对话历史
     """
+    _require_request_task(db, current_user.id)
     try:
         request_data = await request.json()
         session_id = request_data.get('session_id', 'default')
@@ -1957,6 +1960,7 @@ async def load_conversation_endpoint(request: Request, db: Session = Depends(get
     """
     加载对话历史
     """
+    _require_request_task(db, current_user.id)
     try:
         request_data = await request.json()
         session_id = request_data.get('session_id', 'default')
@@ -3425,6 +3429,7 @@ async def first_message_endpoint(
     - user_type: 'custom' 表示自定义身份
     - custom_identity: 用户描述的身份信息
     """
+    _require_request_task(db, current_user.id)
     require_llm_configured()
     try:
         user_type = request.user_type
@@ -3579,6 +3584,7 @@ async def save_ai_message_endpoint(
     """
     保存 AI 消息到数据库（同时保存到 messages 和 compressed_context）
     """
+    _require_request_task(db, current_user.id)
     try:
         message = request.message
         session_id = request.session_id

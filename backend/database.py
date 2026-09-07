@@ -89,18 +89,6 @@ class InviteCode(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
-class JobDescription(Base):
-    """JD数据表"""
-    __tablename__ = "job_descriptions"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, nullable=False, index=True)
-    company = Column(String(100), default="")
-    position = Column(String(100), default="")
-    jd_data = Column(JSON, default=dict)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-
 class Conversation(Base):
     """对话历史表"""
     __tablename__ = "conversations"
@@ -1544,39 +1532,25 @@ def set_source_page_count(db, user_id: int, page_count: int):
 
 
 def get_user_jd(db, user_id: int) -> dict:
-    """获取用户JD"""
-    task = _active_task(db, user_id)
-    if task:
-        return task.jd_data or {}
-    jd = db.query(JobDescription).filter(JobDescription.user_id == user_id).first()
-    return jd.jd_data if jd else {}
+    """Return JD data owned by the active project task."""
+    task = _require_active_task(db, user_id)
+    return task.jd_data or {}
 
 
 def save_user_jd(db, user_id: int, data: dict, company: str = "", position: str = ""):
-    """保存用户JD"""
-    task = _active_task(db, user_id)
-    if task:
-        task.jd_data = data
-        task.updated_at = datetime.utcnow()
-        db.commit()
-        return task
-    jd = db.query(JobDescription).filter(JobDescription.user_id == user_id).first()
-    if jd:
-        jd.jd_data = data
-        jd.company = company
-        jd.position = position
-    else:
-        jd = JobDescription(user_id=user_id, jd_data=data, company=company, position=position)
-        db.add(jd)
+    """Save JD data on the active project task."""
+    task = _require_active_task(db, user_id)
+    task.jd_data = data
+    task.updated_at = datetime.utcnow()
     db.commit()
-    return jd
+    return task
 
 
 def save_conversation(db, user_id: int, session_id: str, messages: list):
     """保存对话历史"""
-    task = _active_task(db, user_id)
-    context = _context_query(db, user_id, session_id) if task else None
-    if task and (not context or context.context_type == "main"):
+    task = _require_active_task(db, user_id)
+    context = _context_query(db, user_id, session_id)
+    if not context or context.context_type == "main":
         task.messages = messages
         task.last_accessed = datetime.utcnow()
         task.updated_at = datetime.utcnow()
@@ -1597,9 +1571,9 @@ def save_conversation(db, user_id: int, session_id: str, messages: list):
 
 def get_conversation(db, user_id: int, session_id: str) -> list:
     """获取对话历史"""
-    task = _active_task(db, user_id)
-    context = _context_query(db, user_id, session_id) if task else None
-    if task and (not context or context.context_type == "main"):
+    task = _require_active_task(db, user_id)
+    context = _context_query(db, user_id, session_id)
+    if not context or context.context_type == "main":
         task.last_accessed = datetime.utcnow()
         db.commit()
         return task.messages or []
@@ -1907,9 +1881,9 @@ def save_conversation_context(
     pending_confirmation=_PENDING_CONFIRMATION_UNSET,
 ):
     """保存压缩后的上下文到数据库"""
-    task = _active_task(db, user_id)
-    context = _context_query(db, user_id, session_id) if task else None
-    if task and (not context or context.context_type == "main"):
+    task = _require_active_task(db, user_id)
+    context = _context_query(db, user_id, session_id)
+    if not context or context.context_type == "main":
         task.compressed_context = compressed_context
         if pending_confirmation is not _PENDING_CONFIRMATION_UNSET:
             task.pending_confirmation = pending_confirmation
@@ -1945,9 +1919,9 @@ def save_conversation_context(
 
 def get_pending_confirmation(db, user_id: int, session_id: str) -> dict:
     """获取待确认状态"""
-    task = _active_task(db, user_id)
-    context = _context_query(db, user_id, session_id) if task else None
-    if task and (not context or context.context_type == "main"):
+    task = _require_active_task(db, user_id)
+    context = _context_query(db, user_id, session_id)
+    if not context or context.context_type == "main":
         return task.pending_confirmation
     conv = db.query(Conversation).filter(
         Conversation.user_id == user_id,
@@ -2114,9 +2088,9 @@ def get_resume_edit_state(db, user_id: int, task_id: str) -> dict | None:
 
 def clear_pending_confirmation(db, user_id: int, session_id: str):
     """清除待确认状态"""
-    task = _active_task(db, user_id)
-    context = _context_query(db, user_id, session_id) if task else None
-    if task and (not context or context.context_type == "main"):
+    task = _require_active_task(db, user_id)
+    context = _context_query(db, user_id, session_id)
+    if not context or context.context_type == "main":
         task.pending_confirmation = None
         db.query(ResumeEditLock).filter(
             ResumeEditLock.task_id == task.id,
@@ -2143,9 +2117,9 @@ def clear_pending_confirmation(db, user_id: int, session_id: str):
 
 def get_conversation_context(db, user_id: int, session_id: str) -> list:
     """获取压缩后的上下文（用于性能优化）"""
-    task = _active_task(db, user_id)
-    context = _context_query(db, user_id, session_id) if task else None
-    if task and (not context or context.context_type == "main"):
+    task = _require_active_task(db, user_id)
+    context = _context_query(db, user_id, session_id)
+    if not context or context.context_type == "main":
         task.last_accessed = datetime.utcnow()
         db.commit()
         return task.compressed_context or []
@@ -2180,9 +2154,9 @@ def cleanup_old_contexts(db, days: int = 7):
 
 def delete_conversation_context(db, user_id: int, session_id: str):
     """删除指定会话的上下文"""
-    task = _active_task(db, user_id)
-    context = _context_query(db, user_id, session_id) if task else None
-    if task and (not context or context.context_type == "main"):
+    task = _require_active_task(db, user_id)
+    context = _context_query(db, user_id, session_id)
+    if not context or context.context_type == "main":
         task.compressed_context = []
         task.updated_at = datetime.utcnow()
         db.query(AgentMemoryState).filter(
@@ -2216,16 +2190,3 @@ def delete_conversation_context(db, user_id: int, session_id: str):
         ).delete(synchronize_session=False)
         db.commit()
         return
-    db.query(Conversation).filter(
-        Conversation.user_id == user_id,
-        Conversation.session_id == session_id
-    ).update({"compressed_context": []})
-    db.query(AgentMemoryState).filter(
-        AgentMemoryState.scope_id == f"conversation:{user_id}:{session_id}",
-        AgentMemoryState.user_id == user_id,
-    ).delete(synchronize_session=False)
-    db.query(AgentSkillState).filter(
-        AgentSkillState.user_id == user_id,
-        AgentSkillState.session_id == session_id,
-    ).delete(synchronize_session=False)
-    db.commit()

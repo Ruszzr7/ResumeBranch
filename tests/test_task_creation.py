@@ -90,6 +90,7 @@ class TaskCreationTests(unittest.TestCase):
     def test_new_user_has_no_implicit_legacy_project_and_can_create_one_explicitly(self):
         self.assertNotIn("resumes", Base.metadata.tables)
         self.assertNotIn("workspace_states", Base.metadata.tables)
+        self.assertNotIn("job_descriptions", Base.metadata.tables)
         self.assertEqual(list_resume_projects(self.db, 99), [])
 
         project, task = create_resume_project(self.db, 99, "新建简历组")
