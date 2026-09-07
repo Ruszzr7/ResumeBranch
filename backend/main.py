@@ -130,7 +130,7 @@ from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, System
 from .database import (
     init_db, get_db, create_user, get_user_by_email,
     database_backend, register_user_with_invite,
-    save_user_resume, get_user_resume, save_user_jd, get_user_jd,
+    get_user_resume, save_user_jd, get_user_jd,
     create_invite_code,
     get_parsing_status, set_parsing_status, set_source_page_count, get_user_photo,
     list_resume_projects, create_resume_project, get_resume_project,
@@ -536,6 +536,17 @@ def _release_short_mutation_lock(db, user_id: int, task_id: str, owner_session_i
         LOGGER.exception("释放短期简历修改锁失败")
 
 
+def _require_request_task(db, user_id: int):
+    """Resolve the authenticated task context required by resume workspace APIs."""
+    task_id = db.info.get("task_id") if hasattr(db, "info") else None
+    if not task_id:
+        raise HTTPException(status_code=400, detail="请先选择一个简历任务")
+    task = get_resume_task(db, user_id, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return task
+
+
 def require_llm_configured():
     """Return a clear local-mode error instead of attempting an unauthenticated call."""
     if not resume_agent.LLM_ENABLED:
@@ -890,7 +901,7 @@ async def create_invite(request: Request, current_user = Depends(get_current_adm
 
 @app.get("/projects")
 async def get_projects(db: Session = Depends(get_db), current_user = Depends(get_current_user)):
-    """列出简历项目，并自动迁移旧版单简历数据。"""
+    """列出当前用户显式创建的简历项目。"""
     projects = list_resume_projects(db, current_user.id)
     return [
         serialize_project(project, len(list_project_tasks(db, current_user.id, project.id)))
@@ -1207,7 +1218,7 @@ async def undo_task_resume_change(
         if task and request and request.base_version:
             from .resume_changes import resume_state_version_matches
             current_task = get_resume_task(db, current_user.id, task_id)
-            current_resume = get_user_resume(db, current_user.id)
+            current_resume = validate_resume_data(current_task.resume_data or {})
             current_layout = get_task_layout_config(db, current_user.id, task_id)
             if not resume_state_version_matches(
                 request.base_version,
@@ -1590,6 +1601,7 @@ async def load_resume_endpoint(db: Session = Depends(get_db), current_user = Dep
     """
     加载当前用户的简历数据
     """
+    task = _require_request_task(db, current_user.id)
     try:
         resume_data = get_user_resume(db, current_user.id)
 
@@ -1611,12 +1623,7 @@ async def load_resume_endpoint(db: Session = Depends(get_db), current_user = Dep
             LOGGER.warning("读取解析状态失败，使用默认状态: %s", statusError)
             parsing_status = "none"
 
-        state_version = None
-        task_id = db.info.get("task_id") if hasattr(db, "info") else None
-        if task_id and hasattr(db, "query"):
-            task = get_resume_task(db, current_user.id, task_id)
-            if task:
-                state_version = build_task_state_version(task)
+        state_version = build_task_state_version(task)
         if isinstance(resume_data, dict) and "error" in resume_data:
             return JSONResponse(content={}, status_code=500)
         return JSONResponse(content={
@@ -1635,14 +1642,8 @@ async def save_resume_endpoint(request: SaveResumeRequest, db: Session = Depends
     """
     保存当前用户的简历数据
     """
+    task = _require_request_task(db, current_user.id)
     try:
-        task_id = db.info.get("task_id") if hasattr(db, "info") else None
-        task = get_resume_task(db, current_user.id, task_id) if task_id and hasattr(db, "query") else None
-        if not task:
-            # Preserve the legacy single-resume test/local path.  Project-task
-            # requests always use the lock + state-token mutation below.
-            save_user_resume(db, current_user.id, request.resume_data)
-            return JSONResponse(content={"success": True})
         owner_session_id, request_id = _acquire_short_mutation_lock(
             db, current_user.id, task.id, "manual"
         )
@@ -1689,6 +1690,7 @@ async def translate_resume_endpoint(
     from .resume_changes import resume_digest
     from .resume_translation import translate_resume
 
+    task = _require_request_task(db, current_user.id)
     try:
         source_data = get_user_resume(db, current_user.id)
         if not source_data:
@@ -1715,11 +1717,6 @@ async def translate_resume_endpoint(
                 target_language=request.target_language,
             )
             result["full_snapshot_reused"] = False
-        task_id = db.info.get("task_id") if hasattr(db, "info") else None
-        task = get_resume_task(db, current_user.id, task_id) if task_id and hasattr(db, "query") else None
-        if not task:
-            save_user_resume(db, current_user.id, result["resume_data"])
-            return {"success": True, **result}
         owner_session_id, request_id = _acquire_short_mutation_lock(
             db, current_user.id, task.id, "translate"
         )
@@ -1769,6 +1766,7 @@ async def restore_resume_translation_endpoint(
     from .resume_changes import resume_digest
     from .resume_translation import restore_from_translation_memory
 
+    task = _require_request_task(db, current_user.id)
     try:
         current_data = get_user_resume(db, current_user.id)
         state = get_resume_translation_state(db, current_user.id)
@@ -1782,15 +1780,6 @@ async def restore_resume_translation_endpoint(
             if restored_fields == 0:
                 raise HTTPException(status_code=409, detail="没有可恢复的中文翻译基线")
         base_version = request.base_version if request else None
-        task_id = db.info.get("task_id") if hasattr(db, "info") else None
-        task = get_resume_task(db, current_user.id, task_id) if task_id and hasattr(db, "query") else None
-        if not task:
-            save_user_resume(db, current_user.id, source_data)
-            return {
-                "success": True,
-                "resume_data": source_data,
-                "restored_fields": restored_fields,
-            }
         owner_session_id, request_id = _acquire_short_mutation_lock(
             db, current_user.id, task.id, "translate"
         )
@@ -2047,6 +2036,7 @@ async def parse_and_save_resume_endpoint(
     解析简历图片并保存（首次上传流程）
     支持 multipart/form-data 上传文件
     """
+    task = _require_request_task(db, current_user.id)
     source_document = None
     import_base_version = None
     mutation = None
@@ -2071,13 +2061,9 @@ async def parse_and_save_resume_endpoint(
                 status_code=409,
             )
 
-        # Parsing is read-only.  Capture the state token before the potentially
-        # long upstream call so a legacy immediate-save request cannot overwrite
-        # a newer manual or Agent edit when it eventually applies the result.
-        task_id = db.info.get("task_id") if hasattr(db, "info") else None
-        task = get_resume_task(db, current_user.id, task_id) if task_id and hasattr(db, "query") else None
-        if task:
-            import_base_version = build_task_state_version(task)
+        # Parsing is read-only. Capture the state token before the potentially
+        # long upstream call so applying the result cannot overwrite a newer edit.
+        import_base_version = build_task_state_version(task)
         if base_version:
             try:
                 import_base_version = json.loads(base_version) if isinstance(base_version, str) else base_version
@@ -2117,35 +2103,31 @@ async def parse_and_save_resume_endpoint(
         )
 
         if not draft_only:
-            task = get_resume_task(db, current_user.id, task_id) if task_id and hasattr(db, "query") else None
-            if task:
-                owner_session_id, request_id = _acquire_short_mutation_lock(
-                    db, current_user.id, task.id, "import"
+            owner_session_id, request_id = _acquire_short_mutation_lock(
+                db, current_user.id, task.id, "import"
+            )
+            try:
+                mutation = commit_resume_mutation(
+                    db,
+                    current_user.id,
+                    task.id,
+                    resume_data=resume_data,
+                    base_version=import_base_version,
+                    check_content=True,
+                    check_layout=False,
+                    owner_session_id=owner_session_id,
+                    request_id=request_id,
+                    source="import",
                 )
-                try:
-                    mutation = commit_resume_mutation(
-                        db,
-                        current_user.id,
-                        task.id,
-                        resume_data=resume_data,
-                        base_version=import_base_version,
-                        check_content=True,
-                        check_layout=False,
-                        owner_session_id=owner_session_id,
-                        request_id=request_id,
-                        source="import",
-                    )
-                except ResumeStateConflict as exc:
-                    raise HTTPException(
-                        status_code=409,
-                        detail="简历在解析期间已发生其他修改，请重新导入或确认当前结果。",
-                    ) from exc
-                finally:
-                    _release_short_mutation_lock(
-                        db, current_user.id, task.id, owner_session_id, request_id
-                    )
-            else:
-                save_user_resume(db, current_user.id, resume_data)
+            except ResumeStateConflict as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail="简历在解析期间已发生其他修改，请重新导入或确认当前结果。",
+                ) from exc
+            finally:
+                _release_short_mutation_lock(
+                    db, current_user.id, task.id, owner_session_id, request_id
+                )
             set_source_page_count(db, current_user.id, source_page_count)
             attached = attach_source_document(db, current_user.id, source_document.id)
             if attached:
@@ -2206,38 +2188,33 @@ async def confirm_resume_import_endpoint(
     current_user = Depends(get_current_user),
 ):
     from .import_contract import finalize_import_resume
+    task = _require_request_task(db, current_user.id)
     try:
         resume_data, _ = finalize_import_resume(request.resume_data)
         if request.source_document_token:
             document = get_source_document(db, current_user.id, request.source_document_token)
             if not document or document.status != "pending":
                 raise ValueError("原版确认凭证已失效，请重新选择文件")
-        task_id = db.info.get("task_id") if hasattr(db, "info") else None
-        task = get_resume_task(db, current_user.id, task_id) if task_id and hasattr(db, "query") else None
-        mutation = None
-        if task:
-            owner_session_id, request_id = _acquire_short_mutation_lock(
-                db, current_user.id, task.id, "import"
+        owner_session_id, request_id = _acquire_short_mutation_lock(
+            db, current_user.id, task.id, "import"
+        )
+        try:
+            mutation = commit_resume_mutation(
+                db,
+                current_user.id,
+                task.id,
+                resume_data=resume_data,
+                base_version=request.base_version,
+                check_content=True,
+                check_layout=False,
+                owner_session_id=owner_session_id,
+                request_id=request_id,
+                source="import",
             )
-            try:
-                mutation = commit_resume_mutation(
-                    db,
-                    current_user.id,
-                    task.id,
-                    resume_data=resume_data,
-                    base_version=request.base_version,
-                    check_content=True,
-                    check_layout=False,
-                    owner_session_id=owner_session_id,
-                    request_id=request_id,
-                    source="import",
-                )
-            except ResumeStateConflict as exc:
-                raise HTTPException(status_code=409, detail="简历在导入确认期间已发生其他修改，请重新加载后再确认。") from exc
-            finally:
-                _release_short_mutation_lock(db, current_user.id, task.id, owner_session_id, request_id)
-        else:
-            save_user_resume(db, current_user.id, resume_data)
+        except ResumeStateConflict as exc:
+            raise HTTPException(status_code=409, detail="简历在导入确认期间已发生其他修改，请重新加载后再确认。") from exc
+        finally:
+            _release_short_mutation_lock(db, current_user.id, task.id, owner_session_id, request_id)
         page_count = max(1, min(1000, int(request.source_page_count or 1)))
         set_source_page_count(db, current_user.id, page_count)
         attached = None
@@ -2253,7 +2230,7 @@ async def confirm_resume_import_endpoint(
             "resume_data": resume_data,
             "source_page_count": page_count,
             "has_source_document": bool(attached),
-            "state_version": mutation["state_version"] if mutation else None,
+            "state_version": mutation["state_version"],
         }
     except HTTPException:
         raise
@@ -2267,6 +2244,7 @@ async def discard_resume_import_draft_endpoint(
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user),
 ):
+    _require_request_task(db, current_user.id)
     storage_key = discard_pending_source_document(db, current_user.id, document_id)
     if not storage_key:
         raise HTTPException(status_code=404, detail="待确认原版不存在或已经使用")
@@ -2277,6 +2255,7 @@ async def discard_resume_import_draft_endpoint(
 @app.get("/api/resume/parsing_status")
 async def get_parsing_status_endpoint(db: Session = Depends(get_db), current_user = Depends(get_current_user)):
     """获取简历解析状态"""
+    _require_request_task(db, current_user.id)
     status = get_parsing_status(db, current_user.id)
     return {"parsing_status": status}
 
@@ -2286,6 +2265,7 @@ async def export_pdf_endpoint(request: Request, db: Session = Depends(get_db), c
     """
     导出 PDF（从数据库读取简历）
     """
+    _require_request_task(db, current_user.id)
     try:
         # 尝试获取JSON，如果请求体为空则使用空字典
         try:
@@ -2334,6 +2314,7 @@ async def export_pdf_endpoint(request: Request, db: Session = Depends(get_db), c
 @app.post("/export_docx")
 async def export_docx_endpoint(request: Request, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
     """导出可继续编辑的 Word（DOCX）简历。"""
+    _require_request_task(db, current_user.id)
     try:
         try:
             request_data = await request.json()
@@ -3267,69 +3248,39 @@ async def confirm_endpoint(
             request_id=pending_confirmation.get("request_id") or "",
         ):
             return JSONResponse(content={"error": "修改锁已失效，请重新生成预览"}, status_code=409)
-        if hasattr(db, "query"):
-            try:
-                mutation = commit_resume_mutation(
-                    db,
-                    current_user.id,
-                    task_id,
-                    resume_data=updated_resume_data,
-                    layout_config=updated_layout_data,
-                    base_version=pending_confirmation.get("base_version"),
-                    check_content=has_content_changes,
-                    check_layout=has_layout_changes,
-                    owner_session_id=session_id,
-                    request_id=pending_confirmation.get("request_id") or "",
-                    selected_change_ids=ids_to_apply,
-                    source="ai_confirm",
-                )
-            except ResumeStateConflict:
-                clear_pending_confirmation(db, current_user.id, session_id)
-                release_resume_edit_lock(
-                    db, current_user.id, task_id,
-                    owner_session_id=session_id,
-                    request_id=pending_confirmation.get("request_id"),
-                )
-                update_agent_memory_round_outcome(
-                    db,
-                    current_user.id,
-                    session_id,
-                    round_id=pending_confirmation.get("request_id"),
-                    status="failed",
-                    outcome_updates={"resolution": "preview_expired"},
-                )
-                return JSONResponse(content={
-                    "error": "简历内容或排版已发生其他修改，请重新生成修改预览"
-                }, status_code=409)
-        else:
-            # Keep lightweight legacy/unit callers working while the real task
-            # path above owns the lock, token check, and revision transaction.
-            from .database import record_resume_revision
-            from .tools import update_resume
-            result = update_resume(
-                updated_resume_data,
-                user_id=current_user.id,
-                task_id=task_id,
-                db=db,
-            )
-            if result.startswith("保存失败") or result.startswith("错误"):
-                return JSONResponse(content={"error": result}, status_code=400)
-            revision = record_resume_revision(
+        try:
+            mutation = commit_resume_mutation(
                 db,
                 current_user.id,
                 task_id,
-                before_resume_data,
-                updated_resume_data,
-                ids_to_apply,
-                before_layout=before_layout_data,
-                after_layout=updated_layout_data,
+                resume_data=updated_resume_data,
+                layout_config=updated_layout_data,
+                base_version=pending_confirmation.get("base_version"),
+                check_content=has_content_changes,
+                check_layout=has_layout_changes,
+                owner_session_id=session_id,
+                request_id=pending_confirmation.get("request_id") or "",
+                selected_change_ids=ids_to_apply,
+                source="ai_confirm",
             )
-            mutation = {
-                "resume_data": updated_resume_data,
-                "layout_config": updated_layout_data,
-                "revision": revision,
-                "state_version": None,
-            }
+        except ResumeStateConflict:
+            clear_pending_confirmation(db, current_user.id, session_id)
+            release_resume_edit_lock(
+                db, current_user.id, task_id,
+                owner_session_id=session_id,
+                request_id=pending_confirmation.get("request_id"),
+            )
+            update_agent_memory_round_outcome(
+                db,
+                current_user.id,
+                session_id,
+                round_id=pending_confirmation.get("request_id"),
+                status="failed",
+                outcome_updates={"resolution": "preview_expired"},
+            )
+            return JSONResponse(content={
+                "error": "简历内容或排版已发生其他修改，请重新生成修改预览"
+            }, status_code=409)
         updated_resume_data = mutation["resume_data"]
         updated_layout_data = mutation["layout_config"]
         revision = mutation.get("revision")
@@ -3552,6 +3503,7 @@ async def first_message_from_resume_endpoint(
     """
     根据已解析的简历内容获取首次提问
     """
+    _require_request_task(db, current_user.id)
     require_llm_configured()
     try:
         session_id = request.session_id

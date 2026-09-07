@@ -1,7 +1,7 @@
 import json
 import unittest
 from types import SimpleNamespace
-from unittest.mock import ANY, AsyncMock, patch
+from unittest.mock import AsyncMock, patch
 
 from langchain_core.messages import AIMessage
 
@@ -136,11 +136,18 @@ class ResumeTranslationTests(unittest.IsolatedAsyncioTestCase):
             "new_translations": 1,
             "total_translatable": 3,
         }
-        with patch.object(main, "get_user_resume", return_value=sample_resume()), \
+        task = SimpleNamespace(id="task-1")
+        with patch.object(main, "_require_request_task", return_value=task), \
+             patch.object(main, "get_user_resume", return_value=sample_resume()), \
              patch.object(main, "get_resume_translation_state", return_value=None), \
              patch.object(main, "save_resume_translation_state"), \
              patch.object(resume_translation, "translate_resume", AsyncMock(return_value=service_result)), \
-             patch.object(main, "save_user_resume") as save_resume:
+             patch.object(main, "_acquire_short_mutation_lock", return_value=("owner", "request")), \
+             patch.object(main, "_release_short_mutation_lock"), \
+             patch.object(main, "commit_resume_mutation", return_value={
+                 "resume_data": translated,
+                 "state_version": {"sequence": 1},
+             }) as commit_mutation:
             result = await main.translate_resume_endpoint(
                 main.TranslateResumeRequest(),
                 db=FakeDb(),
@@ -149,7 +156,8 @@ class ResumeTranslationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result["success"])
         self.assertEqual(result["cache_hits"], 2)
-        save_resume.assert_called_once_with(ANY, 7, translated)
+        self.assertEqual(commit_mutation.call_args.args[2], "task-1")
+        self.assertEqual(commit_mutation.call_args.kwargs["source"], "translation")
 
     async def test_endpoint_reuses_durable_full_snapshot(self):
         from backend import main
@@ -163,10 +171,17 @@ class ResumeTranslationTests(unittest.IsolatedAsyncioTestCase):
             translated_data=translated,
         )
         translator = AsyncMock()
-        with patch.object(main, "get_user_resume", return_value=source), \
+        with patch.object(main, "_require_request_task", return_value=SimpleNamespace(id="task-1")), \
+             patch.object(main, "get_user_resume", return_value=source), \
              patch.object(main, "get_resume_translation_state", return_value=state), \
              patch.object(resume_translation, "translate_resume", translator), \
-             patch.object(main, "save_user_resume"):
+             patch.object(main, "save_resume_translation_state"), \
+             patch.object(main, "_acquire_short_mutation_lock", return_value=("owner", "request")), \
+             patch.object(main, "_release_short_mutation_lock"), \
+             patch.object(main, "commit_resume_mutation", return_value={
+                 "resume_data": translated,
+                 "state_version": {"sequence": 1},
+             }):
             result = await main.translate_resume_endpoint(
                 main.TranslateResumeRequest(), FakeDb(), SimpleNamespace(id=7),
             )
@@ -180,16 +195,23 @@ class ResumeTranslationTests(unittest.IsolatedAsyncioTestCase):
 
         source = sample_resume()
         state = SimpleNamespace(source_data=source)
-        with patch.object(main, "get_user_resume", return_value={"basics": {"name": "Li Ming"}}), \
+        with patch.object(main, "_require_request_task", return_value=SimpleNamespace(id="task-1")), \
+             patch.object(main, "get_user_resume", return_value={"basics": {"name": "Li Ming"}}), \
              patch.object(main, "get_resume_translation_state", return_value=state), \
-             patch.object(main, "save_user_resume") as save_resume:
+             patch.object(main, "save_resume_translation_state"), \
+             patch.object(main, "_acquire_short_mutation_lock", return_value=("owner", "request")), \
+             patch.object(main, "_release_short_mutation_lock"), \
+             patch.object(main, "commit_resume_mutation", return_value={
+                 "resume_data": source,
+                 "state_version": {"sequence": 1},
+             }) as commit_mutation:
             result = await main.restore_resume_translation_endpoint(
                 FakeDb(), SimpleNamespace(id=7),
             )
 
         self.assertTrue(result["success"])
         self.assertEqual(result["resume_data"]["basics"]["name"], "李明")
-        save_resume.assert_called_once_with(ANY, 7, source)
+        self.assertEqual(commit_mutation.call_args.kwargs["source"], "translation_restore")
 
 
 if __name__ == "__main__":

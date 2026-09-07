@@ -4,9 +4,8 @@
 """
 
 import os
-import json
 from sqlalchemy.orm import Session
-from .database import get_db, get_user_jd, get_user_resume, save_user_jd, save_user_resume
+from .database import get_db, get_user_jd, get_user_resume, save_user_jd
 
 
 def list_directory(path: str) -> str:
@@ -38,7 +37,7 @@ def write_file(file_path: str, content: str) -> str:
     写入文件内容（已废弃，不再使用）
 
     注意：在多用户环境下，文件操作被数据库操作替代。
-    此函数保留用于向后兼容，但实际应使用 save_user_resume。
+    简历写入必须通过带任务锁和版本校验的 API 完成。
     """
     try:
         with open(file_path, 'w', encoding='utf-8') as f:
@@ -51,44 +50,6 @@ def write_file(file_path: str, content: str) -> str:
 # =============================================================================
 # 数据库操作函数（新增）
 # =============================================================================
-
-def update_resume(data: dict, user_id: int = None, task_id: str = None, db: Session = None) -> str:
-    """
-    更新用户简历到 SQLite
-
-    Args:
-        data: 简历数据字典
-        user_id: 用户ID（可选，如果不提供则从 db 获取）
-        db: 数据库会话（可选，如果不提供则创建新的）
-
-    Returns:
-        str: 操作结果消息
-    """
-    owns_db = db is None
-    if owns_db:
-        db_gen = get_db()
-        db = next(db_gen)
-
-    try:
-        if user_id is None:
-            return "错误：无法确定用户身份，请先登录"
-        if task_id:
-            db.info["task_id"] = task_id
-
-        # 确保 user_id 是有效的整数
-        if user_id is None:
-            return "错误：无法确定用户身份，请先登录"
-
-        save_user_resume(db, user_id, data)
-        db.commit()  # 显式提交事务
-        return "简历已成功保存到数据库"
-    except Exception as e:
-        db.rollback()  # 回滚事务
-        return f"保存失败：{str(e)}"
-    finally:
-        if owns_db and db:
-            db.close()
-
 
 def load_resume(user_id: int = None, task_id: str = None, db: Session = None) -> dict:
     """

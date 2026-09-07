@@ -697,9 +697,12 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch("backend.database.get_pending_confirmation", return_value=pending),
             patch("backend.database.clear_pending_confirmation") as clear_pending,
-            patch("backend.database.record_resume_revision") as record_revision,
             patch("backend.database.update_conversation_context_metadata"),
-            patch("backend.tools.update_resume", return_value="简历已成功保存"),
+            patch("backend.main.commit_resume_mutation", return_value={
+                "resume_data": after,
+                "layout_config": default_layout_config(),
+                "revision": SimpleNamespace(id="revision-1"),
+            }) as commit_mutation,
             patch("backend.main.release_resume_edit_lock"),
             patch("backend.main.get_resume_task", return_value=SimpleNamespace(
                 resume_data=before,
@@ -722,7 +725,7 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(confirm_payload["action"], "saved")
         self.assertEqual(confirm_payload["resume_data"]["basics"]["name"], "新姓名")
         clear_pending.assert_called_once_with(db, 7, "task-1")
-        record_revision.assert_called_once()
+        commit_mutation.assert_called_once()
 
         layout = default_layout_config()
         with patch(
@@ -766,9 +769,12 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch("backend.database.get_pending_confirmation", return_value=pending),
             patch("backend.database.clear_pending_confirmation"),
-            patch("backend.database.record_resume_revision"),
             patch("backend.database.update_conversation_context_metadata"),
-            patch("backend.tools.update_resume", return_value="简历已成功保存") as update,
+            patch("backend.main.commit_resume_mutation", side_effect=lambda *args, **kwargs: {
+                "resume_data": kwargs["resume_data"],
+                "layout_config": kwargs["layout_config"],
+                "revision": SimpleNamespace(id="revision-1"),
+            }) as commit_mutation,
             patch("backend.main.release_resume_edit_lock"),
             patch("backend.main.get_resume_task", return_value=SimpleNamespace(
                 resume_data=before,
@@ -785,7 +791,7 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
             )
 
         payload = json.loads(response.body)
-        saved_resume = update.call_args.args[0]
+        saved_resume = commit_mutation.call_args.kwargs["resume_data"]
         self.assertTrue(payload["success"])
         self.assertEqual(payload["selected_change_ids"], [selected_id])
         self.assertEqual(saved_resume["basics"]["name"], "新姓名")
@@ -865,9 +871,12 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch("backend.database.get_pending_confirmation", return_value=pending),
             patch("backend.database.clear_pending_confirmation"),
-            patch("backend.database.record_resume_revision"),
             patch("backend.database.update_conversation_context_metadata"),
-            patch("backend.tools.update_resume", return_value="简历已成功保存") as update,
+            patch("backend.main.commit_resume_mutation", side_effect=lambda *args, **kwargs: {
+                "resume_data": kwargs["resume_data"],
+                "layout_config": kwargs["layout_config"],
+                "revision": SimpleNamespace(id="revision-1"),
+            }) as commit_mutation,
             patch("backend.main.release_resume_edit_lock"),
             patch("backend.main.get_resume_task", return_value=task),
         ):
@@ -881,7 +890,7 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertTrue(json.loads(response.body)["success"])
-        saved_resume = update.call_args.args[0]
+        saved_resume = commit_mutation.call_args.kwargs["resume_data"]
         self.assertEqual(saved_resume["education"][0]["school_name"], "暨南大学")
         self.assertEqual(saved_resume["education"][1]["school_name"], "广东工业大学")
 

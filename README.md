@@ -156,7 +156,7 @@ ResumeBranch does not hard-code every request as a fixed workflow. The entry rou
 
 Resume content, layout rules, the JD, conversation summaries, and necessary memory are assembled on demand by the context layer. Coaching evidence is kept in private Skill state, separate from the rolling conversation summary.
 
-When a change is confirmed, the resume revision and content digest are checked. If another window changes the resume while confirmation is pending, the stale suggestion is rejected and the frontend reloads the canonical version from the database. Database locks serialize changes across conversation windows, browser tabs, and backend processes; consultation-only conversations are unaffected.
+Every resume-workspace request is bound to a validated `ProjectTask` through `X-Task-ID`; there is no user-level fallback resume store. When a change is confirmed, the resume revision and affected content/layout digest are checked. If another window changes the same state while confirmation is pending, the stale suggestion is rejected and the frontend reloads the canonical version from the database. Database locks serialize writes across conversation windows, browser tabs, and backend processes; consultation-only conversations are unaffected.
 
 See [Agent architecture and state boundaries](docs/agent-architecture.md) for the current implementation details.
 

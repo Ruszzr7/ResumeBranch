@@ -2,7 +2,7 @@ import json
 import unittest
 from io import BytesIO
 from types import SimpleNamespace
-from unittest.mock import ANY, AsyncMock, patch
+from unittest.mock import AsyncMock, patch
 
 from starlette.datastructures import Headers, UploadFile
 
@@ -27,9 +27,19 @@ def upload(mime="application/pdf"):
     )
 
 
+def active_task():
+    return SimpleNamespace(
+        id="task-1",
+        resume_data=RESUME,
+        layout_config={},
+        state_sequence=0,
+    )
+
+
 class ResumeFileApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_import_requires_parser_configuration(self):
-        with patch("backend.main.get_role_config", return_value={}):
+        with patch("backend.main._require_request_task", return_value=active_task()), \
+             patch("backend.main.get_role_config", return_value={}):
             response = await main.parse_and_save_resume_endpoint(
                 file=upload(), db=SimpleNamespace(), current_user=SimpleNamespace(id=7)
             )
@@ -38,7 +48,8 @@ class ResumeFileApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_import_requires_verified_parser(self):
         profile = {"api_key": "key", "base_url": "https://relay/v1", "model": "gemini", "verified": False}
-        with patch("backend.main.get_role_config", return_value=profile):
+        with patch("backend.main._require_request_task", return_value=active_task()), \
+             patch("backend.main.get_role_config", return_value=profile):
             response = await main.parse_and_save_resume_endpoint(
                 file=upload(), db=SimpleNamespace(), current_user=SimpleNamespace(id=7)
             )
@@ -48,6 +59,7 @@ class ResumeFileApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_verified_parser_returns_draft_without_saving(self):
         profile = {"api_key": "key", "base_url": "https://relay/v1", "model": "gemini", "verified": True}
         with (
+            patch("backend.main._require_request_task", return_value=active_task()),
             patch("backend.main.get_role_config", return_value=profile),
             patch("backend.main.gateway_config", return_value=GatewayConfig("parser", "https://relay/v1", "gemini", "key", "gemini_native")),
             patch("backend.main.invoke_document", AsyncMock(return_value=json.dumps(RESUME, ensure_ascii=False))),
@@ -55,7 +67,6 @@ class ResumeFileApiTests(unittest.IsolatedAsyncioTestCase):
             patch("backend.source_documents.detect_source_page_count", return_value=1),
             patch("backend.main.delete_unreferenced_source_documents", return_value=[]),
             patch("backend.main.persist_source_document", return_value=SimpleNamespace(id="source-1", status="pending")),
-            patch("backend.main.save_user_resume") as save_resume,
         ):
             response = await main.parse_and_save_resume_endpoint(
                 file=upload(), draft_only=True, db=SimpleNamespace(), current_user=SimpleNamespace(id=7)
@@ -66,11 +77,12 @@ class ResumeFileApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["source_document_token"], "source-1")
         self.assertEqual(payload["resume_data"]["formatting_version"], 4)
         self.assertTrue(payload["import_quality"]["accepted"])
-        save_resume.assert_not_called()
 
-    async def test_verified_parser_can_preserve_legacy_immediate_save(self):
+    async def test_verified_parser_immediate_save_uses_task_mutation(self):
         profile = {"api_key": "key", "base_url": "https://relay/v1", "model": "gemini", "verified": True}
+        task = active_task()
         with (
+            patch("backend.main._require_request_task", return_value=task),
             patch("backend.main.get_role_config", return_value=profile),
             patch("backend.main.gateway_config", return_value=GatewayConfig("parser", "https://relay/v1", "gemini", "key", "gemini_native")),
             patch("backend.main.invoke_document", AsyncMock(return_value=json.dumps(RESUME, ensure_ascii=False))),
@@ -80,18 +92,30 @@ class ResumeFileApiTests(unittest.IsolatedAsyncioTestCase):
             patch("backend.main.persist_source_document", return_value=SimpleNamespace(id="source-1", status="pending")),
             patch("backend.main.attach_source_document", return_value=SimpleNamespace(id="source-1", status="ready")),
             patch("backend.main.delete_unreferenced_source_documents", return_value=[]),
-            patch("backend.main.save_user_resume") as save_resume,
+            patch("backend.main._acquire_short_mutation_lock", return_value=("owner", "request")),
+            patch("backend.main._release_short_mutation_lock"),
+            patch("backend.main.commit_resume_mutation", return_value={
+                "resume_data": RESUME,
+                "state_version": {"sequence": 1},
+            }) as commit_mutation,
         ):
             response = await main.parse_and_save_resume_endpoint(
                 file=upload(), draft_only=False, db=SimpleNamespace(), current_user=SimpleNamespace(id=7)
             )
         self.assertEqual(response.status_code, 200)
-        save_resume.assert_called_once_with(ANY, 7, ANY)
+        self.assertEqual(commit_mutation.call_args.kwargs["source"], "import")
+        self.assertEqual(commit_mutation.call_args.args[2], "task-1")
 
     async def test_confirm_import_validates_and_saves_draft(self):
         request = main.ConfirmResumeImportRequest(resume_data=RESUME, source_page_count=2)
         with (
-            patch("backend.main.save_user_resume") as save_resume,
+            patch("backend.main._require_request_task", return_value=active_task()),
+            patch("backend.main._acquire_short_mutation_lock", return_value=("owner", "request")),
+            patch("backend.main._release_short_mutation_lock"),
+            patch("backend.main.commit_resume_mutation", return_value={
+                "resume_data": RESUME,
+                "state_version": {"sequence": 1},
+            }) as commit_mutation,
             patch("backend.main.set_source_page_count"),
             patch("backend.main.set_parsing_status"),
         ):
@@ -100,7 +124,14 @@ class ResumeFileApiTests(unittest.IsolatedAsyncioTestCase):
             )
         self.assertTrue(response["success"])
         self.assertEqual(response["source_page_count"], 2)
-        save_resume.assert_called_once_with(ANY, 7, ANY)
+        self.assertEqual(commit_mutation.call_args.kwargs["source"], "import")
+
+    async def test_import_requires_active_task(self):
+        with self.assertRaises(main.HTTPException) as raised:
+            await main.parse_and_save_resume_endpoint(
+                file=upload(), db=SimpleNamespace(), current_user=SimpleNamespace(id=7)
+            )
+        self.assertEqual(raised.exception.status_code, 400)
 
 
     async def test_image_and_pdf_share_lossless_schema_prompt(self):
@@ -113,6 +144,7 @@ class ResumeFileApiTests(unittest.IsolatedAsyncioTestCase):
         })
         invoke = AsyncMock(return_value=json.dumps(parsed, ensure_ascii=False))
         with (
+            patch("backend.main._require_request_task", return_value=active_task()),
             patch("backend.main.get_role_config", return_value=profile),
             patch("backend.main.gateway_config", return_value=GatewayConfig("parser", "https://relay/v1beta", "gemini", "key", "gemini_native")),
             patch("backend.main.invoke_document", invoke),

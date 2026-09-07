@@ -8,10 +8,15 @@ from backend.database import (
     ProjectTask,
     ResumeProject,
     create_resume_task,
+    create_resume_project,
+    acquire_resume_edit_lock,
+    build_task_state_version,
+    commit_resume_mutation,
+    release_resume_edit_lock,
+    list_resume_projects,
     rename_resume_project,
     rename_resume_task,
     switch_base_resume_task,
-    save_user_resume,
 )
 from backend.resume_schema import validate_resume_data
 
@@ -82,20 +87,56 @@ class TaskCreationTests(unittest.TestCase):
         self.assertEqual(task.source_page_count, 1)
         self.assertIsNone(task.source_document_id)
 
+    def test_new_user_has_no_implicit_legacy_project_and_can_create_one_explicitly(self):
+        self.assertNotIn("resumes", Base.metadata.tables)
+        self.assertNotIn("workspace_states", Base.metadata.tables)
+        self.assertEqual(list_resume_projects(self.db, 99), [])
+
+        project, task = create_resume_project(self.db, 99, "新建简历组")
+
+        self.assertEqual([item.id for item in list_resume_projects(self.db, 99)], [project.id])
+        self.assertEqual(task.project_id, project.id)
+        self.assertTrue(task.is_base)
+
     def test_explicit_empty_photo_removes_existing_photo_but_omitted_photo_is_preserved(self):
         self.db.info["task_id"] = self.source_task.id
 
-        save_user_resume(
+        owner = "photo-test"
+        request_id = "remove-photo"
+        acquire_resume_edit_lock(self.db, 1, self.source_task.id, owner, request_id)
+        commit_resume_mutation(
             self.db,
             1,
-            {"basics": {"name": "候选人", "photo": ""}},
+            self.source_task.id,
+            resume_data={"basics": {"name": "候选人", "photo": ""}},
+            base_version=build_task_state_version(self.source_task),
+            owner_session_id=owner,
+            request_id=request_id,
+        )
+        release_resume_edit_lock(
+            self.db, 1, self.source_task.id,
+            owner_session_id=owner, request_id=request_id,
         )
         self.db.refresh(self.source_task)
         self.assertEqual(self.source_task.photo, "")
 
         self.source_task.photo = "photo-data"
         self.db.commit()
-        save_user_resume(self.db, 1, {"basics": {"name": "候选人"}})
+        request_id = "preserve-photo"
+        acquire_resume_edit_lock(self.db, 1, self.source_task.id, owner, request_id)
+        commit_resume_mutation(
+            self.db,
+            1,
+            self.source_task.id,
+            resume_data={"basics": {"name": "候选人"}},
+            base_version=build_task_state_version(self.source_task),
+            owner_session_id=owner,
+            request_id=request_id,
+        )
+        release_resume_edit_lock(
+            self.db, 1, self.source_task.id,
+            owner_session_id=owner, request_id=request_id,
+        )
         self.db.refresh(self.source_task)
         self.assertEqual(self.source_task.photo, "photo-data")
 

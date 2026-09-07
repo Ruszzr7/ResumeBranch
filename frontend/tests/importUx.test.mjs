@@ -235,6 +235,14 @@ test('resume editor keeps an isolated normalized draft for live preview', () => 
   assert.ok(appSource.includes('resumeEditorPreviewData.value = null'))
 })
 
+test('resume editor removes pending school-tag UI state from persisted data', () => {
+  const start = appSource.indexOf('function buildResumeEditorData()')
+  const end = appSource.indexOf('function refreshResumeEditorPreview()', start)
+  const builder = appSource.slice(start, end)
+  assert.ok(start >= 0 && end > start)
+  assert.ok(builder.includes('delete edu.newSchoolTag'))
+})
+
 test('resume translation uses a dedicated endpoint and reusable cache', () => {
   assert.ok(appSource.includes("fetch('/translate_resume'"))
   assert.ok(appSource.includes("fetch('/restore_resume_translation'"))

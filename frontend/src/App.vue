@@ -206,26 +206,13 @@ async function restoreChineseResume() {
 
   if (translationApplied.value && sourceData) {
     try {
-      let response = await fetch('/restore_resume_translation', {
+      const response = await fetch('/restore_resume_translation', {
         method: 'POST',
         headers: getAuthHeaders(),
         body: JSON.stringify({ base_version: currentTask.value?.state_version || null })
       })
-      let payload = await response.json().catch(() => ({}))
-      let restoredData = payload.resume_data
-      // 兼容功能升级前仅保存在浏览器中的翻译会话。
-      if (!response.ok && sourceData) {
-        response = await fetch('/save_resume', {
-          method: 'POST',
-          headers: getAuthHeaders(),
-          body: JSON.stringify({
-            resume_data: sourceData,
-            base_version: currentTask.value?.state_version || null
-          })
-        })
-        payload = await response.json().catch(() => ({}))
-        restoredData = sourceData
-      }
+      const payload = await response.json().catch(() => ({}))
+      const restoredData = payload.resume_data
       if (!response.ok || !restoredData) throw new Error(payload.detail || '中文简历恢复失败')
       if (currentTask.value && payload.state_version) {
         currentTask.value.state_version = payload.state_version
@@ -3309,6 +3296,7 @@ function buildResumeEditorData() {
 
   dataToSave.education?.forEach(edu => {
     convertDateRangeToSave(edu)
+    delete edu.newSchoolTag
   })
   dataToSave.work_experience?.forEach(work => {
     convertDateRangeToSave(work)

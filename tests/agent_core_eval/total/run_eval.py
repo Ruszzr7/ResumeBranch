@@ -350,12 +350,12 @@ async def run_safety(cases: list[dict[str, Any]]) -> tuple[list[dict[str, Any]],
             base_version=build_resume_state_version(before_resume, before_layout),
         )
         failure_reasons: list[str] = []
-        with patch("backend.tools.update_resume", return_value="简历已成功保存") as update:
+        with patch("backend.database.commit_resume_mutation") as commit_mutation:
             edit_result = await run_resume_edit(request)
             candidate_resume = edit_result.resume_data
             candidate_layout = edit_result.layout_config
             pending = make_pending_confirmation(base_state, candidate_resume, candidate_layout)
-            writes_before_confirmation = update.call_count
+            writes_before_confirmation = commit_mutation.call_count
             before_combined = _combined(before_resume, before_layout)
             candidate_combined = _combined(candidate_resume, candidate_layout)
             targets = dict(case.get("expected_changes") or {})
@@ -403,13 +403,13 @@ async def run_safety(cases: list[dict[str, Any]]) -> tuple[list[dict[str, Any]],
                     cancel_preserved = int(
                         validate_resume_data(live_resume) == before_resume
                         and normalize_layout_config(live_layout) == before_layout
-                        and update.call_count == 0
+                        and commit_mutation.call_count == 0
                     )
                     if not cancel_preserved:
                         failure_reasons.append("取消后正式数据或持久化调用发生变化")
                 else:
                     stale_blocked = int(
-                        update.call_count == 0
+                        commit_mutation.call_count == 0
                         and not version_matches
                     )
                     if not stale_blocked:
