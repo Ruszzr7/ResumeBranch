@@ -30,8 +30,8 @@ class AgentCoreEvalMetricTests(unittest.TestCase):
         from tests.agent_core_eval.total.run_eval import _report
 
         online = {
-            "dataset_id": "agent-core-total-600",
-            "dataset_case_counts": {"routing": 200, "skill": 300, "safety": 100},
+            "dataset_id": "agent-core-total-700",
+            "dataset_case_counts": {"routing": 200, "skill": 400, "safety": 100},
             "metrics": {"skill": skill_metrics([])},
             "cases": [],
             "run_scope": {
@@ -41,7 +41,7 @@ class AgentCoreEvalMetricTests(unittest.TestCase):
             },
         }
         independent = _report(None, online, results_dir=EVAL_ROOT / "total" / "results")
-        self.assertIn("仅基于本轮案例，不代表 300 条 Skill 总集结果", independent)
+        self.assertIn("仅基于本轮案例，不代表 400 条 Skill 总集结果", independent)
         online["run_scope"]["merged_with_existing"] = True
         merged = _report(None, online, results_dir=EVAL_ROOT / "total" / "results")
         self.assertIn("其余案例沿用上一轮实际结果后重新计算总体指标", merged)
@@ -50,7 +50,7 @@ class AgentCoreEvalMetricTests(unittest.TestCase):
         payload = _load_cases(EVAL_ROOT / "total" / "cases.json")
         self.assertEqual(
             {category: len(payload[category]) for category in ("routing", "skill", "safety")},
-            {"routing": 200, "skill": 300, "safety": 100},
+            {"routing": 200, "skill": 400, "safety": 100},
         )
         case_ids = [
             case["id"]
@@ -58,18 +58,19 @@ class AgentCoreEvalMetricTests(unittest.TestCase):
             for case in payload[category]
         ]
         prompts = [case["prompt"].strip() for case in payload["routing"] + payload["skill"] + payload["safety"]]
-        self.assertEqual(len(case_ids), 600)
-        self.assertEqual(len(set(case_ids)), 600)
+        self.assertEqual(len(case_ids), 700)
+        self.assertEqual(len(set(case_ids)), 700)
         self.assertEqual(len(prompts), len(set(prompts)))
         self.assertEqual(sum(case.get("smoke") is True for case in payload["skill"]), 20)
         self.assertEqual(
             payload["scenario_counts"],
             {
-                "legacy_unclassified": 300,
+                "legacy_unclassified": 296,
                 "complex_operation": 101,
-                "mixed_request": 53,
+                "mixed_request": 56,
                 "ambiguous_request": 91,
-                "multi_turn_summary": 55,
+                "multi_turn_summary": 56,
+                "coach_command": 100,
             },
         )
 
@@ -188,6 +189,35 @@ class AgentCoreEvalMetricTests(unittest.TestCase):
         self.assertAlmostEqual(result["schema"]["pass_rate"], 2 / 3)
         self.assertEqual(result["no_tool_subset_accuracy"], 1.0)
 
+    def test_skill_metrics_record_true_negatives_for_each_skill(self):
+        result = skill_metrics([
+            {
+                "id": "coach-tp",
+                "expected_tools": ["resume_coach"],
+                "predicted_calls": [{"name": "resume_coach"}],
+            },
+            {
+                "id": "coach-fn",
+                "expected_tools": ["resume_coach"],
+                "predicted_calls": [],
+            },
+            {
+                "id": "coach-fp",
+                "expected_tools": [],
+                "predicted_calls": [{"name": "resume_coach"}],
+            },
+            {
+                "id": "coach-tn",
+                "expected_tools": [],
+                "predicted_calls": [],
+            },
+        ])
+        self.assertEqual(
+            result["per_skill"]["resume_coach"],
+            {"tp": 1, "fp": 1, "fn": 1, "tn": 1,
+             "precision": 0.5, "recall": 0.5, "f1": 0.5},
+        )
+
     def test_skill_metrics_accept_optional_tools_without_false_positive(self):
         result = skill_metrics([{
             "id": "optional-1",
@@ -202,7 +232,7 @@ class AgentCoreEvalMetricTests(unittest.TestCase):
         self.assertEqual(result["exact_tool_set_accuracy"], 0.0)
         self.assertEqual(
             result["per_skill"]["resume_snapshot"],
-            {"tp": 0, "fp": 0, "fn": 0, "precision": 0.0, "recall": 0.0, "f1": 0.0},
+            {"tp": 0, "fp": 0, "fn": 0, "tn": 0, "precision": 0.0, "recall": 0.0, "f1": 0.0},
         )
 
     def test_skill_metrics_accept_explicit_multi_valid_outcomes(self):
@@ -221,7 +251,7 @@ class AgentCoreEvalMetricTests(unittest.TestCase):
         self.assertEqual(result["multi_outcome_case_count"], 1)
         self.assertEqual(
             result["per_skill"]["resume_edit"],
-            {"tp": 0, "fp": 0, "fn": 0, "precision": 0.0, "recall": 0.0, "f1": 0.0},
+            {"tp": 0, "fp": 0, "fn": 0, "tn": 0, "precision": 0.0, "recall": 0.0, "f1": 0.0},
         )
 
     def test_skill_selection_requires_declared_answer_when_expected(self):

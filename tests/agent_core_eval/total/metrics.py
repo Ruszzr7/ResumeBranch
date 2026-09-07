@@ -10,7 +10,7 @@ from collections import Counter
 from typing import Any, Iterable
 
 
-SUPPORTED_SKILLS = ("resume_edit", "resume_snapshot")
+SUPPORTED_SKILLS = ("resume_edit", "resume_snapshot", "resume_coach")
 _LAYOUT_FIELD_HINTS = {
     "density", "lineHeight", "moduleMargin", "marginVertical", "marginHorizontal",
     "titleStyle", "sectionOrder", "hiddenSections", "titleOverrides",
@@ -72,13 +72,14 @@ def _ratio(numerator: int, denominator: int) -> float:
     return numerator / denominator if denominator else 0.0
 
 
-def _prf(tp: int, fp: int, fn: int) -> dict[str, Any]:
+def _prf(tp: int, fp: int, fn: int, tn: int = 0) -> dict[str, Any]:
     precision = _ratio(tp, tp + fp)
     recall = _ratio(tp, tp + fn)
     return {
         "tp": tp,
         "fp": fp,
         "fn": fn,
+        "tn": tn,
         "precision": precision,
         "recall": recall,
         "f1": _ratio(2 * precision * recall, precision + recall),
@@ -273,7 +274,7 @@ def skill_metrics(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
     failures = []
 
     for skill in SUPPORTED_SKILLS:
-        tp = fp = fn = 0
+        tp = fp = fn = tn = 0
         for row in decision_rows:
             expected = _required_tools(row)
             optional = _optional_tools(row)
@@ -284,6 +285,8 @@ def skill_metrics(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
                 required_presence = all(skill in _outcome_tools(outcome) for outcome in outcomes)
                 if skill in predicted and not allowed_presence:
                     fp += 1
+                elif not allowed_presence:
+                    tn += 1
                 elif required_presence:
                     if skill in predicted:
                         tp += 1
@@ -298,7 +301,9 @@ def skill_metrics(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
                 continue
             elif skill in predicted:
                 fp += 1
-        per_skill[skill] = _prf(tp, fp, fn)
+            else:
+                tn += 1
+        per_skill[skill] = _prf(tp, fp, fn, tn)
 
     for row in decision_rows:
         expected = _required_tools(row)

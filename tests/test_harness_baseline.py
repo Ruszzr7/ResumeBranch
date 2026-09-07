@@ -12,7 +12,13 @@ from backend.database import MemoryVersionConflict
 from backend.harness.context import UNVERIFIED_EXECUTION_STATUS, filter_messages_for_llm
 from backend.harness.persistence import sanitize_messages_for_persistence, serialize_context_messages
 from backend.layout_config import default_layout_config
-from backend.resume_agent import AgentState, conversation_node, make_pending_confirmation
+from backend.resume_agent import (
+    AgentState,
+    _contains_unverified_execution_claim,
+    _sanitize_unverified_execution_reply,
+    conversation_node,
+    make_pending_confirmation,
+)
 
 
 def resume_payload(name="测试用户"):
@@ -30,6 +36,33 @@ def resume_payload(name="测试用户"):
         "others": {"skills": [], "certificates": [], "languages": []},
         "self_evaluation": [],
     }
+
+
+class ExecutionClaimSanitizerTests(unittest.TestCase):
+    def test_coach_progress_about_resume_evidence_is_not_an_edit_claim(self):
+        reply = (
+            "我已经完成了这段简历经历的证据收集，并记录了交付阶段连续运行一天无错误。"
+            "这条结果已足以支持保守而具体的表述。"
+        )
+        self.assertFalse(_contains_unverified_execution_claim(reply))
+        self.assertEqual(_sanitize_unverified_execution_reply(reply), reply)
+
+    def test_unverified_resume_mutation_and_preview_claims_remain_blocked(self):
+        claims = [
+            "已根据你的要求生成修改预览。",
+            "修改预览已提交。",
+            "候选已经准备好。",
+            "我已经修改了简历内容。",
+            "现已保存简历。",
+            "已经完成简历修改。",
+        ]
+        for claim in claims:
+            with self.subTest(claim=claim):
+                self.assertTrue(_contains_unverified_execution_claim(claim))
+                self.assertEqual(
+                    _sanitize_unverified_execution_reply(claim),
+                    UNVERIFIED_EXECUTION_STATUS,
+                )
 
 
 def decode_sse(chunks):
@@ -569,6 +602,58 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[4]["resume_candidate"]["basics"]["name"], "新姓名")
         self.assertEqual(events[5]["content"], "修改预览已生成")
 
+    async def test_confirmation_event_waits_for_turn_persistence(self):
+        before = resume_payload("原姓名")
+        pending = make_pending_confirmation(
+            AgentState(
+                resume_data=before,
+                layout_data=default_layout_config(),
+                user_id=7,
+                task_id="task-1",
+            ),
+            resume_payload("新姓名"),
+            default_layout_config(),
+        )
+        db = SimpleNamespace(info={"task_id": "task-1"})
+        user = SimpleNamespace(id=7)
+        event_order = []
+
+        async def record_persistence(*_args, **_kwargs):
+            event_order.append("persisted")
+
+        with (
+            patch("backend.main.require_llm_configured"),
+            patch("backend.main.graph", FakeConfirmationGraph(pending)),
+            patch("backend.main.get_user_resume", return_value=before),
+            patch("backend.main.get_user_jd", return_value={}),
+            patch("backend.main.get_task_layout_config", return_value=default_layout_config()),
+            patch("backend.database.clear_pending_confirmation"),
+            patch("backend.database.get_agent_memory_state", return_value={
+                "summary": "", "recent_rounds": [], "version": 0,
+            }),
+            patch("backend.database.get_conversation_context", return_value=[]),
+            patch("backend.database.get_pending_confirmation", return_value=None),
+            patch("backend.database.find_task_pending_confirmation", return_value=None),
+            patch("backend.database.save_conversation_context"),
+            patch(
+                "backend.main.persist_turn_state",
+                new=AsyncMock(side_effect=record_persistence),
+            ),
+        ):
+            response = await main.chat_endpoint(
+                message="把姓名改成新姓名",
+                files=[],
+                session_id="task-1",
+                request_id="request-confirm-order",
+                current_user=user,
+                db=db,
+            )
+            async for chunk in response.body_iterator:
+                if '\"type\": \"confirm\"' in chunk:
+                    event_order.append("confirm")
+
+        self.assertEqual(event_order, ["persisted", "confirm"])
+
     async def test_explicit_edit_never_exposes_unverified_model_stream(self):
         db = SimpleNamespace(info={"task_id": "task-1"})
         user = SimpleNamespace(id=7)
@@ -728,9 +813,12 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
         commit_mutation.assert_called_once()
 
         layout = default_layout_config()
-        with patch(
-            "backend.main.undo_latest_resume_revision",
-            return_value=("undone", before, layout),
+        with (
+            patch(
+                "backend.main.undo_latest_resume_revision",
+                return_value=("undone", before, layout, "revision-1"),
+            ),
+            patch("backend.main._restore_coach_offer_after_undo") as restore_coach,
         ):
             undo_payload = await main.undo_task_resume_change(
                 "task-1", db=db, current_user=user
@@ -742,6 +830,7 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(undo_payload["message"], "已撤回本次修改")
         self.assertEqual(undo_payload["resume_data"], before)
         self.assertEqual(undo_payload["layout_config"], layout)
+        restore_coach.assert_called_once_with(db, 7, "task-1", "revision-1")
 
     async def test_confirm_endpoint_applies_only_selected_content_change(self):
         before = resume_payload("原姓名")
@@ -758,6 +847,7 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
             after,
             default_layout_config(),
         )
+        pending["coach_offer_id"] = "coach-offer-1"
         selected_id = next(
             change["id"]
             for change in pending["changes"]
@@ -776,6 +866,7 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
                 "revision": SimpleNamespace(id="revision-1"),
             }) as commit_mutation,
             patch("backend.main.release_resume_edit_lock"),
+            patch("backend.main._update_coach_offer_status") as update_coach_offer,
             patch("backend.main.get_resume_task", return_value=SimpleNamespace(
                 resume_data=before,
                 layout_config=default_layout_config(),
@@ -796,6 +887,15 @@ class HarnessBaselineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["selected_change_ids"], [selected_id])
         self.assertEqual(saved_resume["basics"]["name"], "新姓名")
         self.assertEqual(saved_resume["basics"]["target_position"], "开发")
+        update_coach_offer.assert_called_once()
+        self.assertEqual(
+            update_coach_offer.call_args.args,
+            (db, 7, "task-1", "coach-offer-1", "partially_applied"),
+        )
+        self.assertEqual(
+            update_coach_offer.call_args.kwargs["revision_id"], "revision-1"
+        )
+        self.assertTrue(update_coach_offer.call_args.kwargs["applied_at"])
 
     async def test_direct_replace_builds_one_literal_preview_without_llm(self):
         before = resume_payload("广东工业大学")

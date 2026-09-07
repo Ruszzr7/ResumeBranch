@@ -425,6 +425,66 @@ def _conversation_tools_for_state(state) -> list:
     return [load_agent_skill, *skill_runtime.tools_for(active_names)]
 
 
+def _set_coach_offer_status(
+    coach_state: dict,
+    offer_id: str,
+    status: str,
+    *,
+    revision_id: str = "",
+    applied_at: str = "",
+) -> bool:
+    """Update one persisted coach proposal without changing unrelated issues."""
+    if not offer_id or not isinstance(coach_state, dict):
+        return False
+    issues = coach_state.get("issues")
+    if not isinstance(issues, dict):
+        return False
+    for issue in issues.values():
+        if not isinstance(issue, dict):
+            continue
+        offer = issue.get("pending_preview_offer")
+        if isinstance(offer, dict) and str(offer.get("offer_id")) == str(offer_id):
+            offer["status"] = status
+            if revision_id:
+                offer["revision_id"] = str(revision_id)
+            if applied_at:
+                offer["applied_at"] = str(applied_at)
+            return True
+    return False
+
+
+def _reopen_coach_offer_for_revision(coach_state: dict, revision_id: str) -> bool:
+    """Reopen the one coach issue whose applied revision was undone."""
+    if not revision_id or not isinstance(coach_state, dict):
+        return False
+    issues = coach_state.get("issues")
+    if not isinstance(issues, dict):
+        return False
+    for issue_id, issue in issues.items():
+        if not isinstance(issue, dict):
+            continue
+        offer = issue.get("pending_preview_offer")
+        if not isinstance(offer, dict):
+            continue
+        if str(offer.get("revision_id") or "") != str(revision_id):
+            continue
+        if offer.get("status") not in {"applied", "partially_applied"}:
+            return False
+        current_issue_id = str(coach_state.get("current_issue_id") or "")
+        if current_issue_id and current_issue_id != str(issue_id):
+            current_issue = issues.get(current_issue_id)
+            if isinstance(current_issue, dict) and current_issue.get("status") == "active":
+                current_issue["status"] = "skipped"
+                current_issue["result"] = "因撤回上一问题的修改，返回继续处理上一问题"
+        offer["status"] = "undone"
+        issue["status"] = "active"
+        issue["result"] = ""
+        coach_state["current_issue_id"] = str(issue_id)
+        coach_state["active"] = True
+        return True
+    return False
+
+
 def _skill_names_loaded_in_live_protocol(messages: list) -> set[str]:
     """Return Skills whose loader call is already present in this live turn."""
     loaded = set()
@@ -480,6 +540,7 @@ class AgentState:
     coach_turn_processed: bool = False
     coach_required: bool = False  # 显式 Command 或已激活会话要求本轮经过 Skill
     coach_edit_handoff: dict = None  # 用户批准后由 coach Skill 生成的一次性编辑授权
+    coach_edit_processed: bool = False  # 本轮的一次性交接是否已经尝试执行
     assistant_command: str = ""  # 可信 UI Command：layout/coaching
     request_id: str = ""
     context_id: str = ""
@@ -978,8 +1039,12 @@ def _plain_response_text(content) -> str:
 
 _UNVERIFIED_EXECUTION_CLAIM_RE = re.compile(
     r"(?:右侧已显示(?:临时)?预览|"
-    r"(?:已|已经|现已)[^。！？\n]{0,80}(?:生成|显示|准备(?:好)?|应用|保存|完成)[^。！？\n]{0,30}(?:修改(?:排版)?预览|预览|候选|简历)|"
-    r"我先[^。！？\n]{0,80}(?:生成|显示|应用|保存|完成)[^。！？\n]{0,30}(?:修改(?:排版)?预览|预览|候选|简历))"
+    r"(?:已|已经|现已)[^。！？\n]{0,60}(?:生成|显示|准备(?:好)?)[^。！？\n]{0,20}(?:修改(?:排版)?预览|预览|候选)|"
+    r"(?:修改(?:排版)?预览|预览|候选)[^。！？\n]{0,12}(?:已|已经|现已)(?:成功)?(?:生成|提交|显示|准备(?:好)?|完成)|"
+    r"(?:已|已经|现已)[^。！？\n]{0,30}(?:修改|改写|重写|更新|调整|应用|保存)[^。！？\n]{0,20}(?:简历|简历内容|排版)|"
+    r"(?:已|已经|现已)[^。！？\n]{0,30}完成[^。！？\n]{0,12}(?:简历修改|简历更新|排版修改)|"
+    r"我先[^。！？\n]{0,60}(?:生成|显示)[^。！？\n]{0,20}(?:修改(?:排版)?预览|预览|候选)|"
+    r"我先[^。！？\n]{0,30}(?:修改|改写|重写|更新|调整|应用|保存)[^。！？\n]{0,20}(?:简历|简历内容|排版))"
 )
 _NON_EXECUTION_CONTEXT_RE = re.compile(r"(?:建议|可以|是否|如果|无法|不能|未能|尚未|没有)")
 
@@ -1788,6 +1853,8 @@ async def conversation_node(state: AgentState) -> dict:
     visual_error = str(getattr(state, "visual_snapshot_error", "") or "")
     metadata_updates = dict(getattr(state, "context_metadata_updates", None) or {})
     active_skill_names = list(getattr(state, "active_skill_names", None) or [])
+    coach_edit_handoff = deepcopy(getattr(state, "coach_edit_handoff", None))
+    coach_edit_processed = bool(getattr(state, "coach_edit_processed", False))
     tool_loaded_skill_names = _skill_names_loaded_in_live_protocol(state.messages)
 
     # A layout-advice mission has one explicit first-turn guarantee.  Every
@@ -1865,13 +1932,47 @@ async def conversation_node(state: AgentState) -> dict:
             + skill_runtime.catalog_context()
             + skill_runtime.active_instructions_context(preloaded_skill_names)
         ))
-        if COACH_SKILL_NAME in active_skill_names:
+        if COACH_SKILL_NAME in active_skill_names and (
+            coach_active or getattr(state, "coach_required", False)
+        ):
+            pending_preview_offer = None
+            current_issue = coach_state.get("issues", {}).get(
+                coach_state.get("current_issue_id", "")
+            )
+            if isinstance(current_issue, dict):
+                candidate_offer = current_issue.get("pending_preview_offer")
+                if (
+                    isinstance(candidate_offer, dict)
+                    and candidate_offer.get("status") in {
+                        "offered", "authorized", "preview_generated", "undone"
+                    }
+                ):
+                    pending_preview_offer = candidate_offer
             messages[0] = SystemMessage(content=(
                 str(messages[0].content)
                 + "\n\n【resume-coach 私有状态】\n"
                 + "以下状态仅供当前已激活 Skill 使用。每轮必须以完整证据为依据，"
                   "不得把结论摘要当作用户事实。\n"
                 + json.dumps(coach_state, ensure_ascii=False, indent=2)
+                + (
+                    "\n\n【待处理的修改建议】当前问题已有尚未解决的修改建议。"
+                    "如果用户同意生成预览，或在撤回后明确要求重新生成，"
+                    "必须对现有建议调用 handoff_to_edit；"
+                    "不得再次调用 offer_preview，不得声称预览已经生成，也不得开始下一个问题。"
+                    "如果用户补充或修正事实，使用 update 更新证据，运行时会使旧建议失效；"
+                    "如果用户拒绝、跳过或退出，使用相应的 complete_issue 或 exit。"
+                    if pending_preview_offer
+                    else ""
+                )
+            ))
+        elif COACH_SKILL_NAME in active_skill_names and coach_state.get("pending_start_offer"):
+            pending_start_offer = coach_state.get("pending_start_offer")
+            messages[0] = SystemMessage(content=(
+                str(messages[0].content)
+                + "\n\n【resume-coach 待启动邀请】\n"
+                "当前仅有一个等待用户确认的进入邀请。只能根据用户本轮消息决定接受并启动，"
+                "或清除邀请；不得把历史教练证据当作普通对话上下文。\n"
+                + json.dumps(pending_start_offer, ensure_ascii=False, indent=2)
             ))
         messages[0] = SystemMessage(content=(
             str(messages[0].content)
@@ -1901,18 +2002,24 @@ async def conversation_node(state: AgentState) -> dict:
         # responsible for schema validation, preview-only edits, confirmation,
         # and the one-snapshot-per-turn guard.
         forced_coach_turn = bool(
-            getattr(state, "coach_required", False)
+            (
+                getattr(state, "coach_required", False)
+                or coach_state.get("pending_start_offer")
+            )
             and not getattr(state, "coach_turn_processed", False)
         )
+        forced_edit_turn = bool(coach_edit_handoff and not coach_edit_processed)
         conversation_tools = _conversation_tools_for_state(state)
-        if forced_coach_turn:
+        if forced_edit_turn:
+            conversation_tools = skill_runtime.tools_for([EDIT_SKILL_NAME])
+        elif forced_coach_turn:
             conversation_tools = [
                 tool for tool in conversation_tools
                 if getattr(tool, "name", "") == COACH_TOOL_NAME
             ]
         model = conversation_llm.bind_tools(
             conversation_tools,
-            tool_choice="required" if forced_coach_turn else "auto"
+            tool_choice="required" if forced_coach_turn or forced_edit_turn else "auto"
         )
         # 不要添加 stop 序列，否则可能导致工具名称被截断
         # 增加超时时间到120秒，因为上下文可能较大
@@ -2023,7 +2130,8 @@ async def conversation_node(state: AgentState) -> dict:
         "coach_state_changed": getattr(state, "coach_state_changed", False),
         "coach_turn_processed": getattr(state, "coach_turn_processed", False),
         "coach_required": coach_active or getattr(state, "coach_required", False),
-        "coach_edit_handoff": getattr(state, "coach_edit_handoff", None),
+        "coach_edit_handoff": coach_edit_handoff,
+        "coach_edit_processed": coach_edit_processed,
         "assistant_command": getattr(state, "assistant_command", "") or "",
     }
     
@@ -2058,6 +2166,7 @@ async def tool_node(state: AgentState) -> dict:
     coach_state_changed = bool(getattr(state, "coach_state_changed", False))
     coach_turn_processed = bool(getattr(state, "coach_turn_processed", False))
     coach_edit_handoff = deepcopy(getattr(state, "coach_edit_handoff", None))
+    coach_edit_processed = bool(getattr(state, "coach_edit_processed", False))
     
     # 普通工具调用处理
     # 检查是否有工具调用
@@ -2085,6 +2194,7 @@ async def tool_node(state: AgentState) -> dict:
     edit_tool_called = False
     edit_noop = False
     seen_tool_call_fingerprints: set[str] = set()
+    coach_tool_processed_this_node = False
     visual_parts = list(getattr(state, "visual_snapshot_parts", None) or [])
     visual_calls = int(getattr(state, "visual_snapshot_calls", 0) or 0)
     visual_revision = str(getattr(state, "visual_snapshot_revision", "") or "")
@@ -2170,6 +2280,9 @@ async def tool_node(state: AgentState) -> dict:
                         active_skill_names.append(package.name)
                     result = load_agent_skill.invoke({"name": package.name})
                 elif tool_name == COACH_TOOL_NAME:
+                    if coach_tool_processed_this_node:
+                        raise ValueError("每轮只能执行一次教练状态操作")
+                    coach_tool_processed_this_node = True
                     coach_result = await skill_runtime.invoke(
                         COACH_SKILL_NAME,
                         tool_args,
@@ -2183,14 +2296,15 @@ async def tool_node(state: AgentState) -> dict:
                             "coach_state": coach_state,
                         },
                     )
+                    coach_turn_processed = True
                     harness_metrics.increment("resume_coach_turns_total")
                     coach_state = coach_result.coach_state.model_dump()
                     coach_state_changed = True
-                    coach_turn_processed = True
                     coach_edit_handoff = (
                         coach_result.edit_handoff.model_dump()
                         if coach_result.edit_handoff else None
                     )
+                    coach_edit_processed = False if coach_edit_handoff else coach_edit_processed
                     if coach_result.active:
                         if COACH_SKILL_NAME not in active_skill_names:
                             active_skill_names.append(COACH_SKILL_NAME)
@@ -2231,6 +2345,7 @@ async def tool_node(state: AgentState) -> dict:
                             )
                 elif tool_name == 'resume_edit':
                     edit_tool_called = True
+                    handoff_for_edit = deepcopy(coach_edit_handoff)
                     if coach_state.get("active") and not coach_edit_handoff:
                         raise ValueError(
                             "深度打磨仍处于分析阶段；必须先由用户明确同意生成预览，"
@@ -2274,6 +2389,15 @@ async def tool_node(state: AgentState) -> dict:
                             LOGGER.warning("简历修改预览生成失败: %s", exc)
                             proposal_error = "本次修改无法安全生成确认预览，系统未对简历做任何更改。"
                             result = proposal_error
+                            if handoff_for_edit:
+                                coach_state_changed = (
+                                    _set_coach_offer_status(
+                                        coach_state,
+                                        handoff_for_edit.get("offer_id"),
+                                        "invalidated",
+                                    )
+                                    or coach_state_changed
+                                )
                         else:
                             if preview.get("state_changed"):
                                 # The Skill was intentionally not invoked with
@@ -2286,10 +2410,37 @@ async def tool_node(state: AgentState) -> dict:
                                 state.state_change_notice = str(
                                     getattr(state, "state_change_notice", "") or preview.get("message") or ""
                                 )
+                                if handoff_for_edit:
+                                    coach_state_changed = (
+                                        _set_coach_offer_status(
+                                            coach_state,
+                                            handoff_for_edit.get("offer_id"),
+                                            "invalidated",
+                                        )
+                                        or coach_state_changed
+                                    )
                             pending_confirmation = preview.get("pending_confirmation")
                             if pending_confirmation and coach_edit_handoff:
                                 pending_confirmation["coach_offer_id"] = coach_edit_handoff.get("offer_id")
+                                if handoff_for_edit:
+                                    coach_state_changed = (
+                                        _set_coach_offer_status(
+                                            coach_state,
+                                            handoff_for_edit.get("offer_id"),
+                                            "preview_generated",
+                                        )
+                                        or coach_state_changed
+                                    )
                             edit_noop = bool(preview.get("already_satisfied"))
+                            if handoff_for_edit and edit_noop:
+                                coach_state_changed = (
+                                    _set_coach_offer_status(
+                                        coach_state,
+                                        handoff_for_edit.get("offer_id"),
+                                        "noop",
+                                    )
+                                    or coach_state_changed
+                                )
                             assistant_reply = str(tool_args.get("answer_text", "") or "").strip()
                             edit_preview_reply = "" if preview.get("state_changed") else str(
                                 preview.get("message", "已生成修改预览。") or ""
@@ -2297,6 +2448,9 @@ async def tool_node(state: AgentState) -> dict:
                             result = edit_preview_reply
                             if preview.get("state_changed"):
                                 result = str(preview.get("message") or "简历状态已更新，请基于当前内容重新判断。")
+                    if handoff_for_edit:
+                        coach_edit_processed = True
+                        coach_edit_handoff = None
                 else:
                     # 其他工具直接执行
                     result = tool_func.invoke(tool_args)
@@ -2369,6 +2523,7 @@ async def tool_node(state: AgentState) -> dict:
         "coach_turn_processed": coach_turn_processed,
         "coach_required": bool(coach_state.get("active")),
         "coach_edit_handoff": coach_edit_handoff,
+        "coach_edit_processed": coach_edit_processed,
         "assistant_command": getattr(state, "assistant_command", "") or "",
     }
 

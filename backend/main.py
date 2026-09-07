@@ -153,6 +153,7 @@ from .database import (
     release_resume_edit_lock, get_resume_edit_state,
     get_agent_skill_state, save_agent_skill_state,
     update_agent_memory_round_outcome,
+    AgentSkillState,
 )
 from .harness.memory import recent_rounds_to_messages
 from .auth import (
@@ -1250,6 +1251,9 @@ async def undo_task_resume_change(
         revision_id=revision_id,
         status="undone",
         outcome_updates={"revision_id": revision_id},
+    )
+    _restore_coach_offer_after_undo(
+        db, current_user.id, task_id, revision_id
     )
     return {
         "success": True,
@@ -2428,6 +2432,13 @@ async def chat_endpoint(
                 status="rejected",
                 outcome_updates={"resolution": "superseded_by_new_round"},
             )
+            _update_coach_offer_status(
+                db,
+                current_user.id,
+                session_id,
+                superseded_pending.get("coach_offer_id"),
+                "invalidated",
+            )
         clear_pending_confirmation(db, current_user.id, session_id)
 
 
@@ -2504,7 +2515,7 @@ async def chat_endpoint(
         ).module.normalize_coach_state(coach_record.get("state"))
         coach_required = requested_command == "coaching" or bool(coach_state.get("active"))
         active_skill_names = []
-        if coach_required:
+        if coach_required or coach_state.get("pending_start_offer"):
             active_skill_names.append(resume_agent.COACH_SKILL_NAME)
 
         # 证件照单独存储在任务记录中；在真实数据库会话中一并带入快照渲染。
@@ -2536,6 +2547,7 @@ async def chat_endpoint(
             "coach_turn_processed": False,
             "coach_required": coach_required,
             "coach_edit_handoff": None,
+            "coach_edit_processed": False,
             "assistant_command": requested_command,
             "request_id": request_id,
             "context_id": session_id,
@@ -2610,6 +2622,7 @@ async def chat_endpoint(
             sent_progress_phases = set()
             sent_confirm_ids = set()
             confirmation_sent = False
+            confirmation_event_result = None
             edit_lock_acquired = False
             proposal_error_result = None
             assistant_reply_result = ""
@@ -2883,10 +2896,11 @@ async def chat_endpoint(
                                 last_streamed_content = accumulated_content
                                 sent_confirm_ids.add(confirm_id)
                                 confirmation_sent = True
-                                yield progress_event("ready", "修改预览已准备好")
-                                if accumulated_content:
-                                    yield f'data: {json.dumps({"type": "stream", "content": accumulated_content, "request_id": request_id})}\n\n'
-                                yield 'data: ' + json.dumps({
+                                # Only expose an interactive confirmation after
+                                # this turn's memory and Skill state are durable.
+                                # A fast click must not let final persistence
+                                # resurrect an already handled preview.
+                                confirmation_event_result = {
                                     "type": "confirm",
                                     "request_id": request_id,
                                     "id": str(uuid.uuid4()),
@@ -2897,7 +2911,7 @@ async def chat_endpoint(
                                     "layout_candidate": confirm_data.get("layout_candidate"),
                                     "confirm_id": confirm_id,
                                     "session_id": session_id,
-                                }) + '\n\n'
+                                }
                         elif (
                             node_name in {"tool_node", "direct_edit"}
                             and "pending_confirmation" in output
@@ -3068,6 +3082,7 @@ async def chat_endpoint(
             # Persist before final/end so a following request cannot observe a
             # stale context. Optimistic version conflicts fail closed instead
             # of overwriting newer memory.
+            persistence_succeeded = False
             try:
                 await save_state_async(
                     db,
@@ -3091,15 +3106,30 @@ async def chat_endpoint(
                         coach_state_result,
                         int(coach_record.get("version", 0) or 0),
                     )
+                persistence_succeeded = True
             except Exception as exc:
                 LOGGER.warning("回合状态保存失败: %s", exc)
                 harness_metrics.increment("persistence_errors_total")
+                if pending_confirmation_result:
+                    from .database import clear_pending_confirmation
+                    clear_pending_confirmation(db, current_user.id, session_id)
+                    pending_confirmation_result = None
                 yield 'data: ' + json.dumps({
                     "type": "persistence_error",
                     "request_id": request_id,
                     "message": "对话状态未能安全保存，请重新发送上一条消息。",
                     "retryable": True,
                 }) + '\n\n'
+
+            if (
+                persistence_succeeded
+                and pending_confirmation_result
+                and confirmation_event_result
+            ):
+                yield progress_event("ready", "修改预览已准备好")
+                if accumulated_content:
+                    yield f'data: {json.dumps({"type": "stream", "content": accumulated_content, "request_id": request_id})}\n\n'
+                yield 'data: ' + json.dumps(confirmation_event_result) + '\n\n'
 
             yield 'data: ' + json.dumps({
                 "type": "final",
@@ -3121,6 +3151,90 @@ async def chat_endpoint(
     except Exception:
         LOGGER.exception("聊天接口失败")
         return _public_error_response("CHAT_FAILED", "本次请求未能安全完成，请稍后重试。")
+
+
+def _update_coach_offer_status(
+    db: Session,
+    user_id: int,
+    session_id: str,
+    offer_id: str | None,
+    status: str,
+    *,
+    revision_id: str = "",
+    applied_at: str = "",
+) -> None:
+    """Best-effortly record the outcome of a coach-authorized preview."""
+    if not offer_id or not hasattr(db, "query"):
+        return
+    try:
+        record = get_agent_skill_state(
+            db, user_id, session_id, resume_agent.COACH_SKILL_NAME
+        )
+        module = resume_agent.skill_runtime.get(
+            resume_agent.COACH_SKILL_NAME
+        ).module
+        coach_state = module.normalize_coach_state(record.get("state"))
+        changed = resume_agent._set_coach_offer_status(
+            coach_state,
+            str(offer_id),
+            status,
+            revision_id=revision_id,
+            applied_at=applied_at,
+        )
+        if not changed:
+            return
+        coach_state["updated_at"] = datetime.utcnow().isoformat()
+        save_agent_skill_state(
+            db,
+            user_id,
+            session_id,
+            resume_agent.COACH_SKILL_NAME,
+            coach_state,
+            int(record.get("version", 0) or 0),
+        )
+    except Exception as exc:
+        # The resume mutation/lock result is authoritative.  A telemetry-like
+        # coach status update must never turn a successful confirmation into an
+        # error response.
+        LOGGER.warning("教练修改方案状态回写失败: %s", exc)
+
+
+def _restore_coach_offer_after_undo(
+    db: Session,
+    user_id: int,
+    task_id: str,
+    revision_id: str | None,
+) -> None:
+    """Best-effortly reopen the coach issue resolved by an undone revision."""
+    if not revision_id or not hasattr(db, "query"):
+        return
+    try:
+        records = db.query(AgentSkillState).filter(
+            AgentSkillState.user_id == user_id,
+            AgentSkillState.task_id == task_id,
+            AgentSkillState.skill_name == resume_agent.COACH_SKILL_NAME,
+        ).all()
+        for record in records:
+            module = resume_agent.skill_runtime.get(
+                resume_agent.COACH_SKILL_NAME
+            ).module
+            coach_state = module.normalize_coach_state(record.state_json)
+            if not resume_agent._reopen_coach_offer_for_revision(
+                coach_state, str(revision_id)
+            ):
+                continue
+            coach_state["updated_at"] = datetime.utcnow().isoformat()
+            save_agent_skill_state(
+                db,
+                user_id,
+                record.session_id,
+                resume_agent.COACH_SKILL_NAME,
+                coach_state,
+                int(record.version or 0),
+            )
+            return
+    except Exception as exc:
+        LOGGER.warning("撤回后恢复教练问题状态失败: %s", exc)
 
 
 @app.post("/confirm")
@@ -3178,6 +3292,13 @@ async def confirm_endpoint(
                 round_id=pending_confirmation.get("request_id"),
                 status="rejected",
             )
+            _update_coach_offer_status(
+                db,
+                current_user.id,
+                session_id,
+                pending_confirmation.get("coach_offer_id"),
+                "rejected",
+            )
             return JSONResponse(content={
                 "success": True,
                 "message": "已取消保存操作",
@@ -3220,11 +3341,25 @@ async def confirm_endpoint(
                 status="failed",
                 outcome_updates={"resolution": "preview_expired"},
             )
+            _update_coach_offer_status(
+                db,
+                current_user.id,
+                session_id,
+                pending_confirmation.get("coach_offer_id"),
+                "invalidated",
+            )
             return JSONResponse(content={
                 "error": "简历内容或排版已发生其他修改，请重新生成修改预览"
             }, status_code=409)
 
         if not validate_resume_change_set(before_resume_data, candidate_resume_data, changes):
+            _update_coach_offer_status(
+                db,
+                current_user.id,
+                session_id,
+                pending_confirmation.get("coach_offer_id"),
+                "invalidated",
+            )
             return JSONResponse(content={"error": "修改预览已失效，请重新生成修改建议"}, status_code=409)
         all_change_ids = [item.get("id") for item in changes if item.get("id")]
         requested_ids = [item for item in selected_change_ids.split(",") if item]
@@ -3249,6 +3384,13 @@ async def confirm_endpoint(
             owner_session_id=session_id,
             request_id=pending_confirmation.get("request_id") or "",
         ):
+            _update_coach_offer_status(
+                db,
+                current_user.id,
+                session_id,
+                pending_confirmation.get("coach_offer_id"),
+                "invalidated",
+            )
             return JSONResponse(content={"error": "修改锁已失效，请重新生成预览"}, status_code=409)
         try:
             mutation = commit_resume_mutation(
@@ -3280,6 +3422,13 @@ async def confirm_endpoint(
                 status="failed",
                 outcome_updates={"resolution": "preview_expired"},
             )
+            _update_coach_offer_status(
+                db,
+                current_user.id,
+                session_id,
+                pending_confirmation.get("coach_offer_id"),
+                "invalidated",
+            )
             return JSONResponse(content={
                 "error": "简历内容或排版已发生其他修改，请重新生成修改预览"
             }, status_code=409)
@@ -3306,6 +3455,20 @@ async def confirm_endpoint(
                 "revision_id": revision_id,
                 "selected_change_ids": ids_to_apply,
             },
+        )
+        coach_offer_status = (
+            "applied"
+            if set(ids_to_apply) == set(all_change_ids)
+            else "partially_applied"
+        )
+        _update_coach_offer_status(
+            db,
+            current_user.id,
+            session_id,
+            pending_confirmation.get("coach_offer_id"),
+            coach_offer_status,
+            revision_id=str(revision_id or ""),
+            applied_at=datetime.utcnow().isoformat(),
         )
         return JSONResponse(content={
             "success": True,

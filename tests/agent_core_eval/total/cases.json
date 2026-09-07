@@ -1,18 +1,19 @@
 {
   "schema_version": 1,
-  "dataset_id": "agent-core-total-600",
-  "description": "ResumeBranch Agent 核心评测总集；统一汇总路由、Skill 选择和修改安全案例。",
+  "dataset_id": "agent-core-total-700",
+  "description": "ResumeBranch Agent 核心评测总集；统一汇总路由、三个 Skill 选择和修改安全案例。",
   "case_counts": {
     "routing": 200,
-    "skill": 300,
+    "skill": 400,
     "safety": 100
   },
   "scenario_counts": {
-    "legacy_unclassified": 300,
+    "legacy_unclassified": 296,
     "complex_operation": 101,
-    "mixed_request": 53,
+    "mixed_request": 56,
     "ambiguous_request": 91,
-    "multi_turn_summary": 55
+    "multi_turn_summary": 56,
+    "coach_command": 100
   },
   "smoke_case_count": 20,
   "routing": [
@@ -4008,6 +4009,401 @@
       ],
       "outcome_note": "可直接给出全局间距建议，也可生成合法的全局间距修改候选；快照可调用但不强制。"
     },
+  {
+    "id": "skill-coach-001",
+    "scenario_type": "coach_command",
+    "prompt": "开始深度打磨，先从项目经历逐条问我。",
+    "state": {"coach_required": true, "coach_state": {}, "assistant_command": "coaching", "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-002",
+    "scenario_type": "coach_command",
+    "prompt": "进入教练模式，帮我把工作经历中的事实问清楚。",
+    "state": {"coach_required": true, "coach_state": {}, "assistant_command": "coaching", "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-003",
+    "scenario_type": "coach_command",
+    "prompt": "我想做一次深度打磨，请先问问题，不要直接改。",
+    "state": {"coach_required": true, "coach_state": {}, "assistant_command": "coaching", "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-004",
+    "scenario_type": "coach_command",
+    "prompt": "开始逐项追问我的项目贡献，暂时只收集事实。",
+    "state": {"coach_required": true, "coach_state": {}, "assistant_command": "coaching", "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-005",
+    "scenario_type": "coach_command",
+    "prompt": "请启动深挖流程，从最薄弱的经历开始问我。",
+    "state": {"coach_required": true, "coach_state": {}, "assistant_command": "coaching", "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-006",
+    "scenario_type": "coach_command",
+    "prompt": "开启深度复盘，先不要生成任何简历修改。",
+    "state": {"coach_required": true, "coach_state": {}, "assistant_command": "coaching", "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-007",
+    "scenario_type": "coach_command",
+    "prompt": "请通过连续提问帮我补全这段实习经历。",
+    "state": {"coach_required": true, "coach_state": {}, "assistant_command": "coaching", "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-008",
+    "scenario_type": "coach_command",
+    "prompt": "我准备好了，开始深度打磨我的简历内容吧。",
+    "state": {"coach_required": true, "coach_state": {}, "assistant_command": "coaching", "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-009",
+    "scenario_type": "coach_command",
+    "prompt": "不要猜测我的经历，请用教练方式逐步取证。",
+    "state": {"coach_required": true, "coach_state": {}, "assistant_command": "coaching", "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-010",
+    "scenario_type": "coach_command",
+    "prompt": "开始一次只讨论一个问题的简历深挖。",
+    "state": {"coach_required": true, "coach_state": {}, "assistant_command": "coaching", "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-011",
+    "scenario_type": "coach_command",
+    "prompt": "从我的项目结果开始追问，直到事实足够明确。",
+    "state": {"coach_required": true, "coach_state": {}, "assistant_command": "coaching", "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-012",
+    "scenario_type": "coach_command",
+    "prompt": "我想核实经历细节后再考虑改写，请先启动辅导。",
+    "state": {"coach_required": true, "coach_state": {}, "assistant_command": "coaching", "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-013",
+    "scenario_type": "coach_command",
+    "prompt": "请开启证据收集流程，先问我承担了什么。",
+    "state": {"coach_required": true, "coach_state": {}, "assistant_command": "coaching", "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-014",
+    "scenario_type": "coach_command",
+    "prompt": "开始深度打磨项目云笺协作平台，先别替我编内容。",
+    "state": {"coach_required": true, "coach_state": {}, "assistant_command": "coaching", "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-015",
+    "scenario_type": "coach_command",
+    "prompt": "进入多轮简历辅导，我会逐步补充项目事实。",
+    "state": {"coach_required": true, "coach_state": {}, "assistant_command": "coaching", "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-016",
+    "scenario_type": "coach_command",
+    "prompt": "请先通过提问了解我的订单服务工作，再谈怎么写。",
+    "state": {"coach_required": true, "coach_state": {}, "assistant_command": "coaching", "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-017",
+    "scenario_type": "coach_command",
+    "prompt": "启动一次事实核验式的简历深度讨论。",
+    "state": {"coach_required": true, "coach_state": {}, "assistant_command": "coaching", "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-018",
+    "scenario_type": "coach_command",
+    "prompt": "请逐个问题帮我把职责、行动和结果补完整。",
+    "state": {"coach_required": true, "coach_state": {}, "assistant_command": "coaching", "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-019",
+    "scenario_type": "coach_command",
+    "prompt": "开始深度问答，我只想确认真实经历，不要马上输出成稿。",
+    "state": {"coach_required": true, "coach_state": {}, "assistant_command": "coaching", "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-020",
+    "scenario_type": "coach_command",
+    "prompt": "进入深度打磨，从工作经历的第一条开始取证。",
+    "state": {"coach_required": true, "coach_state": {}, "assistant_command": "coaching", "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-021",
+    "scenario_type": "coach_command",
+    "prompt": "我当时主要负责接口开发和测试。",
+    "state": {"coach_required": true, "coach_state": {"active": true}, "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-022",
+    "scenario_type": "coach_command",
+    "prompt": "补充一下，权限校验是我独立设计的。",
+    "state": {"coach_required": true, "coach_state": {"active": true}, "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-023",
+    "scenario_type": "coach_command",
+    "prompt": "这项工作没有准确的百分比，但确实减少了人工排查。",
+    "state": {"coach_required": true, "coach_state": {"active": true}, "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-024",
+    "scenario_type": "coach_command",
+    "prompt": "我用的是 FastAPI，数据库是 PostgreSQL。",
+    "state": {"coach_required": true, "coach_state": {"active": true}, "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-025",
+    "scenario_type": "coach_command",
+    "prompt": "慢查询是通过 EXPLAIN 定位到的，后来补了联合索引。",
+    "state": {"coach_required": true, "coach_state": {"active": true}, "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-026",
+    "scenario_type": "coach_command",
+    "prompt": "刚才那条需要更正，我没有负责上线，只负责了开发。",
+    "state": {"coach_required": true, "coach_state": {"active": true}, "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-027",
+    "scenario_type": "coach_command",
+    "prompt": "这段经历大约持续了五个月，团队有六个人。",
+    "state": {"coach_required": true, "coach_state": {"active": true}, "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-028",
+    "scenario_type": "coach_command",
+    "prompt": "项目的主要用户是校内社团，规模没有正式统计。",
+    "state": {"coach_required": true, "coach_state": {"active": true}, "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-029",
+    "scenario_type": "coach_command",
+    "prompt": "我能复盘的结果是接口超时问题减少了，具体数量记不清。",
+    "state": {"coach_required": true, "coach_state": {"active": true}, "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-030",
+    "scenario_type": "coach_command",
+    "prompt": "我只参与了测试用例补充，没有决定测试方案。",
+    "state": {"coach_required": true, "coach_state": {"active": true}, "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-031",
+    "scenario_type": "coach_command",
+    "prompt": "缓存并没有用在这个项目里，请不要把它写进去。",
+    "state": {"coach_required": true, "coach_state": {"active": true}, "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-032",
+    "scenario_type": "coach_command",
+    "prompt": "我补充的事实是：接口文档由我整理并交给前端使用。",
+    "state": {"coach_required": true, "coach_state": {"active": true}, "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-033",
+    "scenario_type": "coach_command",
+    "prompt": "这个项目没有上线，结果只能描述为完成了内部演示。",
+    "state": {"coach_required": true, "coach_state": {"active": true}, "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-034",
+    "scenario_type": "coach_command",
+    "prompt": "我负责的是后端部分，前端页面不是我实现的。",
+    "state": {"coach_required": true, "coach_state": {"active": true}, "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-035",
+    "scenario_type": "coach_command",
+    "prompt": "目前没有更多可核实的细节了。",
+    "state": {"coach_required": true, "coach_state": {"active": true}, "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-036",
+    "scenario_type": "coach_command",
+    "prompt": "先暂停这个问题，之后我再补充。",
+    "state": {"coach_required": true, "coach_state": {"active": true}, "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-037",
+    "scenario_type": "coach_command",
+    "prompt": "跳过当前这段，继续看下一项经历。",
+    "state": {"coach_required": true, "coach_state": {"active": true}, "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-038",
+    "scenario_type": "coach_command",
+    "prompt": "结束本轮深度打磨，回到普通聊天。",
+    "state": {"coach_required": true, "coach_state": {"active": true}, "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-039",
+    "scenario_type": "coach_command",
+    "prompt": "我想换个问题，先处理项目职责的证据。",
+    "state": {"coach_required": true, "coach_state": {"active": true}, "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-040",
+    "scenario_type": "coach_command",
+    "prompt": "继续刚才的取证问题。",
+    "state": {"coach_required": true, "coach_state": {"active": true}, "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-041",
+    "scenario_type": "coach_command",
+    "prompt": "现在可以根据已确认的事实提出预览建议了。",
+    "state": {"coach_required": true, "coach_state": {"active": true}, "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-042",
+    "scenario_type": "coach_command",
+    "prompt": "我不想继续这个问题了，请退出辅导。",
+    "state": {"coach_required": true, "coach_state": {"active": true}, "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-043",
+    "scenario_type": "coach_command",
+    "prompt": "保留当前记录，先结束这次深挖。",
+    "state": {"coach_required": true, "coach_state": {"active": true}, "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-044",
+    "scenario_type": "coach_command",
+    "prompt": "回到刚才的问题继续讨论，不要切换成直接改写。",
+    "state": {"coach_required": true, "coach_state": {"active": true}, "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-045",
+    "scenario_type": "coach_command",
+    "prompt": "我确认先只做事实讨论，继续问下一条。",
+    "state": {"coach_required": true, "coach_state": {"active": true}, "context_type": "coaching"},
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-046",
+    "scenario_type": "coach_command",
+    "prompt": "请不要直接替我改，先逐步追问项目中的真实贡献。",
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-047",
+    "scenario_type": "coach_command",
+    "prompt": "我想通过几轮问题把这段经历讲具体。",
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-048",
+    "scenario_type": "coach_command",
+    "prompt": "先问清楚我在慢查询优化中做了哪一步，再讨论表述。",
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-049",
+    "scenario_type": "coach_command",
+    "prompt": "我需要你像面试复盘一样追问证据，而不是一次性给答案。",
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-050",
+    "scenario_type": "coach_command",
+    "prompt": "请从我的回答中继续提炼事实，每次只问一个关键点。",
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
     {
       "id": "skill-v3-055",
       "scenario_type": "ambiguous_request",
@@ -5780,23 +6176,373 @@
       "answer_expectation": "empty"
     },
     {
-      "id": "skill-v4-066",
-      "scenario_type": "mixed_request",
-      "prompt": "先观察页面，再把项目技术栈补充 Redis。",
-      "expected_tools": [
-        "resume_snapshot",
-        "resume_edit"
-      ],
-      "forbidden_tools": [],
-      "expected_operations": [
-        {
-          "op": "set",
-          "path": "project_experience[0].content_blocks[0].text",
-          "value": "Python、FastAPI、PostgreSQL、Redis"
-        }
-      ],
-      "answer_expectation": "empty"
-    }
+    "id": "skill-v4-066",
+    "scenario_type": "mixed_request",
+    "prompt": "先观察页面，再把项目技术栈补充 Redis。",
+    "expected_tools": [
+      "resume_snapshot",
+      "resume_edit"
+    ],
+    "forbidden_tools": [],
+    "expected_operations": [
+      {
+        "op": "set",
+        "path": "project_experience[0].content_blocks[0].text",
+        "value": "Python、FastAPI、PostgreSQL、Redis"
+      }
+    ],
+    "answer_expectation": "empty"
+  },
+  {
+    "id": "skill-coach-051",
+    "scenario_type": "coach_command",
+    "prompt": "可以，接受你的建议，开始逐条深挖我的项目。",
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-052",
+    "scenario_type": "coach_command",
+    "prompt": "好，我们进入深度辅导模式，先讨论工作经历。",
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-053",
+    "scenario_type": "coach_command",
+    "prompt": "可以开始取证了，我会如实回答你接下来的问题。",
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-054",
+    "scenario_type": "coach_command",
+    "prompt": "同意进入多轮追问，先从项目结果开始。",
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-055",
+    "scenario_type": "coach_command",
+    "prompt": "行，按你说的先确认事实，不急着改写。",
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-056",
+    "scenario_type": "coach_command",
+    "prompt": "我同意开始深度打磨，请先问我个人贡献。",
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-057",
+    "scenario_type": "coach_command",
+    "prompt": "接受这个辅导方式，先把订单服务的背景讲清楚。",
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-058",
+    "scenario_type": "coach_command",
+    "prompt": "可以进入教练流程了，我准备补充项目细节。",
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-059",
+    "scenario_type": "coach_command",
+    "prompt": "好，先围绕慢查询问题逐步问我。",
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-060",
+    "scenario_type": "coach_command",
+    "prompt": "同意开始这轮深挖，但请只记录我明确说过的事实。",
+    "expected_tools": ["resume_coach"],
+    "forbidden_tools": ["resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-061",
+    "scenario_type": "coach_command",
+    "prompt": "把项目简介改成“负责协作平台后端开发”。",
+    "expected_tools": ["resume_edit"],
+    "forbidden_tools": ["resume_coach", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-062",
+    "scenario_type": "coach_command",
+    "prompt": "删除工作职责里的第二条内容。",
+    "expected_tools": ["resume_edit"],
+    "forbidden_tools": ["resume_coach", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-063",
+    "scenario_type": "coach_command",
+    "prompt": "将项目技术栈补充 Redis。",
+    "expected_tools": ["resume_edit"],
+    "forbidden_tools": ["resume_coach", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-064",
+    "scenario_type": "coach_command",
+    "prompt": "把工作经历的职位改为后端开发实习生。",
+    "expected_tools": ["resume_edit"],
+    "forbidden_tools": ["resume_coach", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-065",
+    "scenario_type": "coach_command",
+    "prompt": "在项目职责末尾新增一条“补充接口自动化测试”。",
+    "expected_tools": ["resume_edit"],
+    "forbidden_tools": ["resume_coach", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-066",
+    "scenario_type": "coach_command",
+    "prompt": "把教育经历的专业名称替换为软件工程。",
+    "expected_tools": ["resume_edit"],
+    "forbidden_tools": ["resume_coach", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-067",
+    "scenario_type": "coach_command",
+    "prompt": "把工作职责中第二条内容移到第一条之前。",
+    "expected_tools": ["resume_edit"],
+    "forbidden_tools": ["resume_coach", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-068",
+    "scenario_type": "coach_command",
+    "prompt": "请直接把自我评价改成“注重可维护性和测试质量”。",
+    "expected_tools": ["resume_edit"],
+    "forbidden_tools": ["resume_coach", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-069",
+    "scenario_type": "coach_command",
+    "prompt": "将项目角色改为后端开发，不需要先讨论。",
+    "expected_tools": ["resume_edit"],
+    "forbidden_tools": ["resume_coach", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-070",
+    "scenario_type": "coach_command",
+    "prompt": "把技能列表增加 Docker 和 Linux。",
+    "expected_tools": ["resume_edit"],
+    "forbidden_tools": ["resume_coach", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-071",
+    "scenario_type": "coach_command",
+    "prompt": "请查看PDF快照，告诉我页面底部是否留白过多。",
+    "expected_tools": ["resume_snapshot"],
+    "forbidden_tools": ["resume_coach", "resume_edit"]
+  },
+  {
+    "id": "skill-coach-072",
+    "scenario_type": "coach_command",
+    "prompt": "只分析项目经历的标题和正文是否对齐，不修改内容。",
+    "expected_tools": ["resume_snapshot"],
+    "forbidden_tools": ["resume_coach", "resume_edit"]
+  },
+  {
+    "id": "skill-coach-073",
+    "scenario_type": "coach_command",
+    "prompt": "渲染当前简历，检查联系方式有没有换行。",
+    "expected_tools": ["resume_snapshot"],
+    "forbidden_tools": ["resume_coach", "resume_edit"]
+  },
+  {
+    "id": "skill-coach-074",
+    "scenario_type": "coach_command",
+    "prompt": "帮我观察一页版式的视觉密度和模块间距。",
+    "expected_tools": ["resume_snapshot"],
+    "forbidden_tools": ["resume_coach", "resume_edit"]
+  },
+  {
+    "id": "skill-coach-075",
+    "scenario_type": "coach_command",
+    "prompt": "看看项目经历内部的栏目顺序在页面上是否清楚。",
+    "expected_tools": ["resume_snapshot"],
+    "forbidden_tools": ["resume_coach", "resume_edit"]
+  },
+  {
+    "id": "skill-coach-076",
+    "scenario_type": "coach_command",
+    "prompt": "请检查简历是否出现标题被截断的视觉问题。",
+    "expected_tools": ["resume_snapshot"],
+    "forbidden_tools": ["resume_coach", "resume_edit"]
+  },
+  {
+    "id": "skill-coach-077",
+    "scenario_type": "coach_command",
+    "prompt": "我只想知道教育经历和工作经历之间的留白是否均匀。",
+    "expected_tools": ["resume_snapshot"],
+    "forbidden_tools": ["resume_coach", "resume_edit"]
+  },
+  {
+    "id": "skill-coach-078",
+    "scenario_type": "coach_command",
+    "prompt": "从真实页面看，项目职责的圆点和文字是否对齐？",
+    "expected_tools": ["resume_snapshot"],
+    "forbidden_tools": ["resume_coach", "resume_edit"]
+  },
+  {
+    "id": "skill-coach-079",
+    "scenario_type": "coach_command",
+    "prompt": "请解释项目技术栈和项目职责在简历中的区别。",
+    "expected_tools": [],
+    "forbidden_tools": ["resume_coach", "resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-080",
+    "scenario_type": "coach_command",
+    "prompt": "你觉得后端实习生的项目经历应该突出哪些方面？",
+    "expected_tools": [],
+    "forbidden_tools": ["resume_coach", "resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-081",
+    "scenario_type": "coach_command",
+    "prompt": "请概括当前简历最明显的三个内容问题，只给建议。",
+    "expected_tools": [],
+    "forbidden_tools": ["resume_coach", "resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-082",
+    "scenario_type": "coach_command",
+    "prompt": "为什么经历描述中最好同时写行动和结果？",
+    "expected_tools": [],
+    "forbidden_tools": ["resume_coach", "resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-083",
+    "scenario_type": "coach_command",
+    "prompt": "帮我比较一下专业技能栏和项目技术栈栏的用途。",
+    "expected_tools": [],
+    "forbidden_tools": ["resume_coach", "resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-084",
+    "scenario_type": "coach_command",
+    "prompt": "针对Python后端岗位，哪些经历信息通常更有说服力？",
+    "expected_tools": [],
+    "forbidden_tools": ["resume_coach", "resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-085",
+    "scenario_type": "coach_command",
+    "prompt": "我暂时不想改简历，只想知道量化结果为什么重要。",
+    "expected_tools": [],
+    "forbidden_tools": ["resume_coach", "resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-086",
+    "scenario_type": "coach_command",
+    "prompt": "请回答我关于简历模块作用的疑问，不要进入任何技能流程。",
+    "expected_tools": [],
+    "forbidden_tools": ["resume_coach", "resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-087",
+    "scenario_type": "coach_command",
+    "prompt": "把我上传的PDF解析成简历，解析完成后告诉我结果。",
+    "expected_tools": [],
+    "forbidden_tools": ["resume_coach", "resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-088",
+    "scenario_type": "coach_command",
+    "prompt": "请把当前简历导出成PDF文件。",
+    "expected_tools": [],
+    "forbidden_tools": ["resume_coach", "resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-089",
+    "scenario_type": "coach_command",
+    "prompt": "确认后把整份简历翻译成英文。",
+    "expected_tools": [],
+    "forbidden_tools": ["resume_coach", "resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-090",
+    "scenario_type": "coach_command",
+    "prompt": "请告诉我当前岗位JD最看重哪些技能。",
+    "expected_tools": [],
+    "forbidden_tools": ["resume_coach", "resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-091",
+    "scenario_type": "coach_command",
+    "prompt": "你可以考虑问我更多细节，但我现在只要一个简短建议。",
+    "expected_tools": [],
+    "forbidden_tools": ["resume_coach", "resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-092",
+    "scenario_type": "coach_command",
+    "prompt": "先别开始深度打磨，直接告诉我这段描述的问题。",
+    "expected_tools": [],
+    "forbidden_tools": ["resume_coach", "resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-093",
+    "scenario_type": "coach_command",
+    "prompt": "我暂时不接受进入教练模式的建议，请正常回答。",
+    "expected_tools": [],
+    "forbidden_tools": ["resume_coach", "resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-094",
+    "scenario_type": "coach_command",
+    "prompt": "不用多轮追问，你先概括项目经历可以怎么改善。",
+    "expected_tools": [],
+    "forbidden_tools": ["resume_coach", "resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-095",
+    "scenario_type": "coach_command",
+    "prompt": "我看到了深度打磨的建议，但这次先不进入。",
+    "expected_tools": [],
+    "forbidden_tools": ["resume_coach", "resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-096",
+    "scenario_type": "coach_command",
+    "prompt": "先查看项目经历的页面效果，再把项目标题改成云笺平台。",
+    "expected_tools": ["resume_snapshot", "resume_edit"],
+    "forbidden_tools": ["resume_coach"]
+  },
+  {
+    "id": "skill-coach-097",
+    "scenario_type": "coach_command",
+    "prompt": "直接把项目职责改成更具体的表述，不需要收集额外事实。",
+    "expected_tools": ["resume_edit"],
+    "forbidden_tools": ["resume_coach", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-098",
+    "scenario_type": "coach_command",
+    "prompt": "只判断当前页面是否拥挤，并给出排版建议，不要追问经历。",
+    "expected_tools": ["resume_snapshot"],
+    "forbidden_tools": ["resume_coach", "resume_edit"]
+  },
+  {
+    "id": "skill-coach-099",
+    "scenario_type": "coach_command",
+    "prompt": "我知道项目内容还不具体，请直接给我三条改写建议，不要启动深挖。",
+    "expected_tools": [],
+    "forbidden_tools": ["resume_coach", "resume_edit", "resume_snapshot"]
+  },
+  {
+    "id": "skill-coach-100",
+    "scenario_type": "coach_command",
+    "prompt": "把教育经历的顺序调整一下，并直接生成修改预览。",
+    "expected_tools": ["resume_edit"],
+    "forbidden_tools": ["resume_coach", "resume_snapshot"]
+  }
   ],
   "safety": [
     {

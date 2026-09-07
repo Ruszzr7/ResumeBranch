@@ -30,6 +30,7 @@ from backend.database import (
     save_conversation_context,
     update_conversation_context_metadata,
 )
+from backend.main import _restore_coach_offer_after_undo, _update_coach_offer_status
 
 
 class ConversationContextTests(unittest.TestCase):
@@ -186,6 +187,78 @@ class ConversationContextTests(unittest.TestCase):
         self.assertEqual(stored["version"], 1)
         self.assertTrue(stored["state"]["active"])
         self.assertNotIn("coach_state", get_agent_memory_state(self.db, 1, context.session_id))
+
+    def test_coach_offer_status_is_updated_after_confirmation(self):
+        context = ensure_main_context(self.db, 1, "task-1")
+        save_agent_skill_state(
+            self.db,
+            1,
+            context.session_id,
+            "resume-coach",
+            {
+                "active": True,
+                "current_issue_id": "issue-1",
+                "issues": {
+                    "issue-1": {
+                        "problem": "结果不足",
+                        "pending_preview_offer": {
+                            "offer_id": "offer-1",
+                            "summary": "补充结果",
+                            "resume_operations": [],
+                            "source_content_digest": "digest",
+                            "status": "preview_generated",
+                        },
+                    },
+                },
+            },
+            0,
+        )
+
+        _update_coach_offer_status(
+            self.db,
+            1,
+            context.session_id,
+            "offer-1",
+            "applied",
+            revision_id="revision-1",
+            applied_at="2026-09-08T12:00:00",
+        )
+
+        stored = get_agent_skill_state(self.db, 1, context.session_id, "resume-coach")
+        offer = stored["state"]["issues"]["issue-1"]["pending_preview_offer"]
+        self.assertEqual(offer["status"], "applied")
+        self.assertEqual(offer["revision_id"], "revision-1")
+        self.assertEqual(offer["applied_at"], "2026-09-08T12:00:00")
+        self.assertEqual(stored["version"], 2)
+
+        _restore_coach_offer_after_undo(self.db, 1, "task-1", "revision-1")
+
+        restored = get_agent_skill_state(
+            self.db, 1, context.session_id, "resume-coach"
+        )
+        restored_issue = restored["state"]["issues"]["issue-1"]
+        self.assertEqual(restored_issue["pending_preview_offer"]["status"], "undone")
+        self.assertEqual(restored_issue["status"], "active")
+        self.assertEqual(restored["state"]["current_issue_id"], "issue-1")
+        self.assertTrue(restored["state"]["active"])
+        self.assertEqual(restored["version"], 3)
+
+    def test_undo_of_non_coach_revision_does_not_change_coach_state(self):
+        context = ensure_main_context(self.db, 1, "task-1")
+        save_agent_skill_state(
+            self.db,
+            1,
+            context.session_id,
+            "resume-coach",
+            {"active": False, "issues": {}},
+            0,
+        )
+
+        _restore_coach_offer_after_undo(self.db, 1, "task-1", "manual-revision")
+
+        stored = get_agent_skill_state(self.db, 1, context.session_id, "resume-coach")
+        self.assertEqual(stored["version"], 1)
+        self.assertEqual(stored["state"], {"active": False, "issues": {}})
 
 
 if __name__ == "__main__":

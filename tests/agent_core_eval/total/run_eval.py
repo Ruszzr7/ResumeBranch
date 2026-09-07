@@ -59,7 +59,7 @@ from tests.agent_core_eval.total.metrics import (
 HERE = Path(__file__).resolve().parent
 EVAL_ROOT = HERE.parent
 CASES_PATH = HERE / "cases.json"
-EXPECTED_COUNTS = {"routing": 200, "skill": 300, "safety": 100}
+EXPECTED_COUNTS = {"routing": 200, "skill": 400, "safety": 100}
 FORBIDDEN_CASE_MARKERS = ("虚构", "虚假", "伪造", "捏造", "测试信息")
 TOOLS = {
     resume_edit_tool.name: resume_edit_tool,
@@ -827,13 +827,13 @@ def _report(
             else:
                 lines.append(
                     f"- 本轮为独立定向复测，共执行 {run_scope.get('executed_case_count', 0)} 条案例；"
-                    "下列在线指标仅基于本轮案例，不代表 300 条 Skill 总集结果。"
+                    "下列在线指标仅基于本轮案例，不代表 400 条 Skill 总集结果。"
                 )
         for name, values in skill["per_skill"].items():
             lines.append(
                 f"- `{name}`：Precision {_percentage(values['precision'])}，"
                 f"Recall {_percentage(values['recall'])} "
-                f"（TP={values['tp']}，FP={values['fp']}，FN={values['fn']}）"
+                f"（TP={values['tp']}，FP={values['fp']}，FN={values['fn']}，TN={values.get('tn', 0)}）"
             )
         executability = skill["edit_operation_executability"]
         lines.extend([

@@ -36,7 +36,7 @@ from tests.agent_core_eval.total.run_eval import (
 DATASET_PATH = Path(__file__).resolve().parent / "cases.json"
 REPORT_PATH = Path(__file__).resolve().parent / "audit.md"
 FORBIDDEN_MARKERS = ("虚构", "虚假", "伪造", "捏造", "测试信息")
-SUPPORTED_TOOLS = {"resume_edit", "resume_snapshot"}
+SUPPORTED_TOOLS = {"resume_edit", "resume_snapshot", "resume_coach"}
 VISUAL_TERMS = re.compile(
     r"页面|PDF|排版|布局|视觉|呈现|预览|换页|空白|间距|对齐|拥挤|舒服|好看|美观|留白|换行|下划线|一页|渲染|模块"
 )
@@ -254,7 +254,7 @@ def render_report(result: dict) -> str:
     safe = result["safety_metrics"]
     counts = result["counts"]
     lines = [
-        "# ResumeBranch Agent 核心评测 600 条数据审查",
+        "# ResumeBranch Agent 核心评测 700 条数据审查",
         "",
         "本报告只审查案例结构、金标与当前契约的一致性，不调用模型 API。",
         "",
