@@ -1,78 +1,103 @@
 # ResumeBranch
 
-**English** | [简体中文](README.zh-CN.md)
+[English](README.en.md) | **简体中文**
 
-ResumeBranch is an open-source AI resume assistant for maintaining resumes and preparing job applications. It uses a structured resume as its core data model and provides import, editing, version management, layout controls, PDF/DOCX export, job-description analysis, and conversational optimization. It is distributed through three paths: source development/testing, multi-user Docker deployment, and a Windows single-user installation package.
+ResumeBranch 是一个面向个人简历维护与求职准备的开源 AI 简历助手。项目以结构化简历为核心，提供导入、编辑、版本管理、排版、PDF/DOCX 导出、JD 分析和对话式优化，并提供源码开发/测试、多用户 Docker 部署和 Windows 单用户安装三种交付方式。
 
-The current version is **Release 1.1.3**. The feature set and architecture are frozen; this document describes the code, configuration, and launch scripts in the repository.
+## 主要能力
 
-## Main capabilities
+- 管理主简历与岗位版本，支持创建、复制、导入、切换和撤销。
+- 结构化编辑基本信息、教育、工作、项目、技能、论文、证书等栏目。
+- 调整模板、字号、间距、页边距、栏目顺序与内容形式，并保持页面预览、PDF 和可编辑 DOCX 尽可能一致。
+- 导入 PDF 或图片简历，通过解析 API 注入项目模板，并保留原文件供查看。
+- 维护岗位 JD，支持文本或图片解析、结构化编辑和针对性分析。
+- 由智能 Agent 根据请求决定直接回复、追问、读取排版快照或生成修改预览。
+- AI 修改采用“预览—确认—保存”流程；简历已变化时拒绝过期修改，并对多窗口修改做并发兜底。
+- 单用户版导出到 `output/resumes/`；多用户版通过浏览器下载，不在服务器长期堆积导出文件。
 
-- Manage a base resume and job-specific versions, including creation, duplication, import, switching, and undo.
-- Edit structured sections such as personal information, education, work experience, projects, skills, publications, and certificates.
-- Adjust templates, font sizes, spacing, margins, section order, and content styles while keeping the browser preview, PDF, and editable DOCX as consistent as possible.
-- Import PDF or image resumes through the parsing API, map them into the project template, and retain the original files for reference.
-- Maintain job descriptions with text or image parsing, structured editing, and targeted analysis.
-- Let the intelligent Agent decide whether to answer, ask follow-up questions, read a layout snapshot, or generate a modification preview.
-- Use a preview-confirm-save flow for AI changes; stale changes are rejected when the resume has changed, with concurrency protection for multiple windows.
-- Save single-user exports to `output/resumes/`; the multi-user profile downloads files through the browser instead of accumulating them on the server.
 
-## Three delivery paths
+## 界面演示
 
-The three paths share the same Vue frontend, FastAPI backend, and business code, but they target different users and operational environments. The application does not switch between single-user and multi-user profiles dynamically inside the page.
+### 项目主页
 
-| Delivery path | Obtain and run | User model | Purpose |
+![ResumeBranch 简历工作区](docs/images/readme/cover.png)
+
+### 简历导入
+
+![创建或导入简历](docs/images/readme/import-resume.png)
+
+### 主页面
+
+![简历工作区主页面](docs/images/readme/main-page.png)
+
+### 编辑内容
+
+![结构化编辑简历内容](docs/images/readme/edit-content.png)
+
+### 编辑顺序
+
+![模块顺序编辑](docs/images/readme/edit-order.png)
+
+### 对话修改
+
+![AI 修改预览与确认](docs/images/readme/conversation-edit.png)
+
+## 三种交付方式
+
+三种方式共用同一套 Vue 前端、FastAPI 后端和业务代码，但面向的用户和运行环境不同。单用户与多用户配置通过启动配置选择，页面内不能动态切换。
+
+| 交付方式 | 获取与运行 | 用户模型 | 主要用途 |
 |---|---|---|---|
-| Source development/testing | Clone the GitHub repository, install dependencies, and use Windows scripts | Single-user or multi-user test configuration | Development, testing, and acceptance |
-| Multi-user Docker deployment | Obtain the source and Docker Compose configuration, then run Docker Compose | Multi-user only | Local deployment validation or server deployment |
-| Windows single-user installation | Download `ResumeBranch-Setup-v1.1.3-x64.exe` from GitHub Releases and install it | Single-user only | Direct local use on Windows |
+| 源码开发/测试 | 从 GitHub 拉取源码，安装依赖并运行 Windows 脚本 | 单用户或多用户测试配置 | 开发、测试和验收 |
+| 多用户 Docker 部署 | 获取源码和 Docker Compose 配置并启动容器 | 仅多用户 | 本地部署验收或服务器部署 |
+| Windows 单用户安装 | 从 GitHub Releases 下载 `ResumeBranch-Setup-v1.1.3-x64.exe` 并安装 | 仅单用户 | Windows 本地直接使用 |
 
-The source path provides two configurations: single-user uses SQLite and `scripts\start_local.cmd`; multi-user testing uses MySQL and `scripts\start_multi_user.cmd`. The existing internal configuration value `APP_MODE=local` and script names remain unchanged; “single-user” is the user-facing description.
+源码方式包含两种配置：单用户使用 SQLite 和 `scripts\start_local.cmd`；多用户测试使用 MySQL 和 `scripts\start_multi_user.cmd`。现有内部配置值 `APP_MODE=local` 和脚本名称保持不变；面向用户的说明统一使用“单用户”。
 
-Single-user SQLite does not require a separate service. Shutting down the application or restarting the computer does not delete `data/resumebranch.db`; the data remains as long as the `data/` directory is kept. SQLite and MySQL are independent data sources, and the project does not migrate data between them automatically.
+单用户 SQLite 不需要单独启动。关闭项目或重启电脑不会删除 `data/resumebranch.db`；只要保留 `data/`，数据就会保留。SQLite 与 MySQL 是独立数据源，项目不会自动在两者之间迁移数据。
 
-## Technical architecture
+## 技术架构
 
-- Frontend: Vue 3, Vite, Element Plus, and Vue Router.
-- Backend: Python 3.11, FastAPI, SQLAlchemy, and Uvicorn/Gunicorn.
-- Agent: LangGraph handles graph state and routing; repository-local Agent Skill packages provide discoverable resume-edit, resume-snapshot, and resume-coach capabilities; LangChain Core and an OpenAI-compatible client provide message, model, and tool abstractions.
-- Data: the single-user profile uses SQLite, while the multi-user profile uses MySQL; private multi-turn Skill state is stored separately from ordinary conversation memory.
-- Export and rendering: Chromium generates PDFs, `python-docx` generates editable DOCX files, and Poppler generates PDF page snapshots that can be consumed by the AI.
-- Communication: regular endpoints use HTTP, while AI responses are streamed over SSE.
-- Delivery and deployment: the source path includes Windows launch scripts; the multi-user Docker path includes Compose, MySQL, Gunicorn, and Nginx configuration.
+- 前端：Vue 3、Vite、Element Plus、Vue Router。
+- 后端：Python 3.11、FastAPI、SQLAlchemy、Uvicorn/Gunicorn。
+- Agent：LangGraph 负责状态图与路由；仓库内标准 Agent Skill 包提供可发现的简历修改、页面快照与证据式教练能力；LangChain Core/OpenAI 兼容客户端负责消息、模型和工具抽象。
+- 数据：单用户版使用 SQLite，多用户版使用 MySQL；多轮 Skill 私有状态与普通对话记忆分离保存。
+- 导出与渲染：Chromium 生成 PDF，`python-docx` 生成可继续编辑的 DOCX，Poppler 用于 AI 可读的 PDF 页面快照。
+- 通信：普通接口使用 HTTP，AI 回复使用 SSE 流式传输。
+- 交付与部署：源码方式使用 Windows 启动脚本；多用户 Docker 方式提供 Compose、MySQL、Gunicorn 和 Nginx 配置。
 
-Reproducible dependency versions are defined by [`backend/requirements.lock.txt`](backend/requirements.lock.txt) and [`frontend/package-lock.json`](frontend/package-lock.json). Patch versions are not duplicated in this README because they become outdated easily.
+依赖的可复现版本以 [`backend/requirements.lock.txt`](backend/requirements.lock.txt) 和 [`frontend/package-lock.json`](frontend/package-lock.json) 为准，不在 README 中重复维护容易过期的补丁版本。
 
-## Windows single-user installation package
+## Windows 单用户安装
 
-For a normal Windows user, download `ResumeBranch-Setup-v1.1.3-x64.exe` from GitHub Releases and run the installer. It includes the frozen single-user application, the production frontend bundle, a private Python runtime and dependencies, Nginx, Poppler, and the PDF rendering browser. It does not require Python, Node.js, npm, Docker, MySQL, or Inno Setup on the target computer, and it does not modify the system `PATH`.
+普通 Windows 用户应从 GitHub Releases 下载 `ResumeBranch-Setup-v1.1.3-x64.exe` 并运行安装程序。安装包已经包含冻结后的单用户版程序、前端生产文件、私有 Python 运行环境及依赖、Nginx、Poppler 和 PDF 渲染浏览器。目标电脑不需要另外安装 Python、Node.js、npm、Docker、MySQL 或 Inno Setup，也不会修改系统 `PATH`。
 
-The installer uses a per-user installation location by default. After installation, the optional desktop shortcut points to `ResumeBranch.exe`; the launcher starts the private single-user backend and frontend, then opens `http://127.0.0.1:5173` in the default browser. The SQLite database and exports are stored below the installed `app/` directory. Initial user data and API settings are empty and must be configured by the user when needed.
+安装程序默认使用当前用户的安装位置。安装时可以选择创建桌面快捷方式，快捷方式直接指向 `ResumeBranch.exe`。启动器会启动安装包内的单用户后端和前端，并在默认浏览器打开 `http://127.0.0.1:5173`。SQLite 数据库和导出文件位于安装目录下的 `app/` 中。首次安装时用户数据和 API 配置为空，需要使用时再自行配置。
 
-The single-user installer has no updater. Multi-user use remains a separate source-testing or Docker-deployment path.
+单用户安装包不包含更新器。多用户使用仍然通过源码测试或 Docker 部署完成。
 
-The installer is a generated release artifact. Maintainers can rebuild it on Windows x64 with:
+安装程序是构建生成的发布文件。维护者可以在 Windows x64 上从项目根目录重新构建：
 
-~~~powershell
+```powershell
 .\packaging\build-installer.ps1
-~~~
+```
 
-The generated file is written to `output/installer/ResumeBranch-Setup-v1.1.3-x64.exe`. See [Windows single-user installation package](packaging/README.md) for packaging details.
+生成的文件位于 `output/installer/ResumeBranch-Setup-v1.1.3-x64.exe`。具体打包说明见 [Windows 安装包构建说明](packaging/README.md)。
 
-## Source development/testing on Windows
+## 源码开发/测试：Windows
 
-The following procedure is for developers or users who clone the repository directly. It describes the single-user source configuration; the multi-user source configuration is covered below. If you use the installation package above, do not install these development dependencies separately.
+下面的步骤适用于开发者或直接拉取仓库的用户，先说明单用户源码配置，后文再说明多用户源码配置。如果使用上面的安装包，不需要另外安装这些开发依赖。
 
-### Single-user source test: requirements
+### 单用户源码测试：环境要求
 
 - Windows 10/11
 - Python 3.11+
 - Node.js 20+
-- Chrome, Edge, or Chromium (required for PDF export)
+- Chrome、Edge 或 Chromium（PDF 导出需要）
 
-### Single-user source test: configure and install
+### 单用户源码测试：配置与安装
 
-~~~powershell
+```powershell
 Copy-Item .env.example .env
 
 python -m venv .venv-win
@@ -81,172 +106,172 @@ python -m venv .venv-win
 Set-Location frontend
 npm ci
 Set-Location ..
-~~~
+```
 
-For AI chat and resume parsing, configure an OpenAI-compatible API in `.env`, or fill it in through **API settings** in the upper-right corner after startup. Local editing, version management, and export do not require an LLM key.
+如需 AI 对话和简历解析，在 `.env` 中配置对应的 OpenAI 兼容 API，或启动后从右上角“API 设置”填写。单用户编辑、版本管理和导出不依赖 LLM 密钥。
 
-Do not commit `.env`, `.env.multi_user`, `.env.docker`, or any real credentials.
+不要把 `.env`、`.env.multi_user`、`.env.docker` 或任何真实密钥提交到仓库。
 
-### Single-user source test: start and stop
+### 单用户源码测试：启动与停止
 
-~~~powershell
+```powershell
 .\scripts\start_local.cmd
-~~~
+```
 
-Open <http://127.0.0.1:5173>. The script starts or restarts the backend, starts the shared frontend, and runs health checks. The Vite development server supports hot reload.
+访问 <http://127.0.0.1:5173>。脚本会启动或重启后端、启动共用前端并执行健康检查；前端开发服务器支持热更新。
 
-~~~powershell
-# Stop the frontend and backend without deleting data
+```powershell
+# 停止前端和后端，不删除数据
 .\scripts\stop_app.cmd
-~~~
+```
 
-See [Source development and testing](docs/source-development-testing.md) for the complete source procedure, backup guidance, and health checks.
+完整步骤、数据备份与验活方式见 [源码开发与测试](docs/source-development-testing.md)。
 
-### Multi-user source test: Windows native MySQL
+### 多用户源码测试：Windows 原生 MySQL
 
-Use this source configuration on a Windows computer without Docker to test login, invite codes, administrator permissions, and user-data isolation:
+适合在不使用 Docker 的 Windows 电脑上测试登录、邀请码、管理员权限和用户数据隔离：
 
-~~~powershell
+```powershell
 Copy-Item .env.multi_user.example .env.multi_user
-# Configure the MySQL database and application account, then:
+# 完成 MySQL 数据库/应用账号配置后：
 .\scripts\start_multi_user.cmd
-~~~
+```
 
-The Windows multi-user entry script checks and starts the MySQL service, verifies the database connection, starts or restarts the backend, and reuses the same Vite frontend. Ordinary users must register and sign in with an email address; administrators may use an email address or a dedicated non-email account name. Each account has only one valid login session at a time; a new login invalidates the previous session.
+Windows 多用户入口脚本会检查并启动 MySQL 服务、验证数据库连接、启动或重启后端，并复用同一个 Vite 前端。普通用户必须使用邮箱注册和登录；管理员可按配置使用邮箱或专用账号名。一个账号同时只保留一个有效登录会话，新登录会使旧会话失效。
 
-See [Source development and testing](docs/source-development-testing.md) for detailed configuration.
+详细配置见 [源码开发与测试](docs/source-development-testing.md)。
 
-## Multi-user Docker deployment
+## 多用户 Docker 部署
 
-Use this path on a Linux server or another environment that supports Docker. It can also be run locally for deployment acceptance. Docker is not required for the source single-user or source multi-user Windows tests.
+适合 Linux 服务器或支持 Docker 的环境，也可以在本地进行部署验收。源码测试不要求本机安装 Docker。
 
-~~~bash
+```bash
 cp .env.docker.example .env.docker
-# Replace the JWT, administrator, and MySQL passwords:
+# 修改 JWT、管理员和 MySQL 密码后：
 docker compose --env-file .env.docker -f docker-compose.multi-user.yml config
 docker compose --env-file .env.docker -f docker-compose.multi-user.yml up -d --build
-~~~
+```
 
-The default address is <http://127.0.0.1:8080>. See [Multi-user Docker deployment](docs/docker-multi-user-deployment.md) for the topology, security boundaries, backups, and acceptance checks.
+默认访问地址为 <http://127.0.0.1:8080>。部署拓扑、安全边界、备份和验收见 [多用户 Docker 部署](docs/docker-multi-user-deployment.md)。
 
-## Launch scripts
+## 启动脚本
 
-| Script | Purpose |
+| 脚本 | 作用 |
 |---|---|
-| `scripts/start_local.cmd` | Start the single-user SQLite backend and shared frontend |
-| `scripts/start_multi_user.cmd` | Start native MySQL, the multi-user backend, and the shared frontend |
-| `scripts/start_backend_local.cmd` | Start or restart the single-user backend |
-| `scripts/start_backend_multi_user.cmd` | Start or restart the multi-user backend |
-| `scripts/start_frontend.cmd` | Start the shared Vite frontend |
-| `scripts/start_mysql.cmd` | Start the Windows MySQL service only |
-| `scripts/stop_mysql.cmd` | Stop the Windows MySQL service only |
-| `scripts/stop_app.cmd` | Stop the frontend and backend while preserving SQLite/MySQL data and the MySQL service |
+| `scripts/start_local.cmd` | 启动单用户 SQLite 后端和共用前端 |
+| `scripts/start_multi_user.cmd` | 启动本机 MySQL、多用户后端和共用前端 |
+| `scripts/start_backend_local.cmd` | 启动或重启单用户后端 |
+| `scripts/start_backend_multi_user.cmd` | 启动或重启多用户后端 |
+| `scripts/start_frontend.cmd` | 启动共用的 Vite 前端 |
+| `scripts/start_mysql.cmd` | 单独启动 Windows MySQL 服务 |
+| `scripts/stop_mysql.cmd` | 单独停止 Windows MySQL 服务 |
+| `scripts/stop_app.cmd` | 停止前端和后端，保留 SQLite/MySQL 数据及 MySQL 服务 |
 
-Runtime logs are written to `.local-run/`, which is ignored by Git.
+运行日志位于 `.local-run/`，该目录不会提交到 Git。
 
-## Agent and modification safety
+## Agent 与修改安全
 
-ResumeBranch does not hard-code every request as a fixed workflow. The entry router combines the current request, active Skill state, and confirmation protocol to choose a path:
+ResumeBranch 不是把所有请求写死为固定流程。入口路由会结合当前对话模式和请求类型选择：
 
-- General questions and complex resume tasks are given to the Agent, which decides whether to answer, ask questions, or call a skill.
-- Explicit, safely parseable requests for fields, font sizes, layout, or local bold formatting use the deterministic direct-edit path.
-- Comprehensive diagnosis remains a one-shot conversation; deep polish explicitly activates the evidence-driven coaching Skill, which can also be activated on demand in other conversations.
-- When visual layout information is needed, the system renders resume page snapshots using the same source as the official PDF.
-- When a resume change is needed, the system generates a structured candidate, shows a preview, and persists it only after confirmation.
+- 普通咨询或复杂简历任务：交给 Agent 判断是否回复、追问或调用技能。
+- 明确且可安全解析的字段、字号、排版或局部加粗请求：进入确定性的直接修改路径。
+- 全面诊断保留为一次性普通对话；深度打磨显式激活证据式教练 Skill，其他窗口也可按需进入。
+- 需要视觉排版信息时：按需渲染与正式 PDF 同源的简历页面快照。
+- 需要修改简历时：生成结构化候选结果，先展示预览，确认后才持久化。
 
-Resume content, layout rules, the JD, conversation summaries, and necessary memory are assembled on demand by the context layer. Coaching evidence is kept in private Skill state, separate from the rolling conversation summary.
+简历内容、排版规则、JD、对话摘要和必要记忆由上下文层按需组装。教练证据保存为 Skill 私有状态，不受普通对话摘要压缩影响。
 
-Every resume-workspace request is bound to a validated `ProjectTask` through `X-Task-ID`; there is no user-level fallback resume store. When a change is confirmed, the resume revision and affected content/layout digest are checked. If another window changes the same state while confirmation is pending, the stale suggestion is rejected and the frontend reloads the canonical version from the database. Database locks serialize writes across conversation windows, browser tabs, and backend processes; consultation-only conversations are unaffected.
+所有简历工作区请求都必须通过 `X-Task-ID` 绑定并验证一个 `ProjectTask`，不存在用户级单简历回退存储。确认修改时会校验简历修订版本以及本次涉及的内容或排版摘要。若等待确认期间相同状态已被其他窗口修改，旧建议会被拒绝，前端重新加载数据库中的正式版本。不同对话窗口、浏览器标签页和后端进程之间通过数据库锁串行化写入；咨询类对话不受影响。
 
-See [Agent architecture and state boundaries](docs/agent-architecture.md) for the current implementation details.
+更完整的当前实现说明见 [Agent 架构与状态边界](docs/agent-architecture.md)。
 
-## Data and privacy
+## 数据与隐私
 
-Main persistent data in the single-user profile:
+单用户版的主要持久化内容：
 
-~~~text
-data/resumebranch.db                  # Resume, JD, conversation, and business state
-data/source_documents/                # Original imported resume files
-data/llm_profiles.json                # Local API settings, if configured in the UI
-output/resumes/                       # Locally exported PDF/DOCX files
-~~~
+```text
+data/resumebranch.db                  # 简历、JD、对话与业务状态
+data/source_documents/                # 导入简历的原文件
+data/llm_profiles.json                # 本机 API 配置（如使用页面设置）
+output/resumes/                       # 单用户导出的 PDF/DOCX
+```
 
-Stop the backend before backing up the entire `data/` directory instead of copying only the database file while SQLite is running. Multi-user Docker data is stored in named volumes; see the deployment documentation for backup instructions.
+建议停止后端后备份整个 `data/`，而不是在 SQLite 运行时只复制单个 `.db` 文件。多用户 Docker 数据存放在命名卷中，备份方法见部署文档。
 
-The project does not require resumes to be uploaded to an official ResumeBranch server. If you enable a third-party LLM or parsing API, review that provider's data-processing and privacy policies.
+项目不会要求将简历上传到 ResumeBranch 的官方服务器；但启用第三方 LLM 或解析 API 后，请自行确认服务商的数据处理与隐私政策。
 
-## API and runtime checks
+## API 与运行检查
 
-After the backend starts, check its status with:
+后端启动后，可通过以下地址检查运行状态：
 
-~~~powershell
+```powershell
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/health
 Invoke-RestMethod http://127.0.0.1:8000/app/config
-~~~
+```
 
-FastAPI generates the complete development API contract:
+开发环境完整接口契约由 FastAPI 自动生成：
 
-- Swagger UI: <http://127.0.0.1:8000/docs>
-- OpenAPI JSON: <http://127.0.0.1:8000/openapi.json>
+- Swagger UI：<http://127.0.0.1:8000/docs>
+- OpenAPI JSON：<http://127.0.0.1:8000/openapi.json>
 
-The main endpoint groups cover runtime configuration, authentication and invite codes, resumes and versions, JDs, conversations, imports, PDF/DOCX export, AI settings, and confirmation saves. `POST /chat` streams events over SSE. Authentication endpoints are available only in the multi-user profile; the open-export-directory endpoint is available only in the single-user profile.
+主要接口分为运行配置、认证与邀请码、简历与版本、JD、对话、导入解析、PDF/DOCX 导出、AI 设置和确认保存。`POST /chat` 使用 SSE 返回流式事件。认证接口只在多用户模式开放，打开导出目录的接口只在单用户模式开放。
 
-## Tests
+## 测试
 
-~~~powershell
-# Backend: explicitly use test SQLite instead of inheriting MySQL from .env
+```powershell
+# 后端：显式使用测试 SQLite，避免继承当前 .env 中的 MySQL
 $env:APP_MODE = "local"
 $env:LOCAL_USER_EMAIL = "local@localhost"
 $env:DATABASE_URL = "sqlite:///./.local-run/test-suite.db"
 .\.venv-win\Scripts\python.exe -m unittest discover -s tests
 
-# Frontend
+# 前端
 Set-Location frontend
 npm test
 npm run build
-~~~
+```
 
-These commands force the regular tests to use SQLite under `.local-run/`. They do not run real MySQL integration tests or call a real LLM by default. Prerequisites for MySQL integration tests, real-LLM smoke tests, Docker acceptance, environment cleanup, and manual regression are listed in [Testing and acceptance](docs/testing.md). GitHub Actions runs the core backend tests, frontend tests, and production build on pushes and pull requests, and separately validates the multi-user Docker profile.
+以上命令强制普通测试使用 `.local-run/` 下的测试 SQLite。默认不会执行真实 MySQL 集成测试，也不会调用真实 LLM。MySQL 集成测试、真实 LLM 冒烟测试、Docker 验收、环境变量清理和人工回归的前置条件见 [测试与验收](docs/testing.md)。GitHub Actions 会在 push 和 Pull Request 时执行核心后端测试、前端测试和生产构建，并单独验证多用户 Docker 方案。
 
-## Project structure
+## 项目结构
 
-~~~text
+```text
 ResumeBranch/
-├── .agents/skills/                 # Discoverable Agent Skill packages and their schemas/scripts
-├── backend/                       # FastAPI, Agent, data models, import and export
-│   ├── harness/                   # Context, memory, persistence, and observability
-│   ├── skill_runtime.py           # Skill discovery, activation, schema loading, and invocation
+├── .agents/skills/                 # 可发现的 Agent Skill 包及其 schema、脚本
+├── backend/                       # FastAPI、Agent、数据模型、导出与导入
+│   ├── harness/                   # 上下文、记忆、工作流状态与可观测性
+│   ├── skill_runtime.py           # Skill 发现、激活、schema 加载与调用
 │   ├── Dockerfile
 │   ├── main.py
 │   ├── resume_agent.py
-│   ├── requirements.txt           # Dependency declarations
-│   └── requirements.lock.txt      # Locked dependencies
-├── frontend/                      # Vue SPA and Nginx container configuration
-├── scripts/                       # Windows startup, shutdown, health, and smoke scripts
-├── launcher/                      # GUI launcher source for the single-user installer
-├── installer/                     # Inno Setup recipe for the Windows installer
-├── packaging/                     # Installer build scripts and bundled runtime configuration
-├── tests/                         # Backend automated tests
-├── docs/                          # Deployment, architecture, testing, and reference docs
-├── data/                          # Local runtime data (not committed by default)
-├── output/resumes/                # Local exports (not committed by default)
-├── output/installer/               # Generated Windows installer artifact
-├── docker-compose.multi-user.yml  # Multi-user Compose definition
-├── .env*.example                  # Configuration templates
-├── README.md                      # English default README
-└── README.zh-CN.md                # Simplified Chinese README
-~~~
+│   ├── requirements.txt           # 依赖声明
+│   └── requirements.lock.txt      # 锁定依赖
+├── frontend/                      # Vue 单页应用与 Nginx 容器配置
+├── scripts/                       # Windows 启停、验活与冒烟脚本
+├── launcher/                      # 单用户安装包的图形启动器源码
+├── installer/                     # Windows 安装程序配置
+├── packaging/                     # 安装器构建脚本与运行时配置
+├── tests/                         # 后端自动化测试
+├── docs/                          # 部署、架构、测试、参考资料和 README 图片
+├── data/                          # 本地运行数据（默认不提交）
+├── output/resumes/                # 本地导出文件（默认不提交）
+├── output/installer/               # 构建生成的 Windows 安装程序
+├── docker-compose.multi-user.yml  # 多用户容器编排
+├── .env*.example                  # 配置模板
+├── README.md                      # 简体中文默认 README
+└── README.en.md                  # English README
+```
 
-## Documentation
+## 文档
 
-- [Documentation index](docs/README.md)
-- [Windows single-user installation](docs/windows-single-user-installation.md)
-- [Source development and testing](docs/source-development-testing.md)
-- [Multi-user Docker deployment](docs/docker-multi-user-deployment.md)
-- [Windows installation package build](packaging/README.md)
-- [Testing and acceptance](docs/testing.md)
-- [Agent architecture and state boundaries](docs/agent-architecture.md)
+- [文档索引](docs/README.md)
+- [Windows 单用户安装](docs/windows-single-user-installation.md)
+- [源码开发与测试](docs/source-development-testing.md)
+- [多用户 Docker 部署](docs/docker-multi-user-deployment.md)
+- [Windows 安装包构建说明](packaging/README.md)
+- [测试与验收](docs/testing.md)
+- [Agent 架构与状态边界](docs/agent-architecture.md)
 
 ## License
 
-This project is released under the [MIT License](LICENSE).
+本项目采用 [MIT License](LICENSE)。
