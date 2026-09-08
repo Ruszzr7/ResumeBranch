@@ -268,7 +268,7 @@ if ($trackedChangesAfter.Count -gt 0) {
     throw "Frozen application files changed during packaging: $($trackedChangesAfter -join ', ')"
 }
 
-$installerPath = Join-Path $outputRoot "ResumeBranch-Setup-v1.1.3-x64.exe"
+$installerPath = Join-Path $outputRoot "ResumeBranch-Setup-v1.2.0-x64.exe"
 $installerHash = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash
 Write-Host ""
 Write-Host "Installer ready: $installerPath"
