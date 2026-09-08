@@ -1,10 +1,10 @@
 {
-  "dataset_id": "agent-core-total-600",
+  "dataset_id": "agent-core-total-700",
   "mode": "offline",
-  "generated_at": "2026-08-30T09:35:29.584723+00:00",
+  "generated_at": "2026-09-08T15:06:33.750800+00:00",
   "dataset_case_counts": {
     "routing": 200,
-    "skill": 300,
+    "skill": 400,
     "safety": 100
   },
   "case_counts": {
@@ -18,47 +18,34 @@
       "incorrect": 0,
       "accuracy": 1.0,
       "per_path": {
+        "confirm_endpoint": {
+          "correct": 28,
+          "incorrect": 0
+        },
         "conversation_llm": {
-          "correct": 101,
+          "correct": 134,
           "incorrect": 0
         },
         "direct_edit": {
-          "correct": 40,
-          "incorrect": 0
-        },
-        "interview_coach": {
-          "correct": 31,
-          "incorrect": 0
-        },
-        "tool_node": {
-          "correct": 28,
+          "correct": 38,
           "incorrect": 0
         }
       },
       "confusion_matrix": {
+        "confirm_endpoint": {
+          "confirm_endpoint": 28,
+          "conversation_llm": 0,
+          "direct_edit": 0
+        },
         "conversation_llm": {
-          "conversation_llm": 101,
-          "direct_edit": 0,
-          "interview_coach": 0,
-          "tool_node": 0
+          "confirm_endpoint": 0,
+          "conversation_llm": 134,
+          "direct_edit": 0
         },
         "direct_edit": {
+          "confirm_endpoint": 0,
           "conversation_llm": 0,
-          "direct_edit": 40,
-          "interview_coach": 0,
-          "tool_node": 0
-        },
-        "interview_coach": {
-          "conversation_llm": 0,
-          "direct_edit": 0,
-          "interview_coach": 31,
-          "tool_node": 0
-        },
-        "tool_node": {
-          "conversation_llm": 0,
-          "direct_edit": 0,
-          "interview_coach": 0,
-          "tool_node": 28
+          "direct_edit": 38
         }
       },
       "failures": []
@@ -70,7 +57,7 @@
       "target_total": 77,
       "non_target_field_error_rate": 0.0,
       "non_target_changed": 0,
-      "non_target_total": 30956,
+      "non_target_total": 31556,
       "collateral_change_case_rate": 0.0,
       "collateral_cases_changed": 0,
       "collateral_cases": 100,
@@ -271,8 +258,8 @@
       {
         "id": "route-031",
         "prompt": "把正文字号调整为 10.5 磅。",
-        "expected": "direct_edit",
-        "actual": "direct_edit"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-032",
@@ -301,92 +288,92 @@
       {
         "id": "route-036",
         "prompt": "确认全部修改。",
-        "expected": "tool_node",
-        "actual": "tool_node"
+        "expected": "confirm_endpoint",
+        "actual": "confirm_endpoint"
       },
       {
         "id": "route-037",
         "prompt": "全部接受候选修改。",
-        "expected": "tool_node",
-        "actual": "tool_node"
+        "expected": "confirm_endpoint",
+        "actual": "confirm_endpoint"
       },
       {
         "id": "route-038",
         "prompt": "只应用选中的修改。",
-        "expected": "tool_node",
-        "actual": "tool_node"
+        "expected": "confirm_endpoint",
+        "actual": "confirm_endpoint"
       },
       {
         "id": "route-039",
         "prompt": "取消这次修改。",
-        "expected": "tool_node",
-        "actual": "tool_node"
+        "expected": "confirm_endpoint",
+        "actual": "confirm_endpoint"
       },
       {
         "id": "route-040",
         "prompt": "拒绝当前预览。",
-        "expected": "tool_node",
-        "actual": "tool_node"
+        "expected": "confirm_endpoint",
+        "actual": "confirm_endpoint"
       },
       {
         "id": "route-041",
         "prompt": "放弃候选版本并保留原简历。",
-        "expected": "tool_node",
-        "actual": "tool_node"
+        "expected": "confirm_endpoint",
+        "actual": "confirm_endpoint"
       },
       {
         "id": "route-042",
         "prompt": "开始全面诊断。",
-        "expected": "interview_coach",
-        "actual": "interview_coach"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-043",
         "prompt": "请继续诊断最薄弱的经历。",
-        "expected": "interview_coach",
-        "actual": "interview_coach"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-044",
         "prompt": "开始深挖我的项目经历。",
-        "expected": "interview_coach",
-        "actual": "interview_coach"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-045",
         "prompt": "我负责权限接口和自动化测试。",
-        "expected": "interview_coach",
-        "actual": "interview_coach"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-046",
         "prompt": "暂停这轮求职辅导。",
-        "expected": "interview_coach",
-        "actual": "interview_coach"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-047",
         "prompt": "继续刚才的问题。",
-        "expected": "interview_coach",
-        "actual": "interview_coach"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-048",
         "prompt": "应用当前已经核实的改写建议。",
-        "expected": "interview_coach",
-        "actual": "interview_coach"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-049",
         "prompt": "结合岗位要求开始复盘。",
-        "expected": "interview_coach",
-        "actual": "interview_coach"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-050",
         "prompt": "结束本轮 JD 复盘。",
-        "expected": "interview_coach",
-        "actual": "interview_coach"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-v2-001",
@@ -552,7 +539,7 @@
       },
       {
         "id": "route-v2-028",
-        "prompt": "请修改教育经历：将海岚大学替换为青屿大学。",
+        "prompt": "请把邮箱改为 lin.new@example.com。",
         "expected": "direct_edit",
         "actual": "direct_edit"
       },
@@ -571,8 +558,8 @@
       {
         "id": "route-v2-031",
         "prompt": "将正文字号设置为 11 磅。",
-        "expected": "direct_edit",
-        "actual": "direct_edit"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-v2-032",
@@ -601,92 +588,92 @@
       {
         "id": "route-v2-036",
         "prompt": "接受当前全部候选。",
-        "expected": "tool_node",
-        "actual": "tool_node"
+        "expected": "confirm_endpoint",
+        "actual": "confirm_endpoint"
       },
       {
         "id": "route-v2-037",
         "prompt": "确认应用所有修改。",
-        "expected": "tool_node",
-        "actual": "tool_node"
+        "expected": "confirm_endpoint",
+        "actual": "confirm_endpoint"
       },
       {
         "id": "route-v2-038",
         "prompt": "仅确认我勾选的变更。",
-        "expected": "tool_node",
-        "actual": "tool_node"
+        "expected": "confirm_endpoint",
+        "actual": "confirm_endpoint"
       },
       {
         "id": "route-v2-039",
         "prompt": "取消当前候选。",
-        "expected": "tool_node",
-        "actual": "tool_node"
+        "expected": "confirm_endpoint",
+        "actual": "confirm_endpoint"
       },
       {
         "id": "route-v2-040",
         "prompt": "不要保存这次预览。",
-        "expected": "tool_node",
-        "actual": "tool_node"
+        "expected": "confirm_endpoint",
+        "actual": "confirm_endpoint"
       },
       {
         "id": "route-v2-041",
         "prompt": "拒绝所有候选并保留现状。",
-        "expected": "tool_node",
-        "actual": "tool_node"
+        "expected": "confirm_endpoint",
+        "actual": "confirm_endpoint"
       },
       {
         "id": "route-v2-042",
         "prompt": "开始检查整份简历。",
-        "expected": "interview_coach",
-        "actual": "interview_coach"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-v2-043",
         "prompt": "继续回答诊断问题。",
-        "expected": "interview_coach",
-        "actual": "interview_coach"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-v2-044",
         "prompt": "开始深挖工作经历。",
-        "expected": "interview_coach",
-        "actual": "interview_coach"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-v2-045",
         "prompt": "我用慢查询日志定位了索引问题。",
-        "expected": "interview_coach",
-        "actual": "interview_coach"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-v2-046",
         "prompt": "先暂停这轮深挖。",
-        "expected": "interview_coach",
-        "actual": "interview_coach"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-v2-047",
         "prompt": "恢复刚才的求职辅导。",
-        "expected": "interview_coach",
-        "actual": "interview_coach"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-v2-048",
         "prompt": "应用已经确认过的辅导结论。",
-        "expected": "interview_coach",
-        "actual": "interview_coach"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-v2-049",
         "prompt": "开始根据当前 JD 复盘项目。",
-        "expected": "interview_coach",
-        "actual": "interview_coach"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-v2-050",
         "prompt": "结束岗位复盘。",
-        "expected": "interview_coach",
-        "actual": "interview_coach"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-v3-001",
@@ -732,7 +719,7 @@
       },
       {
         "id": "route-v3-008",
-        "prompt": "先重写项目职责，再把项目经历放到工作经历前面。",
+        "prompt": "把工作经历的职位改成“后端开发工程师”，同时把工作经历模块移到项目经历前面。",
         "expected": "conversation_llm",
         "actual": "conversation_llm"
       },
@@ -871,20 +858,20 @@
       {
         "id": "route-v3-031",
         "prompt": "我想继续上次的项目追问。",
-        "expected": "interview_coach",
-        "actual": "interview_coach"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-v3-032",
         "prompt": "我补充完了，请继续追问结果数据。",
-        "expected": "interview_coach",
-        "actual": "interview_coach"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-v3-033",
         "prompt": "根据刚才的 JD 对照继续复盘。",
-        "expected": "interview_coach",
-        "actual": "interview_coach"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-v3-034",
@@ -895,38 +882,38 @@
       {
         "id": "route-v3-035",
         "prompt": "确认全部接受。",
-        "expected": "tool_node",
-        "actual": "tool_node"
+        "expected": "confirm_endpoint",
+        "actual": "confirm_endpoint"
       },
       {
         "id": "route-v3-036",
         "prompt": "这次先不采用，保留原简历。",
-        "expected": "tool_node",
-        "actual": "tool_node"
+        "expected": "confirm_endpoint",
+        "actual": "confirm_endpoint"
       },
       {
         "id": "route-v3-037",
         "prompt": "只接受第 2 项修改。",
-        "expected": "tool_node",
-        "actual": "tool_node"
+        "expected": "confirm_endpoint",
+        "actual": "confirm_endpoint"
       },
       {
         "id": "route-v3-038",
         "prompt": "全部采用刚才的候选版本。",
-        "expected": "tool_node",
-        "actual": "tool_node"
+        "expected": "confirm_endpoint",
+        "actual": "confirm_endpoint"
       },
       {
         "id": "route-v3-039",
         "prompt": "取消本次预览。",
-        "expected": "tool_node",
-        "actual": "tool_node"
+        "expected": "confirm_endpoint",
+        "actual": "confirm_endpoint"
       },
       {
         "id": "route-v3-040",
         "prompt": "确认当前这组修改。",
-        "expected": "tool_node",
-        "actual": "tool_node"
+        "expected": "confirm_endpoint",
+        "actual": "confirm_endpoint"
       },
       {
         "id": "route-v3-041",
@@ -1171,122 +1158,122 @@
       {
         "id": "route-v4-040",
         "prompt": "开始一次简历诊断。",
-        "expected": "interview_coach",
-        "actual": "interview_coach"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-v4-041",
         "prompt": "继续追问我的项目成果。",
-        "expected": "interview_coach",
-        "actual": "interview_coach"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-v4-042",
         "prompt": "请根据当前简历模拟面试官提问。",
-        "expected": "interview_coach",
-        "actual": "interview_coach"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-v4-043",
         "prompt": "先从岗位匹配度开始分析。",
-        "expected": "interview_coach",
-        "actual": "interview_coach"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-v4-044",
         "prompt": "我想回答刚才的问题：项目上线后接口响应时间下降了。",
-        "expected": "interview_coach",
-        "actual": "interview_coach"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-v4-045",
         "prompt": "暂停这次辅导。",
-        "expected": "interview_coach",
-        "actual": "interview_coach"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-v4-046",
         "prompt": "恢复上次的面试练习。",
-        "expected": "interview_coach",
-        "actual": "interview_coach"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-v4-047",
         "prompt": "结束本轮辅导。",
-        "expected": "interview_coach",
-        "actual": "interview_coach"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-v4-048",
         "prompt": "请针对 JD 给我下一道追问。",
-        "expected": "interview_coach",
-        "actual": "interview_coach"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-v4-049",
         "prompt": "诊断我的简历并列出待核实事项。",
-        "expected": "interview_coach",
-        "actual": "interview_coach"
+        "expected": "conversation_llm",
+        "actual": "conversation_llm"
       },
       {
         "id": "route-v4-050",
         "prompt": "确认刚才的修改",
-        "expected": "tool_node",
-        "actual": "tool_node"
+        "expected": "confirm_endpoint",
+        "actual": "confirm_endpoint"
       },
       {
         "id": "route-v4-051",
         "prompt": "先取消这次修改",
-        "expected": "tool_node",
-        "actual": "tool_node"
+        "expected": "confirm_endpoint",
+        "actual": "confirm_endpoint"
       },
       {
         "id": "route-v4-052",
         "prompt": "接受当前候选",
-        "expected": "tool_node",
-        "actual": "tool_node"
+        "expected": "confirm_endpoint",
+        "actual": "confirm_endpoint"
       },
       {
         "id": "route-v4-053",
         "prompt": "拒绝当前候选",
-        "expected": "tool_node",
-        "actual": "tool_node"
+        "expected": "confirm_endpoint",
+        "actual": "confirm_endpoint"
       },
       {
         "id": "route-v4-054",
-        "prompt": "确认全部修改",
-        "expected": "tool_node",
-        "actual": "tool_node"
+        "prompt": "这些修改我都接受，请全部保存",
+        "expected": "confirm_endpoint",
+        "actual": "confirm_endpoint"
       },
       {
         "id": "route-v4-055",
         "prompt": "全部取消",
-        "expected": "tool_node",
-        "actual": "tool_node"
+        "expected": "confirm_endpoint",
+        "actual": "confirm_endpoint"
       },
       {
         "id": "route-v4-056",
         "prompt": "应用刚才的候选",
-        "expected": "tool_node",
-        "actual": "tool_node"
+        "expected": "confirm_endpoint",
+        "actual": "confirm_endpoint"
       },
       {
         "id": "route-v4-057",
         "prompt": "不要应用这次候选",
-        "expected": "tool_node",
-        "actual": "tool_node"
+        "expected": "confirm_endpoint",
+        "actual": "confirm_endpoint"
       },
       {
         "id": "route-v4-058",
         "prompt": "我确认保存",
-        "expected": "tool_node",
-        "actual": "tool_node"
+        "expected": "confirm_endpoint",
+        "actual": "confirm_endpoint"
       },
       {
         "id": "route-v4-059",
         "prompt": "我不接受这次修改",
-        "expected": "tool_node",
-        "actual": "tool_node"
+        "expected": "confirm_endpoint",
+        "actual": "confirm_endpoint"
       }
     ],
     "safety": [
@@ -1295,7 +1282,7 @@
         "phase": "candidate",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1312,7 +1299,7 @@
         "phase": "candidate",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1329,7 +1316,7 @@
         "phase": "candidate",
         "target_total": 2,
         "target_success": 2,
-        "non_target_total": 309,
+        "non_target_total": 315,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1346,7 +1333,7 @@
         "phase": "candidate",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1363,7 +1350,7 @@
         "phase": "candidate",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1380,7 +1367,7 @@
         "phase": "isolation",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1397,7 +1384,7 @@
         "phase": "isolation",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1414,7 +1401,7 @@
         "phase": "isolation",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1431,7 +1418,7 @@
         "phase": "isolation",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1448,7 +1435,7 @@
         "phase": "isolation",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1465,7 +1452,7 @@
         "phase": "confirm",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1482,7 +1469,7 @@
         "phase": "confirm",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1499,7 +1486,7 @@
         "phase": "confirm",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1516,7 +1503,7 @@
         "phase": "confirm",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1533,7 +1520,7 @@
         "phase": "confirm",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1550,7 +1537,7 @@
         "phase": "cancel",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1567,7 +1554,7 @@
         "phase": "cancel",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1584,7 +1571,7 @@
         "phase": "cancel",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1601,7 +1588,7 @@
         "phase": "cancel",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1618,7 +1605,7 @@
         "phase": "cancel",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1635,7 +1622,7 @@
         "phase": "stale",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1652,7 +1639,7 @@
         "phase": "stale",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1669,7 +1656,7 @@
         "phase": "stale",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1686,7 +1673,7 @@
         "phase": "stale",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1703,7 +1690,7 @@
         "phase": "stale",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1720,7 +1707,7 @@
         "phase": "candidate",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1737,7 +1724,7 @@
         "phase": "candidate",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1754,7 +1741,7 @@
         "phase": "candidate",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1771,7 +1758,7 @@
         "phase": "candidate",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1788,7 +1775,7 @@
         "phase": "candidate",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1805,7 +1792,7 @@
         "phase": "isolation",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1822,7 +1809,7 @@
         "phase": "isolation",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1839,7 +1826,7 @@
         "phase": "isolation",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1856,7 +1843,7 @@
         "phase": "isolation",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1873,7 +1860,7 @@
         "phase": "isolation",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1890,7 +1877,7 @@
         "phase": "confirm",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1907,7 +1894,7 @@
         "phase": "confirm",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1924,7 +1911,7 @@
         "phase": "confirm",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1941,7 +1928,7 @@
         "phase": "confirm",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1958,7 +1945,7 @@
         "phase": "confirm",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1975,7 +1962,7 @@
         "phase": "cancel",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -1992,7 +1979,7 @@
         "phase": "cancel",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2009,7 +1996,7 @@
         "phase": "cancel",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2026,7 +2013,7 @@
         "phase": "cancel",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2043,7 +2030,7 @@
         "phase": "cancel",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2060,7 +2047,7 @@
         "phase": "stale",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2077,7 +2064,7 @@
         "phase": "stale",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2094,7 +2081,7 @@
         "phase": "stale",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2111,7 +2098,7 @@
         "phase": "stale",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2128,7 +2115,7 @@
         "phase": "stale",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2145,7 +2132,7 @@
         "phase": "candidate",
         "target_total": 2,
         "target_success": 2,
-        "non_target_total": 309,
+        "non_target_total": 315,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2162,7 +2149,7 @@
         "phase": "candidate",
         "target_total": 2,
         "target_success": 2,
-        "non_target_total": 309,
+        "non_target_total": 315,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2179,7 +2166,7 @@
         "phase": "candidate",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 311,
+        "non_target_total": 317,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2196,7 +2183,7 @@
         "phase": "candidate",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 301,
+        "non_target_total": 307,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2213,7 +2200,7 @@
         "phase": "candidate",
         "target_total": 2,
         "target_success": 2,
-        "non_target_total": 309,
+        "non_target_total": 315,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2230,7 +2217,7 @@
         "phase": "isolation",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2247,7 +2234,7 @@
         "phase": "isolation",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2264,7 +2251,7 @@
         "phase": "isolation",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2281,7 +2268,7 @@
         "phase": "isolation",
         "target_total": 2,
         "target_success": 2,
-        "non_target_total": 309,
+        "non_target_total": 315,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2298,7 +2285,7 @@
         "phase": "isolation",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 308,
+        "non_target_total": 314,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2315,7 +2302,7 @@
         "phase": "confirm",
         "target_total": 2,
         "target_success": 2,
-        "non_target_total": 309,
+        "non_target_total": 315,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2332,7 +2319,7 @@
         "phase": "confirm",
         "target_total": 3,
         "target_success": 3,
-        "non_target_total": 308,
+        "non_target_total": 314,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2349,7 +2336,7 @@
         "phase": "confirm",
         "target_total": 2,
         "target_success": 2,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2366,7 +2353,7 @@
         "phase": "confirm",
         "target_total": 2,
         "target_success": 2,
-        "non_target_total": 309,
+        "non_target_total": 315,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2383,7 +2370,7 @@
         "phase": "cancel",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2400,7 +2387,7 @@
         "phase": "cancel",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 301,
+        "non_target_total": 307,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2417,7 +2404,7 @@
         "phase": "cancel",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 309,
+        "non_target_total": 315,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2434,7 +2421,7 @@
         "phase": "stale",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2451,7 +2438,7 @@
         "phase": "stale",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 309,
+        "non_target_total": 315,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2468,7 +2455,7 @@
         "phase": "stale",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2485,7 +2472,7 @@
         "phase": "confirm",
         "target_total": 2,
         "target_success": 2,
-        "non_target_total": 308,
+        "non_target_total": 314,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2502,7 +2489,7 @@
         "phase": "confirm",
         "target_total": 2,
         "target_success": 2,
-        "non_target_total": 309,
+        "non_target_total": 315,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2519,7 +2506,7 @@
         "phase": "cancel",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 307,
+        "non_target_total": 313,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2536,7 +2523,7 @@
         "phase": "stale",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2553,7 +2540,7 @@
         "phase": "confirm",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 308,
+        "non_target_total": 314,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2570,7 +2557,7 @@
         "phase": "candidate",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2587,7 +2574,7 @@
         "phase": "candidate",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2604,7 +2591,7 @@
         "phase": "candidate",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 311,
+        "non_target_total": 317,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2621,7 +2608,7 @@
         "phase": "candidate",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2638,7 +2625,7 @@
         "phase": "candidate",
         "target_total": 3,
         "target_success": 3,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2655,7 +2642,7 @@
         "phase": "confirm",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2672,7 +2659,7 @@
         "phase": "confirm",
         "target_total": 2,
         "target_success": 2,
-        "non_target_total": 309,
+        "non_target_total": 315,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2689,7 +2676,7 @@
         "phase": "confirm",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 311,
+        "non_target_total": 317,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2706,7 +2693,7 @@
         "phase": "confirm",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 301,
+        "non_target_total": 307,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2723,7 +2710,7 @@
         "phase": "confirm",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2740,7 +2727,7 @@
         "phase": "cancel",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2757,7 +2744,7 @@
         "phase": "cancel",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 311,
+        "non_target_total": 317,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2774,7 +2761,7 @@
         "phase": "cancel",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2791,7 +2778,7 @@
         "phase": "cancel",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2808,7 +2795,7 @@
         "phase": "cancel",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2825,7 +2812,7 @@
         "phase": "isolation",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2842,7 +2829,7 @@
         "phase": "isolation",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2859,7 +2846,7 @@
         "phase": "isolation",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2876,7 +2863,7 @@
         "phase": "isolation",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2893,7 +2880,7 @@
         "phase": "isolation",
         "target_total": 1,
         "target_success": 1,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2910,7 +2897,7 @@
         "phase": "stale",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2927,7 +2914,7 @@
         "phase": "stale",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2944,7 +2931,7 @@
         "phase": "stale",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 311,
+        "non_target_total": 317,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2961,7 +2948,7 @@
         "phase": "stale",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,
@@ -2978,7 +2965,7 @@
         "phase": "stale",
         "target_total": 0,
         "target_success": 0,
-        "non_target_total": 310,
+        "non_target_total": 316,
         "non_target_changed": 0,
         "collateral_case": 1,
         "collateral_case_changed": 0,

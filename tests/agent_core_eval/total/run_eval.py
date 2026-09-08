@@ -16,6 +16,7 @@ import json
 from pathlib import Path
 import sys
 from typing import Any
+import unicodedata
 from unittest.mock import patch
 
 
@@ -34,6 +35,7 @@ from backend.resume_agent import (
     entry_router,
     graph,
     make_pending_confirmation,
+    resume_coach_tool,
     resume_snapshot_tool,
     resume_edit_tool,
 )
@@ -60,10 +62,16 @@ HERE = Path(__file__).resolve().parent
 EVAL_ROOT = HERE.parent
 CASES_PATH = HERE / "cases.json"
 EXPECTED_COUNTS = {"routing": 200, "skill": 400, "safety": 100}
+# The production conversation node has its own per-LLM-call timeout. A graph
+# turn may contain more than one model/tool hop, so keep a larger outer budget
+# while ensuring one pathological case cannot stall the complete evaluation.
+EVAL_CASE_TIMEOUT_SECONDS = 180.0
+EVAL_CONCURRENCY = 4
 FORBIDDEN_CASE_MARKERS = ("虚构", "虚假", "伪造", "捏造", "测试信息")
 TOOLS = {
     resume_edit_tool.name: resume_edit_tool,
     resume_snapshot_tool.name: resume_snapshot_tool,
+    resume_coach_tool.name: resume_coach_tool,
 }
 
 
@@ -138,6 +146,12 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _canonical_prompt(value: Any) -> str:
+    """Normalize representation-only prompt differences for duplicate checks."""
+    normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    return "".join(character for character in normalized if character.isalnum())
+
+
 def _load_cases(cases_path: Path = CASES_PATH) -> dict[str, Any]:
     payload = json.loads(cases_path.read_text(encoding="utf-8"))
     if payload.get("schema_version") != 1:
@@ -164,6 +178,16 @@ def _load_cases(cases_path: Path = CASES_PATH) -> dict[str, Any]:
     total_count = sum(expected_counts.values())
     if len(all_ids) != total_count or len(set(all_ids)) != total_count:
         raise ValueError(f"评测集必须包含 {total_count} 个唯一案例 ID")
+    prompt_ids: dict[str, list[str]] = {}
+    for category in expected_counts:
+        for case in payload[category]:
+            canonical = _canonical_prompt(case.get("prompt"))
+            if not canonical:
+                raise ValueError(f"案例提示词不能为空：{case.get('id', '')}")
+            prompt_ids.setdefault(canonical, []).append(str(case.get("id") or ""))
+    duplicate_groups = [ids for ids in prompt_ids.values() if len(ids) > 1]
+    if duplicate_groups:
+        raise ValueError(f"评测集包含规范化后重复的提示词：{duplicate_groups}")
     serialized = json.dumps(payload, ensure_ascii=False)
     found_markers = [marker for marker in FORBIDDEN_CASE_MARKERS if marker in serialized]
     if found_markers:
@@ -209,17 +233,74 @@ def _base_state(prompt: str, **overrides: Any) -> AgentState:
 def _case_state_overrides(case: dict[str, Any]) -> dict[str, Any]:
     """Apply only the fixture explicitly requested by a test case."""
     overrides = dict(case.get("state") or {})
+    if case.get("coach_case_group") == "explicit_command_start":
+        # The real /chat boundary preloads the command-owned Skill before the
+        # graph starts. Reproduce that boundary so a forced coach turn always
+        # has the resume_coach tool available.
+        overrides.setdefault("active_skill_names", ["resume-coach"])
     if case.get("fixture") == "photo":
         fixture_resume = deepcopy(SYNTHETIC_RESUME)
         fixture_resume["basics"]["photo"] = SYNTHETIC_PHOTO_DATA_URL
         overrides.setdefault("resume_data", fixture_resume)
         overrides.setdefault("photo", SYNTHETIC_PHOTO_DATA_URL)
+    coach_fixture = str(case.get("coach_fixture") or "")
+    if coach_fixture == "active_issue":
+        overrides.setdefault("coach_required", True)
+        overrides.setdefault("context_type", "coaching")
+        overrides.setdefault("active_skill_names", ["resume-coach"])
+        overrides["coach_state"] = {
+            "schema_version": 1,
+            "active": True,
+            "entry": "explicit_command",
+            "agenda": [],
+            "current_issue_id": "issue-eval-active",
+            "issues": {
+                "issue-eval-active": {
+                    "problem": "项目经历缺少可核验的个人行动与结果",
+                    "status": "active",
+                    "evidence": [],
+                    "conclusions": [],
+                    "open_questions": ["你在项目中具体负责了什么，结果如何？"],
+                    "pending_preview_offer": None,
+                    "result": "",
+                },
+            },
+            "pending_start_offer": None,
+        }
+    elif coach_fixture == "pending_start_offer":
+        case_id = str(case.get("id") or "coach-eval")
+        overrides.setdefault("context_type", "main")
+        overrides.setdefault("active_skill_names", ["resume-coach"])
+        overrides["coach_state"] = {
+            "schema_version": 1,
+            "active": False,
+            "entry": "",
+            "agenda": [],
+            "current_issue_id": "",
+            "issues": {},
+            "pending_start_offer": {
+                "offer_id": f"offer-{case_id}",
+                "problem": "通过多轮追问核实项目经历中的个人行动与结果",
+                "source_request_id": f"request-{case_id}",
+                "status": "offered",
+            },
+        }
+    elif coach_fixture:
+        raise ValueError(f"未知 coach_fixture：{coach_fixture}")
     return overrides
 
 
 def _case_messages(case: dict[str, Any], *, prompt: str | None = None) -> list[Any]:
     """Build the real conversation history for a case with optional prior turns."""
     messages: list[Any] = []
+    coach_fixture = str(case.get("coach_fixture") or "")
+    if coach_fixture == "active_issue":
+        messages.append(AIMessage(content="请说明你在该项目中的具体职责或结果。"))
+    elif coach_fixture == "pending_start_offer":
+        messages.append(AIMessage(content=(
+            "这个问题需要核实更多事实。我可以进入深度打磨，每次只问一个问题，"
+            "并在修改前再次征求你的确认。是否进入？"
+        )))
     for turn in case.get("turns") or []:
         if not isinstance(turn, dict):
             continue
@@ -641,8 +722,9 @@ async def run_skill(cases: list[dict[str, Any]], *, mode: str) -> tuple[list[dic
     if not LLM_ENABLED:
         raise RuntimeError("当前对话 API 未配置，无法执行在线 Skill 评测")
     selected = [case for case in cases if case.get("smoke") is True] if mode == "smoke" else cases
-    rows = []
-    for index, case in enumerate(selected, start=1):
+    semaphore = asyncio.Semaphore(EVAL_CONCURRENCY)
+
+    async def run_case(index: int, case: dict[str, Any]) -> dict[str, Any]:
         state = _base_state(
             case["prompt"],
             messages=_case_messages(case),
@@ -650,40 +732,44 @@ async def run_skill(cases: list[dict[str, Any]], *, mode: str) -> tuple[list[dic
             **_case_state_overrides(case),
         )
         started_route = entry_router(state)
-        try:
-            result = await graph.ainvoke(state, config={"recursion_limit": 12})
-            new_messages = list(result.get("messages") or [])[len(state.messages):]
-            predicted_calls = []
-            assistant_parts = []
-            for response in new_messages:
-                if not isinstance(response, AIMessage):
-                    continue
-                calls = list(getattr(response, "tool_calls", None) or [])
-                invalid_calls = list(getattr(response, "invalid_tool_calls", None) or [])
-                for call in calls + invalid_calls:
-                    name = str(_tool_call_value(call, "name", "") or "")
-                    if name == "load_agent_skill":
+        async with semaphore:
+            try:
+                result = await asyncio.wait_for(
+                    graph.ainvoke(state, config={"recursion_limit": 12}),
+                    timeout=EVAL_CASE_TIMEOUT_SECONDS,
+                )
+                new_messages = list(result.get("messages") or [])[len(state.messages):]
+                predicted_calls = []
+                assistant_parts = []
+                for response in new_messages:
+                    if not isinstance(response, AIMessage):
                         continue
-                    args = _tool_call_value(call, "args", {})
-                    schema_valid, executable, validation_error = await _validate_call(name, args)
-                    predicted_calls.append({
-                        "name": name, "args": args if isinstance(args, dict) else {},
-                        "schema_valid": schema_valid, "executable": executable,
-                        "validation_error": validation_error,
-                    })
-                content = getattr(response, "content", "")
-                if content:
-                    assistant_parts.append(
-                        content if isinstance(content, str)
-                        else json.dumps(content, ensure_ascii=False)
-                    )
-            assistant_text = "\n\n".join(assistant_parts)
-            error = ""
-        except Exception as exc:
-            result = {}
-            predicted_calls = []
-            assistant_text = ""
-            error = f"{type(exc).__name__}: {str(exc)}"
+                    calls = list(getattr(response, "tool_calls", None) or [])
+                    invalid_calls = list(getattr(response, "invalid_tool_calls", None) or [])
+                    for call in calls + invalid_calls:
+                        name = str(_tool_call_value(call, "name", "") or "")
+                        if name == "load_agent_skill":
+                            continue
+                        args = _tool_call_value(call, "args", {})
+                        schema_valid, executable, validation_error = await _validate_call(name, args)
+                        predicted_calls.append({
+                            "name": name, "args": args if isinstance(args, dict) else {},
+                            "schema_valid": schema_valid, "executable": executable,
+                            "validation_error": validation_error,
+                        })
+                    content = getattr(response, "content", "")
+                    if content:
+                        assistant_parts.append(
+                            content if isinstance(content, str)
+                            else json.dumps(content, ensure_ascii=False)
+                        )
+                assistant_text = "\n\n".join(assistant_parts)
+                error = ""
+            except Exception as exc:
+                result = {}
+                predicted_calls = []
+                assistant_text = ""
+                error = f"{type(exc).__name__}: {str(exc)}"
         required_tools = (
             case.get("required_tools")
             if "required_tools" in case
@@ -704,12 +790,16 @@ async def run_skill(cases: list[dict[str, Any]], *, mode: str) -> tuple[list[dic
             "error": error,
         }
         await _attach_operation_outcome(row, case, graph_result=result)
-        rows.append(row)
         predicted = [call["name"] for call in predicted_calls]
         print(
             f"[{index}/{len(selected)}] {case['id']} required={row['required_tools']} "
             f"optional={row['optional_tools']} predicted={predicted}"
         )
+        return row
+
+    rows = list(await asyncio.gather(
+        *(run_case(index, case) for index, case in enumerate(selected, start=1))
+    ))
     return rows, skill_metrics(rows)
 
 
@@ -765,12 +855,6 @@ def _report(
         f"- 分类：路由 {dataset_counts['routing']} 条、Skill 选择 {dataset_counts['skill']} 条、"
         f"修改安全 {dataset_counts['safety']} 条"
     )
-    lines.append("- 本轮评测调整：修改正确性按最终候选结果判定；操作 JSON 严格匹配仅作为诊断信息，不作为核心指标")
-    lines.append(f"- 报告生成时间：{_utc_now()}")
-    if smoke:
-        lines.append(
-            f"- 在线 Smoke：已执行 {smoke.get('case_count', 0)} 条，结果仅用于接口与结果格式检查"
-        )
     lines.extend([
         "", "## 指标定义", "",
         "- 路由准确率：入口节点预测正确数 / 路由案例数。",
@@ -817,18 +901,6 @@ def _report(
     if online:
         skill = online["metrics"]["skill"]
         lines.extend(["", "## 在线 Skill 结果", ""])
-        run_scope = online.get("run_scope") or {}
-        if run_scope.get("type") == "targeted_rerun":
-            if run_scope.get("merged_with_existing"):
-                lines.append(
-                    f"- 本轮定向复测 {run_scope.get('executed_case_count', 0)} 条上一轮失败案例；"
-                    "其余案例沿用上一轮实际结果后重新计算总体指标。"
-                )
-            else:
-                lines.append(
-                    f"- 本轮为独立定向复测，共执行 {run_scope.get('executed_case_count', 0)} 条案例；"
-                    "下列在线指标仅基于本轮案例，不代表 400 条 Skill 总集结果。"
-                )
         for name, values in skill["per_skill"].items():
             lines.append(
                 f"- `{name}`：Precision {_percentage(values['precision'])}，"
@@ -885,20 +957,6 @@ def _report(
                 )
             else:
                 lines.append("- 无")
-    probe_path = results_dir / "route-016-online-probe.json"
-    if probe_path.exists():
-        probe = json.loads(probe_path.read_text(encoding="utf-8"))
-        lines.extend([
-            "", "## route-016 在线行为探针", "",
-            f"- 入口：`{probe['entry_route']}`；调用：`{', '.join(probe['predicted_tools'])}`。",
-            f"- 回复先追问未明确的项目职责：{'是' if probe['clarification_question_detected'] else '否'}。",
-            f"- 简历内容操作 {probe['resume_operations_count']} 条；独立排版操作 {probe['layout_operations_count']} 条。",
-            f"- 参数 Schema：{'通过' if probe['schema_valid'] else '失败'}；操作可执行：{'是' if probe['executable'] else '否'}。",
-        ])
-    lines.extend([
-        "", "## 可用于简历的表述草稿", "",
-        f"构建 {total_count} 条版本化 Agent 核心评测集，覆盖 LangGraph 路由、Skill 选择与候选修改安全；实现离线可复现指标和在线对话模型评测，量化路由准确率、Skill Precision/Recall、修改可执行率与最终修改正确率，并通过失败归因完善 Agent 行为。",
-    ])
     lines.extend([
         "", "## 说明", "",
         "所有指标均由实际运行结果计算；在线评测仅使用项目当前对话 API 配置，不读取或输出 API Key。",

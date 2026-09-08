@@ -1,9 +1,7 @@
 # ResumeBranch Agent 核心评测报告
 
-- 数据集：`agent-core-total-600`，600 条唯一评测案例
-- 分类：路由 200 条、Skill 选择 300 条、修改安全 100 条
-- 本轮评测调整：修改正确性按最终候选结果判定；操作 JSON 严格匹配仅作为诊断信息，不作为核心指标
-- 报告生成时间：2026-08-30T10:47:08.831158+00:00
+- 数据集：`agent-core-total-700`，700 条唯一评测案例
+- 分类：路由 200 条、Skill 选择 400 条、修改安全 100 条
 
 ## 指标定义
 
@@ -25,46 +23,44 @@
 
 ### 路由各路径
 
-- `conversation_llm`：正确 101，错误 0
-- `direct_edit`：正确 40，错误 0
-- `interview_coach`：正确 31，错误 0
-- `tool_node`：正确 28，错误 0
+- `confirm_endpoint`：正确 28，错误 0
+- `conversation_llm`：正确 134，错误 0
+- `direct_edit`：正确 38，错误 0
 
 ### 路由混淆矩阵
 
-| 金标 \ 实际 | conversation_llm | direct_edit | interview_coach | tool_node |
-|---|---:|---:|---:|---:|
-| conversation_llm | 101 | 0 | 0 | 0 |
-| direct_edit | 0 | 40 | 0 | 0 |
-| interview_coach | 0 | 0 | 31 | 0 |
-| tool_node | 0 | 0 | 0 | 28 |
+| 金标 \ 实际 | confirm_endpoint | conversation_llm | direct_edit |
+|---|---:|---:|---:|
+| confirm_endpoint | 28 | 0 | 0 |
+| conversation_llm | 0 | 134 | 0 |
+| direct_edit | 0 | 0 | 38 |
 
 ### 修改安全计数
 
 - 目标字段：77/77 正确。
-- 非目标叶子字段：0/30956 发生变化；连带修改案例 0/100。
+- 非目标叶子字段：0/31556 发生变化；连带修改案例 0/100。
 - 确认前写入：0/100。
 - 取消后保持：19/19。
 - 过期确认拦截：19/19。
 
 ## 在线 Skill 结果
 
-- `request_resume_edit`：Precision 98.23%，Recall 98.23% （TP=111，FP=2，FN=2）
-- `render_resume_pdf_images`：Precision 95.29%，Recall 100.00% （TP=81，FP=4，FN=0）
-- Skill 总案例：300；进入 LLM Skill 决策：300；排除：0。
-- 修改可执行率：100.00% （117/117）
-- 修改结果准确率：95.83% （69/72）
+- `resume_edit`：Precision 99.23%，Recall 97.73% （TP=129，FP=1，FN=3，TN=263）
+- `resume_snapshot`：Precision 100.00%，Recall 97.83% （TP=90，FP=0，FN=2，TN=304）
+- `resume_coach`：Precision 96.77%，Recall 100.00% （TP=60，FP=2，FN=0，TN=337）
+- Skill 总案例：400；进入 LLM Skill 决策：400；排除：0。
+- 修改可执行率：100.00% （135/135）
+- 修改结果准确率：100.00% （74/74）
 
 ## 失败案例
 
-- `skill-v3-015`：{"id": "skill-v3-015", "required_tools": ["request_resume_edit"], "optional_tools": [], "accepted_outcomes": [], "predicted_tools": []}
-- `skill-v3-026`：{"id": "skill-v3-026", "required_tools": [], "optional_tools": [], "accepted_outcomes": [], "predicted_tools": ["request_resume_edit"]}
-- `skill-v3-043`：{"id": "skill-v3-043", "required_tools": ["request_resume_edit"], "optional_tools": [], "accepted_outcomes": [], "predicted_tools": []}
-- `skill-v3-050`：{"id": "skill-v3-050", "required_tools": [], "optional_tools": [], "accepted_outcomes": [], "predicted_tools": ["render_resume_pdf_images"]}
-- `skill-v3-052`：{"id": "skill-v3-052", "required_tools": [], "optional_tools": [], "accepted_outcomes": [], "predicted_tools": ["request_resume_edit"]}
-- `skill-v3-056`：{"id": "skill-v3-056", "required_tools": [], "optional_tools": [], "accepted_outcomes": [], "predicted_tools": ["render_resume_pdf_images"]}
-- `skill-v3-064`：{"id": "skill-v3-064", "required_tools": [], "optional_tools": [], "accepted_outcomes": [], "predicted_tools": ["render_resume_pdf_images"]}
-- `skill-v4-050`：{"id": "skill-v4-050", "required_tools": [], "optional_tools": [], "accepted_outcomes": [], "predicted_tools": ["render_resume_pdf_images"]}
+- `skill-v3-046`：{"id": "skill-v3-046", "required_tools": ["resume_edit"], "optional_tools": [], "accepted_outcomes": [], "predicted_tools": ["resume_coach"]}
+- `skill-v3-050`：{"id": "skill-v3-050", "required_tools": ["resume_edit"], "optional_tools": [], "accepted_outcomes": [], "predicted_tools": []}
+- `skill-v3-063`：{"id": "skill-v3-063", "required_tools": ["resume_edit"], "optional_tools": [], "accepted_outcomes": [], "predicted_tools": []}
+- `skill-v3-081`：{"id": "skill-v3-081", "required_tools": ["resume_snapshot"], "optional_tools": [], "accepted_outcomes": [], "predicted_tools": []}
+- `skill-v3-084`：{"id": "skill-v3-084", "required_tools": [], "optional_tools": [], "accepted_outcomes": [], "predicted_tools": ["resume_coach"]}
+- `skill-v4-059`：{"id": "skill-v4-059", "required_tools": ["resume_edit", "resume_snapshot"], "optional_tools": [], "accepted_outcomes": [], "predicted_tools": ["resume_edit"]}
+- `skill-coach-089`：{"id": "skill-coach-089", "required_tools": [], "optional_tools": [], "accepted_outcomes": [], "predicted_tools": ["resume_edit"]}
 
 ### 参数可执行失败
 
@@ -72,13 +68,7 @@
 
 ### 目标修改结果失败
 
-- `skill-v3-015`：最终候选未达到金标结果。 未生成可供用户确认的修改候选
-- `skill-v3-043`：最终候选未达到金标结果。 未生成可供用户确认的修改候选
-- `skill-v4-023`：最终候选未达到金标结果。
-
-## 可用于简历的表述草稿
-
-构建 600 条版本化 Agent 核心评测集，覆盖 LangGraph 路由、Skill 选择与候选修改安全；实现离线可复现指标和在线对话模型评测，量化路由准确率、Skill Precision/Recall、修改可执行率与最终修改正确率，并通过失败归因完善 Agent 行为。
+- 无
 
 ## 说明
 

@@ -18,6 +18,7 @@ from tests.agent_core_eval.total.run_eval import (
     SYNTHETIC_PHOTO_DATA_URL,
     SYNTHETIC_RESUME,
     _base_state,
+    _canonical_prompt,
     _case_messages,
     _case_state_overrides,
     _load_cases,
@@ -26,7 +27,7 @@ from tests.agent_core_eval.total.run_eval import (
 
 
 class AgentCoreEvalMetricTests(unittest.TestCase):
-    def test_targeted_report_distinguishes_independent_and_merged_metrics(self):
+    def test_report_uses_stable_result_format(self):
         from tests.agent_core_eval.total.run_eval import _report
 
         online = {
@@ -40,11 +41,12 @@ class AgentCoreEvalMetricTests(unittest.TestCase):
                 "merged_with_existing": False,
             },
         }
-        independent = _report(None, online, results_dir=EVAL_ROOT / "total" / "results")
-        self.assertIn("仅基于本轮案例，不代表 400 条 Skill 总集结果", independent)
-        online["run_scope"]["merged_with_existing"] = True
-        merged = _report(None, online, results_dir=EVAL_ROOT / "total" / "results")
-        self.assertIn("其余案例沿用上一轮实际结果后重新计算总体指标", merged)
+        for merged_with_existing in (False, True):
+            online["run_scope"]["merged_with_existing"] = merged_with_existing
+            report = _report(None, online, results_dir=EVAL_ROOT / "total" / "results")
+            self.assertIn("## 在线 Skill 结果", report)
+            self.assertNotIn("定向复测", report)
+            self.assertNotIn("报告生成时间", report)
 
     def test_total_dataset_has_target_counts_and_unique_prompts(self):
         payload = _load_cases(EVAL_ROOT / "total" / "cases.json")
@@ -57,7 +59,10 @@ class AgentCoreEvalMetricTests(unittest.TestCase):
             for category in ("routing", "skill", "safety")
             for case in payload[category]
         ]
-        prompts = [case["prompt"].strip() for case in payload["routing"] + payload["skill"] + payload["safety"]]
+        prompts = [
+            _canonical_prompt(case["prompt"])
+            for case in payload["routing"] + payload["skill"] + payload["safety"]
+        ]
         self.assertEqual(len(case_ids), 700)
         self.assertEqual(len(set(case_ids)), 700)
         self.assertEqual(len(prompts), len(set(prompts)))
@@ -66,13 +71,54 @@ class AgentCoreEvalMetricTests(unittest.TestCase):
             payload["scenario_counts"],
             {
                 "legacy_unclassified": 296,
-                "complex_operation": 101,
+                "complex_operation": 102,
                 "mixed_request": 56,
-                "ambiguous_request": 91,
+                "ambiguous_request": 90,
                 "multi_turn_summary": 56,
                 "coach_command": 100,
             },
         )
+
+    def test_coach_cases_have_balanced_gold_and_executable_context_fixtures(self):
+        payload = _load_cases(EVAL_ROOT / "total" / "cases.json")
+        cases = [
+            case for case in payload["skill"]
+            if case["id"].startswith("skill-coach-")
+        ]
+        self.assertEqual(len(cases), 100)
+        self.assertEqual(
+            Counter(case["coach_case_group"] for case in cases),
+            Counter({
+                "explicit_command_start": 20,
+                "active_followup": 25,
+                "explicit_request_start": 5,
+                "accepted_start_offer": 10,
+                "direct_edit_boundary": 12,
+                "snapshot_boundary": 9,
+                "no_tool_boundary": 18,
+                "mixed_boundary": 1,
+            }),
+        )
+        self.assertEqual(sum(
+            "resume_coach" in set(case.get("expected_tools") or [])
+            for case in cases
+        ), 60)
+        for case in cases:
+            with self.subTest(case_id=case["id"]):
+                state = _case_state_overrides(case)
+                if case["coach_case_group"] == "explicit_command_start":
+                    self.assertEqual(state["active_skill_names"], ["resume-coach"])
+                elif case["coach_case_group"] == "active_followup":
+                    coach_state = state["coach_state"]
+                    issue_id = coach_state["current_issue_id"]
+                    self.assertTrue(coach_state["active"])
+                    self.assertEqual(coach_state["issues"][issue_id]["status"], "active")
+                elif case["coach_case_group"] == "accepted_start_offer":
+                    coach_state = state["coach_state"]
+                    self.assertFalse(coach_state["active"])
+                    self.assertEqual(
+                        coach_state["pending_start_offer"]["status"], "offered"
+                    )
 
     def test_v4_hard_intent_gold_matches_case_content(self):
         total = _load_cases(EVAL_ROOT / "total" / "cases.json")
@@ -96,9 +142,9 @@ class AgentCoreEvalMetricTests(unittest.TestCase):
         self.assertEqual(
             payload["scenario_counts"],
             {
-                "complex_operation": 61,
+                "complex_operation": 62,
                 "mixed_request": 18,
-                "ambiguous_request": 56,
+                "ambiguous_request": 55,
                 "multi_turn_summary": 15,
             },
         )
@@ -107,7 +153,7 @@ class AgentCoreEvalMetricTests(unittest.TestCase):
             if case.get("expected_tools") == ["resume_edit"]
             and not case.get("optional_tools")
         ]
-        self.assertEqual(len(edit_cases), 26)
+        self.assertEqual(len(edit_cases), 27)
         self.assertTrue(all(case["scenario_type"] == "complex_operation" for case in edit_cases))
         contact_case = next(case for case in payload["skill"] if case["id"] == "skill-v4-052")
         self.assertEqual(contact_case["expected_tools"], ["resume_snapshot"])
@@ -381,12 +427,19 @@ class AgentCoreEvalRunnerTests(unittest.IsolatedAsyncioTestCase):
             for case in payload["skill"]
         ))
 
+    async def test_runner_validates_all_three_skill_tools(self):
+        from tests.agent_core_eval.total.run_eval import TOOLS
+
+        self.assertEqual(
+            set(TOOLS), {"resume_edit", "resume_snapshot", "resume_coach"}
+        )
+
     async def test_all_skill_operation_gold_is_executable(self):
         from tests.agent_core_eval.total.run_eval import _expected_operation_changes
 
         payload = _load_cases(EVAL_ROOT / "total" / "cases.json")
         operation_cases = [case for case in payload["skill"] if case.get("expected_operations")]
-        self.assertEqual(len(operation_cases), 72)
+        self.assertEqual(len(operation_cases), 74)
         for case in operation_cases:
             with self.subTest(case_id=case["id"]):
                 self.assertIsInstance(await _expected_operation_changes(case), dict)
