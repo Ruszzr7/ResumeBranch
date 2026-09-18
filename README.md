@@ -94,61 +94,6 @@ flowchart TD
 | Stale Confirmation | 19 | 100% 拦截（19/19） |
 | Cancel Preservation | 19 | 100% 保持原数据（19/19） |
 
-## 项目启动
-
-### 方式 A — Windows 单用户安装
-
-从 GitHub Releases 获取当前 <code>ResumeBranch-Setup-v1.2.0-x64.exe</code> 并运行安装程序，目标电脑不需要另外安装 Python、Node.js、npm、Docker、MySQL 或 Inno Setup；安装包启动后默认访问 <http://127.0.0.1:5173>，数据保存在安装目录的 <code>app/data/</code> 中。
-
-### 方式 B — Docker Compose 多用户部署
-
-适用于 Linux 服务器或支持 Docker 的环境：
-
-~~~bash
-cp .env.docker.example .env.docker
-# 修改 JWT、管理员和 MySQL 密码
-docker compose --env-file .env.docker -f docker-compose.multi-user.yml config
-docker compose --env-file .env.docker -f docker-compose.multi-user.yml up -d --build
-~~~
-
-默认访问 <http://127.0.0.1:8080>，详细拓扑、安全边界、备份和验收见[多用户 Docker 部署](docs/docker-multi-user-deployment.md)。
-
-### 方式 C — Windows 源码开发/测试
-
-环境要求：Windows 10/11、Python 3.11+、Node.js 20+，以及用于 PDF 导出的 Chrome、Edge 或 Chromium。
-
-~~~powershell
-Copy-Item .env.example .env
-
-python -m venv .venv-win
-.\\.venv-win\\Scripts\\python.exe -m pip install -r backend\\requirements.lock.txt
-
-Set-Location frontend
-npm ci
-Set-Location ..
-
-.\\scripts\\start_local.cmd
-~~~
-
-访问 <http://127.0.0.1:5173>，多用户 Windows 原生 MySQL 测试见[源码开发与测试](docs/source-development-testing.md)。
-
-### 自动化测试
-
-~~~powershell
-# 后端：使用测试 SQLite，不继承当前 .env 中的 MySQL
-$env:APP_MODE = "local"
-$env:LOCAL_USER_EMAIL = "local@localhost"
-$env:DATABASE_URL = "sqlite:///./.local-run/test-suite.db"
-.\\.venv-win\\Scripts\\python.exe -m unittest discover -s tests
-
-# 前端
-Set-Location frontend
-npm test
-npm run build
-~~~
-
-完整测试前置条件、MySQL 集成测试、Docker 验收和人工回归见[测试与验收](docs/testing.md)。
-
 ## Agent Skills
 
 项目级 Skill 位于 <code>.agents/skills/</code>，由 <code>backend/skill_runtime.py</code> 在启动时发现，并按输入/输出 Schema 执行。
@@ -214,6 +159,61 @@ npm run build
 | 数据 | SQLite（单用户）、MySQL（多用户） |
 | 导出与视觉 | Chromium、<code>python-docx</code>、Poppler |
 | 通信 | HTTP REST、SSE |
+
+## 项目启动
+
+### 方式 A — Windows 单用户安装
+
+从 GitHub Releases 获取当前 <code>ResumeBranch-Setup-v1.2.0-x64.exe</code> 并运行安装程序，目标电脑不需要另外安装 Python、Node.js、npm、Docker、MySQL 或 Inno Setup；安装包启动后默认访问 <http://127.0.0.1:5173>，数据保存在安装目录的 <code>app/data/</code> 中。
+
+### 方式 B — Docker Compose 多用户部署
+
+适用于 Linux 服务器或支持 Docker 的环境：
+
+~~~bash
+cp .env.docker.example .env.docker
+# 修改 JWT、管理员和 MySQL 密码
+docker compose --env-file .env.docker -f docker-compose.multi-user.yml config
+docker compose --env-file .env.docker -f docker-compose.multi-user.yml up -d --build
+~~~
+
+默认访问 <http://127.0.0.1:8080>，详细拓扑、安全边界、备份和验收见[多用户 Docker 部署](docs/docker-multi-user-deployment.md)。
+
+### 方式 C — Windows 源码开发/测试
+
+环境要求：Windows 10/11、Python 3.11+、Node.js 20+，以及用于 PDF 导出的 Chrome、Edge 或 Chromium。
+
+~~~powershell
+Copy-Item .env.example .env
+
+python -m venv .venv-win
+.\\.venv-win\\Scripts\\python.exe -m pip install -r backend\\requirements.lock.txt
+
+Set-Location frontend
+npm ci
+Set-Location ..
+
+.\\scripts\\start_local.cmd
+~~~
+
+访问 <http://127.0.0.1:5173>，多用户 Windows 原生 MySQL 测试见[源码开发与测试](docs/source-development-testing.md)。
+
+### 自动化测试
+
+~~~powershell
+# 后端：使用测试 SQLite，不继承当前 .env 中的 MySQL
+$env:APP_MODE = "local"
+$env:LOCAL_USER_EMAIL = "local@localhost"
+$env:DATABASE_URL = "sqlite:///./.local-run/test-suite.db"
+.\\.venv-win\\Scripts\\python.exe -m unittest discover -s tests
+
+# 前端
+Set-Location frontend
+npm test
+npm run build
+~~~
+
+完整测试前置条件、MySQL 集成测试、Docker 验收和人工回归见[测试与验收](docs/testing.md)。
 
 ## 项目结构
 

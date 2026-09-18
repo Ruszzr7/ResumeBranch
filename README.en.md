@@ -94,61 +94,6 @@ Evaluation setup: the offline routing and safety evaluations do not call an LLM 
 | Stale Confirmation | 19 | 100% blocked (19/19) |
 | Cancel Preservation | 19 | 100% preserved (19/19) |
 
-## Quick Start
-
-### Option A — Windows Single-User Installer
-
-Download the current <code>ResumeBranch-Setup-v1.2.0-x64.exe</code> from GitHub Releases and run it. The target computer does not need Python, Node.js, npm, Docker, MySQL, or Inno Setup. The installed application opens <http://127.0.0.1:5173> and stores data under the installed <code>app/data/</code> directory.
-
-### Option B — Multi-User Docker Compose
-
-For Linux servers or another Docker-capable environment:
-
-~~~bash
-cp .env.docker.example .env.docker
-# Replace the JWT, administrator, and MySQL passwords
-docker compose --env-file .env.docker -f docker-compose.multi-user.yml config
-docker compose --env-file .env.docker -f docker-compose.multi-user.yml up -d --build
-~~~
-
-The default address is <http://127.0.0.1:8080>. See [Multi-user Docker deployment](docs/docker-multi-user-deployment.md) for topology, security boundaries, backups, and acceptance checks.
-
-### Option C — Windows Source Development/Testing
-
-Requirements: Windows 10/11, Python 3.11+, Node.js 20+, and Chrome, Edge, or Chromium for PDF export.
-
-~~~powershell
-Copy-Item .env.example .env
-
-python -m venv .venv-win
-.\\.venv-win\\Scripts\\python.exe -m pip install -r backend\\requirements.lock.txt
-
-Set-Location frontend
-npm ci
-Set-Location ..
-
-.\\scripts\\start_local.cmd
-~~~
-
-Open <http://127.0.0.1:5173>. See [Source development and testing](docs/source-development-testing.md) for the native-MySQL multi-user path.
-
-### Automated Tests
-
-~~~powershell
-# Backend: use test SQLite instead of inheriting MySQL from .env
-$env:APP_MODE = "local"
-$env:LOCAL_USER_EMAIL = "local@localhost"
-$env:DATABASE_URL = "sqlite:///./.local-run/test-suite.db"
-.\\.venv-win\\Scripts\\python.exe -m unittest discover -s tests
-
-# Frontend
-Set-Location frontend
-npm test
-npm run build
-~~~
-
-See [Testing and acceptance](docs/testing.md) for MySQL integration, Docker acceptance, and manual regression prerequisites.
-
 ## Agent Skills
 
 Project-level Skills live under <code>.agents/skills/</code>. <code>backend/skill_runtime.py</code> discovers them at startup and executes them through their input/output schemas.
@@ -214,6 +159,61 @@ The screenshots cover resume version management, the full workspace, AI edit con
 | Data | SQLite for single-user; MySQL for multi-user |
 | Export and visual rendering | Chromium, <code>python-docx</code>, Poppler |
 | Communication | HTTP REST, SSE |
+
+## Quick Start
+
+### Option A — Windows Single-User Installer
+
+Download the current <code>ResumeBranch-Setup-v1.2.0-x64.exe</code> from GitHub Releases and run it. The target computer does not need Python, Node.js, npm, Docker, MySQL, or Inno Setup. The installed application opens <http://127.0.0.1:5173> and stores data under the installed <code>app/data/</code> directory.
+
+### Option B — Multi-User Docker Compose
+
+For Linux servers or another Docker-capable environment:
+
+~~~bash
+cp .env.docker.example .env.docker
+# Replace the JWT, administrator, and MySQL passwords
+docker compose --env-file .env.docker -f docker-compose.multi-user.yml config
+docker compose --env-file .env.docker -f docker-compose.multi-user.yml up -d --build
+~~~
+
+The default address is <http://127.0.0.1:8080>. See [Multi-user Docker deployment](docs/docker-multi-user-deployment.md) for topology, security boundaries, backups, and acceptance checks.
+
+### Option C — Windows Source Development/Testing
+
+Requirements: Windows 10/11, Python 3.11+, Node.js 20+, and Chrome, Edge, or Chromium for PDF export.
+
+~~~powershell
+Copy-Item .env.example .env
+
+python -m venv .venv-win
+.\\.venv-win\\Scripts\\python.exe -m pip install -r backend\\requirements.lock.txt
+
+Set-Location frontend
+npm ci
+Set-Location ..
+
+.\\scripts\\start_local.cmd
+~~~
+
+Open <http://127.0.0.1:5173>. See [Source development and testing](docs/source-development-testing.md) for the native-MySQL multi-user path.
+
+### Automated Tests
+
+~~~powershell
+# Backend: use test SQLite instead of inheriting MySQL from .env
+$env:APP_MODE = "local"
+$env:LOCAL_USER_EMAIL = "local@localhost"
+$env:DATABASE_URL = "sqlite:///./.local-run/test-suite.db"
+.\\.venv-win\\Scripts\\python.exe -m unittest discover -s tests
+
+# Frontend
+Set-Location frontend
+npm test
+npm run build
+~~~
+
+See [Testing and acceptance](docs/testing.md) for MySQL integration, Docker acceptance, and manual regression prerequisites.
 
 ## Repository Structure
 
