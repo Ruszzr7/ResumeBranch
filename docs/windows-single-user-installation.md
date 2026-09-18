@@ -25,7 +25,7 @@
 普通用户应从 GitHub Releases 下载：
 
 ~~~text
-ResumeBranch-Setup-v1.1.3-x64.exe
+ResumeBranch-Setup-v1.2.0-x64.exe
 ~~~
 
 运行安装程序后：
@@ -87,7 +87,7 @@ app/output/resumes/
 生成文件位于：
 
 ~~~text
-output/installer/ResumeBranch-Setup-v1.1.3-x64.exe
+output/installer/ResumeBranch-Setup-v1.2.0-x64.exe
 ~~~
 
 构建过程和运行时来源见 [Windows 安装包构建说明](../packaging/README.md)。

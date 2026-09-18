@@ -2,227 +2,144 @@
 
 **English** | [简体中文](README.md)
 
-ResumeBranch is an open-source AI resume assistant for maintaining resumes and preparing job applications. It uses a structured resume as its core data model and provides import, editing, version management, layout controls, PDF/DOCX export, job-description analysis, and conversational optimization. It is distributed through three paths: source development/testing, multi-user Docker deployment, and a Windows single-user installation package.
+**ResumeBranch** is an AI resume workspace for resume maintenance and job-search coaching. It supports resume import, structured editing, JD branch management, AI diagnosis, safe editing, and PDF/DOCX export.
 
-## Main capabilities
+Unlike asking an LLM to rewrite a resume directly, ResumeBranch converts AI edits into structured operations, validates them, shows field-level differences and a layout preview before writing, and applies them formally only after user confirmation. Combined with deterministic routing, Agent Skills, and versioned context management, this improves editing efficiency, controllability, and traceability. The project provides a Windows single-user installer, source development/testing, and multi-user Docker Compose deployment.
 
-- Manage a base resume and job-specific versions, including creation, duplication, import, switching, and undo.
-- Edit structured sections such as personal information, education, work experience, projects, skills, publications, and certificates.
-- Adjust templates, font sizes, spacing, margins, section order, and content styles while keeping the browser preview, PDF, and editable DOCX as consistent as possible.
-- Import PDF or image resumes through the parsing API, map them into the project template, and retain the original files for reference.
-- Maintain job descriptions with text or image parsing, structured editing, and targeted analysis.
-- Let the intelligent Agent decide whether to answer, ask follow-up questions, read a layout snapshot, or generate a modification preview.
-- Use a preview-confirm-save flow for AI changes; stale changes are rejected when the resume has changed, with concurrency protection for multiple windows.
-- Save single-user exports to `output/resumes/`; the multi-user profile downloads files through the browser instead of accumulating them on the server.
+![ResumeBranch AI edit preview with request, diff, temporary preview, and confirmation](docs/images/readme/hero-workspace-confirmation.png)
 
-## Interface demos
+The screenshot shows the full edit-preview boundary: the user request, the structured before/after change, the temporary resume preview, and the accept/reject controls. The canonical resume is not written before acceptance.
 
-### Project homepage
+## Key Highlights
 
-![ResumeBranch workspace](docs/images/readme/cover.png)
+- **Hybrid Agent Routing**: explicit, safely parseable requests use the deterministic <code>direct_edit</code> path; consultations and complex tasks enter <code>conversation_llm</code> and call Agent Skills when needed.
+- **Safe Edit Pipeline**: requests become structured operations, pass schema and capability validation, produce a working-copy candidate, diff, and layout preview, and are persisted only after confirmation.
+- **Three Agent Skills**: <code>resume-edit</code> generates candidates, <code>resume-snapshot</code> supplies visual evidence from the real PDF pipeline, and <code>resume-coach</code> manages sourced evidence and edit authorization.
+- **Context & Version Management**: <code>ProjectTask</code>, task-level locks, content/layout digests, bounded memory, and private Skill state define context and concurrency boundaries.
+- **Evaluation & Delivery**: the repository includes 700 core Agent evaluation cases and three delivery paths: Windows installer, source testing, and multi-user Docker Compose.
 
-### Resume import
+## System Architecture
 
-![Create or import a resume](docs/images/readme/import-resume.png)
-
-### Main workspace
-
-![Resume workspace](docs/images/readme/main-page.png)
-
-### Content editing
-
-![Structured resume content editing](docs/images/readme/edit-content.png)
-
-### Layout ordering
-
-![Module order editing](docs/images/readme/edit-order.png)
-
-### Conversational editing
-
-![AI edit preview and confirmation](docs/images/readme/conversation-edit.png)
-
-## Three delivery paths
-
-The three paths share the same Vue frontend, FastAPI backend, and business code, but they target different users and operational environments. The application does not switch between single-user and multi-user profiles dynamically inside the page.
-
-| Delivery path | Obtain and run | User model | Purpose |
-|---|---|---|---|
-| Source development/testing | Clone the GitHub repository, install dependencies, and use Windows scripts | Single-user or multi-user test configuration | Development, testing, and acceptance |
-| Multi-user Docker deployment | Obtain the source and Docker Compose configuration, then run Docker Compose | Multi-user only | Local deployment validation or server deployment |
-| Windows single-user installation | Download `ResumeBranch-Setup-v1.2.0-x64.exe` from GitHub Releases and install it | Single-user only | Direct local use on Windows |
-
-The source path provides two configurations: single-user uses SQLite and `scripts\start_local.cmd`; multi-user testing uses MySQL and `scripts\start_multi_user.cmd`. The existing internal configuration value `APP_MODE=local` and script names remain unchanged; “single-user” is the user-facing description.
-
-Single-user SQLite does not require a separate service. Shutting down the application or restarting the computer does not delete `data/resumebranch.db`; the data remains as long as the `data/` directory is kept. SQLite and MySQL are independent data sources, and the project does not migrate data between them automatically.
-
-## Technical architecture
-
-- Frontend: Vue 3, Vite, Element Plus, and Vue Router.
-- Backend: Python 3.11, FastAPI, SQLAlchemy, and Uvicorn/Gunicorn.
-- Agent: LangGraph handles graph state and routing; repository-local Agent Skill packages provide discoverable resume-edit, resume-snapshot, and resume-coach capabilities; LangChain Core and an OpenAI-compatible client provide message, model, and tool abstractions.
-- Data: the single-user profile uses SQLite, while the multi-user profile uses MySQL; private multi-turn Skill state is stored separately from ordinary conversation memory.
-- Export and rendering: Chromium generates PDFs, `python-docx` generates editable DOCX files, and Poppler generates PDF page snapshots that can be consumed by the AI.
-- Communication: regular endpoints use HTTP, while AI responses are streamed over SSE.
-- Delivery and deployment: the source path includes Windows launch scripts; the multi-user Docker path includes Compose, MySQL, Gunicorn, and Nginx configuration.
-
-Reproducible dependency versions are defined by [`backend/requirements.lock.txt`](backend/requirements.lock.txt) and [`frontend/package-lock.json`](frontend/package-lock.json). Patch versions are not duplicated in this README because they become outdated easily.
-
-## Windows single-user installation package
-
-For a normal Windows user, download `ResumeBranch-Setup-v1.2.0-x64.exe` from GitHub Releases and run the installer. It includes the frozen single-user application, the production frontend bundle, a private Python runtime and dependencies, Nginx, Poppler, and the PDF rendering browser. It does not require Python, Node.js, npm, Docker, MySQL, or Inno Setup on the target computer, and it does not modify the system `PATH`.
-
-The installer uses a per-user installation location by default. After installation, the optional desktop shortcut points to `ResumeBranch.exe`; the launcher starts the private single-user backend and frontend, then opens `http://127.0.0.1:5173` in the default browser. The SQLite database and exports are stored below the installed `app/` directory. Initial user data and API settings are empty and must be configured by the user when needed.
-
-The single-user installer has no updater. Multi-user use remains a separate source-testing or Docker-deployment path.
-
-The installer is a generated release artifact. Maintainers can rebuild it on Windows x64 with:
-
-~~~powershell
-.\packaging\build-installer.ps1
+~~~mermaid
+flowchart TD
+    UI["Vue 3 Workspace"] --> API["FastAPI<br/>REST + SSE"]
+    API --> SERVICES["Resume / Version / Task Services"]
+    API --> ROUTER{"LangGraph<br/>Entry Router"}
+    ROUTER --> PATHS["direct_edit / conversation_llm"]
+    PATHS --> RUNTIME["SkillRuntime<br/>Discovery and Invocation"]
+    RUNTIME --> SKILLS["resume-edit<br/>resume-snapshot<br/>resume-coach"]
+    SKILLS --> RESULT["Structured Operations / Visual Evidence / Coach State"]
+    RESULT --> OUTCOME{"Outcome"}
+    OUTCOME -->|Answer / Clarify| RESPONSE["Answer / Visual Analysis"]
+    OUTCOME -->|Edit Candidate| VALID["Schema Validation / Diff / Layout Preview"]
+    VALID --> CONFIRM["User Confirm / Cancel<br/>POST /confirm"]
+    SERVICES --> MODEL["Structured Resume Model"]
+    CONFIRM --> MODEL
+    MODEL --> DB["SQLite / MySQL"]
+    MODEL --> EXPORT["PDF / DOCX Export"]
+    DB --> REV["ResumeRevision / Undo"]
 ~~~
 
-The generated file is written to `output/installer/ResumeBranch-Setup-v1.2.0-x64.exe`. See [Windows single-user installation package](packaging/README.md) for packaging details.
+The frontend depends on public REST endpoints, SSE events, and confirmation results. Internal graph nodes, Skill names, and field paths are kept behind the application boundary. Import, editing, version management, and export share the structured resume model.
 
-## Source development/testing on Windows
+## Core Execution Flow: AI Does Not Directly Overwrite the Resume
 
-The following procedure is for developers or users who clone the repository directly. It describes the single-user source configuration; the multi-user source configuration is covered below. If you use the installation package above, do not install these development dependencies separately.
+~~~mermaid
+flowchart TD
+    A["User Request"] --> B{"Safely Parseable?"}
+    B -->|Yes| C["direct_edit<br/>Deterministic Parsing"]
+    B -->|No| D["conversation_llm<br/>Understand, Answer, or Ask"]
+    D --> E{"Agent Skill Needed?"}
+    E -->|No| F["Answer / Clarify"]
+    E -->|Yes| G["SkillRuntime Invokes Skill"]
 
-### Single-user source test: requirements
+    C --> H["Structured Operations"]
+    G --> I["Structured Tool Result"]
+    I --> J{"Does It Require a Change?"}
+    J -->|No| F
+    J -->|Yes| H
 
-- Windows 10/11
-- Python 3.11+
-- Node.js 20+
-- Chrome, Edge, or Chromium (required for PDF export)
+    H --> P["Acquire Task-Level Edit Lock"]
+    P --> K["resume-edit Applies Operations to a Working Copy"]
+    K --> L["Schema and Layout Capability Validation"]
+    L --> M["Candidate, Change Set, Diff, and Layout Preview"]
+    M --> N{"User Confirmation?"}
+    N -->|Cancel / Reject| O["Clear Pending State<br/>Release Edit Lock; Canonical Resume Unchanged"]
+    N -->|Accept| Q["Recheck base_version<br/>Content and Layout Digests"]
+    Q --> R{"State Still Matches?"}
+    R -->|No| S["Clear Stale Candidate<br/>Release Edit Lock; Regenerate Required"]
+    R -->|Yes| T["Commit ResumeRevision in a Transaction"]
+    T --> U["Update Canonical Resume<br/>Release Edit Lock; Undo Remains Available"]
+~~~
 
-### Single-user source test: configure and install
+- <code>resume-edit</code> generates a validated candidate; it does not save the canonical resume.
+- For AI candidates, <code>/confirm</code> is the single boundary for applying candidates, writing resume/layout data, recording revisions, and releasing the edit lock.
+- Confirmation checks only the content or layout scope touched by the candidate, avoiding unnecessary conflicts.
+- If another window has changed the same scope, the stale candidate is rejected and the frontend reloads the canonical database state.
+
+## Evaluation Evidence
+
+The dataset is [tests/agent_core_eval/total/cases.json](tests/agent_core_eval/total/cases.json), the runner is [tests/agent_core_eval/total/run_eval.py](tests/agent_core_eval/total/run_eval.py), and the checked-in report is [results/report.md](tests/agent_core_eval/total/results/report.md). The dataset contains 700 unique cases: 200 routing cases, 400 Skill-selection cases, and 100 safe-edit cases.
+
+Evaluation setup: the offline routing and safety evaluations do not call an LLM and are computed deterministically by the current code; the 400 Skill-selection cases run through the project's current conversation API configuration, with provider/model recorded in the result JSON. The checked-in report is a single run and does not record a fixed commit or temperature, so it does not claim cross-version, cross-model, or repeated-run stability.
+
+| Evaluation | Cases | Result |
+|---|---:|---|
+| Intent Routing | 200 | 100% (200/200) |
+| Skill Selection | 400 | <code>resume-edit</code> P99.23% / R97.73%; <code>resume-snapshot</code> P100% / R97.83%; <code>resume-coach</code> P96.77% / R100% |
+| Safe Edit | 100 | 0/100 writes before confirmation; 0/100 cascading edits |
+| Structured Edit Outcome | 74 | 100% (74/74) |
+| Executable Edit Operations | 135 | 100% (135/135) |
+| Non-target Leaf Fields | 31,556 | 0 unintended changes |
+| Stale Confirmation | 19 | 100% blocked (19/19) |
+| Cancel Preservation | 19 | 100% preserved (19/19) |
+
+## Quick Start
+
+### Option A — Windows Single-User Installer
+
+Download the current <code>ResumeBranch-Setup-v1.2.0-x64.exe</code> from GitHub Releases and run it. The target computer does not need Python, Node.js, npm, Docker, MySQL, or Inno Setup. The installed application opens <http://127.0.0.1:5173> and stores data under the installed <code>app/data/</code> directory.
+
+### Option B — Multi-User Docker Compose
+
+For Linux servers or another Docker-capable environment:
+
+~~~bash
+cp .env.docker.example .env.docker
+# Replace the JWT, administrator, and MySQL passwords
+docker compose --env-file .env.docker -f docker-compose.multi-user.yml config
+docker compose --env-file .env.docker -f docker-compose.multi-user.yml up -d --build
+~~~
+
+The default address is <http://127.0.0.1:8080>. See [Multi-user Docker deployment](docs/docker-multi-user-deployment.md) for topology, security boundaries, backups, and acceptance checks.
+
+### Option C — Windows Source Development/Testing
+
+Requirements: Windows 10/11, Python 3.11+, Node.js 20+, and Chrome, Edge, or Chromium for PDF export.
 
 ~~~powershell
 Copy-Item .env.example .env
 
 python -m venv .venv-win
-.\.venv-win\Scripts\python.exe -m pip install -r backend\requirements.lock.txt
+.\\.venv-win\\Scripts\\python.exe -m pip install -r backend\\requirements.lock.txt
 
 Set-Location frontend
 npm ci
 Set-Location ..
+
+.\\scripts\\start_local.cmd
 ~~~
 
-For AI chat and resume parsing, configure an OpenAI-compatible API in `.env`, or fill it in through **API settings** in the upper-right corner after startup. Local editing, version management, and export do not require an LLM key.
+Open <http://127.0.0.1:5173>. See [Source development and testing](docs/source-development-testing.md) for the native-MySQL multi-user path.
 
-Do not commit `.env`, `.env.multi_user`, `.env.docker`, or any real credentials.
-
-### Single-user source test: start and stop
+### Automated Tests
 
 ~~~powershell
-.\scripts\start_local.cmd
-~~~
-
-Open <http://127.0.0.1:5173>. The script starts or restarts the backend, starts the shared frontend, and runs health checks. The Vite development server supports hot reload.
-
-~~~powershell
-# Stop the frontend and backend without deleting data
-.\scripts\stop_app.cmd
-~~~
-
-See [Source development and testing](docs/source-development-testing.md) for the complete source procedure, backup guidance, and health checks.
-
-### Multi-user source test: Windows native MySQL
-
-Use this source configuration on a Windows computer without Docker to test login, invite codes, administrator permissions, and user-data isolation:
-
-~~~powershell
-Copy-Item .env.multi_user.example .env.multi_user
-# Configure the MySQL database and application account, then:
-.\scripts\start_multi_user.cmd
-~~~
-
-The Windows multi-user entry script checks and starts the MySQL service, verifies the database connection, starts or restarts the backend, and reuses the same Vite frontend. Ordinary users must register and sign in with an email address; administrators may use an email address or a dedicated non-email account name. Each account has only one valid login session at a time; a new login invalidates the previous session.
-
-See [Source development and testing](docs/source-development-testing.md) for detailed configuration.
-
-## Multi-user Docker deployment
-
-Use this path on a Linux server or another environment that supports Docker. It can also be run locally for deployment acceptance. Docker is not required for the source single-user or source multi-user Windows tests.
-
-~~~bash
-cp .env.docker.example .env.docker
-# Replace the JWT, administrator, and MySQL passwords:
-docker compose --env-file .env.docker -f docker-compose.multi-user.yml config
-docker compose --env-file .env.docker -f docker-compose.multi-user.yml up -d --build
-~~~
-
-The default address is <http://127.0.0.1:8080>. See [Multi-user Docker deployment](docs/docker-multi-user-deployment.md) for the topology, security boundaries, backups, and acceptance checks.
-
-## Launch scripts
-
-| Script | Purpose |
-|---|---|
-| `scripts/start_local.cmd` | Start the single-user SQLite backend and shared frontend |
-| `scripts/start_multi_user.cmd` | Start native MySQL, the multi-user backend, and the shared frontend |
-| `scripts/start_backend_local.cmd` | Start or restart the single-user backend |
-| `scripts/start_backend_multi_user.cmd` | Start or restart the multi-user backend |
-| `scripts/start_frontend.cmd` | Start the shared Vite frontend |
-| `scripts/start_mysql.cmd` | Start the Windows MySQL service only |
-| `scripts/stop_mysql.cmd` | Stop the Windows MySQL service only |
-| `scripts/stop_app.cmd` | Stop the frontend and backend while preserving SQLite/MySQL data and the MySQL service |
-
-Runtime logs are written to `.local-run/`, which is ignored by Git.
-
-## Agent and modification safety
-
-ResumeBranch does not hard-code every request as a fixed workflow. The entry router combines the current request, active Skill state, and confirmation protocol to choose a path:
-
-- General questions and complex resume tasks are given to the Agent, which decides whether to answer, ask questions, or call a skill.
-- Explicit, safely parseable requests for fields, font sizes, layout, or local bold formatting use the deterministic direct-edit path.
-- Comprehensive diagnosis remains a one-shot conversation; deep polish explicitly activates the evidence-driven coaching Skill, which can also be activated on demand in other conversations.
-- When visual layout information is needed, the system renders resume page snapshots using the same source as the official PDF.
-- When a resume change is needed, the system generates a structured candidate, shows a preview, and persists it only after confirmation.
-
-Resume content, layout rules, the JD, conversation summaries, and necessary memory are assembled on demand by the context layer. Coaching evidence is kept in private Skill state, separate from the rolling conversation summary.
-
-Every resume-workspace request is bound to a validated `ProjectTask` through `X-Task-ID`; there is no user-level fallback resume store. When a change is confirmed, the resume revision and affected content/layout digest are checked. If another window changes the same state while confirmation is pending, the stale suggestion is rejected and the frontend reloads the canonical version from the database. Database locks serialize writes across conversation windows, browser tabs, and backend processes; consultation-only conversations are unaffected.
-
-See [Agent architecture and state boundaries](docs/agent-architecture.md) for the current implementation details.
-
-## Data and privacy
-
-Main persistent data in the single-user profile:
-
-~~~text
-data/resumebranch.db                  # Resume, JD, conversation, and business state
-data/source_documents/                # Original imported resume files
-data/llm_profiles.json                # Local API settings, if configured in the UI
-output/resumes/                       # Locally exported PDF/DOCX files
-~~~
-
-Stop the backend before backing up the entire `data/` directory instead of copying only the database file while SQLite is running. Multi-user Docker data is stored in named volumes; see the deployment documentation for backup instructions.
-
-The project does not require resumes to be uploaded to an official ResumeBranch server. If you enable a third-party LLM or parsing API, review that provider's data-processing and privacy policies.
-
-## API and runtime checks
-
-After the backend starts, check its status with:
-
-~~~powershell
-Invoke-RestMethod -Method Post http://127.0.0.1:8000/health
-Invoke-RestMethod http://127.0.0.1:8000/app/config
-~~~
-
-FastAPI generates the complete development API contract:
-
-- Swagger UI: <http://127.0.0.1:8000/docs>
-- OpenAPI JSON: <http://127.0.0.1:8000/openapi.json>
-
-The main endpoint groups cover runtime configuration, authentication and invite codes, resumes and versions, JDs, conversations, imports, PDF/DOCX export, AI settings, and confirmation saves. `POST /chat` streams events over SSE. Authentication endpoints are available only in the multi-user profile; the open-export-directory endpoint is available only in the single-user profile.
-
-## Tests
-
-~~~powershell
-# Backend: explicitly use test SQLite instead of inheriting MySQL from .env
+# Backend: use test SQLite instead of inheriting MySQL from .env
 $env:APP_MODE = "local"
 $env:LOCAL_USER_EMAIL = "local@localhost"
 $env:DATABASE_URL = "sqlite:///./.local-run/test-suite.db"
-.\.venv-win\Scripts\python.exe -m unittest discover -s tests
+.\\.venv-win\\Scripts\\python.exe -m unittest discover -s tests
 
 # Frontend
 Set-Location frontend
@@ -230,47 +147,118 @@ npm test
 npm run build
 ~~~
 
-These commands force the regular tests to use SQLite under `.local-run/`. They do not run real MySQL integration tests or call a real LLM by default. Prerequisites for MySQL integration tests, real-LLM smoke tests, Docker acceptance, environment cleanup, and manual regression are listed in [Testing and acceptance](docs/testing.md). GitHub Actions runs the core backend tests, frontend tests, and production build on pushes and pull requests, and separately validates the multi-user Docker profile.
+See [Testing and acceptance](docs/testing.md) for MySQL integration, Docker acceptance, and manual regression prerequisites.
 
-## Project structure
+## Agent Skills
+
+Project-level Skills live under <code>.agents/skills/</code>. <code>backend/skill_runtime.py</code> discovers them at startup and executes them through their input/output schemas.
+
+| Skill | Responsibility | Writes to the canonical resume |
+|---|---|---|
+| <code>resume-edit</code> | Compiles an explicit intent into structured content/layout operations and generates a candidate change set | No |
+| <code>resume-snapshot</code> | Uses the same rendering source as PDF export to create limited color PNG pages for pagination, spacing, alignment, overflow, and visual-density checks | No, read-only |
+| <code>resume-coach</code> | Manages an issue, evidence sources, follow-up questions, conclusions, and edit authorization before handing off to <code>resume-edit</code> | No |
+
+## Key Engineering Design
+
+### Deterministic and LLM Paths
+
+The architecture and execution-flow diagrams show how the two paths converge on shared Skill invocation, candidate generation, and confirmation semantics.
+
+### Context and State Isolation
+
+- Every workspace request carries <code>X-Task-ID</code> and is bound to a user-owned <code>ProjectTask</code>.
+- Main conversations, command conversations, JDs, resume versions, and browser tabs have explicit context boundaries.
+- Harness keeps recent complete structured rounds and compresses older content into a bounded summary.
+- The current issue, evidence, and authorization state of <code>resume-coach</code> live in private Skill state rather than the ordinary conversation summary.
+
+### Version, Digest, and Concurrency Checks
+
+A candidate preview records content and layout digests together with a state sequence. Confirmation reloads the task and checks only the scopes touched by the candidate. Database-level task locks serialize writes across windows, browser tabs, and backend processes. The lock answers “who can commit”; <code>base_version</code> and the digests answer “was this candidate generated from the current state?”
+
+## Screenshots
+
+The screenshots cover resume version management, the full workspace, AI edit confirmation, resume import, and structured content and module-order editing.
+
+### Resume Version Homepage
+
+![ResumeBranch version homepage](docs/images/readme/cover.png)
+
+### Full Workspace
+
+![Resume preview and AI chat workspace](docs/images/readme/main-page.png)
+
+### Layout Edit Preview
+
+![Layout edit preview and confirmation](docs/images/readme/conversation-edit.png)
+
+### Resume Import
+
+![Create or import a resume](docs/images/readme/import-resume.png)
+
+### Structured Content Editing
+
+![Structured resume content editing](docs/images/readme/edit-content.png)
+
+### Module Ordering
+
+![Module ordering editor](docs/images/readme/edit-order.png)
+
+## Technology Stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | Vue 3, Vite, Element Plus, Vue Router |
+| Backend | Python 3.11, FastAPI, SQLAlchemy, Uvicorn/Gunicorn |
+| Agent | LangGraph, LangChain Core, OpenAI-compatible client, Agent Skills |
+| Data | SQLite for single-user; MySQL for multi-user |
+| Export and visual rendering | Chromium, <code>python-docx</code>, Poppler |
+| Communication | HTTP REST, SSE |
+
+## Repository Structure
 
 ~~~text
 ResumeBranch/
-├── .agents/skills/                 # Discoverable Agent Skill packages and their schemas/scripts
-├── backend/                       # FastAPI, Agent, data models, import and export
-│   ├── harness/                   # Context, memory, persistence, and observability
-│   ├── skill_runtime.py           # Skill discovery, activation, schema loading, and invocation
-│   ├── Dockerfile
-│   ├── main.py
-│   ├── resume_agent.py
-│   ├── requirements.txt           # Dependency declarations
-│   └── requirements.lock.txt      # Locked dependencies
-├── frontend/                      # Vue SPA and Nginx container configuration
-├── scripts/                       # Windows startup, shutdown, health, and smoke scripts
-├── launcher/                      # GUI launcher source for the single-user installer
-├── installer/                     # Inno Setup recipe for the Windows installer
-├── packaging/                     # Installer build scripts and bundled runtime configuration
-├── tests/                         # Backend automated tests
-├── docs/                          # Deployment, architecture, testing, references, and README images
-├── data/                          # Local runtime data (not committed by default)
-├── output/resumes/                # Local exports (not committed by default)
-├── output/installer/               # Generated Windows installer artifact
-├── docker-compose.multi-user.yml  # Multi-user Compose definition
-├── .env*.example                  # Configuration templates
-├── README.md                      # Simplified Chinese default README
-└── README.en.md                   # English README
+├── backend/
+│   ├── resume_agent.py       # LangGraph routing and Agent orchestration
+│   ├── harness/              # Context, memory, persistence, observability
+│   ├── skill_runtime.py      # Skill discovery and invocation
+│   ├── resume_changes.py     # Diff, digests, and candidate changes
+│   └── main.py               # REST/SSE and confirmation endpoints
+├── .agents/skills/           # resume-edit / resume-snapshot / resume-coach
+├── frontend/                 # Vue 3 workspace and resume preview
+├── tests/                    # Regression tests and Agent evaluation
+├── scripts/                  # Windows startup, shutdown, and health scripts
+├── docs/                     # Architecture, deployment, testing, and README images
+├── packaging/                # Windows installer build
+├── docker-compose.multi-user.yml
+├── README.md
+└── README.en.md
 ~~~
+
+## Data and Privacy
+
+Main single-user persistent data:
+
+~~~text
+data/resumebranch.db                  # Resume, JD, conversation, and business state
+data/source_documents/                # Original imported resume files
+data/llm_profiles.json                # Local API settings, if configured in the UI
+output/resumes/                       # Single-user PDF/DOCX exports
+~~~
+
+ResumeBranch does not require resumes to be uploaded to an official ResumeBranch server. If a third-party LLM or parsing API is enabled, review that provider's data-processing and privacy policies. Stop the backend before backing up the entire <code>data/</code> directory.
 
 ## Documentation
 
 - [Documentation index](docs/README.md)
-- [Windows single-user installation](docs/windows-single-user-installation.md)
+- [Agent architecture and state boundaries](docs/agent-architecture.md)
 - [Source development and testing](docs/source-development-testing.md)
 - [Multi-user Docker deployment](docs/docker-multi-user-deployment.md)
-- [Windows installation package build](packaging/README.md)
+- [Windows single-user installation](docs/windows-single-user-installation.md)
+- [Windows installer build](packaging/README.md)
 - [Testing and acceptance](docs/testing.md)
-- [Agent architecture and state boundaries](docs/agent-architecture.md)
 
 ## License
 
-This project is released under the [MIT License](LICENSE).
+Released under the [MIT License](LICENSE).
